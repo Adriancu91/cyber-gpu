@@ -1,0 +1,10 @@
+[package]
+name = "gpu-memory"
+description = "Address types, range allocator, DMA policy and buffer table with documented invariants"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+gpu-core.workspace = true

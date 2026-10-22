@@ -1,0 +1,10 @@
+[package]
+name = "gpu-sim"
+description = "SIMULATION ONLY: software models of PCI config space and GPU MMIO for host-side tests. Never proof of hardware behaviour."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+gpu-core.workspace = true

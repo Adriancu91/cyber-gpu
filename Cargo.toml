@@ -1,0 +1,31 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/gpu-core",
+    "crates/gpu-pci",
+    "crates/gpu-memory",
+    "crates/gpu-command",
+    "crates/gpu-compute",
+    "crates/nvidia-ga104",
+    "crates/gpu-sim",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Iancu Ionut Adrian"]
+repository = "https://github.com/Adriancu91/cyber-gpu"
+
+# No external dependencies: every crate is original code (docs/PROVENANCE.md).
+[workspace.dependencies]
+gpu-core = { path = "crates/gpu-core" }
+gpu-pci = { path = "crates/gpu-pci" }
+gpu-memory = { path = "crates/gpu-memory" }
+gpu-command = { path = "crates/gpu-command" }
+gpu-compute = { path = "crates/gpu-compute" }
+nvidia-ga104 = { path = "crates/nvidia-ga104" }
+gpu-sim = { path = "crates/gpu-sim" }
+
+[profile.release]
+opt-level = 2

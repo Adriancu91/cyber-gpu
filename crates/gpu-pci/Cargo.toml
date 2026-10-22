@@ -1,0 +1,13 @@
+[package]
+name = "gpu-pci"
+description = "PCI/PCIe discovery for compute devices: header, BARs, capabilities, Resizable BAR"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+gpu-core.workspace = true
+
+[dev-dependencies]
+gpu-sim.workspace = true

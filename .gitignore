@@ -1,0 +1,4 @@
+/target
+/.claude
+*.log
+/rezultate/local/

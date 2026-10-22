@@ -1,0 +1,12 @@
+[package]
+name = "gpu-compute"
+description = "Tensor descriptors, operator contract (I2) and the CPU reference backend used as numerical oracle"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+gpu-core.workspace = true
+gpu-memory.workspace = true
+gpu-command.workspace = true
