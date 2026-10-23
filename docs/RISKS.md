@@ -21,6 +21,7 @@
 | B5 | Lipsa unui compilator SM86 | decizie NAK (MIT, pe gazdă) vs ptxas (EULA) — `TOOLCHAIN.md` |
 | B6 | Kernelul: `map_mmio` nu garantează UC pe pagini deja mapate | glue-ul refuză; propunere de patch separat în OS (`integration/`) |
 | B7 | Fereastra DMA a OS-ului < 4 GiB, fără zeroizare | suficientă pentru cozile GSP (0x40000); de revizuit |
+| B9 | GitHub Actions nu mai alocă calculatoare joburilor (rularea 5, 23 oct, de 2 ori) — probabil limita de minute pentru depozite private | Adrian verifică „Billing and plans → Actions” pe GitHub; până atunci `tools/check.sh` local e verificarea |
 | B8 | Kernel fără SSE/AVX salvat | crate-urile merg în soft-float; performanța CPU cere XSAVE (ARHITECTURA §14.7) |
 
 ## Riscuri
