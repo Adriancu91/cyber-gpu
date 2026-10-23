@@ -44,14 +44,14 @@ pub const GA104_PLAN: &[Step] = &[
     },
     Step {
         id: "I2",
-        what: "asteptarea GFW_BOOT (devinit facut de firmware-ul placii la pornire)",
-        status: StepStatus::NotImplemented,
+        what: "asteptarea GFW_BOOT (devinit facut de firmware-ul placii la pornire) — doar citire",
+        status: StepStatus::Implemented,
         writes_hardware: false,
     },
     Step {
         id: "I3",
-        what: "citirea VBIOS si gasirea imaginii FWSEC",
-        status: StepStatus::NotImplemented,
+        what: "citirea VBIOS prin fereastra PROM: imaginile, tabela BIT, imaginile FWSEC — doar citire",
+        status: StepStatus::Implemented,
         writes_hardware: false,
     },
     Step {
@@ -162,10 +162,10 @@ mod tests {
             ran.push(s.id);
             Ok(())
         });
-        assert_eq!(ran, ["I0", "I1"]);
-        assert!(matches!(r, Err(GpuError::NotImplemented(_))));
-        assert_eq!(p.first_gap().unwrap().id, "I2");
-        assert_eq!(p.done(), 2);
+        assert_eq!(ran, ["I0", "I1", "I2", "I3"]);
+        assert!(matches!(r, Err(GpuError::Blocked(_))));
+        assert_eq!(p.first_gap().unwrap().id, "I4");
+        assert_eq!(p.done(), 4);
     }
 
     #[test]

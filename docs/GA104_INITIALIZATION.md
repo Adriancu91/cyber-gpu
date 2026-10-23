@@ -32,6 +32,32 @@ Din nouveau `nvkm/subdev/gsp/tu102.c` (refolosit de `ga102.c`; MIT) și nova-cor
 
 Pe Ampere se rulează numai firmware semnat de NVIDIA; GPU-ul verifică semnăturile. Firmware propriu = **imposibil** (Pista B închisă, plan v0.2 §6, confirmat).
 
+## 3b. I2 și I3 — implementate (doar citire), testate doar în SIMULARE (sesiunea 2)
+
+**I2 — GFW_BOOT** (`nvidia-ga104/src/gfw.rs`)
+| Registru | Offset BAR0 | Ce înseamnă | Sursă |
+|---|---|---|---|
+| `NV_PGC6_AON_SECURE_SCRATCH_GROUP_05_PRIV_LEVEL_MASK` | `0x118128` | bit 0 = FWSEC a coborât protecția; abia apoi se poate citi registrul următor | nouveau `devinit/tu102.c` `tu102_devinit_wait` (MIT) — confirmat; nova-core `gfw.rs` (doar procedura) |
+| `NV_PGC6_AON_SECURE_SCRATCH_GROUP_05_0_GFW_BOOT` | `0x118234` | biții 7:0 = progres; `0xff` = terminat | idem |
+
+Procedura: la fiecare ~1 ms citește masca; numai dacă bitul 0 e 1 citește progresul; terminat la `0xff`. Limită 4 s (ca nova-core;
+nouveau: ~2050 × 1–2 ms). `0xffffffff` → placa nu răspunde; `0xbadfxxxx` (eroare de acces) → defect hardware, nu dată. Jurnalul păstrează
+doar valorile finale (o așteptare poate avea mii de citiri).
+
+**I3 — VBIOS prin PROM** (`nvidia-ga104/src/vbios.rs`)
+- Fereastra: BAR0 + `0x300000` (nova-core, documentația oficială a kernelului „nova/core/vbios”; nouveau `shadowprom.c`); limita noastră: 1 MiB.
+- Opțional antet IFR „NVGI” (versiunile 1–2: începutul imaginilor la `FIXED_DATA_SIZE + 4`; versiunea 3: director „RFRD”) — după documentația nova.
+- Lanțul de imagini PCI: `0xAA55`, PCIR (Specificația PCI Firmware 3.0), extensia NVIDIA „NPDE” (mărime + „ultima imagine”) — DEDUS din nouveau `npde.c`.
+- Tipuri: `0x00` PCI-AT, `0x03` EFI, `0x70` NBSI, `0xE0` FWSEC. Tabela BIT (`FF B8 'BIT'`) în imaginea PCI-AT; jetonul `0x70` = datele Falcon.
+- **Criteriul I3:** PCI-AT cu tabelă BIT care are jetonul 0x70 + cel puțin o imagine FWSEC.
+- Ce nu facem la I3: extragerea codului FWSEC (tabela PMU, aplicația 0x85) — vine la I6; interiorul firmware-ului rămâne blob opac.
+- Limite: 2 s, maximum 300 000 de citiri, nicio citire în afara ferestrei.
+- **Risc știut:** nouveau oprește „umbrirea ROM” înainte de citire (o scriere în configurație). Dacă pe placa noastră fereastra nu arată
+  semnătura, I3 se oprește cu `Blocked` — nu încercăm scrierea fără aprobarea lui Adrian.
+
+**Fereastra BAR0 necesară:** 4 MiB (`regs::INIT_WINDOW`), nu doar prima pagină. Kernelul trebuie să mapeze UC primii 4 MiB din BAR0
+(observația pentru OS e în hub, `integrare/cyber-gpu/`).
+
 ## 4. Calea fără GSP (ACR/SEC2 + FECS/GPCCS semnate)
 nouveau a adăugat GR pe GA102 în Linux 6.2 (`c4bdac754ca0`), cu firmware-uri din `linux-firmware/nvidia/ga102` și `ga104/gr`.
 Și aceasta cere firmware semnat, DMA și cunoașterea protocolului ACR. Nu e mai simplă; e o alternativă dacă GSP-RM se dovedește prea opac.
@@ -64,4 +90,5 @@ nouveau a adăugat GR pe GA102 în Linux 6.2 (`c4bdac754ca0`), cu firmware-uri d
 | I0 | `gpu identifica`: `10de:2482`, clasa 03, BAR0 mem32 neprefetchable, D0; `0 scrieri in placa` în jurnal |
 | I1 | `NV_PMC_BOOT_0` & 0x1ff00000 = 0x17400000; BOOT_42.chip_id = 0x174; bitul 29 notat |
 | BAR | (opțional, `gpu dimensiuni da`) BAR0 16 MiB, BAR3 32 MiB, BAR1 = valoarea ReBAR; ecranul rămâne funcțional; restaurare verificată |
-| I2 | GFW_BOOT raportat terminat (după implementare), doar citire |
+| I2 | `0x118128` bit 0 = 1 și `0x118234 & 0xff = 0xff` în < 4 s; 0 scrieri |
+| I3 | semnătură `0xAA55` (sau „NVGI”) la BAR0+0x300000; lanț PCI-AT → … → FWSEC (0xE0); BIT cu jetonul 0x70; 0 scrieri |

@@ -24,10 +24,12 @@ extern crate alloc;
 pub mod backend;
 pub mod boot;
 pub mod firmware;
+pub mod gfw;
 pub mod ids;
 pub mod init;
 pub mod probe;
 pub mod push;
 pub mod regs;
+pub mod vbios;
 
 pub use backend::Ga104Backend;

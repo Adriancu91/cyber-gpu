@@ -15,6 +15,10 @@ pub struct SimMmio {
     pub absent: bool,
     pub reads: Vec<u64>,
     pub writes: Vec<(u64, u32)>,
+    /// Registers whose value changes after a number of reads of that
+    /// offset: `offset -> (reads left, new value)`. Models a status that
+    /// firmware updates while the driver polls.
+    delayed: BTreeMap<u64, (u32, u32)>,
 }
 
 impl SimMmio {
@@ -26,6 +30,7 @@ impl SimMmio {
             absent: false,
             reads: Vec::new(),
             writes: Vec::new(),
+            delayed: BTreeMap::new(),
         }
     }
 
@@ -40,6 +45,20 @@ impl SimMmio {
     pub fn set(&mut self, off: u64, v: u32) {
         self.regs.insert(off, v);
     }
+
+    /// After `reads` more reads of `off`, the register reads `v`.
+    pub fn set_after(&mut self, off: u64, reads: u32, v: u32) {
+        self.delayed.insert(off, (reads, v));
+    }
+
+    /// Place `bytes` at `base` as little-endian dwords (the PROM window).
+    pub fn load_bytes(&mut self, base: u64, bytes: &[u8]) {
+        for (i, c) in bytes.chunks(4).enumerate() {
+            let mut w = [0u8; 4];
+            w[..c.len()].copy_from_slice(c);
+            self.set(base + 4 * i as u64, u32::from_le_bytes(w));
+        }
+    }
 }
 
 impl Mmio for SimMmio {
@@ -50,6 +69,15 @@ impl Mmio for SimMmio {
         self.reads.push(offset);
         if self.absent {
             return 0xffff_ffff;
+        }
+        if let Some((left, v)) = self.delayed.get_mut(&offset) {
+            if *left == 0 {
+                let v = *v;
+                self.delayed.remove(&offset);
+                self.regs.insert(offset, v);
+            } else {
+                *left -= 1;
+            }
         }
         *self.regs.get(&offset).unwrap_or(&self.default)
     }

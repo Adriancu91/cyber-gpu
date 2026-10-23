@@ -10,33 +10,43 @@ use gpu_core::backend::{
 use gpu_core::caps::{Capabilities, Feature};
 use gpu_core::diag::Journal;
 use gpu_core::error::{GpuError, GpuResult};
-use gpu_core::hal::{ConfigSpace, Mmio};
+use gpu_core::hal::{Clock, ConfigSpace, Mmio};
 use gpu_core::ids::PciAddress;
 use gpu_core::state::DeviceState;
 
+use crate::gfw::{self, GfwStatus};
 use crate::init::InitPlan;
 use crate::probe::{self, Level0};
+use crate::vbios::{self, VbiosLayout};
 
-pub struct Ga104Backend<C: ConfigSpace, M: Mmio> {
+pub struct Ga104Backend<C: ConfigSpace, M: Mmio, K: Clock> {
     cfg: C,
     bar0: M,
+    clock: K,
     address: Option<PciAddress>,
     state: DeviceState,
     level0: Option<Level0>,
+    gfw: Option<GfwStatus>,
+    vbios: Option<VbiosLayout>,
     plan: InitPlan,
     fences: FenceTimeline,
     pub journal: Journal,
 }
 
-impl<C: ConfigSpace, M: Mmio> Ga104Backend<C, M> {
-    /// `bar0` must be an uncached mapping of at least the first 4 KiB of BAR0.
-    pub fn new(cfg: C, bar0: M, address: Option<PciAddress>) -> Self {
+impl<C: ConfigSpace, M: Mmio, K: Clock> Ga104Backend<C, M, K> {
+    /// `bar0` must be an uncached mapping of BAR0: at least the first 4 KiB
+    /// for `identify`, at least [`crate::regs::INIT_WINDOW`] (4 MiB) for the
+    /// read-only steps I2–I3 of `initialize`.
+    pub fn new(cfg: C, bar0: M, clock: K, address: Option<PciAddress>) -> Self {
         Ga104Backend {
             cfg,
             bar0,
+            clock,
             address,
             state: DeviceState::Discovered,
             level0: None,
+            gfw: None,
+            vbios: None,
             plan: InitPlan::ga104(),
             fences: FenceTimeline::new(),
             journal: Journal::new(512),
@@ -49,6 +59,16 @@ impl<C: ConfigSpace, M: Mmio> Ga104Backend<C, M> {
 
     pub fn state(&self) -> DeviceState {
         self.state
+    }
+
+    /// Result of I2, once run.
+    pub fn gfw(&self) -> Option<&GfwStatus> {
+        self.gfw.as_ref()
+    }
+
+    /// Result of I3, once run (also kept when I3 found an incomplete VBIOS).
+    pub fn vbios(&self) -> Option<&VbiosLayout> {
+        self.vbios.as_ref()
     }
 
     fn not_ready(&self) -> GpuError {
@@ -65,7 +85,7 @@ impl<C: ConfigSpace, M: Mmio> Ga104Backend<C, M> {
     }
 }
 
-impl<C: ConfigSpace, M: Mmio> ComputeDevice for Ga104Backend<C, M> {
+impl<C: ConfigSpace, M: Mmio, K: Clock> ComputeDevice for Ga104Backend<C, M, K> {
     fn identify(&mut self) -> GpuResult<Identity> {
         if self.level0.is_none() {
             let l0 = probe::level0(
@@ -99,12 +119,40 @@ impl<C: ConfigSpace, M: Mmio> ComputeDevice for Ga104Backend<C, M> {
 
     fn initialize(&mut self) -> GpuResult<()> {
         self.identify()?;
-        let state = &mut self.state;
-        self.plan.run(|step| {
-            // I0 and I1 were executed by identify(); the probe results are
-            // recorded in the journal. Mapped = BAR0 probe window usable.
-            if step.id == "I1" && *state == DeviceState::Identified {
-                state.go(DeviceState::Mapped)?;
+        let Ga104Backend {
+            bar0,
+            clock,
+            state,
+            gfw,
+            vbios,
+            plan,
+            journal,
+            ..
+        } = self;
+        plan.run(|step| {
+            match step.id {
+                // I0 and I1 were executed by identify(); the probe results are
+                // recorded in the journal. Mapped = BAR0 probe window usable.
+                "I1" if *state == DeviceState::Identified => state.go(DeviceState::Mapped)?,
+                "I2" if gfw.is_none() => {
+                    *gfw = Some(gfw::wait_gfw_boot(
+                        bar0,
+                        journal,
+                        clock,
+                        gfw::GFW_TIMEOUT_US,
+                    )?);
+                }
+                "I3" if vbios.is_none() => {
+                    let l = vbios::read_layout(bar0, journal, clock, vbios::VBIOS_TIMEOUT_US)?;
+                    let complete = l.complete();
+                    *vbios = Some(l);
+                    if !complete {
+                        return Err(GpuError::Blocked(
+                            "I3: VBIOS citit, dar fara PCI-AT+BIT+FWSEC (vezi raportul)",
+                        ));
+                    }
+                }
+                _ => {}
             }
             Ok(())
         })
@@ -174,13 +222,24 @@ impl<C: ConfigSpace, M: Mmio> ComputeDevice for Ga104Backend<C, M> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpu_sim::clock::SimClock;
     use gpu_sim::mmio::SimMmio;
     use gpu_sim::pci::SimConfig;
 
-    fn sim() -> Ga104Backend<SimConfig, SimMmio> {
+    // SIMULARE: a 4 MiB BAR0 model with BOOT_0/42, GFW completed and a
+    // synthetic VBIOS in the PROM window.
+    fn sim() -> Ga104Backend<SimConfig, SimMmio, SimClock> {
         let mut m = SimMmio::ga104_bar0();
         m.set(0xa00, 0x174a_1000);
-        Ga104Backend::new(SimConfig::ga104_rtx3070ti(), m, None)
+        m.set(0x11_8128, 1);
+        m.set(0x11_8234, 0xff);
+        m.load_bytes(crate::regs::PROM_BASE, &gpu_sim::rom::ga10x_like_chain());
+        Ga104Backend::new(
+            SimConfig::workstation_rtx3070ti(),
+            m,
+            SimClock::default(),
+            None,
+        )
     }
 
     #[test]
@@ -192,11 +251,13 @@ mod tests {
         assert!(d.capabilities().has(Feature::Identify));
         assert!(!d.capabilities().has(Feature::Compute));
         let r = d.initialize();
-        assert!(matches!(r, Err(GpuError::NotImplemented(w)) if w.contains("GFW_BOOT")));
+        assert!(matches!(r, Err(GpuError::Blocked(w)) if w.contains("LICENCE.nvidia")));
         assert_eq!(d.state(), DeviceState::Mapped);
+        assert_eq!(d.gfw().unwrap().progress, 0xff);
+        assert!(d.vbios().unwrap().complete());
         assert!(matches!(
             d.allocate(BufferDesc::device(256)),
-            Err(GpuError::NotImplemented(_))
+            Err(GpuError::Blocked(_))
         ));
         assert!(
             d.submit(&Submission {
@@ -217,8 +278,32 @@ mod tests {
 
     #[test]
     fn absent_card() {
-        let mut d = Ga104Backend::new(SimConfig::absent(), SimMmio::ga104_bar0(), None);
+        let mut d = Ga104Backend::new(
+            SimConfig::absent(),
+            SimMmio::ga104_bar0(),
+            SimClock::default(),
+            None,
+        );
         assert_eq!(d.identify().unwrap_err(), GpuError::NotPresent);
         assert_eq!(d.initialize().unwrap_err(), GpuError::NotPresent);
+    }
+
+    #[test]
+    fn gfw_never_finishing_stops_at_i2() {
+        let mut d = sim();
+        d.bar0.set(0x11_8234, 0x10);
+        assert!(matches!(d.initialize(), Err(GpuError::Timeout { .. })));
+        assert!(d.gfw().is_none() && d.vbios().is_none());
+        assert_eq!(d.journal.writes(), 0);
+    }
+
+    #[test]
+    fn probe_window_only_cannot_run_i2() {
+        let mut m = SimMmio::new(0x1000);
+        m.set(0, 0x1740_00a1);
+        m.set(0xa00, 0x174a_1000);
+        let mut d = Ga104Backend::new(SimConfig::ga104_rtx3070ti(), m, SimClock::default(), None);
+        d.identify().unwrap();
+        assert!(matches!(d.initialize(), Err(GpuError::InvalidArgument(_))));
     }
 }
