@@ -1,0 +1,67 @@
+C-11: comanda `gpu` (nivel 0 = identificare GA104, doar citire)
+
+NU este aplicat in cyber-universe. Se aplica manual, dupa revizuire:
+  cp <cyber-gpu>/integration/cyber-universe/kernel/src/drivers/gpu.rs kernel/src/drivers/gpu.rs
+  git apply <cyber-gpu>/integration/cyber-universe/0001-C-11-gpu-nivel0.patch
+
+--- a/kernel/Cargo.toml
++++ b/kernel/Cargo.toml
+@@ -11,5 +11,9 @@
+ cyber_crypto = { path = "../crypto" }
+ # P6-01: Realtek RTL8168/8111 driver logic (tested on the host against a model of the chip).
+ cyber_rtl8168 = { path = "../rtl8168" }
++# C-11: compute GPU backend (github.com/Adriancu91/cyber-gpu), level 0 = read-only identification.
++gpu-core = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "dda59f92cd6d657b5e93b9cebd8a9f6d9ba9f988" }
++gpu-pci = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "dda59f92cd6d657b5e93b9cebd8a9f6d9ba9f988" }
++nvidia-ga104 = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "dda59f92cd6d657b5e93b9cebd8a9f6d9ba9f988" }
+
+ [features]
+--- a/kernel/src/drivers/mod.rs
++++ b/kernel/src/drivers/mod.rs
+@@ -3,6 +3,7 @@
+
+ pub mod ahci;
+ pub mod e1000;
++pub mod gpu;
+ pub mod keyboard;
+ pub mod mouse;
+ pub mod nic;
+--- a/kernel/src/shell/mod.rs
++++ b/kernel/src/shell/mod.rs
+@@ -60,6 +60,7 @@
+             "net" => net(),
+             "rtl" => rtl(args),
+             "hw" => hw(),
++            "gpu" => gpu(args),
+             "log" => show_log(args),
+             "uptime" => uptime(),
+             "reboot" => reboot(),
+@@ -119,6 +120,7 @@
+     out!("  net              placa de retea (adresa MAC, pachete)\n");
+     out!("  rtl porneste [variante]  reporneste placa Realtek cu variantele date (fara: ca la pornire; `rtl` le arata)\n");
+     out!("  hw               raport hardware pe o pagina (pentru o singura poza)\n");
++    out!("  gpu              placa video de calcul: identificare nivel 0 (gpu plan, gpu dimensiuni da)\n");
+     out!("  log [cuvant] [n] ultimele n randuri din jurnal (implicit 30), doar cele cu cuvantul\n");
+     out!("  uptime           de cat timp merge sistemul\n");
+     out!("  reboot           reporneste calculatorul\n");
+@@ -323,6 +325,20 @@
+     }
+ }
+
++fn gpu(args: &[&str]) {
++    match args {
++        [] | ["identifica"] => out!("{}", crate::drivers::gpu::identify()),
++        ["plan"] => out!("{}", crate::drivers::gpu::plan()),
++        ["dimensiuni", "da"] => out!("{}", crate::drivers::gpu::size()),
++        _ => {
++            out!("folosire: gpu [identifica|plan|dimensiuni da]\n");
++            out!("  identifica      nivel 0: PCI + NV_PMC_BOOT_0/BOOT_42, doar citire (implicit)\n");
++            out!("  plan            pasii de initializare GA104 si unde se opresc\n");
++            out!("  dimensiuni da   marimea BAR-urilor: scrie in configuratia PCI cu decodarea oprita\n");
++        }
++    }
++}
++
+ fn lsusb() {
+     let devices = crate::drivers::usb::devices();
+     if devices.is_empty() {

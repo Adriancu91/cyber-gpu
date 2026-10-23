@@ -1,0 +1,58 @@
+# Mută acest fișier în .github/workflows/ci.yml (push-ul automat nu are scope-ul GitHub `workflow`):
+#   git mv ci/github-actions-ci.yml .github/workflows/ci.yml && git commit -m "CI: activare" && git push
+
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  crates:
+    name: crates (${{ matrix.toolchain }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # stable for development, nightly because cyber-universe builds with nightly
+        toolchain: [stable, nightly]
+    steps:
+      - uses: actions/checkout@v4
+      - name: toolchain
+        run: |
+          rustup toolchain install ${{ matrix.toolchain }} --profile minimal -c rustfmt,clippy -t x86_64-unknown-none
+          rustup default ${{ matrix.toolchain }}
+      - name: format
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: host tests (logic + SIMULATED devices)
+        run: cargo test --workspace --release
+      - name: no_std build for the kernel target
+        run: cargo build --workspace --target x86_64-unknown-none --release
+
+  kernel-integration:
+    # Builds cyber-universe's kernel with integration/cyber-universe applied, inside this runner only.
+    # Nothing is pushed to cyber-universe.
+    name: kernel build with the gpu patch
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: cyber-gpu
+      - uses: actions/checkout@v4
+        with:
+          repository: Adriancu91/cyber-universe
+          path: cyber-universe
+      - name: toolchain
+        run: rustup toolchain install nightly --profile minimal -c rust-src -t x86_64-unknown-none
+      - name: apply the patch, point the deps at this checkout
+        working-directory: cyber-universe
+        run: |
+          cp ../cyber-gpu/integration/cyber-universe/kernel/src/drivers/gpu.rs kernel/src/drivers/gpu.rs
+          git apply --verbose ../cyber-gpu/integration/cyber-universe/0001-C-11-gpu-nivel0.patch
+          sed -i -E 's#^(gpu-core|gpu-pci|nvidia-ga104) = \{ git = .*#\1 = { path = "../../cyber-gpu/crates/\1" }#' kernel/Cargo.toml
+          grep -n "gpu" kernel/Cargo.toml
+      - name: build kernel
+        working-directory: cyber-universe/kernel
+        run: cargo build --release
