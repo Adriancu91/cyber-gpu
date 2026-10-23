@@ -15,6 +15,7 @@
 //!   needs, with their licence status;
 //! - [`push`]: pushbuffer method headers and GPFIFO entries (clc56f.h, MIT) —
 //!   encoding only, unverified on hardware;
+//! - [`radix3`]: the page list GSP reads to find its image in RAM (pure data);
 //! - [`backend`]: the I1 contract for GA104.
 //!
 //! Sources and licences: docs/GA104_INITIALIZATION.md, docs/PROVENANCE.md.
@@ -34,6 +35,7 @@ pub mod ids;
 pub mod init;
 pub mod probe;
 pub mod push;
+pub mod radix3;
 pub mod regs;
 pub mod vbios;
 
