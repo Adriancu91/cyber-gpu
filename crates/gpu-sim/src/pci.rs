@@ -75,6 +75,40 @@ impl SimConfig {
         }
     }
 
+    /// The workstation board as reported by the K0 inventory (Windows,
+    /// 2026-10-23 09:33, hub `rezultate/2026-10-23-k0-workstation/`):
+    /// ids, subsystem, revision and BAR bases/sizes are FACTS from that
+    /// report (see [`crate::workstation`]); capability layout stays SIM.
+    /// Resizable BAR is off on that machine, so the capability reports the
+    /// current BAR1 size of 256 MiB (whether the capability is exposed at
+    /// all with ReBAR off is UNKNOWN; [`SimConfig::without_rebar`] covers
+    /// the other case).
+    pub fn workstation_rtx3070ti() -> Self {
+        use crate::workstation as ws;
+        let mut s = Self::ga104_rtx3070ti();
+        let mut set = |off: usize, v: u32| s.regs[off / 4] = v;
+        set(0x08, 0x0300_0000 | ws::REVISION as u32);
+        set(0x10, ws::BAR0_BASE as u32);
+        set(0x14, ws::BAR1_BASE as u32 | 0xc);
+        set(0x18, (ws::BAR1_BASE >> 32) as u32);
+        set(0x1c, ws::BAR3_BASE as u32 | 0xc);
+        set(0x20, (ws::BAR3_BASE >> 32) as u32);
+        set(0x24, ws::IO_BASE as u32 | 0x1);
+        set(
+            0x2c,
+            ((ws::SUBSYS_DEVICE as u32) << 16) | ws::SUBSYS_VENDOR as u32,
+        );
+        s
+    }
+
+    /// Remove the Resizable BAR extended capability (AER becomes the last
+    /// extended capability).
+    pub fn without_rebar(mut self) -> Self {
+        self.regs[0x100 / 4] = 0x0001_0001;
+        self.regs[0x200 / 4] = 0;
+        self
+    }
+
     /// SIM: an empty slot, every read returns all ones.
     pub fn absent() -> Self {
         let mut s = Self::ga104_rtx3070ti();

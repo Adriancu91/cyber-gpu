@@ -35,6 +35,7 @@ care compilează și kernelul `cyber-universe` cu patch-ul din `integration/` (�
 - [docs/MEMORY_INVARIANTS.md](docs/MEMORY_INVARIANTS.md) — invarianții M1–M6
 - [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md) — formatul programelor SM86 și opțiunile legale
 - [docs/RISKS.md](docs/RISKS.md) — riscuri, blocaje, politica de siguranță hardware
+- [docs/HARDWARE_WORKSTATION.md](docs/HARDWARE_WORKSTATION.md) — datele reale ale workstation-ului (K0) și dependența de ReBAR/Above-4G
 - [docs/TEST_MATRIX.md](docs/TEST_MATRIX.md) — rezultatele de azi și planul pentru seara de testare
 - [docs/PROVENANCE.md](docs/PROVENANCE.md) — sursele, licențele, regula clean-room
 - [integration/cyber-universe/README.md](integration/cyber-universe/README.md) — raportul de integrare cu OS-ul

@@ -15,7 +15,7 @@
 | Id | Blocaj | Deblocare |
 |---|---|---|
 | B1 | Workstation-ul e al lui Kronos | fereastră aprobată de Adrian (30 min, Kronos oprit) |
-| B2 | IOMMU / Above-4G / ReBAR necunoscute | `tools/k0-inventar-workstation.ps1` + notare manuală din BIOS |
+| B2 | ~~IOMMU / Above-4G / ReBAR necunoscute~~ **rezolvat în mare (K0, 23 oct):** VT-d oprit, ReBAR oprit, BAR-uri sub 4 GiB; planul nu depinde de ele (`HARDWARE_WORKSTATION.md` §4) | rămâne doar poza Above-4G din BIOS |
 | B3 | Licența firmware NVIDIA în imaginea OS | decizia lui Adrian pe `LICENCE.nvidia` §2.1.2 (OS MIT = OSI) |
 | B4 | Protocolul RPC GSP-RM nedocumentat oficial, legat de versiune | fixarea versiunii 535.113.01; studiu nouveau `r535` (MIT) |
 | B5 | Lipsa unui compilator SM86 | decizie NAK (MIT, pe gazdă) vs ptxas (EULA) — `TOOLCHAIN.md` |

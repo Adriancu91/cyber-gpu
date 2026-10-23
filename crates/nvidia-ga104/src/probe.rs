@@ -187,6 +187,49 @@ mod tests {
         assert!(text.contains("NV_PMC_BOOT_0  = 0x174000a1"));
     }
 
+    /// SIMULARE built from the K0 inventory of the real workstation.
+    #[test]
+    fn level0_on_simulated_workstation_config() {
+        use gpu_sim::workstation as ws;
+        for rebar in [true, false] {
+            let mut cfg = SimConfig::workstation_rtx3070ti();
+            if !rebar {
+                cfg = cfg.without_rebar();
+            }
+            let addr = PciAddress {
+                segment: 0,
+                bus: ws::BUS,
+                dev: 0,
+                func: 0,
+            };
+            let mut bar0 = sim_bar0();
+            let mut j = Journal::new(64);
+            let l0 = level0(&mut cfg, Some(addr), &mut bar0, &mut j).unwrap();
+            let id = l0.candidate.report.id;
+            assert_eq!((id.vendor, id.device), (ws::VENDOR, ws::DEVICE));
+            assert_eq!(
+                (id.subsys_vendor, id.subsys_device),
+                (ws::SUBSYS_VENDOR, ws::SUBSYS_DEVICE)
+            );
+            assert_eq!(id.revision, ws::REVISION);
+            assert_eq!(l0.candidate.bar0, ws::BAR0_BASE);
+            let bars = &l0.candidate.report.bars;
+            assert_eq!(bars[1].unwrap().base, ws::BAR1_BASE);
+            assert_eq!(bars[3].unwrap().base, ws::BAR3_BASE);
+            assert_eq!(bars[5].unwrap().base, ws::IO_BASE);
+            // Everything below 4 GiB, as Windows reported.
+            assert!(bars.iter().flatten().all(|b| b.base < 1 << 32));
+            let rebar1 = l0.candidate.report.rebar_size(1);
+            assert_eq!(rebar1, rebar.then_some(ws::BAR1_SIZE));
+            assert_eq!(cfg.writes, 0);
+            assert!(bar0.writes.is_empty());
+            let text = l0.to_string();
+            assert!(text.contains("0000:b3:00.0"));
+            assert!(text.contains("subsys 1043:8813"));
+            assert!(text.contains("@ 0xf9000000"));
+        }
+    }
+
     #[test]
     fn rejects_wrong_devices() {
         let mut cfg = SimConfig::ga104_rtx3070ti();

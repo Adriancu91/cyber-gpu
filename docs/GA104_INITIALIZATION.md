@@ -16,7 +16,8 @@
 ## 2. BAR-uri (din `lspci` publicate, nu din documentație NVIDIA)
 BAR0 32 biți neprefetchable 16 MiB; BAR1 64 biți prefetchable 256 MiB (8 GiB observat pe un laptop 3070 Ti, probabil ReBAR);
 BAR3 64 biți prefetchable 32 MiB; I/O 128 B; ROM 512 KiB. Surse: bbs.archlinux.org (3060 GA104), pciutils issue #151.
-**Stare: observat pe alte plăci; de confirmat pe a noastră (K0).**
+**Stare: observat pe alte plăci.** Pe workstation (K0, din Windows, FAPT): BAR0 16 MiB @F9000000, BAR1 256 MiB @E0000000 (ReBAR oprit),
+BAR3 32 MiB @F0000000, I/O 128 B — vezi [HARDWARE_WORKSTATION.md](HARDWARE_WORKSTATION.md). Încă necitite de codul nostru pe placă.
 
 ## 3. Secvența GSP-RM pe GA10x (confirmată în cod, neimplementată de noi)
 Din nouveau `nvkm/subdev/gsp/tu102.c` (refolosit de `ga102.c`; MIT) și nova-core `gsp/boot.rs`, `gsp/hal/tu102.rs` (GPL-2.0, doar ordinea):
@@ -54,7 +55,7 @@ nouveau a adăugat GR pe GA102 în Linux 6.2 (`c4bdac754ca0`), cu firmware-uri d
 ## 7. Necunoscute
 1. Structurile RPC GSP-RM depind de versiune (r535 vs r570); nu au documentație oficială, doar codul nouveau/nova și headerele MIT ale NVIDIA.
 2. Registrul exact și semnificația GFW_BOOT pe GA104 (nova `devinit.rst` descrie procedura; adresa trebuie extrasă și verificată).
-3. Starea IOMMU pe workstation; dacă e activ, GSP nu poate accesa cozile fără tabele IOMMU în OS.
+3. ~~Starea IOMMU pe workstation~~ — **VT-d oprit** (poza BIOS, 23 oct): placa vede adresele fizice direct; poarta M2 rămâne obligatorie.
 4. Dacă placa e GPU-ul principal (afișaj UEFI GOP): orice reset ar stinge ecranul; protocol de recuperare inexistent.
 
 ## 8. Criterii de verificare pe hardware (în ordine)

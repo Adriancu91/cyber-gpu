@@ -323,4 +323,20 @@ mod tests {
             Err(GpuError::VerifyFailed { offset: 0x10, .. })
         ));
     }
+
+    /// SIMULARE: sizes expected on the workstation (K0 inventory).
+    #[test]
+    fn sizing_simulated_workstation_matches_inventory() {
+        use gpu_sim::workstation as ws;
+        let mut cfg = SimConfig::workstation_rtx3070ti();
+        let before = cfg.snapshot();
+        let mut j = Journal::new(64);
+        let b = size_bars(&mut cfg, &SizingPermit::new("test"), &mut j).unwrap();
+        assert_eq!(b[0].unwrap().size, Some(ws::BAR0_SIZE));
+        assert_eq!(b[1].unwrap().size, Some(ws::BAR1_SIZE));
+        assert_eq!(b[3].unwrap().size, Some(ws::BAR3_SIZE));
+        assert_eq!(b[5].unwrap().size, Some(ws::IO_SIZE));
+        assert_eq!(b[1].unwrap().base, ws::BAR1_BASE);
+        assert_eq!(cfg.snapshot(), before);
+    }
 }
