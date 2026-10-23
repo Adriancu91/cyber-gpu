@@ -238,8 +238,9 @@ pub fn cross_entropy(logits: &[f32], targets: &[u32], vocab: usize) -> GpuResult
     Ok((total / targets.len() as f64) as f32)
 }
 
-/// Natural log in f64 for positive finite x (used only by cross_entropy).
-fn ln(x: f64) -> f64 {
+/// Natural log in f64 for positive finite x (used by cross_entropy and
+/// `rows::cross_entropy_terms`, which must stay bit-identical to it).
+pub(crate) fn ln(x: f64) -> f64 {
     debug_assert!(x > 0.0 && x.is_finite());
     let bits = x.to_bits();
     let e = ((bits >> 52) & 0x7ff) as i64 - 1023;

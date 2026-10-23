@@ -8,6 +8,9 @@
 //!   compared against;
 //! - [`kernels`]: faster CPU kernels (blocked matmul, bf16 weights),
 //!   bit-identical to the reference;
+//! - [`rows`]: row-range versions of softmax (causal), attention and
+//!   cross-entropy, so one operator can be split over several cores;
+//!   bit-identical to the reference, no global state;
 //! - [`cpu`]: a [`gpu_core::ComputeDevice`] that executes on the **CPU**. It is
 //!   a real backend for the runtime (plan v0.2: CPU first) and a test double
 //!   for the runtime; it is never evidence of GPU execution.
@@ -22,6 +25,7 @@ pub mod kernels;
 pub mod math;
 pub mod op;
 pub mod reference;
+pub mod rows;
 pub mod tensor;
 
 pub use op::OpCode;
