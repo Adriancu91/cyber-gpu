@@ -18,6 +18,7 @@ codul GPL nu se copiază niciodată.
 | nouveau `bios/npde.c`, `image.c`, `bit.c` | MIT | câmpurile NPDE și ale tabelei BIT (DEDUS, de confirmat pe placă) |
 | Patch-uri nova-core pe LKML: „firmware: add ucode descriptor used by FWSEC-FRTS” (v2 16/21, mai 2025) și „firmware: add comments to justify v3 header values” (v11 08/12, mar. 2026), citite pe lkml.iu.edu | GPL-2.0 | doar descrierea câmpurilor `FalconUCodeDescV3` (44 de octeți) și faptul că IMEM începe la 0, DMEM la `imem_load_size` (`fwsec.rs`); **niciun cod** |
 | nouveau `bios/pmu.c`, `falcon/fw.c` (MIT) — din cunoaștere generală, necitit în sesiunea 3 | MIT | antetul și intrările tabelei PMU, alegerea semnăturii după siguranță (DEDUS, de confirmat pe placă) |
+| Patch-uri nova-core pe LKML: „compute layout of the FRTS region” (v2 19/21, mai 2025) și „compute layout of more framebuffer regions required for GSP” (v9 01/15, nov. 2025), citite pe lkml.iu.edu | GPL-2.0 | doar ordinea regiunilor din VRAM, alinierile și constantele heap-ului LIBOS3 (`fb_layout.rs`); **niciun cod**. Neclar în surse: când se citește registrul zonei VGA (0x625f04) — lăsat ca parametru |
 | PCI Firmware Specification 3.0 | specificație | antetul ROM, structura PCIR (`vbios.rs`) |
 | Mesa NAK | MIT | identificat ca posibilă unealtă pe gazdă (TOOLCHAIN.md); necopiat |
 | pci.ids | GPL-2.0+ / BSD-3 | date (ID-uri), citate |
