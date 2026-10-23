@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 4 — 24 octombrie 2026, ~01:20–01:40 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Doar calcul pe procesorul gazdei.
+C-16 (integrarea în OS) a fost făcut între timp de sesiunea OS, pe commit-ul nostru `41e44ba` (Release OS `os-189`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| 0. Tag-ul `stabil-2026-10-23` | există local, adnotat, pe `41e44ba`; push reîncercat o dată | **BLOCKED**: HTTP 403 (politica proxy-ului cloud: tag-urile nu se pot urca). OS-ul e fixat pe commit `41e44ba`, deci nu blochează nimic |
+| Compatibilitate | `git diff 41e44ba HEAD` pe `gpu-core`, `gpu-pci`, `nvidia-ga104`, `gpu-compute`: nicio linie `pub` ștearsă | PASS (doar adăugări) |
+| c. Backend CPU, mai multe nuclee | `gpu-compute::rows`: `split_rows`, `softmax_rows_range` (cauzal, cu rândul absolut), `causal_attention_rows`, `cross_entropy_terms` + `cross_entropy_mean`; fără stare globală, ieșiri disjuncte | PASS (gazdă): 4 teste, rezultatul unit **identic bit cu bit** cu `reference` pentru 1, 2, 3, 4, 7, 16, 40 de părți; pe nucleele OS-ului NOT TESTED |
+| b. Sprijin integrare | `integration/cyber-universe/UTILIZARE.md`: fixarea actuală, promisiunea de compatibilitate, ce e nou după `41e44ba`, exemple (identificare doar-citire, SIMULARE cu configurația workstation-ului, operație pe n nuclee cu toleranța 0); README-ul `gpu-compute` explică ce se împarte prin felii și ce cere `rows` | gata |
+| CI | rularea 11 (codul nou) verde | PASS |
+| Placă reală | — | NOT TESTED (Adrian plecat) |
+
+Verificări (`tools/check.sh`, rustc 1.97.0 stable): format PASS, clippy `-D warnings` PASS, **106 teste PASS** (1 ignorat: viteza),
+build `x86_64-unknown-none` PASS. Nicio scriere nouă în registre.
+
+**Următorul pas:** fără placă și fără decizia de licență **nu mai e nimic util de făcut** (pașii a–d sunt acoperiți; I4+ depind de
+firmware-ul NVIDIA, adică de decizia lui Adrian). Cu placa: testul I0–I3 (+5c FWSEC) din `TEST_MATRIX.md` partea B.
+**Blocate de Adrian:** licența firmware-ului, compilatorul (NAK vs ptxas), fereastra pe workstation, urcarea tag-ului.
+
+---
+
 ## Sesiunea 3 — 23 octombrie 2026, ~19:25–19:50 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Testele pe imagini ROM sunt SIMULARE; restul e aritmetică pură.
