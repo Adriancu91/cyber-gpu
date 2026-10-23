@@ -12,6 +12,7 @@
 //! | SOFTMAX | x (in/out) | rows, cols, causal (0/1) |
 //! | EMBEDDING | ids (u32), table, out | n_ids, vocab, dim |
 //! | ATTENTION | q, k, v, out [T, H*D] | T, H, D |
+//! | MATMUL_BF16W | a[m,k] f32, w[k,n] bf16, out[m,n] f32 | m, k, n |
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
@@ -24,6 +25,7 @@ pub enum OpCode {
     Softmax = 6,
     Embedding = 7,
     Attention = 8,
+    MatmulBf16W = 9,
 }
 
 impl OpCode {
@@ -38,6 +40,7 @@ impl OpCode {
             6 => Softmax,
             7 => Embedding,
             8 => Attention,
+            9 => MatmulBf16W,
             _ => return None,
         })
     }
@@ -54,6 +57,7 @@ impl OpCode {
             Softmax => (1, 3),
             Embedding => (3, 3),
             Attention => (4, 3),
+            MatmulBf16W => (3, 3),
         }
     }
 }

@@ -19,6 +19,7 @@ use gpu_core::state::DeviceState;
 use gpu_memory::buffers::BufferTable;
 use gpu_memory::range::RangeAllocator;
 
+use crate::kernels;
 use crate::op::OpCode;
 use crate::reference as r;
 
@@ -60,6 +61,12 @@ impl CpuBackend {
         Ok(words.iter().map(|c| u32::from_le_bytes(*c)).collect())
     }
 
+    fn read_u16(&self, id: BufferId, n: usize) -> GpuResult<Vec<u16>> {
+        let rg = self.range(id, 0, (n * 2) as u64)?;
+        let (halves, _) = self.arena[rg].as_chunks::<2>();
+        Ok(halves.iter().map(|c| u16::from_le_bytes(*c)).collect())
+    }
+
     fn write_f32(&mut self, id: BufferId, v: &[f32]) -> GpuResult<()> {
         let rg = self.range(id, 0, (v.len() * 4) as u64)?;
         let (words, _) = self.arena[rg].as_chunks_mut::<4>();
@@ -90,7 +97,15 @@ impl CpuBackend {
                 let (m, k, n) = (u(0), u(1), u(2));
                 let (a, bb) = (self.read_f32(b[0], m * k)?, self.read_f32(b[1], k * n)?);
                 let mut o = vec![0.0; m * n];
-                r::matmul(&a, &bb, &mut o, m, k, n)?;
+                // Blocked kernel: bit-identical to r::matmul (kernels.rs tests).
+                kernels::matmul_blocked(&a, &bb, &mut o, m, k, n)?;
+                self.write_f32(b[2], &o)
+            }
+            OpCode::MatmulBf16W => {
+                let (m, k, n) = (u(0), u(1), u(2));
+                let (a, w) = (self.read_f32(b[0], m * k)?, self.read_u16(b[1], k * n)?);
+                let mut o = vec![0.0; m * n];
+                kernels::matmul_bf16w(&a, &w, &mut o, m, k, n)?;
                 self.write_f32(b[2], &o)
             }
             OpCode::LayerNorm => {
@@ -159,6 +174,8 @@ impl ComputeDevice for CpuBackend {
         c.memory_bytes = self.table.space().total();
         c.max_allocation = self.table.space().total();
         c.dtypes = DTypeSet::F32;
+        // bf16 is accepted only as matmul weights (MATMUL_BF16W), not as a
+        // general tensor type, so the capability set stays F32.
         c
     }
 
@@ -372,5 +389,44 @@ mod tests {
         let mut want = vec![0.0; m * n];
         r::matmul(&a, &b, &mut want, m, k, n).unwrap();
         assert_eq!(out, f32s(&want));
+    }
+
+    #[test]
+    fn bf16_weight_matmul_through_backend() {
+        let mut d = CpuBackend::new(1 << 16).unwrap();
+        d.initialize().unwrap();
+        let (m, k, n) = (3, 70, 5);
+        let a: Vec<f32> = (0..m * k).map(|i| (i as f32 * 0.21).sin()).collect();
+        let wf: Vec<f32> = (0..k * n).map(|i| (i as f32 * 0.07).cos()).collect();
+        let w: Vec<u16> = wf.iter().map(|&x| crate::tensor::f32_to_bf16(x)).collect();
+        let wb: Vec<u8> = w.iter().flat_map(|h| h.to_le_bytes()).collect();
+        let ba = d.allocate(BufferDesc::device((m * k * 4) as u64)).unwrap();
+        let bw = d.allocate(BufferDesc::device((k * n * 2) as u64)).unwrap();
+        let bo = d.allocate(BufferDesc::device((m * n * 4) as u64)).unwrap();
+        d.copy_host_to_device(&f32s(&a), ba, 0).unwrap();
+        d.copy_host_to_device(&wb, bw, 0).unwrap();
+        submit(
+            &mut d,
+            OpCode::MatmulBf16W,
+            &[ba, bw, bo],
+            &[m as u32, k as u32, n as u32],
+        )
+        .unwrap();
+        let mut out = vec![0u8; m * n * 4];
+        d.copy_device_to_host(bo, 0, &mut out).unwrap();
+        let wd: Vec<f32> = w.iter().map(|&h| crate::tensor::bf16_to_f32(h)).collect();
+        let mut want = vec![0.0; m * n];
+        r::matmul(&a, &wd, &mut want, m, k, n).unwrap();
+        assert_eq!(out, f32s(&want));
+        // A bf16 buffer that is too short is refused, not read past.
+        assert!(
+            submit(
+                &mut d,
+                OpCode::MatmulBf16W,
+                &[ba, bw, bo],
+                &[m as u32, k as u32, 2 * n as u32]
+            )
+            .is_err()
+        );
     }
 }
