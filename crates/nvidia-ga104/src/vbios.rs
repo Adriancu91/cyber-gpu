@@ -20,8 +20,8 @@
 //!   Falcon data that leads to FWSEC (nova-core documentation).
 //!
 //! Locating the FWSEC ucode itself (PMU lookup table, application 0x85,
-//! FalconUCodeDescV3) is left for I6: it is not needed to prove the ROM can
-//! be read, and its interior is NVIDIA firmware we treat as an opaque blob.
+//! FalconUCodeDescV3) is done by [`crate::fwsec`], with the same reader; its
+//! interior is NVIDIA firmware we treat as an opaque blob and never read.
 //!
 //! Nothing here writes. If the PROM window does not show a VBIOS signature,
 //! the result is `Blocked`: nouveau disables ROM shadowing first (a config
@@ -119,18 +119,35 @@ impl VbiosLayout {
 
 /// Byte-addressed reader over the PROM window, with a one-dword cache, a
 /// read counter and a time budget.
-struct Rom<'a, M: Mmio + ?Sized, K: Clock + ?Sized> {
+pub(crate) struct Rom<'a, M: Mmio + ?Sized, K: Clock + ?Sized> {
     bar: ReadOnlyBar0<'a, M>,
     clock: &'a mut K,
     start: u64,
     budget_us: u64,
-    reads: u32,
+    pub(crate) reads: u32,
     cache: Option<(u32, u32)>,
     /// First dword of the window, for the journal.
     head: Option<u32>,
 }
 
-impl<M: Mmio + ?Sized, K: Clock + ?Sized> Rom<'_, M, K> {
+impl<'a, M: Mmio + ?Sized, K: Clock + ?Sized> Rom<'a, M, K> {
+    pub(crate) fn new(
+        bar0: &'a mut M,
+        journal: &'a mut Journal,
+        clock: &'a mut K,
+        budget_us: u64,
+    ) -> Self {
+        let start = clock.now_us();
+        Rom {
+            bar: ReadOnlyBar0::new(bar0, journal),
+            clock,
+            start,
+            budget_us,
+            reads: 0,
+            cache: None,
+            head: None,
+        }
+    }
     fn dword(&mut self, aligned: u32) -> GpuResult<u32> {
         if let Some((o, v)) = self.cache
             && o == aligned
@@ -160,7 +177,7 @@ impl<M: Mmio + ?Sized, K: Clock + ?Sized> Rom<'_, M, K> {
         self.cache = Some((aligned, v));
         Ok(v)
     }
-    fn u8(&mut self, off: u32) -> GpuResult<u8> {
+    pub(crate) fn u8(&mut self, off: u32) -> GpuResult<u8> {
         if off as u64 >= PROM_SIZE {
             return Err(GpuError::OutOfBounds {
                 offset: off as u64,
@@ -170,15 +187,15 @@ impl<M: Mmio + ?Sized, K: Clock + ?Sized> Rom<'_, M, K> {
         }
         Ok((self.dword(off & !3)? >> ((off & 3) * 8)) as u8)
     }
-    fn u16(&mut self, off: u32) -> GpuResult<u16> {
+    pub(crate) fn u16(&mut self, off: u32) -> GpuResult<u16> {
         Ok(self.u8(off)? as u16 | (self.u8(off.wrapping_add(1))? as u16) << 8)
     }
-    fn u32(&mut self, off: u32) -> GpuResult<u32> {
+    pub(crate) fn u32(&mut self, off: u32) -> GpuResult<u32> {
         Ok(self.u16(off)? as u32 | (self.u16(off.wrapping_add(2))? as u32) << 16)
     }
 }
 
-fn in_window(off: u64) -> GpuResult<u32> {
+pub(crate) fn in_window(off: u64) -> GpuResult<u32> {
     if off >= PROM_SIZE {
         return Err(GpuError::OutOfBounds {
             offset: off,
@@ -201,16 +218,7 @@ pub fn read_layout<M: Mmio + ?Sized, K: Clock + ?Sized>(
             "fereastra BAR0 prea mica pentru I3 (trebuie 4 MiB)",
         ));
     }
-    let start = clock.now_us();
-    let mut rom = Rom {
-        bar: ReadOnlyBar0::new(bar0, journal),
-        clock,
-        start,
-        budget_us,
-        reads: 0,
-        cache: None,
-        head: None,
-    };
+    let mut rom = Rom::new(bar0, journal, clock, budget_us);
     let r = scan(&mut rom);
     let reads = rom.reads;
     let head = rom.head;

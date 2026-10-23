@@ -50,7 +50,7 @@ pub const GA104_PLAN: &[Step] = &[
     },
     Step {
         id: "I3",
-        what: "citirea VBIOS prin fereastra PROM: imaginile, tabela BIT, imaginile FWSEC — doar citire",
+        what: "citirea VBIOS prin fereastra PROM: imaginile, tabela BIT, imaginile FWSEC si descriptorul FWSEC_PROD — doar citire",
         status: StepStatus::Implemented,
         writes_hardware: false,
     },

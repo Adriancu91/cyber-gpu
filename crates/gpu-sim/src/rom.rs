@@ -131,3 +131,105 @@ pub fn with_ifr_v3(chain: &[u8]) -> Vec<u8> {
     b.extend_from_slice(chain);
     b
 }
+
+/// Where the synthetic FWSEC pieces go, as offsets into the FWSEC images
+/// taken back to back (the address space the VBIOS pointers use after the
+/// PCI-AT size is subtracted). All values are SIM.
+pub struct SimFwsec {
+    /// Offset of the Falcon data u32 inside the PCI-AT image (the BIT token
+    /// 0x70 data offset).
+    pub falcon_data_at: usize,
+    pub pmu_table_rel: u32,
+    /// PMU entries `(application id, target id, descriptor offset in the
+    /// FWSEC section)`.
+    pub entries: Vec<(u8, u8, u32)>,
+    pub desc_rel: u32,
+    pub desc_version: u8,
+    pub signature_count: u8,
+    pub signature_versions: u16,
+    pub imem_load_size: u32,
+    pub dmem_load_size: u32,
+    /// Extra bytes stored after IMEM + DMEM.
+    pub stored_extra: u32,
+}
+
+impl SimFwsec {
+    pub fn ga10x_like() -> Self {
+        SimFwsec {
+            falcon_data_at: 0x3000,
+            pmu_table_rel: 0x200,
+            entries: vec![(0x05, 0, 0x100), (0x85, 0, 0x400)],
+            desc_rel: 0x400,
+            desc_version: 3,
+            signature_count: 2,
+            signature_versions: 0b0110,
+            // The ucode runs from the first FWSEC image into the second.
+            imem_load_size: 0x3000,
+            dmem_load_size: 0x1000,
+            stored_extra: 0,
+        }
+    }
+}
+
+/// Write `f` into `chain` (built by [`build_chain`]), whose first image is
+/// PCI-AT of `pci_at_size` bytes; `fwsec` lists the FWSEC images as
+/// `(offset in chain, size)`. The ucode bytes stay zero: no firmware here.
+pub fn put_fwsec(chain: &mut [u8], pci_at_size: u32, fwsec: &[(usize, u32)], f: &SimFwsec) {
+    let at = |rel: u32| -> usize {
+        let mut r = rel;
+        for &(off, size) in fwsec {
+            if r < size {
+                return off + r as usize;
+            }
+            r -= size;
+        }
+        panic!("SIM: offset outside the FWSEC images");
+    };
+    let mut put8 = |chain: &mut [u8], rel: u32, v: u8| chain[at(rel)] = v;
+    let put =
+        |chain: &mut [u8], rel: u32, v: u32, n: u32, put8: &mut dyn FnMut(&mut [u8], u32, u8)| {
+            for k in 0..n {
+                put8(chain, rel + k, (v >> (8 * k)) as u8);
+            }
+        };
+    put32(chain, f.falcon_data_at, pci_at_size + f.pmu_table_rel);
+    let t = f.pmu_table_rel;
+    put(chain, t, 1, 1, &mut put8); // version
+    put(chain, t + 1, 6, 1, &mut put8); // header length
+    put(chain, t + 2, 6, 1, &mut put8); // entry length
+    put(chain, t + 3, f.entries.len() as u32, 1, &mut put8);
+    for (k, &(app, target, desc)) in f.entries.iter().enumerate() {
+        let e = t + 6 + 6 * k as u32;
+        put(chain, e, app as u32, 1, &mut put8);
+        put(chain, e + 1, target as u32, 1, &mut put8);
+        put(chain, e + 2, pci_at_size + desc, 4, &mut put8);
+    }
+    let d = f.desc_rel;
+    let header = 44 + f.signature_count as u32 * 384;
+    let stored = f.imem_load_size + f.dmem_load_size + f.stored_extra;
+    let words = [
+        (header << 16) | ((f.desc_version as u32) << 8) | 1,
+        stored,
+        0x10, // pkc_data_offset
+        0x20, // interface_offset
+        0,    // imem_phys_base
+        f.imem_load_size,
+        0, // imem_virt_base
+        0, // dmem_phys_base
+        f.dmem_load_size,
+    ];
+    for (k, &w) in words.iter().enumerate() {
+        put(chain, d + 4 * k as u32, w, 4, &mut put8);
+    }
+    put(chain, d + 36, 0x0400, 2, &mut put8); // engine_id_mask (SIM)
+    put(chain, d + 38, 0x0a, 1, &mut put8); // ucode_id (SIM)
+    put(chain, d + 39, f.signature_count as u32, 1, &mut put8);
+    put(chain, d + 40, f.signature_versions as u32, 2, &mut put8);
+}
+
+/// [`ga10x_like_chain`] with the FWSEC pieces of [`SimFwsec::ga10x_like`].
+pub fn ga10x_like_chain_with_fwsec(f: &SimFwsec) -> Vec<u8> {
+    let mut b = ga10x_like_chain();
+    put_fwsec(&mut b, 0x10000, &[(0x18000, 0x4000), (0x1c000, 0x4000)], f);
+    b
+}

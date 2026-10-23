@@ -8,6 +8,8 @@
 //! - [`probe`]: level-0 identification (config space + two BAR0 reads);
 //! - [`init`]: the GA10x bring-up sequence as an explicit plan whose
 //!   unimplemented steps return `Blocked` with the exact blocker;
+//! - [`fwsec`]: I3, second half — where FWSEC_PROD sits in the VBIOS (read-only,
+//!   the ucode bytes are never read);
 //! - [`firmware`]: inventory of the NVIDIA-signed firmware files the sequence
 //!   needs, with their licence status;
 //! - [`push`]: pushbuffer method headers and GPFIFO entries (clc56f.h, MIT) —
@@ -24,6 +26,7 @@ extern crate alloc;
 pub mod backend;
 pub mod boot;
 pub mod firmware;
+pub mod fwsec;
 pub mod gfw;
 pub mod ids;
 pub mod init;
