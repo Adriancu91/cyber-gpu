@@ -25,8 +25,8 @@ Licență MIT, cod propriu (vezi [docs/PROVENANCE.md](docs/PROVENANCE.md)).
 sh tools/check.sh
 ```
 
-(format, clippy `-D warnings`, teste pe gazdă, build `x86_64-unknown-none`). CI: `ci/github-actions-ci.yml` (de mutat în `.github/workflows/`, vezi antetul fișierului),
-care compilează și kernelul `cyber-universe` cu patch-ul din `integration/` (în runner, fără push în OS).
+(format, clippy `-D warnings`, teste pe gazdă, build `x86_64-unknown-none`). CI: `.github/workflows/ci.yml` (activ din 23 oct),
+aceleași verificări pe stable și nightly.
 
 ## Documente
 

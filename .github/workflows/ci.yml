@@ -1,5 +1,3 @@
-# Mută acest fișier în .github/workflows/ci.yml (push-ul automat nu are scope-ul GitHub `workflow`):
-#   git mv ci/github-actions-ci.yml .github/workflows/ci.yml && git commit -m "CI: activare" && git push
 
 name: ci
 
@@ -31,28 +29,9 @@ jobs:
       - name: no_std build for the kernel target
         run: cargo build --workspace --target x86_64-unknown-none --release
 
-  kernel-integration:
-    # Builds cyber-universe's kernel with integration/cyber-universe applied, inside this runner only.
-    # Nothing is pushed to cyber-universe.
-    name: kernel build with the gpu patch
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          path: cyber-gpu
-      - uses: actions/checkout@v4
-        with:
-          repository: Adriancu91/cyber-universe
-          path: cyber-universe
-      - name: toolchain
-        run: rustup toolchain install nightly --profile minimal -c rust-src -t x86_64-unknown-none
-      - name: apply the patch, point the deps at this checkout
-        working-directory: cyber-universe
-        run: |
-          cp ../cyber-gpu/integration/cyber-universe/kernel/src/drivers/gpu.rs kernel/src/drivers/gpu.rs
-          git apply --verbose ../cyber-gpu/integration/cyber-universe/0001-C-11-gpu-nivel0.patch
-          sed -i -E 's#^(gpu-core|gpu-pci|nvidia-ga104) = \{ git = .*#\1 = { path = "../../cyber-gpu/crates/\1" }#' kernel/Cargo.toml
-          grep -n "gpu" kernel/Cargo.toml
-      - name: build kernel
-        working-directory: cyber-universe/kernel
-        run: cargo build --release
+  # The former "kernel-integration" job (build cyber-universe with
+  # integration/cyber-universe applied) was removed on 2026-10-23:
+  # - this workflow's token cannot check out the private cyber-universe repo
+  #   (first run: checkout failed);
+  # - cyber-universe wrote its own `gpu` command (P6-11), so the patch is
+  #   superseded. Integration notes now go to Cyber-hub `integrare/cyber-gpu/`.

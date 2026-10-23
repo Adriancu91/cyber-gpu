@@ -1,3 +1,7 @@
+> **DEPĂȘIT (23 oct 2026):** sesiunea OS și-a scris propria comandă `gpu` (P6-11, nivel 0, pe toate magistralele-rădăcină) și
+> a judecat observațiile de mai jos în `cyber-universe/docs/research/OBSERVATII-CYBER-GPU.md`. Patch-ul rămâne doar ca istoric;
+> observațiile noi merg în hub, `integrare/cyber-gpu/`.
+
 # Raport de integrare cu cyber-universe
 
 **Nimic din acest director nu e aplicat în `Adriancu91/cyber-universe`.** Patch-ul se aplică manual, după revizuire,
