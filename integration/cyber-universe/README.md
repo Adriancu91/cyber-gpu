@@ -2,6 +2,8 @@
 > a judecat observațiile de mai jos în `cyber-universe/docs/research/OBSERVATII-CYBER-GPU.md`. Patch-ul rămâne doar ca istoric;
 > observațiile noi merg în hub, `integrare/cyber-gpu/`.
 
+> **Pentru folosirea de acum a crate-urilor din OS, vezi [`UTILIZARE.md`](UTILIZARE.md).**
+
 # Raport de integrare cu cyber-universe
 
 **Nimic din acest director nu e aplicat în `Adriancu91/cyber-universe`.** Patch-ul se aplică manual, după revizuire,
