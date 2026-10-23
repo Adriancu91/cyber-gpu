@@ -1,5 +1,15 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 3 (23 oct 2026, cloud, fără placă)
+| Id | Test | Comandă | Așteptat | Obținut | Clasificare |
+|---|---|---|---|---|---|
+| T1–T4 | format, clippy, teste, build no_std | `sh tools/check.sh` | toate trec | 102 trecute, 0 eșuate, 1 ignorat; build OK | PASS |
+| T7 | CI pe GitHub | push pe `g0-g2-fundatie` | verde | rulările 7–8 verzi (repo public) | PASS |
+| T19 | FWSEC_PROD găsit, ucode necitit | `cargo test -p nvidia-ga104 fwsec` | 11 teste; nicio citire în ucode | conform | PASS (SIMULARE) |
+| T20 | regiunile GSP în 8 GiB | `cargo test -p nvidia-ga104 fb_layout` | 6 teste | conform | PASS (aritmetică) |
+| T21 | radix3 | `cargo test -p nvidia-ga104 radix3` | 3 teste | conform | PASS (aritmetică) |
+| T22 | tag-ul `stabil-2026-10-23` pe GitHub | `git push origin stabil-2026-10-23` | urcat | HTTP 403 (politica sesiunii cloud) | BLOCKED |
+
 ## Rezultate — sesiunea 2 (23 oct 2026, cloud, fără placă)
 Hardware: container cloud Linux, Intel Xeon 2,1 GHz. **Fără placă NVIDIA.** Toolchain: rustc 1.97.0 stable, `x86_64-unknown-linux-gnu`.
 
@@ -59,6 +69,10 @@ Condiții: Kronos oprit și salvat; Adrian prezent; stick cu Release-ul care con
     conține PCI-AT, EFI și cel puțin o FWSEC (`0xe0`); tabela BIT are jetonul `0x70`; numărul de citiri < 300 000; `0 scrieri`; ecranul rămâne viu.
     Comparație: Windows raportează VBIOS 94.04.65.00.3e — dacă OS-ul poate afișa șirul de versiune din imagine, trebuie să coincidă.
     Dacă primul cuvânt nu e o semnătură: **BLOCKED** (umbrirea ROM ar cere o scriere) — se notează valoarea și se discută cu Adrian.
+5c. **I3b — FWSEC (doar citire, aceeași fereastră PROM)**, numai dacă 5b a trecut și OS-ul afișează rezultatul lui `fwsec::locate`:
+    PASS: tabela PMU conține aplicația `0x85`; descriptorul are versiunea 3; numărul de semnături = biții din `signature_versions`;
+    ucode-ul încape în imaginile FWSEC; `0 scrieri`. Notează: numărul de semnături, `ucode_id`, `engine_id_mask`, mărimile IMEM/DMEM.
+    FAIL la versiune/pointer = citirea noastră a formatului e greșită → se notează valorile, nu se ghicește.
 6. Opțional, numai dacă Adrian acceptă riscul: `gpu dimensiuni da` → mărimi BAR; ecranul trebuie să rămână viu.
 7. `reboot` în Windows; verifică că Kronos pornește normal (nvidia-smi OK).
 

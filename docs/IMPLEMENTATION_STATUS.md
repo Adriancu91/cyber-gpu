@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 3 — 23 octombrie 2026, ~19:25–19:50 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Testele pe imagini ROM sunt SIMULARE; restul e aritmetică pură.
+Pașii a–e din prompt erau deja gata din sesiunea 2; am făcut pașii următori notați atunci.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| C-16 (hub): punct de revenire | tag-ul adnotat `stabil-2026-10-23` creat local pe `41e44ba` | **BLOCKED**: push-ul tag-ului refuzat (HTTP 403, politica proxy-ului sesiunii cloud); ramura se urcă normal. OS-ul poate fixa dependența pe commit-ul `41e44ba492c606ba5abf15126210caf1313b9e6e` (C-16 permite „tag / commit”) |
+| CI | repo-ul public (decizia lui Adrian, 19:10) → GitHub Actions merge din nou | PASS: rulările 7 și 8 verzi |
+| I3b: descriptorul FWSEC | `nvidia-ga104/src/fwsec.rs`: jetonul BIT 0x70 → tabela PMU → aplicația 0x85 (FWSEC_PROD) → `FalconUCodeDescV3`; unde stau semnăturile și ucode-ul (și dacă trece dintr-o imagine FWSEC în următoarea); **ucode-ul nu e citit niciodată** (test dedicat); alegerea semnăturii după siguranță (formulă DEDUS, nefolosită pe placă) | PASS (SIMULARE), 11 teste |
+| I5 pregătire: regiunile din VRAM | `nvidia-ga104/src/fb_layout.rs`: VGA, FRTS, încărcător, ELF, heap WPR2 (LIBOS3), WPR2, heap 1 MiB; pentru 8 GiB GSP ia ultimii 162 MiB (cu mărimi SIM ale firmware-ului) | PASS (aritmetică), 6 teste |
+| I5 pregătire: radix3 | `nvidia-ga104/src/radix3.rs`: lista de pagini prin care GSP își găsește imaginea în RAM; verificată prin parcurgere, octet cu octet | PASS (aritmetică), 3 teste |
+| Placă reală | — | NOT TESTED (Adrian plecat) |
+
+Verificări (`tools/check.sh`, rustc 1.97.0 stable, Linux x86_64): format PASS, clippy `-D warnings` PASS, **102 teste PASS** (1 ignorat:
+măsurătoarea de viteză), build `x86_64-unknown-none` PASS. Nicio scriere nouă în registre; niciun registru nou pe lista permisă.
+
+**Următorul pas:** fără placă și fără decizia de licență **nu mai e nimic util de făcut**: următorul (mesajele RPC GSP-RM) depinde de
+versiunea firmware-ului NVIDIA, deci de decizia lui Adrian. Cu placa: testul I0–I3 din `TEST_MATRIX.md` partea B (acum și pasul 5c, FWSEC).
+**Blocate de Adrian:** licența firmware-ului (I4 → tot ce urmează), compilatorul (NAK vs ptxas), fereastra pe workstation, tag-ul de revenire.
+
+---
+
 ## Sesiunea 2 — 23 octombrie 2026, ~13:50 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Toate testele hardware sunt pe modelul `gpu-sim` = SIMULARE.
@@ -21,7 +44,7 @@ măsurătoarea de viteză), build `x86_64-unknown-none` PASS.
 
 **Următorul pas:** fără placă — extragerea descriptorului FWSEC din VBIOS (doar citire, pe imagine sintetică) și modelul aritmetic al
 regiunilor WPR2/`GspFwWprMeta`; cu placa — testul I0–I3 din `TEST_MATRIX.md` (partea B), după ce OS-ul are comenzile `gpu gfw` / `gpu vbios`.
-**Blocaj nou:** GitHub Actions nu mai pornește joburile (vezi rândul b) — Adrian verifică în GitHub: Settings → Billing and plans → Actions.
+**Blocaj nou:** GitHub Actions nu mai pornește joburile (vezi rândul b) — *rezolvat în sesiunea 3: repo-ul a devenit public.*
 **Blocate de Adrian:** licența firmware-ului (I4 → tot ce urmează), compilatorul (NAK vs ptxas), fereastra pe workstation.
 
 ---
@@ -62,7 +85,7 @@ Instrumentul: `tools/k0-inventar-workstation.ps1` (Windows, doar citire; testat 
 | G1 nucleul generic | **gata (gazdă)** | `gpu-core`: erori, I1, stări, jurnal; teste PASS |
 | G2 descoperire GPU | **implementat, testat doar în SIMULARE** | `gpu-pci` + `nvidia-ga104::probe`; zero scrieri, verificat de teste; patch kernel `gpu identifica` |
 | G3 cercetare/inițializare | **cercetare gata; sesiunea 2: I2–I3 implementate (doar citire, SIMULARE), cod oprit la I4** | `docs/GA104_INITIALIZATION.md`, `init.rs` (plan I0–I10) |
-| G4 memoria GPU | **parțial** | invarianți + allocator + DMA policy + poarta IOMMU (logică); nimic pe VRAM real |
+| G4 memoria GPU | **parțial** | invarianți + allocator + DMA policy + poarta IOMMU (logică); sesiunea 3: regiunile GSP din VRAM + radix3 (aritmetică); nimic pe VRAM real |
 | G5 primul calcul GPU | **NU** | blocat la I4–I8 (vezi mai jos) |
 | G6 toolchain | **cercetare** | `docs/TOOLCHAIN.md`; niciun binar SM86 produs |
 | G7 operații tensoriale | **referință CPU gata** | `gpu-compute::reference` (add, bias, matmul, layernorm, GELU, softmax cauzal, embedding, atenție, cross-entropy), teste diferențiale f64 PASS |
