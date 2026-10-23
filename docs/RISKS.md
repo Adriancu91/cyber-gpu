@@ -17,7 +17,7 @@
 | B1 | Workstation-ul e al lui Kronos | fereastră aprobată de Adrian (30 min, Kronos oprit) |
 | B2 | ~~IOMMU / Above-4G / ReBAR necunoscute~~ **rezolvat în mare (K0, 23 oct):** VT-d oprit, ReBAR oprit, BAR-uri sub 4 GiB; planul nu depinde de ele (`HARDWARE_WORKSTATION.md` §4) | rămâne doar poza Above-4G din BIOS |
 | B3 | Licența firmware NVIDIA în imaginea OS | decizia lui Adrian pe `LICENCE.nvidia` §2.1.2 (OS MIT = OSI) |
-| B4 | Protocolul RPC GSP-RM nedocumentat oficial, legat de versiune | fixarea versiunii 535.113.01; studiu nouveau `r535` (MIT) |
+| B4 | Protocolul RPC GSP-RM nedocumentat oficial, legat de versiune | fixarea unei singure versiuni (propunere: 570.144, ca nova-core; vezi `RESEARCH_I4_I8.md`) |
 | B5 | Lipsa unui compilator SM86 | decizie NAK (MIT, pe gazdă) vs ptxas (EULA) — `TOOLCHAIN.md` |
 | B6 | Kernelul: `map_mmio` nu garantează UC pe pagini deja mapate | glue-ul refuză; propunere de patch separat în OS (`integration/`) |
 | B7 | Fereastra DMA a OS-ului < 4 GiB, fără zeroizare | suficientă pentru cozile GSP (0x40000); de revizuit |

@@ -1,5 +1,18 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 2 (23 oct 2026, cloud, fără placă)
+Hardware: container cloud Linux, Intel Xeon 2,1 GHz. **Fără placă NVIDIA.** Toolchain: rustc 1.97.0 stable, `x86_64-unknown-linux-gnu`.
+
+| Id | Test | Comandă | Așteptat | Obținut | Clasificare |
+|---|---|---|---|---|---|
+| T1–T4 | format, clippy, teste, build no_std | `sh tools/check.sh` | toate trec | 82 trecute, 0 eșuate, 1 ignorat; build OK | PASS |
+| T5 | logică hardware SIMULATĂ (nivel 0, BAR, I2, I3, configurația workstation) | inclus în T3 | zero scrieri; opriri cinstite | conform | PASS (SIMULARE) |
+| T7 | CI pe GitHub | push pe `g0-g2-fundatie` | joburile `crates (stable/nightly)` verzi | verzi (rulările 2–3); rularea 1 roșie doar la `kernel-integration` (scos) | PASS |
+| T16 | matmul pe blocuri = referința | `cargo test -p gpu-compute` | bit cu bit | bit cu bit, 7 forme | PASS |
+| T17 | bf16 | idem | 65 536/65 536 dus-întors; rotunjire = oracol pe 200 000 de valori | conform | PASS |
+| T18 | viteză matmul 64×768×768 (orientativ) | `cargo test --release -p gpu-compute -- --ignored --nocapture` | — | referință 1,2 GFLOP/s, blocuri 14,2, bf16 14,5 (gazdă, un fir) | INFO |
+| T8, T10–T15 | QEMU, placa fizică | — | — | — | NOT TESTED / BLOCKED |
+
 ## Rezultate — sesiunea 1 (23 oct 2026)
 Hardware: laptop Lenovo, i5-1135G7, Iris Xe, Windows 11 Pro 26300. **Fără placă NVIDIA.**
 Cod: ramura `g0-g2-fundatie`. Toolchain: rustc 1.99.1 `stable-x86_64-pc-windows-gnu`.

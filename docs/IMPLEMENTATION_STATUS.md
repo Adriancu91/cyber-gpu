@@ -1,6 +1,31 @@
 # Starea implementării — cyber-gpu
 
-*23 octombrie 2026, sesiunea 1. Etichete: FAPT (verificat), SIMULARE (doar pe modele software), ESTIMARE, NECUNOSCUT.*
+## Sesiunea 2 — 23 octombrie 2026, ~13:50 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Toate testele hardware sunt pe modelul `gpu-sim` = SIMULARE.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| a. Datele workstation-ului | `docs/HARDWARE_WORKSTATION.md`; `gpu-sim::workstation` (FAPT din K0) + `SimConfig::workstation_rtx3070ti()`; 2 teste noi | PASS (SIMULARE) |
+| a'. Dependența de ReBAR / Above-4G | analiză: I0–I8 **nu** depind de ele; BAR1 256 MiB ajunge; VT-d oprit simplifică DMA, dar fără plasă | gata (DEDUS) |
+| b. CI | mutat în `.github/workflows/ci.yml` — push acceptat; jobul `kernel-integration` scos (repo OS privat + patch depășit) | PASS: rulările 2–3 verzi pe GitHub |
+| c. I2 GFW_BOOT | `nvidia-ga104/src/gfw.rs`: 2 registre noi pe lista permisă (0x118128, 0x118234), limită 4 s, zero scrieri; 5 teste | PASS (SIMULARE) |
+| c. I3 VBIOS | `nvidia-ga104/src/vbios.rs`: fereastra PROM (BAR0+0x300000), IFR/RFRD, lanț PCIR/NPDE, tabela BIT; limite 2 s / 300 000 citiri; 8 teste pe imagini sintetice | PASS (SIMULARE) |
+| c. Planul | I2, I3 marcate implementate (doar citire); `initialize()` se oprește acum la **I4** (licența); plan de test pe placă în `TEST_MATRIX.md` | PASS (SIMULARE) |
+| d. Backend CPU | `gpu-compute/src/kernels.rs`: matmul pe blocuri + matmul cu greutăți bf16 (op 9), **identice bit cu bit** cu referința; bf16 verificat exhaustiv (65 536 valori) și față de un oracol de rotunjire | PASS (gazdă) |
+| e. Cercetare I4–I8 | `docs/RESEARCH_I4_I8.md` + argumentele pentru deciziile lui Adrian; fără cod care scrie în placă | gata |
+| Placă reală | — | NOT TESTED (Adrian plecat; B1) |
+
+Verificări (`tools/check.sh`, rustc 1.97.0 stable, Linux x86_64): format PASS, clippy `-D warnings` PASS, **82 de teste PASS** (1 ignorat:
+măsurătoarea de viteză), build `x86_64-unknown-none` PASS.
+
+**Următorul pas:** fără placă — extragerea descriptorului FWSEC din VBIOS (doar citire, pe imagine sintetică) și modelul aritmetic al
+regiunilor WPR2/`GspFwWprMeta`; cu placa — testul I0–I3 din `TEST_MATRIX.md` (partea B), după ce OS-ul are comenzile `gpu gfw` / `gpu vbios`.
+**Blocate de Adrian:** licența firmware-ului (I4 → tot ce urmează), compilatorul (NAK vs ptxas), fereastra pe workstation.
+
+---
+
+*Sesiunea 1 (mai jos), 23 octombrie 2026. Etichete: FAPT (verificat), SIMULARE (doar pe modele software), ESTIMARE, NECUNOSCUT.*
 
 ## G0 — Audit și inventar
 
@@ -35,7 +60,7 @@ Instrumentul: `tools/k0-inventar-workstation.ps1` (Windows, doar citire; testat 
 | G0 audit | **gata** | acest document |
 | G1 nucleul generic | **gata (gazdă)** | `gpu-core`: erori, I1, stări, jurnal; teste PASS |
 | G2 descoperire GPU | **implementat, testat doar în SIMULARE** | `gpu-pci` + `nvidia-ga104::probe`; zero scrieri, verificat de teste; patch kernel `gpu identifica` |
-| G3 cercetare/inițializare | **cercetare gata, cod oprit la I2** | `docs/GA104_INITIALIZATION.md`, `init.rs` (plan I0–I10) |
+| G3 cercetare/inițializare | **cercetare gata; sesiunea 2: I2–I3 implementate (doar citire, SIMULARE), cod oprit la I4** | `docs/GA104_INITIALIZATION.md`, `init.rs` (plan I0–I10) |
 | G4 memoria GPU | **parțial** | invarianți + allocator + DMA policy + poarta IOMMU (logică); nimic pe VRAM real |
 | G5 primul calcul GPU | **NU** | blocat la I4–I8 (vezi mai jos) |
 | G6 toolchain | **cercetare** | `docs/TOOLCHAIN.md`; niciun binar SM86 produs |

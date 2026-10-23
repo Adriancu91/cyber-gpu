@@ -4,9 +4,9 @@ Driverul de calcul GPU pentru **Cyber Universe OS** (Rust `no_std`, x86_64, UEFI
 Țintă principală: **NVIDIA GeForce RTX 3070 Ti** (GA104, Ampere, SM 8.6, 8 GB).
 Licență MIT, cod propriu (vezi [docs/PROVENANCE.md](docs/PROVENANCE.md)).
 
-> **Stare (23 oct 2026):** identificarea nivel 0 (PCI + `NV_PMC_BOOT_0`) e implementată și testată
+> **Stare (23 oct 2026, sesiunea 2):** identificarea nivel 0 și pașii doar-citire I2 (GFW_BOOT) și I3 (VBIOS) sunt implementați și testați
 > **doar pe dispozitive SIMULATE**. **Niciun program nu a rulat pe GPU.** Inițializarea GA104 se oprește
-> explicit la pasul I2 și e blocată la I4–I8 (firmware semnat GSP, IOMMU, protocolul RPC).
+> explicit la pasul I4 (decizia de licență a firmware-ului semnat) și e blocată la I4–I8.
 > Detalii: [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
 
 ## Cele trei componente, separate
@@ -33,6 +33,7 @@ aceleași verificări pe stable și nightly.
 - [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) — auditul G0, ce e gata, parțial, blocat
 - [docs/GA104_INITIALIZATION.md](docs/GA104_INITIALIZATION.md) — secvența de inițializare, surse, necunoscute
 - [docs/MEMORY_INVARIANTS.md](docs/MEMORY_INVARIANTS.md) — invarianții M1–M6
+- [docs/RESEARCH_I4_I8.md](docs/RESEARCH_I4_I8.md) — cercetarea I4–I8 și argumentele pentru deciziile lui Adrian (firmware, compilator)
 - [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md) — formatul programelor SM86 și opțiunile legale
 - [docs/RISKS.md](docs/RISKS.md) — riscuri, blocaje, politica de siguranță hardware
 - [docs/HARDWARE_WORKSTATION.md](docs/HARDWARE_WORKSTATION.md) — datele reale ale workstation-ului (K0) și dependența de ReBAR/Above-4G

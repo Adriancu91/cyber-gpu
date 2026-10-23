@@ -66,14 +66,16 @@ pub const GA104_PLAN: &[Step] = &[
         id: "I5",
         what: "buffere DMA in RAM pentru WPR meta, radix3 si cozile GSP; Bus Master",
         status: StepStatus::Blocked(
-            "starea IOMMU pe workstation necunoscuta (K0); fereastra DMA a OS-ului e sub 4 GiB",
+            "Bus Master = prima scriere in placa (aprobarea lui Adrian); VT-d oprit pe workstation: DMA pe adrese fizice; necesita I4",
         ),
         writes_hardware: true,
     },
     Step {
         id: "I6",
         what: "FWSEC-FRTS pe falcon-ul GSP (creeaza WPR2), verificare SCRATCH_E",
-        status: StepStatus::Blocked("interfata falcon GA10x neimplementata; necesita I3"),
+        status: StepStatus::Blocked(
+            "interfata falcon GA10x neimplementata; incarcarea FWSEC e DMA (necesita I5); pe GA102+ fara bootloader FWSEC",
+        ),
         writes_hardware: true,
     },
     Step {
