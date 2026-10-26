@@ -37,6 +37,13 @@ pub trait Mmio {
     fn read32_raw(&mut self, offset: u64) -> u32;
     /// Raw volatile 32-bit write. Callers go through [`checked_write32`].
     fn write32_raw(&mut self, offset: u64, value: u32);
+    /// `true` only for the software models in `gpu-sim`. Code that writes to
+    /// the GPU uses it to allow writes to a *model* without the hardware
+    /// permit; a real BAR must keep the default `false` (added after commit
+    /// `41e44ba`, as a default method, so existing implementations still build).
+    fn is_simulation(&self) -> bool {
+        false
+    }
 }
 
 fn check(len: u64, offset: u64) -> GpuResult<()> {

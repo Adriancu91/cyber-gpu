@@ -81,6 +81,9 @@ impl Mmio for SimMmio {
         }
         *self.regs.get(&offset).unwrap_or(&self.default)
     }
+    fn is_simulation(&self) -> bool {
+        true
+    }
     fn write32_raw(&mut self, offset: u64, value: u32) {
         self.writes.push((offset, value));
         if !self.absent {

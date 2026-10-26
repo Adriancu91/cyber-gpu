@@ -2,6 +2,8 @@
 //! **only in SIMULARE** (no access to the board anywhere in this module).
 //!
 //! What is here (each submodule states its sources and confidence):
+//! - [`falcon`]: I6–I7 on registers (falcon reset/start, FWSEC-FRTS result,
+//!   Booter on SEC2), behind a write policy; SIMULARE only;
 //! - [`elf`]: finding a named section in the GSP-RM ELF container (like any
 //!   loader; the section contents stay opaque);
 //! - [`wpr_meta`]: the 256-byte `GspFwWprMeta` Booter reads (I7);
@@ -24,6 +26,7 @@
 //! (off by default) and is meant for the workstation window with Adrian.
 
 pub mod elf;
+pub mod falcon;
 pub mod libos;
 pub mod msgq;
 pub mod registry;

@@ -1,0 +1,324 @@
+//! SIMULARE: a register-level stand-in for the two falcons that boot GSP-RM
+//! on GA102 (the GSP falcon at `0x110000` and SEC2 at `0x840000`), the
+//! WPR2 registers and the boot scratch registers.
+//!
+//! Idea from tinygrad's mock GPUs (`test/mockgpu/am/amgpu.py`: small state
+//! machines answering a driver on registers; MIT, idea only — nothing
+//! translated). Register offsets come from the generated NVIDIA headers in
+//! `nvidia-rm570`; the *behaviour* (how many polls until a falcon halts, what
+//! a failure looks like) is ours, marked SIM. It answers the question "does
+//! our driver follow the sequence we read in the sources, and does it notice
+//! every failure?" — never "does the RTX 3070 Ti do this".
+//!
+//! The firmware itself is not modelled at all: a test says which program is
+//! "loaded" with [`FakeGsp::sim_load`]. Loading real ucode (IMEM/DMEM DMA) is
+//! a separate, unwritten step.
+
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
+
+use gpu_core::hal::Mmio;
+use nvidia_rm570::regs::ga102_dev_falcon_second_pri as f2;
+use nvidia_rm570::regs::ga102_dev_falcon_v4 as fv4;
+use nvidia_rm570::regs::ga102_dev_gc6_island as gc6;
+use nvidia_rm570::regs::ga102_dev_gsp as gsp;
+use nvidia_rm570::regs::ga102_dev_riscv_pri as riscv;
+use nvidia_rm570::regs::tu102_dev_bus as bus;
+use nvidia_rm570::regs::tu102_dev_fb as fb;
+
+/// Base of the GSP falcon (`NV_PGSP`).
+pub const GSP_BASE: u32 = 0x0011_0000;
+/// Base of the SEC2 falcon (`NV_PSEC`).
+pub const SEC2_BASE: u32 = 0x0084_0000;
+
+/// Which signed program the test pretends was loaded into a falcon.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimUcode {
+    /// FWSEC from the VBIOS with the FRTS command (I6), on the GSP falcon.
+    FwsecFrts,
+    /// `booter_load` (I7), on SEC2.
+    BooterLoad,
+}
+
+/// What the fake should do wrong (one at a time).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SimFault {
+    #[default]
+    None,
+    /// Memory scrubbing never finishes after a reset.
+    ScrubStuck,
+    /// FWSEC halts with this error code in `NV_PBUS_SW_SCRATCH(0xe)[31:16]`.
+    FrtsError(u16),
+    /// FWSEC halts without error but WPR2 stays 0.
+    NoWpr2,
+    /// A falcon never halts after `STARTCPU`.
+    NeverHalts,
+    /// Booter halts but the RISC-V core never becomes active.
+    RiscvStaysOff,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct Falcon {
+    in_reset: bool,
+    /// HWCFG2 reads left until scrubbing is reported done.
+    scrub_left: u32,
+    /// `None` = not running; `Some(n)` = halts after n more CPUCTL reads.
+    run_left: Option<u32>,
+    halted: bool,
+    loaded: Option<SimUcode>,
+    core_riscv: bool,
+}
+
+/// SIM: a sparse 16 MiB BAR0 with two falcons behind it.
+pub struct FakeGsp {
+    regs: BTreeMap<u32, u32>,
+    gsp: Falcon,
+    sec2: Falcon,
+    pub fault: SimFault,
+    /// The FRTS region FWSEC "creates" (byte addresses in VRAM, SIM).
+    pub frts: (u64, u64),
+    riscv_active: bool,
+    /// Every write the driver made: (offset, value).
+    pub writes: Vec<(u32, u32)>,
+    /// Number of `NV_PGSP_QUEUE_HEAD(0)` writes (the doorbell).
+    pub doorbells: u32,
+    /// The address booter received in SEC2 mailbox 0/1 (the WPR meta).
+    pub booter_arg: Option<u64>,
+}
+
+/// SIM: polls of HWCFG2 until scrubbing is done, polls of CPUCTL until halt.
+const SCRUB_POLLS: u32 = 3;
+const RUN_POLLS: u32 = 5;
+
+impl Default for FakeGsp {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FakeGsp {
+    pub fn new() -> Self {
+        let mut regs = BTreeMap::new();
+        regs.insert(0, 0x1740_00a1); // NV_PMC_BOOT_0, SIM revision bits
+        // After the VBIOS ran (GFW_BOOT completed), falcons are idle, out of
+        // reset, scrubbing done. SIM.
+        regs.insert(
+            gc6::NV_PGC6_AON_SECURE_SCRATCH_GROUP_05(0),
+            0xff, // GFW_BOOT_PROGRESS_COMPLETED
+        );
+        FakeGsp {
+            regs,
+            gsp: Falcon::default(),
+            sec2: Falcon::default(),
+            fault: SimFault::None,
+            // SIM: 1 MiB just under a 1 MiB VGA area at the end of 8 GiB.
+            frts: ((8 << 30) - (2 << 20), (8 << 30) - (1 << 20)),
+            riscv_active: false,
+            writes: Vec::new(),
+            doorbells: 0,
+            booter_arg: None,
+        }
+    }
+
+    /// The test's stand-in for loading a signed program over DMA.
+    pub fn sim_load(&mut self, base: u32, ucode: SimUcode) {
+        self.falcon_mut(base).loaded = Some(ucode);
+    }
+
+    pub fn riscv_active(&self) -> bool {
+        self.riscv_active
+    }
+
+    fn falcon_mut(&mut self, base: u32) -> &mut Falcon {
+        if base == GSP_BASE {
+            &mut self.gsp
+        } else {
+            &mut self.sec2
+        }
+    }
+
+    fn falcon_of(off: u32) -> Option<(u32, u32)> {
+        for base in [GSP_BASE, SEC2_BASE] {
+            if (base..base + 0x1000).contains(&off) {
+                return Some((base, off - base));
+            }
+        }
+        None
+    }
+
+    fn raw(&self, off: u32) -> u32 {
+        *self.regs.get(&off).unwrap_or(&0)
+    }
+
+    fn read_falcon(&mut self, base: u32, rel: u32) -> u32 {
+        let fault = self.fault;
+        match rel {
+            fv4::NV_PFALCON_FALCON_HWCFG2 => {
+                let f = self.falcon_mut(base);
+                let mut v = fv4::NV_PFALCON_FALCON_HWCFG2_MEM_SCRUBBING
+                    .set(0, u32::from(f.scrub_left > 0 || f.in_reset));
+                v |= 1 << 31; // RESET_READY (addendum), always ready. SIM
+                if f.scrub_left > 0 && !f.in_reset && fault != SimFault::ScrubStuck {
+                    f.scrub_left -= 1;
+                }
+                v
+            }
+            fv4::NV_PFALCON_FALCON_CPUCTL => {
+                let mut halt_now = false;
+                let f = self.falcon_mut(base);
+                if let Some(n) = f.run_left {
+                    if n == 0 {
+                        f.run_left = None;
+                        f.halted = true;
+                        halt_now = true;
+                    } else if fault != SimFault::NeverHalts {
+                        f.run_left = Some(n - 1);
+                    }
+                }
+                if halt_now {
+                    self.halt_effects(base);
+                }
+                let halted = self.falcon_mut(base).halted;
+                fv4::NV_PFALCON_FALCON_CPUCTL_HALTED.set(0, u32::from(halted))
+            }
+            _ => self.raw(base + rel),
+        }
+    }
+
+    /// What the "program" did when it halts. SIM error codes: 0xdead =
+    /// nothing loaded / wrong core, 0xbad1 = booter found no WPR2.
+    fn halt_effects(&mut self, base: u32) {
+        let f = *self.falcon_mut(base);
+        let mb0 = base + fv4::NV_PFALCON_FALCON_MAILBOX0;
+        let ok_core = !f.core_riscv;
+        match (base, f.loaded, ok_core) {
+            (GSP_BASE, Some(SimUcode::FwsecFrts), true) => match self.fault {
+                SimFault::FrtsError(code) => {
+                    self.regs
+                        .insert(bus::NV_PBUS_SW_SCRATCH(0xe), u32::from(code) << 16);
+                }
+                SimFault::NoWpr2 => {
+                    self.regs.insert(bus::NV_PBUS_SW_SCRATCH(0xe), 0);
+                }
+                _ => {
+                    self.regs.insert(bus::NV_PBUS_SW_SCRATCH(0xe), 0);
+                    let enc = |a: u64| ((a >> 12) << 4) as u32;
+                    self.regs
+                        .insert(fb::NV_PFB_PRI_MMU_WPR2_ADDR_LO, enc(self.frts.0));
+                    self.regs
+                        .insert(fb::NV_PFB_PRI_MMU_WPR2_ADDR_HI, enc(self.frts.1));
+                }
+            },
+            (SEC2_BASE, Some(SimUcode::BooterLoad), true) => {
+                let wpr2 = self.raw(fb::NV_PFB_PRI_MMU_WPR2_ADDR_HI) != 0;
+                let arg = u64::from(self.raw(mb0))
+                    | u64::from(self.raw(base + fv4::NV_PFALCON_FALCON_MAILBOX1)) << 32;
+                if !wpr2 || arg == 0 {
+                    self.regs.insert(mb0, 0xbad1);
+                    return;
+                }
+                self.booter_arg = Some(arg);
+                self.regs.insert(mb0, 0);
+                if self.fault != SimFault::RiscvStaysOff {
+                    self.riscv_active = true;
+                    let h = gc6::NV_PGC6_BSI_SECURE_SCRATCH_14;
+                    let v = self.raw(h) | 1 << 26; // BOOT_STAGE_3_HANDOFF
+                    self.regs.insert(h, v);
+                }
+            }
+            _ => {
+                self.regs.insert(mb0, 0xdead);
+            }
+        }
+    }
+
+    fn write_falcon(&mut self, base: u32, rel: u32, v: u32) {
+        match rel {
+            0x3c0 => {
+                // NV_P{GSP,SEC}_FALCON_ENGINE: RESET bit 0.
+                let fault = self.fault;
+                let f = self.falcon_mut(base);
+                if v & 1 == 1 {
+                    *f = Falcon {
+                        in_reset: true,
+                        ..Falcon::default()
+                    };
+                } else if f.in_reset {
+                    f.in_reset = false;
+                    f.scrub_left = if fault == SimFault::ScrubStuck {
+                        1
+                    } else {
+                        SCRUB_POLLS
+                    };
+                }
+                if base == GSP_BASE {
+                    self.riscv_active = false;
+                }
+                self.regs.insert(base + rel, v);
+            }
+            fv4::NV_PFALCON_FALCON_CPUCTL | fv4::NV_PFALCON_FALCON_CPUCTL_ALIAS => {
+                let f = self.falcon_mut(base);
+                if fv4::NV_PFALCON_FALCON_CPUCTL_STARTCPU.get(v) == 1 && !f.in_reset {
+                    f.halted = false;
+                    f.run_left = Some(RUN_POLLS);
+                }
+            }
+            _ => {
+                self.regs.insert(base + rel, v);
+            }
+        }
+    }
+
+    fn write_riscv_bcr(&mut self, base: u32, v: u32) {
+        // NV_PRISCV_RISCV_BCR_CTRL: CORE_SELECT bit 4; VALID (bit 0) reads 1.
+        let f = self.falcon_mut(base);
+        f.core_riscv = riscv::NV_PRISCV_RISCV_BCR_CTRL_CORE_SELECT.get(v) == 1;
+        let off = if base == GSP_BASE {
+            f2::NV_FALCON2_GSP_BASE
+        } else {
+            f2::NV_FALCON2_SEC_BASE
+        } + riscv::NV_PRISCV_RISCV_BCR_CTRL;
+        self.regs.insert(off, v | 1);
+    }
+}
+
+impl Mmio for FakeGsp {
+    fn len(&self) -> u64 {
+        16 << 20
+    }
+    fn is_simulation(&self) -> bool {
+        true
+    }
+    fn read32_raw(&mut self, offset: u64) -> u32 {
+        let off = offset as u32;
+        if off == f2::NV_FALCON2_GSP_BASE + riscv::NV_PRISCV_RISCV_CPUCTL {
+            return riscv::NV_PRISCV_RISCV_CPUCTL_ACTIVE_STAT.set(0, u32::from(self.riscv_active));
+        }
+        match Self::falcon_of(off) {
+            Some((base, rel)) => self.read_falcon(base, rel),
+            None => self.raw(off),
+        }
+    }
+    fn write32_raw(&mut self, offset: u64, value: u32) {
+        let off = offset as u32;
+        self.writes.push((off, value));
+        if off == gsp::NV_PGSP_QUEUE_HEAD(0) {
+            self.doorbells += 1;
+        }
+        for (base, f2base) in [
+            (GSP_BASE, f2::NV_FALCON2_GSP_BASE),
+            (SEC2_BASE, f2::NV_FALCON2_SEC_BASE),
+        ] {
+            if off == f2base + riscv::NV_PRISCV_RISCV_BCR_CTRL {
+                self.write_riscv_bcr(base, value);
+                return;
+            }
+        }
+        match Self::falcon_of(off) {
+            Some((base, rel)) => self.write_falcon(base, rel, value),
+            None => {
+                self.regs.insert(off, value);
+            }
+        }
+    }
+}
