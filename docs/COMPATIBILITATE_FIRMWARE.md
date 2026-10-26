@@ -52,3 +52,15 @@ Verificarea pe Windows, înainte de copiere (PowerShell): `Get-FileHash .\gsp-57
 ## Reguli pentru tabel
 - O linie trece în „confirmat” doar după testul pe placă, cu poza/jurnalul notat în `TEST_MATRIX.md` și în hub `rezultate/`.
 - Orice schimbare de versiune a firmware-ului = tabel nou (ABI diferit); codul refuză altă versiune (`firmware::verify`).
+
+## De verificat — semnalate de studiul din hub (`studiu/2026-10-26_open-source/gpu.md`, C-20), după scrierea codului de azi
+| Ce | Codul nostru (26 oct) | tinygrad / sursa studiului | Ce facem |
+|---|---|---|---|
+| Sumele SHA-256 ale fișierelor 570.144 | `firmware::GSP_570_144` | aceleași valori (ip.py, citit în studiu) | confirmare independentă a sumelor (nu a plăcii) |
+| Heap-ul WPR2 pentru 8 GiB | 127 MiB (formula LIBOS3, nova) | fix `0x8100000` = 129 MiB | **diferență** → test de comparație + decizie la C-20 (C); pe placă decide GSP-RM (îl acceptă sau nu) |
+| Semnătura FWSEC aleasă | după siguranțe (`fwsec.rs`, DEDUS nouveau) | ultima semnătură, fără siguranțe | la testul 5c se notează câte semnături sunt și ce index ar alege formula noastră |
+| Imaginile semnate pentru falcon | presupus: DMA din RAM | puse în VRAM prin BAR1, DMA din memoria plăcii | de reverificat la I6 |
+| Bitul `GP_ENTRY1_LEVEL` în GPFIFO | 0 (`push.rs`) | 1 la fiecare intrare | de aliniat la varianta dovedită pentru primul test real (I9) |
+| Pas între I8 și I9 („golden image”) | lipsește din plan | există | de adăugat la C-20 (C) |
+| Registrele falcon GA10x (I6–I7) | „necunoscut” | publicate MIT în `swref/published/ampere/ga102/` | rândurile I6–I7 devin „de scris” la C-20 (B) |
+| Mărimea VRAM | `fb_size_from_scratch42` | registrul `0x1183a4` (`NV_USABLE_FB_SIZE_IN_MB`, antet NVIDIA MIT) | citire nouă, doar-citire, de adăugat pe lista permisă la C-20 |
