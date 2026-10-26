@@ -360,7 +360,8 @@ impl CommandProcessor {
 /// The CPU stand-in for `tools/nak/out/add64.sm86.sass`: reads the three
 /// addresses from cbuf0 at 0x28/0x30/0x38 (tools/nak/README.md) and does
 /// c[i] = a[i] + b[i] for every thread of a 64×1×1 block, through
-/// `gpu-compute::reference::add` (the project's oracle).
+/// `gpu-compute::reference::add_ftz` — NAK compiled the sum to `FADD.FTZ`
+/// (subnormals flushed), so that is the oracle, not `reference::add`.
 pub fn add64_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     if l.grid != [1, 1, 1] || l.block != [64, 1, 1] {
         return Err(bad("SIM: add64 cere un bloc de 64x1x1"));
@@ -370,7 +371,45 @@ pub fn add64_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     let c = l.mem.read_u64(l.cbuf0 + 0x38)?;
     let (x, y) = (l.mem.read_f32s(a, 64)?, l.mem.read_f32s(b, 64)?);
     let mut out = alloc::vec![0.0f32; 64];
-    gpu_compute::reference::add(&x, &y, &mut out)?;
+    gpu_compute::reference::add_ftz(&x, &y, &mut out)?;
     l.mem.write_f32s(c, &out);
+    Ok(())
+}
+
+/// The CPU stand-in for `tools/nak/out/matmul_naive.sm86.sass` (C-20 E,
+/// step 1). Layout read from the NAK dump (`matmul_naive.sm86.txt`): the
+/// workgroup base at cbuf0 0x0/0x4 (NVK's dispatch base; added to the block
+/// index), a/b/c at 0x28/0x30/0x38, m/n/k at 0x40/0x44/0x48; thread x → row,
+/// y → column; 16×16 threads per block; threads outside C return. Each
+/// element is `reference::matmul_fma_ftz` (the dump shows `ffma.ftz`).
+pub fn matmul_naive_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [16, 16, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: matmul_naive cere blocuri de 16x16x1"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let a = l.mem.read_u64(l.cbuf0 + 0x28)?;
+    let b = l.mem.read_u64(l.cbuf0 + 0x30)?;
+    let c = l.mem.read_u64(l.cbuf0 + 0x38)?;
+    let m = l.mem.read_u32(l.cbuf0 + 0x40)? as usize;
+    let n = l.mem.read_u32(l.cbuf0 + 0x44)? as usize;
+    let k = l.mem.read_u32(l.cbuf0 + 0x48)? as usize;
+    let x = l.mem.read_f32s(a, m * k)?;
+    let y = l.mem.read_f32s(b, k * n)?;
+    let mut out = alloc::vec![0.0f32; m * n];
+    gpu_compute::reference::matmul_fma_ftz(&x, &y, &mut out, m, k, n)?;
+    let rows = (l.grid[0] * 16) as usize;
+    let cols = (l.grid[1] * 16) as usize;
+    // Only the elements some thread owns are written (a grid that is too
+    // small leaves the rest of C untouched, as the real kernel would).
+    for r in 0..m.min(rows) {
+        for col in 0..n.min(cols) {
+            l.mem
+                .write_u32(c + 4 * (r * n + col) as u64, out[r * n + col].to_bits());
+        }
+    }
     Ok(())
 }

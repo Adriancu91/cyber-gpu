@@ -97,6 +97,44 @@ pub fn matmul_fma(
     Ok(())
 }
 
+/// What NAK's `add64` computes on SM86: `FADD.FTZ` per element.
+pub fn add_ftz(a: &[f32], b: &[f32], out: &mut [f32]) -> GpuResult<()> {
+    need(
+        a.len() == b.len() && a.len() == out.len(),
+        "add: lungimi diferite",
+    )?;
+    for i in 0..a.len() {
+        out[i] = math::add_f32_ftz(a[i], b[i]);
+    }
+    Ok(())
+}
+
+/// What NAK's `matmul_naive` computes on SM86: [`matmul_fma`] with
+/// `FFMA.FTZ` (tools/nak/out/matmul_naive.sm86.txt).
+pub fn matmul_fma_ftz(
+    a: &[f32],
+    b: &[f32],
+    out: &mut [f32],
+    m: usize,
+    k: usize,
+    n: usize,
+) -> GpuResult<()> {
+    need(
+        a.len() == m * k && b.len() == k * n && out.len() == m * n,
+        "matmul: forme",
+    )?;
+    for i in 0..m {
+        for j in 0..n {
+            let mut acc = 0.0f32;
+            for p in 0..k {
+                acc = math::fma_f32_ftz(a[i * k + p], b[p * n + j], acc);
+            }
+            out[i * n + j] = acc;
+        }
+    }
+    Ok(())
+}
+
 /// Per-row layer normalization with affine gamma/beta (biased variance, as PyTorch).
 pub fn layernorm(
     x: &[f32],

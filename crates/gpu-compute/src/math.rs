@@ -128,6 +128,29 @@ pub fn fma_f32(a: f32, b: f32, c: f32) -> f32 {
     f64::from_bits(u2) as f32
 }
 
+/// Flush-to-zero: a subnormal becomes a zero of the same sign. NAK emits
+/// `fadd.ftz` / `ffma.ftz` for SM86 by default (tools/nak/out/*.txt), so
+/// the GPU flushes subnormal inputs and results.
+pub fn ftz(x: f32) -> f32 {
+    if x.is_subnormal() {
+        f32::from_bits(x.to_bits() & 0x8000_0000)
+    } else {
+        x
+    }
+}
+
+/// `FFMA.FTZ`: inputs flushed, one rounding, result flushed. Whether the
+/// hardware decides "subnormal result" before or after rounding is
+/// NECUNOSCUT (only matters within one ulp of 2^-126); we flush after.
+pub fn fma_f32_ftz(a: f32, b: f32, c: f32) -> f32 {
+    ftz(fma_f32(ftz(a), ftz(b), ftz(c)))
+}
+
+/// `FADD.FTZ`.
+pub fn add_f32_ftz(a: f32, b: f32) -> f32 {
+    ftz(ftz(a) + ftz(b))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,5 +253,23 @@ mod tests {
             assert!(x.to_bits() == y.to_bits() || (x.is_nan() && y.is_nan()));
         }
         assert_eq!(checked, 2_000_000);
+    }
+
+    #[test]
+    fn ftz_flushes_subnormals_and_keeps_the_sign() {
+        let tiny = f32::from_bits(1);
+        assert_eq!(ftz(tiny).to_bits(), 0);
+        assert_eq!(ftz(-tiny).to_bits(), 0x8000_0000);
+        assert_eq!(ftz(f32::MIN_POSITIVE), f32::MIN_POSITIVE);
+        assert_eq!(add_f32_ftz(tiny, 1.0), 1.0);
+        // A normal minus a normal giving a subnormal: flushed to +0.
+        let x = f32::MIN_POSITIVE * 1.5;
+        assert!((x - f32::MIN_POSITIVE).is_subnormal());
+        assert_eq!(add_f32_ftz(x, -f32::MIN_POSITIVE).to_bits(), 0);
+        // a * b underflows to a subnormal: plain FMA keeps it, FTZ does not.
+        let (a, b) = (1.0e-20f32, 1.0e-20f32);
+        assert!(fma_f32(a, b, 0.0).is_subnormal());
+        assert_eq!(fma_f32_ftz(a, b, 0.0), 0.0);
+        assert_eq!(fma_f32_ftz(2.0, 3.0, 1.0), 7.0);
     }
 }

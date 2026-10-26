@@ -83,7 +83,7 @@ fn add64_runs_in_the_model_and_matches_the_reference() {
     submit(&mut cp).unwrap();
 
     let mut want = vec![0.0; 64];
-    gpu_compute::reference::add(&a, &b, &mut want).unwrap();
+    gpu_compute::reference::add_ftz(&a, &b, &mut want).unwrap();
     let got = cp.mem.read_f32s(C, 64).unwrap();
     assert_eq!(
         got.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
