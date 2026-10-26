@@ -13,6 +13,8 @@
 //!   the ucode bytes are never read);
 //! - [`firmware`]: inventory of the NVIDIA-signed firmware files the sequence
 //!   needs; I4: the pinned 570.144 GSP set (size + SHA-256) read from the stick;
+//! - [`gsp`]: I5–I8 data structures for GSP-RM 570.144 (WPR meta, LibOS
+//!   arguments, message queues, RPC elements) — SIMULARE only, no board access;
 //! - [`sha256`]: FIPS 180-4 digest for the I4 check;
 //! - [`push`]: pushbuffer method headers and GPFIFO entries (clc56f.h, MIT) —
 //!   encoding only, unverified on hardware;
@@ -32,6 +34,7 @@ pub mod fb_layout;
 pub mod firmware;
 pub mod fwsec;
 pub mod gfw;
+pub mod gsp;
 pub mod ids;
 pub mod init;
 pub mod probe;

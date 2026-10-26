@@ -13,3 +13,8 @@ gpu-command.workspace = true
 
 [dev-dependencies]
 gpu-sim.workspace = true
+
+[features]
+# Off by default. Only for the workstation window with Adrian present (C-18):
+# allows creating gsp::HardwareWritePermit. Nothing uses it yet.
+hw-write = []
