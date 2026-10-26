@@ -122,3 +122,43 @@ fn gfw_registers_match_the_header() {
     let f = ga102_dev_gc6_island_addendum::NV_PGC6_AON_SECURE_SCRATCH_GROUP_05_0_GFW_BOOT_PROGRESS;
     assert_eq!(f.mask(), nvidia_ga104::gfw::GFW_COMPLETED as u32);
 }
+
+/// `push.rs` (session 1, read by hand from clc56f.h) against the generated
+/// values from the same header.
+#[test]
+fn pushbuffer_encoding_matches_the_header() {
+    use nvidia_ga104::push::{self, SecOp};
+    use nvidia_rm570::regs::clc56f as h;
+    assert_eq!(push::AMPERE_CHANNEL_GPFIFO_A, h::AMPERE_CHANNEL_GPFIFO_A);
+    assert_eq!(
+        push::AMPERE_COMPUTE_B,
+        nvidia_rm570::regs::clc7c0::AMPERE_COMPUTE_B
+    );
+    assert_eq!(SecOp::IncMethod as u32, h::NVC56F_DMA_SEC_OP_INC_METHOD);
+    assert_eq!(
+        SecOp::NonIncMethod as u32,
+        h::NVC56F_DMA_SEC_OP_NON_INC_METHOD
+    );
+    assert_eq!(
+        SecOp::ImmdDataMethod as u32,
+        h::NVC56F_DMA_SEC_OP_IMMD_DATA_METHOD
+    );
+    assert_eq!(SecOp::OneInc as u32, h::NVC56F_DMA_SEC_OP_ONE_INC);
+
+    let w = push::method_header(SecOp::IncMethod, 5, 0x6c, 3).unwrap();
+    assert_eq!(h::NVC56F_DMA_SEC_OP.get(w), 1);
+    assert_eq!(h::NVC56F_DMA_METHOD_COUNT.get(w), 3);
+    assert_eq!(h::NVC56F_DMA_METHOD_SUBCHANNEL.get(w), 5);
+    assert_eq!(h::NVC56F_DMA_METHOD_ADDRESS.get(w), 0x6c >> 2);
+    let i = push::immediate(2, 0x100, 0x123).unwrap();
+    assert_eq!(h::NVC56F_DMA_IMMD_DATA.get(i), 0x123);
+
+    let e = push::gpfifo_entry(0x12_3456_7890, 40, true).unwrap();
+    assert_eq!(h::NVC56F_GP_ENTRY0_GET.get(e.entry0) << 2, 0x3456_7890);
+    assert_eq!(h::NVC56F_GP_ENTRY1_GET_HI.get(e.entry1), 0x12);
+    assert_eq!(h::NVC56F_GP_ENTRY1_LENGTH.get(e.entry1), 40);
+    assert_eq!(h::NVC56F_GP_ENTRY1_SYNC.get(e.entry1), 1);
+    // Study lesson 14: tinygrad sets LEVEL=1 (SUBROUTINE); ours is 0 (MAIN).
+    // Kept as is until I9; recorded in docs/COMPATIBILITATE_FIRMWARE.md.
+    assert_eq!(h::NVC56F_GP_ENTRY1_LEVEL.get(e.entry1), 0);
+}

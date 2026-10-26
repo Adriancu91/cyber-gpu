@@ -51,6 +51,48 @@ impl Field {
     }
 }
 
+/// A field of a 2048-bit QMD, as `MW(hi:lo)` in NVIDIA's QMD headers: bit
+/// positions counted from bit 0 of the first little-endian u32.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QmdField {
+    pub hi: u32,
+    pub lo: u32,
+}
+
+/// Size of a QMD V03_00 in bytes (2048 bits; `MW` positions stop at 2047).
+pub const QMD_SIZE: usize = 256;
+
+impl QmdField {
+    pub const fn new(hi: u32, lo: u32) -> Self {
+        assert!(hi >= lo && hi < 8 * QMD_SIZE as u32 && hi - lo < 32);
+        QmdField { hi, lo }
+    }
+
+    pub const fn width(self) -> u32 {
+        self.hi - self.lo + 1
+    }
+
+    /// Writes `v` (must fit in the field) into a QMD held as 64 u32 words.
+    /// Fields never cross a 32-bit word in V03_00 (checked by a test).
+    pub fn set(self, qmd: &mut [u32; QMD_SIZE / 4], v: u32) -> Result<(), &'static str> {
+        if self.width() < 32 && v >> self.width() != 0 {
+            return Err("valoare prea mare pentru campul QMD");
+        }
+        if self.lo / 32 != self.hi / 32 {
+            return Err("campul QMD trece peste un cuvant de 32 de biti");
+        }
+        let f = Field::new((self.hi % 32) as u8, (self.lo % 32) as u8);
+        let w = &mut qmd[(self.lo / 32) as usize];
+        *w = f.set(*w, v);
+        Ok(())
+    }
+
+    pub fn get(self, qmd: &[u32; QMD_SIZE / 4]) -> u32 {
+        let f = Field::new((self.hi % 32) as u8, (self.lo % 32) as u8);
+        f.get(qmd[(self.lo / 32) as usize])
+    }
+}
+
 /// A device's register window `lo..=hi` (e.g. `NV_PGSP`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Range {
@@ -165,6 +207,55 @@ mod tests {
 
         assert_eq!(size_of::<GSP_ARGUMENTS_CACHED>(), 72);
         assert_eq!(size_of::<MESSAGE_QUEUE_INIT_ARGUMENTS>(), 32);
+    }
+
+    /// The QMD V03_00 layout from open-gpu-doc: every field fits the 2048
+    /// bits and no field crosses a 32-bit word (so `QmdField::set` is enough).
+    #[test]
+    fn qmd_v03_00_layout_is_sane() {
+        use qmd_v03_00 as q;
+        assert!(q::ALL_FIELDS.len() > 100);
+        for (name, f) in q::ALL_FIELDS {
+            assert!(f.hi < 2048, "{name}");
+            assert_eq!(f.lo / 32, f.hi / 32, "{name} crosses a word");
+        }
+        // The fields the first launch needs (study, lessons 15-16).
+        assert_eq!(
+            q::NVC6C0_QMDV03_00_CTA_RASTER_WIDTH,
+            QmdField::new(415, 384)
+        );
+        assert_eq!(
+            q::NVC6C0_QMDV03_00_CTA_THREAD_DIMENSION0,
+            QmdField::new(607, 592)
+        );
+        assert_eq!(
+            q::NVC6C0_QMDV03_00_RELEASE0_ADDRESS_LOWER,
+            QmdField::new(799, 768)
+        );
+        assert_eq!(
+            q::NVC6C0_QMDV03_00_CONSTANT_BUFFER_VALID(0),
+            QmdField::new(640, 640)
+        );
+        let mut qmd = [0u32; QMD_SIZE / 4];
+        q::NVC6C0_QMDV03_00_CTA_THREAD_DIMENSION0
+            .set(&mut qmd, 64)
+            .unwrap();
+        assert_eq!(qmd[18], 64 << 16);
+        assert_eq!(q::NVC6C0_QMDV03_00_CTA_THREAD_DIMENSION0.get(&qmd), 64);
+        assert!(
+            q::NVC6C0_QMDV03_00_CTA_THREAD_DIMENSION0
+                .set(&mut qmd, 1 << 16)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn launch_methods_match_the_study() {
+        assert_eq!(clc56f::AMPERE_CHANNEL_GPFIFO_A, 0xc56f);
+        assert_eq!(clc56f::NVC56F_SEM_EXECUTE, 0x6c);
+        assert_eq!(clc7c0::AMPERE_COMPUTE_B, 0xc7c0);
+        assert_eq!(clc7c0::NVC7C0_SEND_PCAS_A, 0x2b4);
+        assert_eq!(clc7c0::NVC7C0_SEND_SIGNALING_PCAS2_B, 0x2c0);
     }
 
     #[test]

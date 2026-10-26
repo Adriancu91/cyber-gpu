@@ -1,15 +1,23 @@
 #!/usr/bin/env sh
 # Regenerates crates/nvidia-rm570/src/{regs,structs}.rs from NVIDIA's MIT headers.
 # Host-only. Pinned: open-gpu-kernel-modules tag 570.144 (commit below), bindgen-cli 0.71.1.
-#   tools/gen-rm570/generate.sh <dir-for-the-checkout>
+# Second source (methods C56F/C7C0, QMD V03_00): NVIDIA open-gpu-doc, commit below.
+#   tools/gen-rm570/generate.sh <dir-for-the-checkout> <dir-for-open-gpu-doc>
 # The checkout is NOT part of this repo; only the generated .rs files are committed.
 set -eu
 TAG=570.144
 COMMIT=8ec351aeb96a93a4bb69ccc12a542bf8a8df2b6f
 BINDGEN_VERSION=0.71.1
+DOC_COMMIT=9fdf5c4062007929d9f4e6cbad9c9771fe61b880
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$here/../.."
-src="${1:?usage: generate.sh <checkout-dir>}"
+src="${1:?usage: generate.sh <checkout-dir> <open-gpu-doc-dir>}"
+doc="${2:?usage: generate.sh <checkout-dir> <open-gpu-doc-dir>}"
+if [ ! -d "$doc/.git" ]; then
+  git clone -q https://github.com/NVIDIA/open-gpu-doc "$doc"
+  git -C "$doc" checkout -q "$DOC_COMMIT"
+fi
+test "$(git -C "$doc" rev-parse HEAD)" = "$DOC_COMMIT" || { echo "open-gpu-doc: wrong commit (want $DOC_COMMIT)"; exit 1; }
 if [ ! -d "$src/.git" ]; then
   git clone -q --depth 1 --branch "$TAG" --filter=blob:none --sparse \
     https://github.com/NVIDIA/open-gpu-kernel-modules "$src"
@@ -21,7 +29,7 @@ fi
 test "$(git -C "$src" rev-parse HEAD)" = "$COMMIT" || { echo "wrong commit (want $COMMIT)"; exit 1; }
 bindgen --version | grep -q " $BINDGEN_VERSION\$" || { echo "need bindgen-cli $BINDGEN_VERSION"; exit 1; }
 
-python3 -I "$here/gen_regs.py" "$src" "$repo/crates/nvidia-rm570/src/regs.rs"
+python3 -I "$here/gen_regs.py" "$src" "$doc" "$repo/crates/nvidia-rm570/src/regs.rs"
 
 out="$repo/crates/nvidia-rm570/src/structs.rs"
 {

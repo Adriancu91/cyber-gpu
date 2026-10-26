@@ -13,29 +13,40 @@ output so nothing is silently dropped:
   * `(0xBASE+(i)*STRIDE)`      -> pub const fn NAME(i: u32) -> u32
   * another NAME / NAME(n)     -> resolved alias (u32)
 
-Usage: gen_regs.py <ogkm-checkout> <output.rs>
+Second source (C-20 B, methods and QMD): NVIDIA open-gpu-doc (MIT), for the
+channel class C56F, the compute class C7C0 and the QMD V03_00 layout:
+  * `MW(hi:lo)`                -> pub const NAME: QmdField (bit positions)
+  * `MW((a+(i)*s):(b+(i)*s))`  -> pub const fn NAME(i: u32) -> QmdField
+
+Usage: gen_regs.py <ogkm-checkout> <open-gpu-doc-checkout> <output.rs>
 """
 import re
 import sys
 
+# (module, source key, path, only names starting with this prefix or None)
 HEADERS = [
-    ("ga102_dev_boot", "src/common/inc/swref/published/ampere/ga102/dev_boot.h"),
-    ("ga102_dev_falcon_v4", "src/common/inc/swref/published/ampere/ga102/dev_falcon_v4.h"),
-    ("ga102_dev_falcon_v4_addendum", "src/common/inc/swref/published/ampere/ga102/dev_falcon_v4_addendum.h"),
-    ("ga102_dev_falcon_second_pri", "src/common/inc/swref/published/ampere/ga102/dev_falcon_second_pri.h"),
-    ("ga102_dev_fbif_v4", "src/common/inc/swref/published/ampere/ga102/dev_fbif_v4.h"),
-    ("ga102_dev_gsp", "src/common/inc/swref/published/ampere/ga102/dev_gsp.h"),
-    ("ga102_dev_gsp_addendum", "src/common/inc/swref/published/ampere/ga102/dev_gsp_addendum.h"),
-    ("ga102_dev_sec_pri", "src/common/inc/swref/published/ampere/ga102/dev_sec_pri.h"),
-    ("ga102_dev_sec_addendum", "src/common/inc/swref/published/ampere/ga102/dev_sec_addendum.h"),
-    ("ga102_dev_riscv_pri", "src/common/inc/swref/published/ampere/ga102/dev_riscv_pri.h"),
-    ("ga102_dev_gc6_island", "src/common/inc/swref/published/ampere/ga102/dev_gc6_island.h"),
-    ("ga102_dev_gc6_island_addendum", "src/common/inc/swref/published/ampere/ga102/dev_gc6_island_addendum.h"),
-    ("tu102_dev_fb", "src/common/inc/swref/published/turing/tu102/dev_fb.h"),
+    ("ga102_dev_boot", "ogkm", "src/common/inc/swref/published/ampere/ga102/dev_boot.h", None),
+    ("ga102_dev_falcon_v4", "ogkm", "src/common/inc/swref/published/ampere/ga102/dev_falcon_v4.h", None),
+    ("ga102_dev_falcon_v4_addendum", "ogkm", "src/common/inc/swref/published/ampere/ga102/dev_falcon_v4_addendum.h", None),
+    ("ga102_dev_falcon_second_pri", "ogkm", "src/common/inc/swref/published/ampere/ga102/dev_falcon_second_pri.h", None),
+    ("ga102_dev_fbif_v4", "ogkm", "src/common/inc/swref/published/ampere/ga102/dev_fbif_v4.h", None),
+    ("ga102_dev_gsp", "ogkm", "src/common/inc/swref/published/ampere/ga102/dev_gsp.h", None),
+    ("ga102_dev_gsp_addendum", "ogkm", "src/common/inc/swref/published/ampere/ga102/dev_gsp_addendum.h", None),
+    ("ga102_dev_sec_pri", "ogkm", "src/common/inc/swref/published/ampere/ga102/dev_sec_pri.h", None),
+    ("ga102_dev_sec_addendum", "ogkm", "src/common/inc/swref/published/ampere/ga102/dev_sec_addendum.h", None),
+    ("ga102_dev_riscv_pri", "ogkm", "src/common/inc/swref/published/ampere/ga102/dev_riscv_pri.h", None),
+    ("ga102_dev_gc6_island", "ogkm", "src/common/inc/swref/published/ampere/ga102/dev_gc6_island.h", None),
+    ("ga102_dev_gc6_island_addendum", "ogkm", "src/common/inc/swref/published/ampere/ga102/dev_gc6_island_addendum.h", None),
+    ("tu102_dev_fb", "ogkm", "src/common/inc/swref/published/turing/tu102/dev_fb.h", None),
+    ("clc56f", "ogd", "classes/host/clc56f.h", None),
+    ("clc7c0", "ogd", "classes/compute/clc7c0.h", None),
+    ("qmd_v03_00", "ogd", "classes/compute/clc6c0qmd.h", "NVC6C0_QMDV03_00_"),
 ]
 
 DEFINE = re.compile(r"^#define\s+([A-Za-z_][A-Za-z0-9_]*)(\([a-z]\))?\s+(.*?)\s*(/\*\s*(.*?)\s*\*/)?\s*$")
-NUM = re.compile(r"^(0x[0-9A-Fa-f]+|[0-9]+)[uU]?$")
+NUM = re.compile(r"^\(?(0x[0-9A-Fa-f]+|[0-9]+)[uU]?\)?$")
+MW = re.compile(r"^MW\(([0-9]+):([0-9]+)\)$")
+MW_I = re.compile(r"^MW\(\(([0-9]+)\+\(i\)\*([0-9]+)\):\(([0-9]+)\+\(i\)\*([0-9]+)\)\)$")
 FIELD = re.compile(r"^([0-9]+):([0-9]+)$")
 RANGE = re.compile(r"^(0x[0-9A-Fa-f]+):(0x[0-9A-Fa-f]+)$")
 INDEXED = re.compile(r"^\((0x[0-9A-Fa-f]+|[0-9]+)\+\(([a-z])\)\*(0x[0-9A-Fa-f]+|[0-9]+)\)$")
@@ -48,18 +59,22 @@ def parse(path):
         for line in f:
             m = DEFINE.match(line.rstrip("\n"))
             if m:
-                out.append((m.group(1), m.group(2), m.group(3), (m.group(5) or "").strip()))
+                value = m.group(3).split("//")[0].strip()  # drop C++ line comments
+                out.append((m.group(1), m.group(2), value, (m.group(5) or "").strip()))
     return out
 
 
-def main(root, dst):
+def main(roots, dst):
     plain = {}  # name -> int (global, for alias resolution)
     indexed = {}  # name -> (base, stride)
     modules = []
-    for mod, rel in HEADERS:
+    for mod, key, rel, prefix in HEADERS:
+        root = roots[key]
         items, skipped, seen = [], [], {}
         for name, param, value, access in parse(f"{root}/{rel}"):
             if name.startswith("__") or value == "":
+                continue
+            if prefix is not None and not name.startswith(prefix):
                 continue
             # C allows an identical redefinition; keep one, refuse a different one.
             if name in seen:
@@ -67,7 +82,16 @@ def main(root, dst):
                     sys.exit(f"{rel}: {name} redefined with a different value")
                 continue
             seen[name] = (param, value)
-            if param is None and NUM.match(value):
+            if param is None and MW.match(value):
+                hi, lo = map(int, MW.match(value).groups())
+                items.append(("mw", name, (hi, lo), access))
+            elif param == "(i)" and MW_I.match(value):
+                a, sa, b, sb = map(int, MW_I.match(value).groups())
+                if sa != sb:
+                    skipped.append((name, value))
+                    continue
+                items.append(("mwfn", name, (a, b, sa), access))
+            elif param is None and NUM.match(value):
                 v = int(NUM.match(value).group(1), 0)
                 plain[name] = v
                 items.append(("const", name, v, access))
@@ -102,23 +126,27 @@ def main(root, dst):
 
     w = []
     w.append("// GENERATED by tools/gen-rm570/gen_regs.py — do not edit by hand.")
-    w.append("// Source: NVIDIA open-gpu-kernel-modules, tag 570.144 (see crate README for the commit).")
+    w.append("// Sources: NVIDIA open-gpu-kernel-modules tag 570.144 and NVIDIA open-gpu-doc")
+    w.append("// (commits pinned in tools/gen-rm570/generate.sh).")
     w.append("// The source headers are MIT licensed, Copyright NVIDIA CORPORATION & AFFILIATES;")
     w.append("// the full notice is in crates/nvidia-rm570/LICENSE-NVIDIA.")
     w.append("//")
     w.append("// Access codes in the doc comments are NVIDIA's (first letter R = readable,")
     w.append("// second W = writable). Nothing here performs any register access.")
     w.append("")
-    w.append("use crate::{Field, Range};")
+    w.append("use crate::{Field, QmdField, Range};")
     for mod, rel, items, skipped in modules:
         w.append("")
-        w.append(f"/// From `{rel}` (570.144).")
+        src = "open-gpu-kernel-modules 570.144" if key == "ogkm" else "open-gpu-doc"
+        w.append(f"/// From `{rel}` ({src}).")
         w.append("#[allow(non_snake_case, missing_docs, clippy::identity_op)]")
         w.append(f"pub mod {mod} {{")
         if any(k == "field" for k, *_ in items):
             w.append("    use super::Field;")
         if any(k == "range" for k, *_ in items):
             w.append("    use super::Range;")
+        if any(k in ("mw", "mwfn") for k, *_ in items):
+            w.append("    use super::QmdField;")
         for kind, name, v, access in items:
             doc = f"    /// `{access}`" if access else None
             if doc:
@@ -128,12 +156,25 @@ def main(root, dst):
                 w.append(f"    pub const {name}: {ty} = {v:#x};")
             elif kind == "field":
                 w.append(f"    pub const {name}: Field = Field::new({v[0]}, {v[1]});")
+            elif kind == "mw":
+                w.append(f"    pub const {name}: QmdField = QmdField::new({v[0]}, {v[1]});")
+            elif kind == "mwfn":
+                w.append(f"    pub const fn {name}(i: u32) -> QmdField {{")
+                w.append(f"        QmdField::new({v[0]} + i * {v[2]}, {v[1]} + i * {v[2]})")
+                w.append("    }")
             elif kind == "range":
                 w.append(f"    pub const {name}: Range = Range::new({v[1]:#x}, {v[0]:#x});")
             else:
                 w.append(f"    pub const fn {name}(i: u32) -> u32 {{")
                 w.append(f"        {v[0]:#x} + i * {v[1]:#x}")
                 w.append("    }")
+        mws = [name for k, name, *_ in items if k == "mw"]
+        if mws:
+            w.append("    /// Every fixed-position field above (for whole-layout tests).")
+            w.append("    pub const ALL_FIELDS: &[(&str, QmdField)] = &[")
+            for name in mws:
+                w.append(f'        ("{name}", {name}),')
+            w.append("    ];")
         for name, value in skipped:
             w.append(f"    // skipped (shape not translated): {name} = {value}")
         w.append("}")
@@ -145,4 +186,4 @@ def main(root, dst):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2])
+    main({"ogkm": sys.argv[1], "ogd": sys.argv[2]}, sys.argv[3])
