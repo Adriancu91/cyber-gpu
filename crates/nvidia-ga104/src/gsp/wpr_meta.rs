@@ -57,8 +57,9 @@ pub mod off {
 
 /// Where things are in *system* memory (DMA addresses the GPU will use) and
 /// the bootloader offsets. On hardware these come from I5 (buffers) and from
-/// the bootloader file's header (not parsed yet: NECUNOSCUT, see
-/// docs/COMPATIBILITATE_FIRMWARE.md).
+/// the bootloader file's header ([`crate::fw_hdr::RiscvBootloader`]: code =
+/// `monitorCodeOffset`, data = `monitorDataOffset`, manifest =
+/// `manifestOffset`; parsed only on synthetic files so far, SIMULARE).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SysmemInputs {
     /// DMA address of the radix3 level-0 page describing `.fwimage`.

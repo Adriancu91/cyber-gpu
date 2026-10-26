@@ -4,3 +4,4 @@
 #include "msgq/msgq_priv.h"
 #include "gpu/gsp/gsp_init_args.h"
 #include "rmgspseq.h"
+#include "rmRiscvUcode.h"
