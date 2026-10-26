@@ -68,6 +68,35 @@ pub fn matmul(
     Ok(())
 }
 
+/// Same product as [`matmul`], but every step is one fused multiply-add
+/// (`acc = fma(a, b, acc)`, k in increasing order, acc starting at 0) — what
+/// a GPU kernel compiled to `FFMA` computes. This is the oracle for the NAK
+/// matmul kernels; [`matmul`] (separate multiply and add, two roundings)
+/// stays the oracle for the CPU backend. The two differ in the last bits.
+pub fn matmul_fma(
+    a: &[f32],
+    b: &[f32],
+    out: &mut [f32],
+    m: usize,
+    k: usize,
+    n: usize,
+) -> GpuResult<()> {
+    need(
+        a.len() == m * k && b.len() == k * n && out.len() == m * n,
+        "matmul: forme",
+    )?;
+    for i in 0..m {
+        for j in 0..n {
+            let mut acc = 0.0f32;
+            for p in 0..k {
+                acc = math::fma_f32(a[i * k + p], b[p * n + j], acc);
+            }
+            out[i * n + j] = acc;
+        }
+    }
+    Ok(())
+}
+
 /// Per-row layer normalization with affine gamma/beta (biased variance, as PyTorch).
 pub fn layernorm(
     x: &[f32],
@@ -459,5 +488,38 @@ mod tests {
         assert!((ce as f64 - want).abs() < 1e-6);
         assert!((ln(10.0) - 10f64.ln()).abs() < 1e-12);
         assert!(cross_entropy(&logits, &[0, 3], 3).is_err());
+    }
+
+    #[test]
+    fn matmul_fma_differs_from_matmul_only_in_rounding() {
+        let (m, k, n) = (7, 33, 5);
+        let a: Vec<f32> = (0..m * k)
+            .map(|i| ((i * 37 % 101) as f32 - 50.0) / 7.0)
+            .collect();
+        let b: Vec<f32> = (0..k * n)
+            .map(|i| ((i * 53 % 97) as f32 - 48.0) / 11.0)
+            .collect();
+        let (mut x, mut y) = (vec![0.0; m * n], vec![0.0; m * n]);
+        matmul(&a, &b, &mut x, m, k, n).unwrap();
+        matmul_fma(&a, &b, &mut y, m, k, n).unwrap();
+        let mut differ = 0;
+        for i in 0..m * n {
+            let mut exact = 0.0f64;
+            for p in 0..k {
+                exact += a[i / n * k + p] as f64 * b[p * n + i % n] as f64;
+            }
+            let tol = 1e-5 * exact.abs().max(1.0);
+            assert!((x[i] as f64 - exact).abs() < tol && (y[i] as f64 - exact).abs() < tol);
+            differ += usize::from(x[i].to_bits() != y[i].to_bits());
+        }
+        // Both are close to the exact value, and they are not the same
+        // function: a kernel must be compared with the oracle it implements.
+        assert!(differ > 0);
+        // Same as std's fused steps.
+        let mut acc = 0.0f32;
+        for p in 0..k {
+            acc = a[p].mul_add(b[p * n], acc);
+        }
+        assert_eq!(acc.to_bits(), y[0].to_bits());
     }
 }

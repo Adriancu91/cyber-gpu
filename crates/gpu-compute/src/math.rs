@@ -91,6 +91,43 @@ pub fn erf(x: f32) -> f32 {
     (s * (1.0 - poly * e)) as f32
 }
 
+/// Fused multiply-add `a * b + c` with a single rounding (round to nearest,
+/// ties to even), as the GPU's `FFMA` does. `no_std`, no FMA instruction:
+/// `a * b` is exact in f64 (24 + 24 significand bits), the sum is rounded once
+/// to f64, and the only case where rounding that again to f32 can be wrong —
+/// the f64 sum landing exactly on an f32 tie — is nudged one f64 ulp toward
+/// the exact value. Idea from musl `fmaf.c` (MIT), written here; the f32
+/// subnormal range (fewer kept bits) is handled too. Checked bit for bit
+/// against `std`'s `f32::mul_add` in the tests.
+pub fn fma_f32(a: f32, b: f32, c: f32) -> f32 {
+    let (xy, z) = (a as f64 * b as f64, c as f64);
+    let r = xy + z;
+    let u = r.to_bits();
+    let e = ((u >> 52) & 0x7ff) as i32;
+    if e == 0x7ff || r == 0.0 {
+        return r as f32;
+    }
+    // Bits of the f64 significand that the f32 result drops.
+    let unb = e - 1023;
+    let d = if unb < -126 { 29 + (-126 - unb) } else { 29 };
+    if d >= 53 {
+        return r as f32; // far below the smallest f32 subnormal tie
+    }
+    let mask = (1u64 << d) - 1;
+    let tie = 1u64 << (d - 1);
+    if u & mask != tie || (r - xy == z && r - z == xy) {
+        return r as f32;
+    }
+    let neg = u >> 63 != 0;
+    let err = if neg == (z > xy) {
+        xy - r + z
+    } else {
+        z - r + xy
+    };
+    let u2 = if neg == (err < 0.0) { u + 1 } else { u - 1 };
+    f64::from_bits(u2) as f32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,5 +181,54 @@ mod tests {
         for (x, e) in known {
             assert!((erf(x) - e).abs() < 3e-7, "erf({x})");
         }
+    }
+
+    #[test]
+    fn fma_matches_std_bit_for_bit() {
+        let mut st = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            st ^= st << 13;
+            st ^= st >> 7;
+            st ^= st << 17;
+            st
+        };
+        let mut checked = 0u32;
+        for i in 0..2_000_000u32 {
+            let r = next();
+            // Random bits, but exponents kept in ranges that matter
+            // (normal, near-subnormal, cancellation).
+            let f = |w: u64, lo: u32, span: u32| {
+                let sign = (w >> 63) as u32;
+                let ex = lo + (w >> 32) as u32 % span;
+                f32::from_bits(sign << 31 | ex << 23 | (w as u32 & 0x7f_ffff))
+            };
+            let a = f(r, 1, 253);
+            let b = f(next(), 1, 253);
+            let c = match i % 4 {
+                0 => f(next(), 1, 253),
+                1 => -(a * b),                        // exact error term
+                2 => -(a * b) * (1.0 + f32::EPSILON), // near cancellation
+                _ => f(next(), 0, 30),                // tiny / subnormal c
+            };
+            let (x, y) = (fma_f32(a, b, c), a.mul_add(b, c));
+            assert!(
+                x.to_bits() == y.to_bits() || (x.is_nan() && y.is_nan()),
+                "fma({a:e}, {b:e}, {c:e}) = {x:e}, std {y:e}"
+            );
+            checked += 1;
+        }
+        // Hand-made double-rounding ties.
+        for (a, b, c) in [
+            (1.0 + f32::EPSILON, 1.0 + f32::EPSILON, -1.0f32),
+            (1.0 + f32::EPSILON, 1.0 - f32::EPSILON / 2.0, 0.0),
+            (f32::MIN_POSITIVE, 0.5 + f32::EPSILON, 0.0),
+            (3.0e-39, 0.75, 1.0e-45),
+            (f32::MAX, 2.0, -f32::MAX),
+            (0.0, f32::INFINITY, 1.0),
+        ] {
+            let (x, y) = (fma_f32(a, b, c), a.mul_add(b, c));
+            assert!(x.to_bits() == y.to_bits() || (x.is_nan() && y.is_nan()));
+        }
+        assert_eq!(checked, 2_000_000);
     }
 }
