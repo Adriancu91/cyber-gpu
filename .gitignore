@@ -2,3 +2,7 @@
 /.claude
 *.log
 /rezultate/local/
+
+# NVIDIA firmware is never committed (C-18): only names, sizes and SHA-256 live in firmware.rs
+*.bin
+firmware/

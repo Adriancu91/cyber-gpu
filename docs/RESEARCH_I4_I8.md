@@ -55,7 +55,20 @@ Bus Master = **prima scriere în configurația plăcii** din tot proiectul → d
 - Volum (ESTIMARE, după codul nouveau `r535.c` și nova-core `gsp/`): I6–I8 ≈ 6 000–10 000 de rânduri de Rust la noi, 2–4 luni de lucru
   efectiv, cu 5–15 sesiuni pe workstation. Este partea cea mai mare din drumul până la primul calcul.
 
-## 5. Decizii care sunt ale lui Adrian — argumentele, nu decizia
+## 5. Deciziile lui Adrian
+
+> **DECIS — 26 oct 2026, 17:10 (hub: `COMENZI.md` C-18, `DECIZII.md`):**
+> 1. **Firmware-ul semnat NVIDIA (GSP-RM, Booter): DA**, o singură versiune fixată: **570.144**. Fișierele **nu intră niciodată** în repo,
+>    în `cyber-universe` sau în hub: driverul le citește dintr-un fișier separat pe stick (`/usb/firmware/nvidia/ga102/gsp/…`, vezi
+>    `docs/COMPATIBILITATE_FIRMWARE.md` și `TEST_MATRIX.md` partea B), verificând mărimea și suma SHA-256 notate în `nvidia-ga104/src/firmware.rs`.
+>    Interiorul firmware-ului nu se desface și nu se analizează (licența §2.1.3); folosim doar antetele publice MIT (open-gpu-kernel-modules,
+>    eticheta `570.144`) și documentația nouveau/nova, ca idei.
+> 2. **Compilatorul pentru programele GPU: Mesa NAK**, pe gazdă, la build (nu în OS). `ptxas` doar dacă, mult mai târziu, performanța o cere.
+> 3. Rămân valabile: nicio scriere în placa reală fără Adrian de față; nimic ireversibil; fără cod GPL copiat.
+>
+> Tabelele de mai jos rămân ca istoric al argumentelor.
+
+### Argumentele prezentate înainte de decizie
 ### 5.1 Firmware-ul semnat NVIDIA (GSP-RM, Booter)
 | | Pentru | Contra |
 |---|---|---|

@@ -11,7 +11,12 @@
 | Driverul | `nvidia-ga104` (blocat la I2/I4) |
 | Runtime-ul tensorial | `gpu-compute` (referință CPU) |
 
-## Opțiuni pentru a obține SASS SM86 (de decis de Adrian)
+## Decizia (26 oct 2026, 17:10, C-18): **Mesa NAK**, ca unealtă pe gazdă
+NAK rulează **doar pe calculatorul de build** (gazda Linux / CI), niciodată în OS. Ieșirea lui (cod SASS SM86) e un fișier de date pe care
+driverul îl încarcă. `ptxas` nu se folosește; întrebarea revine doar dacă, după K6-GPU, performanța matmul bf16 o cere.
+Pregătirea uneltei: secțiunea „Unealta NAK pe gazdă” de mai jos.
+
+## Opțiunile cântărite înainte de decizie
 1. **Mesa NAK** (`src/nouveau/compiler/nak/sm70_encode.rs`, MIT, © Collabora): codifică SASS pentru SM ≥ 70, inclusiv Ampere
    (`is_ampere()` = SM 80–88). Folosit **ca unealtă pe gazdă** (generăm binare, nu copiem cod). Licența MIT permite și portarea
    cu atribuire, dar `docs/CLEAN_ROOM.md` din OS cere scriere proprie după specificație. **Recomandare:** unealtă pe gazdă la început.
