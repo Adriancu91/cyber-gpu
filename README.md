@@ -4,17 +4,16 @@ Driverul de calcul GPU pentru **Cyber Universe OS** (Rust `no_std`, x86_64, UEFI
 Țintă principală: **NVIDIA GeForce RTX 3070 Ti** (GA104, Ampere, SM 8.6, 8 GB).
 Licență MIT, cod propriu (vezi [docs/PROVENANCE.md](docs/PROVENANCE.md)).
 
-> **Stare (23 oct 2026, sesiunea 2):** identificarea nivel 0 și pașii doar-citire I2 (GFW_BOOT) și I3 (VBIOS) sunt implementați și testați
-> **doar pe dispozitive SIMULATE**. **Niciun program nu a rulat pe GPU.** Inițializarea GA104 se oprește
-> explicit la pasul I4 (decizia de licență a firmware-ului semnat) și e blocată la I4–I8.
-> Detalii: [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
+> **Stare (26 oct 2026, sesiunea 5):** firmware-ul NVIDIA 570.144 e aprobat (C-18): I4 (citirea și verificarea fișierelor de pe stick) și
+> structurile I5–I8 pentru GSP-RM sunt scrise și testate **doar în SIMULARE**; primul program GPU (adunarea a 64 de f32) e compilat cu Mesa NAK,
+> **nerulat**. **Niciun program nu a rulat pe GPU.** Nicio linie de cod nu scrie în placă. Tabelul unic: [docs/COMPATIBILITATE_FIRMWARE.md](docs/COMPATIBILITATE_FIRMWARE.md).
 
 ## Cele trei componente, separate
 
 | Componentă | Crate | Ce face |
 |---|---|---|
 | **Driverul bare-metal** | `gpu-core`, `gpu-pci`, `gpu-memory`, `gpu-command`, `nvidia-ga104` | contractul I1, PCI, memorie, cozi, backend GA104 |
-| **Motorul de calcul / toolchain** | (nimic încă; vezi [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md)) | programe SM86, încărcare, lansare |
+| **Motorul de calcul / toolchain** | `tools/nak/` (Mesa NAK pe gazdă, C-18; vezi [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md)) | programe SM86, încărcare, lansare |
 | **Runtime-ul tensorial** | `gpu-compute` | tensori (I2), operatorii Kronos în f32 (oracolul numeric), backend CPU |
 
 `gpu-sim` conține **numai simulări** pentru teste pe gazdă; nu e dovadă de funcționare hardware.

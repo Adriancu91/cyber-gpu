@@ -1,5 +1,15 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 5 (26 oct 2026, cloud, fără placă)
+| Id | Test | Comandă | Așteptat | Obținut | Clasificare |
+|---|---|---|---|---|---|
+| T1–T4 | format, clippy, teste, build no_std | `sh tools/check.sh` (rustc 1.99.1) | toate trec | 134 trecute, 0 eșuate, 1 ignorat; build OK | PASS |
+| T7 | CI pe GitHub | push pe `g0-g2-fundatie` | verde | rularea 14–15 roșie (lint clippy 1.99), reparat; 16–18 verzi | PASS |
+| T23 | I4: firmware 570.144 (mărime + SHA-256) | `cargo test -p nvidia-ga104 firmware sha256` | 8 teste | conform | PASS (SIMULARE; sumele din fișierele oficiale) |
+| T24 | I5–I8: WPR meta, LibOS, cozi, RPC, ELF + GSP simulat | `cargo test -p nvidia-ga104 gsp` | 20 de teste | conform | PASS (SIMULARE) |
+| T25 | NAK: `add64.comp` → SM 8.6 | `sh tools/nak/build.sh add64` | binar determinist | 240 B, SHA-256 `a890b75c…98ce`, de 2 ori la fel | PASS (compilare); rulare NOT TESTED |
+| T26 | Fereastra B0 pe workstation | partea B0 | — | — | NOT TESTED (planificată 27–28 oct) |
+
 ## Rezultate — sesiunea 3 (23 oct 2026, cloud, fără placă)
 | Id | Test | Comandă | Așteptat | Obținut | Clasificare |
 |---|---|---|---|---|---|

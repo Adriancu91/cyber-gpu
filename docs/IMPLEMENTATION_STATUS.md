@@ -1,5 +1,33 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 5 — 26 octombrie 2026, ~17:15–17:45 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Tot ce scrie „PASS” e pe calculatorul gazdă: SIMULARE (GSP simulat, imagini
+sintetice), aritmetică sau compilare. Deciziile lui Adrian din 26 oct 17:10 (hub C-18): firmware NVIDIA **570.144**, separat pe stick; compilator **Mesa NAK**.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| a. C-18 preluat | hub `COMENZI.md` C-18 → `preluat`; deciziile notate în `RESEARCH_I4_I8.md` §5, `RISKS.md` (B3, B4, B5, B9 rezolvate; riscuri noi), `TOOLCHAIN.md`; `.gitignore` pentru `*.bin`/`firmware/` | gata |
+| b. Tabelul de compatibilitate | `docs/COMPATIBILITATE_FIRMWARE.md`: 23 de rânduri I0–I10 (sursă, ABI 570.144, fișier Rust, test, stare) + cele 4 fișiere de pus pe stick, cu mărimi și SHA-256 | gata |
+| c. I4 | `firmware::GSP_570_144` (mărimi + SHA-256 calculate din fișierele oficiale linux-firmware, apoi șterse), `load_gsp_set` (citire de pe stick prin `FirmwareSource`), `sha256` scris după FIPS 180-4; planul se oprește acum la **I5**; backend-ul refuză I4 fără firmware | PASS (SIMULARE): 5 + 3 teste (vectori NIST, un octet schimbat, fișier lipsă/trunchiat, manifestul real refuză orice alt conținut) |
+| c. I5–I8 | `gsp::wpr_meta` (GspFwWprMeta 256 B), `gsp::libos` (regiunile LibOS, GSP_ARGUMENTS_CACHED 72 B), `gsp::msgq` (memoria partajată: tabela de pagini + 2 cozi × 63 elemente, SWAP_RX), `gsp::rpc` (element + antet RPC v3 + suma de control XOR, numerele funcțiilor 570.144, antetul secvențiatorului), `gsp::elf` (secțiunile `.fwimage`/`.fwsignature_ga10x`) | PASS (SIMULARE): 20 de teste, inclusiv un „GSP simulat” scris separat (pornire, INIT_DONE, 300 de mesaje cu ocolirea inelului, coadă plină, mesaje corupte/în afara ordinii) |
+| c. Siguranță | nicio scriere în placă nicăieri; `gsp::HardwareWritePermit` există doar cu opțiunea de build `hw-write` (oprită implicit) | PASS (test cu și fără opțiune) |
+| d. NAK pe gazdă | `tools/nak/`: Mesa 25.0.7 (NVK + NAK + drm-shim) construit în cloud; `add64.comp` compilat pentru GA104 (SM 8.6) fără placă: **15 instrucțiuni, 240 octeți** (`tools/nak/out/add64.sm86.sass`, determinist) | PASS (compilare); rularea pe placă: NOT TESTED (vine după I8–I10) |
+| e. Fereastra pe workstation | `TEST_MATRIX.md` partea **B0**: pregătirea stick-ului (unde se pun fișierele, verificarea sumelor pe Windows), 10 pași, 0 scrieri în placă | gata |
+| Integrare OS | `integration/cyber-universe/UTILIZARE.md` (pentru C-19: **nu există `main`**, fixarea pe un commit din `g0-g2-fundatie`), `I4_gpu-firmware.md` (propunere: comanda `gpu firmware`, doar citire) | gata (propunere) |
+| CI | rularea 14 roșie: lint nou în clippy 1.99 (`chunks_exact` → `as_chunks`); reprodus local după `rustup update` (1.99.1), reparat | PASS: rulările 16–18 verzi |
+| Compatibilitate | `git diff 41e44ba HEAD` pe `gpu-core`, `gpu-pci`, `nvidia-ga104`, `gpu-compute`: o singură linie `pub` „ștearsă” = **valoarea** `GSP_VERSION` schimbată din `"535.113.01"` în `"570.144"` (forma e aceeași; OS-ul nu o folosește) | PASS (doar adăugări + o valoare, notată) |
+
+Verificări (`tools/check.sh`, rustc 1.99.1 stable): format PASS, clippy `-D warnings` PASS, **134 de teste PASS** (1 ignorat: viteza),
+build `x86_64-unknown-none` PASS; și `--features hw-write`: clippy + teste PASS.
+
+**Următorul pas:** fără placă: (1) antetele fișierelor `bootloader`/`booter_load` (offset-urile cod/date/manifest, după antetele MIT nouveau —
+lipsesc pentru WPR meta, rândul I4c); (2) conținutul `GspSystemInfo` și al tabelei de registru (I8c); (3) registrele falcon GA10x pentru I6–I7,
+scrise dar oprite. Cu placa (fereastra B0, 27–28 oct): I0–I3, FWSEC și verificarea fișierelor de pe stick.
+**De la Adrian:** fereastra pe workstation și fișierele firmware pe stick (B0); urcarea tag-ului `stabil-2026-10-23` (tot 403 din cloud).
+
+---
+
 ## Sesiunea 4 — 24 octombrie 2026, ~01:20–01:40 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Doar calcul pe procesorul gazdei.
