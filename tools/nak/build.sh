@@ -5,6 +5,8 @@
 #
 #   sh tools/nak/build.sh mesa     # once: download + build Mesa 25.0.7 into $NAK_HOME (~15 min, 2 cores)
 #   sh tools/nak/build.sh add64    # compile add64.comp for GA104 -> tools/nak/out/add64.sm86.{sass,txt}
+#   sh tools/nak/build.sh matmul_naive   # the same for matmul_naive.comp (C-20 E, step 1)
+#   sh tools/nak/build.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): apt install glslang-tools spirv-tools libvulkan-dev libdrm-dev
 #   libclc-18-dev llvm-18-dev libclang-18-dev libllvmspirvlib-18-dev libwayland-dev
@@ -33,28 +35,35 @@ mesa)
     PATH=/usr/lib/llvm-18/bin:$PATH ninja -C build install
     ;;
 add64)
+    exec sh "$0" kernel add64 24
+    ;;
+matmul_naive)
+    exec sh "$0" kernel matmul_naive 40
+    ;;
+kernel)
+    NAME=${2:?nume}; PUSH=${3:?octeti push constants}
     OUT=$HERE/out; TMP=$(mktemp -d); mkdir -p "$OUT"
     LIB=$(dirname "$(find -L "$INST" -name libnouveau_noop_drm_shim.so | head -1)")
-    glslangValidator -V --target-env vulkan1.3 "$HERE/add64.comp" -o "$TMP/add64.spv"
-    spirv-val --target-env vulkan1.3 "$TMP/add64.spv"
+    glslangValidator -V --target-env vulkan1.3 "$HERE/$NAME.comp" -o "$TMP/$NAME.spv"
+    spirv-val --target-env vulkan1.3 "$TMP/$NAME.spv"
     cc -O1 -Wall -o "$TMP/nak_dump" "$HERE/nak_dump.c" -lvulkan
     VK_ICD_FILENAMES="$INST/share/vulkan/icd.d/nouveau_icd.x86_64.json" \
     LD_PRELOAD="$LIB/libnouveau_noop_drm_shim.so" NOUVEAU_CHIPSET=$CHIP NAK_DEBUG=print MESA_SHADER_CACHE_DISABLE=true \
-        "$TMP/nak_dump" "$TMP/add64.spv" 24 > "$TMP/nak.log" 2>&1
+        "$TMP/nak_dump" "$TMP/$NAME.spv" "$PUSH" > "$TMP/nak.log" 2>&1
     grep -q "pipeline compiled" "$TMP/nak.log"
     grep -q "^Encoded shader:" "$TMP/nak.log" || { echo "NAK nu a tiparit codul (cache?)" >&2; exit 1; }
     # Text: the final NAK IR (assembly) + statistics + the encoded words.
     awk '/NAK IR after/{n=NR} {l[NR]=$0} END{for(i=n;i<=NR;i++) if (l[i] !~ /^pipeline compiled/) print l[i]}' \
-        "$TMP/nak.log" > "$OUT/add64.sm86.txt"
+        "$TMP/nak.log" > "$OUT/$NAME.sm86.txt"
     # Binary: the encoded 32-bit words, little-endian, 16 bytes per instruction.
     awk '/^Encoded shader:/{f=1;next} f&&/^ /{for(i=1;i<=NF;i++) print $i} f&&!/^ /{f=0}' "$TMP/nak.log" \
         | python3 -c "import sys,struct; sys.stdout.buffer.write(b''.join(struct.pack('<I',int(w,16)) for w in sys.stdin.read().split()))" \
-        > "$OUT/add64.sm86.sass"
-    [ -s "$OUT/add64.sm86.sass" ] || { echo "binar gol" >&2; exit 1; }
-    sha256sum "$OUT/add64.sm86.sass"
+        > "$OUT/$NAME.sm86.sass"
+    [ -s "$OUT/$NAME.sm86.sass" ] || { echo "binar gol" >&2; exit 1; }
+    sha256sum "$OUT/$NAME.sm86.sass"
     rm -rf "$TMP"
     ;;
 *)
-    echo "usage: $0 mesa|add64" >&2; exit 2
+    echo "usage: $0 mesa|add64|matmul_naive|kernel <nume> <octeti>" >&2; exit 2
     ;;
 esac

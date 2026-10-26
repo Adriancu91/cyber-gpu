@@ -4,6 +4,10 @@
 1. **Nivelul 0 nu scrie nimic** în placă: fără `enable()`, fără Bus Master, fără scrieri BAR0. Testele verifică zero scrieri
    (`probe::tests::level0_on_simulated_board_is_write_free`, `regs::tests::allow_list_enforced`).
 2. BAR0 se citește **numai** la registrele din `regs::READ_ALLOWED` (azi: BOOT_0, BOOT_42). Nu există cale de scriere BAR0 în crate.
+   **Excepție nouă (sesiunea 7, I6–I8):** `gsp::falcon::GuardedBar0` poate scrie, dar **doar** în ferestrele GSP (`0x110000–0x113fff`) și SEC2
+   (`0x840000–0x843fff`), fiecare scriere cu valoarea înainte/după în jurnal; pe o placă reală (orice `Mmio` care nu e model `gpu-sim`) cere
+   `HardwareWritePermit`, care există doar cu opțiunea `hw-write`. Cererile secvențiatorului GSP în afara acestor ferestre sunt **refuzate**
+   (pornirea se oprește cu eroare), nu executate.
 3. Dimensionarea BAR-urilor cere `SizingPermit` explicit, oprește decodarea, restaurează și verifică; la eșec → placa e „Faulted”.
    În kernel e o opțiune separată (`gpu dimensiuni da`), cu întreruperile oprite. Preferăm ReBAR (doar citire) pentru BAR1.
 4. `reset_or_recover(Full)` → `NotPermitted`: GPU-ul principal nu se resetează fără protocol de recuperare.
@@ -39,3 +43,5 @@
 | ABI-ul RPC r570 citit greșit din antete | mesaje respinse de GSP-RM, placa blocată până la repornire | structurile au teste de mărime/offset față de antete; primul test pe placă se face cu Adrian de față, cu repornire planificată |
 | Firmware-ul NVIDIA ajunge din greșeală în repo | încălcarea regulii proiectului (și a deciziei C-18) | `.gitignore` pentru `*.bin` în `firmware/`; repo-ul conține doar nume, mărimi și sume |
 | Cod care scrie în placă rulat din greșeală | stare nedefinită a plăcii care ține ecranul | tot ce scrie în placă pentru I5–I8 stă în spatele `HardwareWritePermit` (oprit implicit) și nu există în OS până la fereastra pe workstation |
+| Secvențiatorul GSP-RM cere pe placa reală scrieri în afara ferestrelor GSP/SEC2 (sesiunea 7) | pornirea GSP se oprește cu `NotPermitted` | e alegerea sigură; registrul cerut apare în jurnal, se decide cu Adrian dacă intră pe listă |
+| GSP-ul fals (`gpu-sim::fake_gsp`) are comportamentul scris de noi | testele trec, placa face altceva | e etichetat SIMULARE; se compară cu jurnalul probei tinygrad (partea P) și cu fereastra B0 |

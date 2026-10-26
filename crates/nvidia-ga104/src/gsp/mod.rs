@@ -22,10 +22,12 @@
 //! re-written here (docs/PROVENANCE.md). They are firmware ABI: valid for
 //! 570.144 only, which is what [`crate::firmware`] enforces.
 //!
-//! Anything that would touch the real board (Bus Master, falcon registers,
-//! the doorbell) is *not* implemented; it needs a [`HardwareWritePermit`],
-//! which only exists when the crate is built with the `hw-write` feature
-//! (off by default) and is meant for the workstation window with Adrian.
+//! Register writes (falcon registers, the doorbell) exist only in [`falcon`]
+//! and [`sequencer`], through `falcon::GuardedBar0`: GSP/SEC2 windows only,
+//! journaled, and on a real BAR only with a [`HardwareWritePermit`], which
+//! exists only when the crate is built with the `hw-write` feature (off by
+//! default) and is meant for the workstation window with Adrian. Bus Master
+//! and DMA are not implemented.
 
 pub mod elf;
 pub mod falcon;
