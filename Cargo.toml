@@ -8,6 +8,7 @@ members = [
     "crates/gpu-compute",
     "crates/nvidia-ga104",
     "crates/gpu-sim",
+    "crates/nvidia-rm570",
 ]
 
 [workspace.package]
@@ -26,6 +27,7 @@ gpu-command = { path = "crates/gpu-command" }
 gpu-compute = { path = "crates/gpu-compute" }
 nvidia-ga104 = { path = "crates/nvidia-ga104" }
 gpu-sim = { path = "crates/gpu-sim" }
+nvidia-rm570 = { path = "crates/nvidia-rm570" }
 
 [profile.release]
 opt-level = 2

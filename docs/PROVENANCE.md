@@ -1,7 +1,8 @@
 # Proveniență și licențe
 
 Tot codul din `crates/` și `integration/` e **original**, MIT, scris după documentația de mai jos. Niciun fișier sursă străin
-nu a fost copiat. Nicio dependență externă (doar `core`/`alloc`, și `std` în teste). Niciun firmware în repository.
+nu a fost copiat. **Singura excepție (C-20 B, aprobată în hub):** `crates/nvidia-rm570/src/regs.rs` și `structs.rs` sunt **generate automat**
+din antetele MIT ale NVIDIA (570.144), cu notificarea lor în `crates/nvidia-rm570/LICENSE-NVIDIA`. Nicio dependență externă (doar `core`/`alloc`, și `std` în teste). Unelte doar pe gazdă (nu intră în OS): Mesa NAK (`tools/nak/`), bindgen-cli 0.71.1 (`tools/gen-rm570/`). Niciun firmware în repository.
 
 Regula clean-room a OS-ului (`cyber-universe/docs/CLEAN_ROOM.md`): sursele deschise se citesc pentru idei, nu se copiază;
 codul GPL nu se copiază niciodată.
@@ -22,6 +23,7 @@ codul GPL nu se copiază niciodată.
 | Patch nova-core pe LKML „firmware: process and prepare the GSP firmware” (v4 07/11, sep. 2025), citit pe lkml.iu.edu | GPL-2.0 | doar formatul radix3 (pagini 4 KiB, intrări de 8 octeți, cele trei niveluri) (`radix3.rs`); **niciun cod** |
 | Antetele NVIDIA open-gpu-kernel-modules, eticheta `570.144` (raw.githubusercontent.com): `gsp_fw_wpr_meta.h`, `msgq_priv.h`, `msgq.h`, `message_queue_priv.h`, `g_rpc-message-header.h`, `rpc_headers.h`, `rpc_global_enums.h`, `gsp_init_args.h`, `libos_init_args.h`, `g_rpc-structures.h` (doar `rpc_run_cpu_sequencer_v17_00`); `msgq.c`, `message_queue_cpu.c` citite pentru reguli (pointeri, SWAP_RX, mărimi, suma de control) | MIT | **interfața ABI** (offset-uri, constante, numere de funcții) rescrisă în `gsp/wpr_meta.rs`, `gsp/libos.rs`, `gsp/msgq.rs`, `gsp/rpc.rs`; **niciun cod copiat**; sesiunea 5, 26 oct 2026 |
 | nouveau `gsp/r535.c` (MIT), din cunoaștere generală | MIT | DEDUS: ce regiune FB intră în ce câmp al `GspFwWprMeta`, cele 4 regiuni LibOS și funcția `id8`, numele secțiunilor ELF `.fwimage` / `.fwsignature_ga10x` — de confirmat pe placă |
+| NVIDIA open-gpu-kernel-modules, tag `570.144`, commit `8ec351aeb96a` (github.com/NVIDIA/open-gpu-kernel-modules): `swref/published/ampere/ga102/{dev_boot,dev_falcon_v4(+_addendum),dev_falcon_second_pri,dev_fbif_v4,dev_gsp(+_addendum),dev_sec_pri(+_addendum),dev_riscv_pri,dev_gc6_island(+_addendum)}.h`, `turing/tu102/dev_fb.h`, `gsp_fw_wpr_meta.h`, `msgq_priv.h`, `gsp_init_args.h` | MIT (SPDX în fiecare antet; `COPYING`) | **generare automată** (C-20 B, sesiunea 6): `tools/gen-rm570/gen_regs.py` (scris de noi, doar biblioteca standard Python) pentru registre și **bindgen-cli 0.71.1** (unealtă pe gazdă, versiune fixată) pentru structuri → crate-ul `nvidia-rm570` (doar date), cu notificarea MIT NVIDIA. Folosit deocamdată doar în teste, ca verificare a offset-urilor scrise de mână |
 | NIST FIPS 180-4 (SHA-256) și vectorii de test NIST | standard public | `sha256.rs`, scris după specificație |
 | Specificația ELF-64 (System V gABI) | publică | `gsp/elf.rs` (căutarea unei secțiuni după nume; conținutul rămâne opac) |
 | linux-firmware (gitlab.com/kernel-firmware), commit `050f0a1e3a76`, tag `20261019` | `LICENCE.nvidia` | **doar** mărimea și SHA-256 ale celor 4 fișiere GSP 570.144 (calculate cu `sha256sum`, fișierele șterse imediat, conținutul neanalizat; s-a verificat doar că `gsp-570.144.bin` începe cu semnătura ELF, cum face orice încărcător) |

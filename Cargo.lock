@@ -52,4 +52,9 @@ dependencies = [
  "gpu-core",
  "gpu-pci",
  "gpu-sim",
+ "nvidia-rm570",
 ]
+
+[[package]]
+name = "nvidia-rm570"
+version = "0.1.0"

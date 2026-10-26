@@ -1,0 +1,9 @@
+[package]
+name = "nvidia-rm570"
+description = "Register offsets and GSP-RM structures generated from NVIDIA's MIT headers (open-gpu-kernel-modules 570.144); data only, no hardware access"
+version.workspace = true
+edition.workspace = true
+license = "MIT"
+authors.workspace = true
+
+[dependencies]
