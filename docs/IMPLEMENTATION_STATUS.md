@@ -1,5 +1,33 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 7 — 27 octombrie 2026, ~01:25–02:05 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Tot ce scrie „PASS” e pe calculatorul gazdă: SIMULARE (modele software),
+aritmetică sau compilare. Comanda lucrată: **C-20**, pașii rămași din sesiunea 6: D partea 2, I4c, E.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| C-20 reluat | hub `COMENZI.md` C-20 → „reluat 01:28, sesiunea 7” | gata |
+| B (completare) | generatorul `tools/gen-rm570` + `dev_bus.h` (`NV_PBUS_SW_SCRATCH`), `rmgspseq.h` (codurile secvențiatorului), `rmRiscvUcode.h` (`RM_RISCV_UCODE_DESC`, 84 B), toate NVIDIA MIT 570.144; eticheta sursei din `regs.rs` corectată (scria „open-gpu-doc” la antetele din open-gpu-kernel-modules) | PASS (verificările bindgen la compilare) |
+| **D partea 2a** GSP fals pe registre | `gpu-sim::fake_gsp`: falcon-ul GSP + SEC2 (reset, „scrubbing”, nucleu falcon/RISC-V, start/oprire, mailbox), WPR2 scris după FWSEC, Booter care pornește RISC-V-ul, soneria; 5 defecte de simulat. `nvidia-ga104::gsp::falcon`: I6 (`fwsec_frts`) și I7 (`booter_load`) pe registre, prin `GuardedBar0` (scrieri **doar** în ferestrele GSP/SEC2, fiecare în jurnal cu valoarea înainte/după; pe placa reală cere `HardwareWritePermit` = opțiunea `hw-write`) | PASS (SIMULARE): 5 teste — secvența întreagă; fiecare defect raportat (nu sărit); ordine greșită, regiune FRTS greșită, FWSEC de două ori, încărcătorul lipsă = eroare, niciodată succes fictiv; BAR „real” fără permis = refuzat, 0 scrieri |
+| **D partea 2b** secvențiator + INIT_DONE | `gsp::sequencer`: cele 9 comenzi (din antet), executate doar prin `GuardedBar0`; `wait_init_done` (sare peste evenimentele străine, rulează cererile secvențiatorului, limită de timp) | PASS (SIMULARE): 4 teste — **pornire simulată cap-coadă: I6 → I7 → cozi → SET_SYSTEM_INFO/SET_REGISTRY + sonerie → cerere de secvențiator (6 comenzi, inclusiv CORE_RESET/CORE_RESUME) → GSP_INIT_DONE**; scrieri cerute în afara GSP/SEC2 refuzate; GSP tăcut = limită de timp |
+| **I4c** antetele fișierelor | `nvidia-ga104::fw_hdr`: `nvfw_bin_hdr` (0x10de), descriptorul RISC-V (generat), „HS v2” al Booter-ului (semnături, `patch_loc`/`patch_sig`, aplicații); totul verificat să stea în fișier; conținutul rămâne opac | PASS (SIMULARE): 3 teste pe fișiere sintetice; pe fișierele reale: NOT TESTED |
+| **E** oracolul FMA | `gpu-compute::math::fma_f32` (o rotunjire, no_std) — **identic bit cu bit cu `std` pe 2 000 000 de cazuri** (testul prinde o implementare greșită); `ftz`, `reference::add_ftz`, `matmul_fma`, `matmul_fma_ftz` | PASS (gazdă) |
+| **E** NAK + matmul | Mesa 25.0.7 reconstruit în cloud (`add64` iese **identic**, aceeași sumă); `build.sh kernel <nume>`; `matmul_naive.comp` (treapta 1) și `matmul_coalesced.comp` (treapta 2): fiecare 51 de instrucțiuni, 816 B, 19 registre. **Constatare:** NAK folosește `ffma.ftz` / `fadd.ftz` (subnormalele aduse la 0) → oracolele programelor GPU sunt variantele `_ftz`; baza grupurilor stă în cbuf0 0x0 (trebuie 0) | PASS (SIMULARE): treptele 1 și 2 lansate prin pushbuffer + QMD în procesorul de comenzi simulat, **identice bit cu bit** cu `matmul_fma_ftz`; nimic scris după C; grilă prea mică = C parțial; program schimbat = refuzat. Programul „rulează” pe procesor, nu pe placă |
+| CI | rulările 28–31 | verificate la final |
+| Compatibilitate OS | `git diff 41e44ba HEAD` pe `gpu-core`, `gpu-pci`, `nvidia-ga104`, `gpu-compute`: tot singura linie `pub` = valoarea `GSP_VERSION` (sesiunea 5). Nou: `Mmio::is_simulation` (metodă cu valoare implicită, compatibilă) | PASS (doar adăugări) |
+
+Verificări (`tools/check.sh`, rustc 1.99.1 stable): format PASS, clippy `-D warnings` PASS, **176 de teste PASS** (1 ignorat: viteza),
+build `x86_64-unknown-none` PASS; `nvidia-ga104 --features hw-write`: clippy + teste PASS. Nicio scriere în placă.
+
+**C-20:** B, C, D, E (treptele 1–2) gata în SIMULARE; A rămâne doar pregătită (se rulează doar cu Adrian de față).
+**Următorul pas:** fără placă: treapta 3 matmul (memorie partajată) și 2D blocktiling; încărcătorul DMA al ucode-ului (I6/I7, în spatele
+`hw-write`); `GspSystemInfo` (I8c'); „golden image” (I8e). Cu placa (B0, 27–28 oct): I0–I3 + FWSEC + fișierele de pe stick, 0 scrieri;
+apoi, cu Adrian: proba P (tinygrad), care dă jurnalul de comparat cu GSP-ul fals.
+**De la Adrian:** fereastra B0 (lista în `TEST_MATRIX.md`).
+
+---
+
 ## Sesiunea 6 — 26 octombrie 2026, ~19:25–19:50 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Tot ce scrie „PASS” e pe calculatorul gazdă: SIMULARE (modele software),

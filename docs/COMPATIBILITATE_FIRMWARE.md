@@ -70,4 +70,4 @@ Verificarea pe Windows, înainte de copiere (PowerShell): `Get-FileHash .\gsp-57
 
 **Sesiunea 6:** toate offset-urile scrise de mână în sesiunea 5 (`GspFwWprMeta`, cozile msgq, `GSP_ARGUMENTS_CACHED`, GFW_BOOT, codificarea pushbuffer/GPFIFO) au fost comparate automat cu valorile generate din antete: **toate egale** (`crates/nvidia-ga104/tests/rm570_crosscheck.rs`).
 
-**Sesiunea 7 (27 oct):** I6, I7, I8d au cod (SIMULARE pe `gpu-sim::fake_gsp`), I4c are cod (SIMULARE pe fișiere sintetice). Nimic nu a rulat pe placă.
+**Sesiunea 7 (27 oct):** I6, I7, I8d au cod (SIMULARE pe `gpu-sim::fake_gsp`), I4c are cod (SIMULARE pe fișiere sintetice); după I10: matmul treptele 1–2 compilate cu NAK (`ffma.ftz`) și lansate în modelul de comenzi, oracol `matmul_fma_ftz` (`tools/nak/README.md`). Nimic nu a rulat pe placă.

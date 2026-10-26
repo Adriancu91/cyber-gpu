@@ -34,6 +34,15 @@ gpu-compute  = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "41e44ba
   probei tinygrad) — **doar SIMULARE / teste**.
 - Nimic nu scrie în placă. Interfața veche (inclusiv tot ce folosește os-191 de la `dac2e32`) e neschimbată.
 
+## Nou în sesiunea 7 (27 oct noaptea) — doar adăugări, opțional pentru OS
+- `gpu-core::hal::Mmio` are o **metodă nouă cu valoare implicită**: `fn is_simulation(&self) -> bool { false }`. Implementările OS-ului
+  se construiesc neschimbate; **nu o suprascrieți** pentru BAR-ul real (doar modelele `gpu-sim` întorc `true`).
+- `nvidia-ga104::gsp::falcon` (I6–I7 pe registre) și `gsp::sequencer` (secvențiatorul GSP + așteptarea `GSP_INIT_DONE`): pe un BAR real cer
+  `HardwareWritePermit` (opțiunea `hw-write`, oprită implicit) → **OS-ul nu trebuie să le cheme** în afara ferestrei cu Adrian.
+- `nvidia-ga104::fw_hdr` (antetele fișierelor `bootloader` / `booter_load`, doar citire din bytes).
+- `gpu-compute`: `math::fma_f32`, `math::ftz`, `reference::add_ftz`, `reference::matmul_fma`, `reference::matmul_fma_ftz` (oracolele programelor NAK).
+- `gpu-sim`: `fake_gsp` (GSP fals pe registre), `cmdproc::matmul_naive_on_cpu` / `matmul_coalesced_on_cpu`.
+
 ## Promisiunea de compatibilitate
 Față de `41e44ba`, interfața publică a `gpu-core`, `gpu-pci`, `nvidia-ga104` (probe) și `gpu-compute` se schimbă **doar prin adăugare**.
 Verificare: `git diff 41e44ba HEAD -- crates/gpu-core crates/gpu-pci crates/nvidia-ga104 crates/gpu-compute | grep -E '^-.*\bpub\b'`
