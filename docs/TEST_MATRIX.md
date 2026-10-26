@@ -53,7 +53,39 @@ Cod: ramura `g0-g2-fundatie`. Toolchain: rustc 1.99.1 `stable-x86_64-pc-windows-
    gpu       | test-shell       | success | TASTATURA: astept taste;;cyber> gpu;;gpu: nicio placa GA104;;cyber> gpu plan;;I10;;cyber> test-gata;;TEST READY | | keys=g p u ret g p u spc p l a n ret t e s t minus g a t a ret
    ```
 
-### B. Pe workstation — numai în fereastra aprobată de Adrian (Kronos oprit)
+### B0. Fereastra de pe workstation, 27 sau 28 oct 2026 (~30 min) — lista exactă (actualizată 26 oct, sesiunea 5)
+
+**Scop:** primele citiri reale ale plăcii (I0–I3, FWSEC) + verificarea fișierelor firmware de pe stick (I4).
+**Nimic din fereastra asta nu scrie în placa video.** Pașii I5+ (Bus Master, falcon, GSP) **nu** se fac acum: codul care scrie în placă
+nu e încă scris; când va fi, va avea o fereastră separată, cu Adrian de față și o listă nouă.
+
+**Pregătire (acasă sau la birou, înainte; ~10 min, o singură dată):**
+1. Release-ul OS de folosit: cel scos de sesiunea OS pentru C-19 (are `gpu gfw`, `gpu vbios`). Dacă OS-ul are și comanda `gpu firmware`
+   (propunerea din `integration/cyber-universe/I4_gpu-firmware.md`), cu atât mai bine; dacă nu, pasul 8 de mai jos se sare.
+2. Pe stick, în rădăcina lui, creează folderele `firmware\nvidia\ga102\gsp\` și copiază acolo, din pachetul oficial `linux-firmware`
+   (https://gitlab.com/kernel-firmware/linux-firmware → folderul `nvidia/ga102/gsp/`, butonul de descărcare al fiecărui fișier):
+   `booter_load-570.144.bin`, `booter_unload-570.144.bin`, `bootloader-570.144.bin`, `gsp-570.144.bin` (~61 MB) și, în `firmware\`,
+   fișierul de licență `LICENCE.nvidia`. **Nu le pune pe GitHub, în hub sau în alt repo.**
+3. Verifică pe Windows sumele (PowerShell, în folderul cu fișierele): `Get-FileHash *.bin -Algorithm SHA256`.
+   Trebuie să iasă exact valorile din `docs/COMPATIBILITATE_FIRMWARE.md` (de ex. `gsp-570.144.bin` → `A8C3EBEE…7F7F`). Dacă una diferă: alt fișier, nu-l folosi.
+
+**În fereastră (Kronos oprit și salvat; Secure Boot oprit doar pentru test):**
+| # | Ce faci | Ce trebuie să vezi (PASS) | Dacă nu |
+|---|---|---|---|
+| 1 | Windows: `powershell -ExecutionPolicy Bypass -File tools\k0-inventar-workstation.ps1` | fișierul `rezultate\k0-*.txt` | se notează, se continuă |
+| 2 | Repornire, F12 → stick → **Esc** → `cyber>` | promptul | oprire, poză |
+| 3 | `lspci` | `10de:2482` la `b3:00.0` | oprire (placa nu e văzută) |
+| 4 | `gpu identifica` + `log gpu 40` | RTX 3070 Ti, BOOT_0 `& 0x1ff00000 = 0x17400000`, „a refuzat 0 scrieri” | oprire, poză |
+| 5 | `gpu plan` | oprirea la **I4** (Release fixat înainte de sesiunea 5) sau **I5** (după) | poză, se continuă |
+| 6 | `gpu gfw` (I2) | `0x118128` bit 0 = 1, progres `0xff`, < 4 s, 0 scrieri | oprire (nu se trece la 7) |
+| 7 | `gpu vbios` (I3, I3b) | `aa55` sau `NVGI` la `0x300000`; PCI-AT + EFI + FWSEC (`0xe0`); BIT cu `0x70`; FWSEC_PROD (`0x85`) găsit; 0 scrieri; ecranul viu | poză cu valorile; BLOCKED dacă nu e semnătură |
+| 8 | `gpu firmware` (I4, dacă există în OS) | 4 rânduri „ok” (nume, mărime, SHA-256 = cele din tabel); 0 scrieri în placă | poză; „marimea”/„SHA-256” = alt fișier pe stick |
+| 9 | `hw`, `log pci 40` | — (doar pentru context) | — |
+| 10 | `reboot` → Windows, Secure Boot pe **Enabled**, Kronos pornit, `nvidia-smi` OK | Kronos merge ca înainte | anunță sesiunea Kronos |
+
+**Ce trimiți înapoi:** pozele de la pașii 3–8 (sau textul de pe ecran) → hub `rezultate/2026-10-2x-workstation-gpu/`. Durată: ~20–30 min.
+
+### B. Pe workstation — numai în fereastra aprobată de Adrian (Kronos oprit) — lista detaliată din sesiunea 2 (context)
 Condiții: Kronos oprit și salvat; Adrian prezent; stick cu Release-ul care conține patch-ul; Secure Boot oprit temporar (decizia lui Adrian).
 1. **Windows, înainte:** `powershell -ExecutionPolicy Bypass -File tools\k0-inventar-workstation.ps1` → fișierul `rezultate\k0-*.txt`.
    Notează manual din BIOS: IOMMU (AMD-Vi/VT-d), Above 4G Decoding, Resizable BAR, CSM.
