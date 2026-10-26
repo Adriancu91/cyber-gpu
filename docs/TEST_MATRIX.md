@@ -95,6 +95,35 @@ nu e încă scris; când va fi, va avea o fereastră separată, cu Adrian de fa�
 
 **Ce trimiți înapoi:** pozele de la pașii 3–8 (sau textul de pe ecran) → hub `rezultate/2026-10-2x-workstation-gpu/`. Durată: ~20–30 min.
 
+### P. Proba de referință cu tinygrad (C-20 A) — PREGĂTITĂ, NERULATĂ; doar cu Adrian de față, după B0
+**Ce e:** pornim workstation-ul de pe un stick cu Linux (nu Cyber Universe) și lăsăm driverul tinygrad (MIT) să pornească placa și să facă
+o singură adunare de 64 de numere. Fiecare scriere în registre se notează (`NV_DEBUG=4`) → „jurnalul de aur” cu care se compară apoi
+driverul nostru, întâi în simulare (`gpu-sim::golden_log`). **Asta scrie în placa reală** (prin tinygrad), deci intră doar în fereastra aprobată.
+Ce NU prinde jurnalul: citirile, soneria (`BAR0+0xbb0000`), scrierile în VRAM prin BAR1 și în memoria calculatorului.
+
+Pregătire (cu o zi înainte, pe laptop; ~20 min):
+1. Un al doilea stick: Ubuntu 24.04 LTS „live” (de pe ubuntu.com, scris cu Rufus/balenaEtcher). La pornire, la meniul GRUB, `e` și se adaugă
+   la linia `linux`: `modprobe.blacklist=nouveau,nvidia` (altfel nouveau ia placa).
+2. Pe stickul cu date (cel de la B0) trebuie să existe deja `firmware/nvidia/ga102/gsp/*-570.144.bin` + `tools/proba-tinygrad/proba.sh`
+   (copiat din acest repo).
+3. Laptopul ThinkPad în aceeași rețea, cu `ssh` (comenzile se dau de acolo: ecranul workstation-ului se stinge când tinygrad preia placa).
+
+În fereastră (~30 min, Kronos oprit și salvat):
+| Min | Pas | Comanda (pe workstation, prin SSH) |
+|---|---|---|
+| 0–5 | pornire de pe stick-ul Ubuntu (cu blacklist); rețea prin cablu; `sudo apt install -y openssh-server zstd python3-venv git` | — |
+| 5–8 | de pe laptop: `ssh ubuntu@<ip>`; găsirea stickului cu date: `lsblk` → ex. `/media/ubuntu/CYBER` | `lsblk` |
+| 8–25 | proba | `sudo CONFIRM_ADRIAN=da bash /media/ubuntu/CYBER/tools/proba-tinygrad/proba.sh /media/ubuntu/CYBER` |
+| 25–28 | repornire în Windows; `nvidia-smi` arată placa; Kronos pornește | — |
+| 28–30 | folderul `proba-tinygrad/<data>/` de pe stick → hub `rezultate/<data>-proba-tinygrad/` (`jurnal.txt`, `consola.txt`, `SHA256SUMS`) | — |
+
+Scriptul se oprește singur (fără nicio scriere) dacă: lipsește `CONFIRM_ADRIAN=da`, placa `10de:2482` nu e găsită, nouveau/nvidia e încărcat,
+sumele SHA-256 ale firmware-ului nu se potrivesc. Fixat: tinygrad `9cf7829a6`, tinymesa `25.2.7.2` (NAK, compilatorul ales de Adrian).
+Rezultat așteptat: o linie `PROBA: OK` + câteva mii de linii `wreg:`. Orice altceva = notat ca atare, fără reîncercări în aceeași fereastră.
+DEDUS, de verificat atunci: tinygrad citește `/sys/bus/pci/...` și `/proc/self/pagemap` (root, VT-d oprit — ca la noi) și nu descarcă
+nimic în afară de pachetele Python (firmware-ul îl ia din `/lib/firmware`, unde îl pune scriptul).
+După: `gpu-sim::golden_log::parse` citește `jurnal.txt` (testat pe un jurnal scris de mână, 3 teste SIMULARE).
+
 ### B. Pe workstation — numai în fereastra aprobată de Adrian (Kronos oprit) — lista detaliată din sesiunea 2 (context)
 Condiții: Kronos oprit și salvat; Adrian prezent; stick cu Release-ul care conține patch-ul; Secure Boot oprit temporar (decizia lui Adrian).
 1. **Windows, înainte:** `powershell -ExecutionPolicy Bypass -File tools\k0-inventar-workstation.ps1` → fișierul `rezultate\k0-*.txt`.
