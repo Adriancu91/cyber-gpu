@@ -1,6 +1,6 @@
 # Cum folosește OS-ul crate-urile cyber-gpu (pentru sesiunea cyber-universe)
 
-Actualizat: 24 octombrie 2026. Nimic de aici nu e aplicat în `cyber-universe`; OS-ul decide singur.
+Actualizat: 26 octombrie 2026 (sesiunea 5). Nimic de aici nu e aplicat în `cyber-universe`; OS-ul decide singur.
 **Nimic nu e testat pe RTX 3070 Ti.**
 
 ## Starea de acum (C-16, făcut de sesiunea OS)
@@ -15,6 +15,16 @@ gpu-sim      = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "41e44ba
 gpu-compute  = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "41e44ba" }               # programe ring 3
 ```
 
+## Pentru C-19 (mutarea fixării) — 26 oct 2026
+- **Nu există ramura `main`** în cyber-gpu: tot lucrul e pe `g0-g2-fundatie` (nu o creăm noi, regula sesiunii). Fixarea se face pe un
+  **commit** de pe `g0-g2-fundatie` cu CI verde — recomandat: ultimul commit „Stare: sesiunea 5 …” (vezi `docs/IMPLEMENTATION_STATUS.md`).
+- `gfw::wait_gfw_boot`, `vbios::read_layout`, `fwsec::locate` sunt neschimbate față de sesiunea 4.
+- Nou (doar adăugări): `firmware::{GSP_570_144, load_gsp_set, verify, FirmwareSource, STICK_DIR}`, `sha256`, `gsp::*` (structurile GSP-RM
+  570.144, doar SIMULARE), `Ga104Backend::{set_firmware, has_firmware}`. Propunere separată: `I4_gpu-firmware.md` (comanda `gpu firmware`).
+- Schimbări de valoare: `firmware::GSP_VERSION` = `"570.144"`; `initialize()` fără firmware se oprește la I4 cu mesajul
+  „I4: firmware-ul GSP 570.144 nu a fost dat …” (înainte: blocaj de licență la I4); `gpu plan` va arăta I4 ca implementat și oprirea la I5.
+  Dacă un scenariu CI al OS-ului verifică textul vechi de la I4, trebuie actualizat.
+
 ## Promisiunea de compatibilitate
 Față de `41e44ba`, interfața publică a `gpu-core`, `gpu-pci`, `nvidia-ga104` (probe) și `gpu-compute` se schimbă **doar prin adăugare**.
 Verificare: `git diff 41e44ba HEAD -- crates/gpu-core crates/gpu-pci crates/nvidia-ga104 crates/gpu-compute | grep -E '^-.*\bpub\b'`
@@ -27,6 +37,8 @@ nu întoarce nimic (24 oct). O schimbare incompatibilă, dacă devine inevitabil
 | `nvidia-ga104::vbios` | I3: citește VBIOS prin fereastra PROM, lanț PCIR/NPDE, tabela BIT | nu | SIMULARE (imagini sintetice) |
 | `nvidia-ga104::fwsec` | localizează descriptorul FWSEC în VBIOS (ucode-ul nu se citește) | nu | SIMULARE |
 | `nvidia-ga104::fb_layout`, `radix3` | aritmetică pentru zonele GSP din VRAM și lista de pagini | nu (calcul pur) | gazdă |
+| `nvidia-ga104::firmware` (I4), `sha256` | citește și verifică fișierele GSP 570.144 de pe stick (mărime + SHA-256) | nu | SIMULARE (sumele: din fișierele oficiale) |
+| `nvidia-ga104::gsp` | WPR meta, argumentele LibOS, cozile de mesaje, RPC (570.144) | nu (nimic nu atinge placa) | SIMULARE |
 | `gpu-compute::rows` | softmax cauzal, atenție, cross-entropy pe felii de rânduri (mai multe nuclee) | — (procesor) | gazdă, bit cu bit |
 
 ## Exemplu minimal: identificarea plăcii (doar citire)

@@ -33,7 +33,7 @@ imagini sintetice). **Nimic din tabel nu e „confirmat” pe placă**: nicio li
 | I8c | Conținutul `GspSystemInfo` (SetSystemInfo) și tabela registrului (SetRegistry) | `gsp_static_config.h`, `rpc.h`@570.144 (MIT) | — | 570.144 | I8a | — | — | necunoscut (nescris) |
 | I8d | Secvențiatorul CPU (`GSP_RUN_CPU_SEQUENCER`) | `g_rpc-structures.h` (`rpc_run_cpu_sequencer_v17_00`)@570.144 | — | antet 40 B + cuvinte de comandă | I8a | `nvidia-ga104/src/gsp/rpc.rs` (`decode_sequencer`) | `sequencer_header_decodes_without_executing` | SIMULARE (doar citirea antetului; executarea = scrieri în placă, nescrisă) |
 | I9 | Canal GPFIFO + `AMPERE_COMPUTE_B` prin RM | open-gpu-doc `clc56f.h`, `clc7c0.h` (MIT) | — | clasele 0xC56F, 0xC7C0 | I8 | `nvidia-ga104/src/push.rs` (doar codificarea) | `push::tests::*` | SIMULARE (codificare neverificată) |
-| I10 | Primul program (adunarea a 64 de f32) | Mesa NAK (MIT), `TOOLCHAIN.md` | — | SASS SM86 | I9, unealta NAK | — | — | necunoscut (unealta NAK de pregătit) |
+| I10 | Primul program (adunarea a 64 de f32) | Mesa 25.0.7 NAK (MIT), `tools/nak/` | — | SASS SM86, 15 instrucțiuni / 240 B; argumentele în cbuf 0 la 0x28/0x30/0x38; 19 registre | I9, QMD v3 | `tools/nak/out/add64.sm86.sass` (date, nu cod Rust) | `sh tools/nak/build.sh add64` (determinist, SHA-256 `a890b75c…98ce`) | parțial: compilat pe gazdă, **nerulat** |
 
 ## Fișierele pe care le pune Adrian pe stick (570.144)
 Toate din pachetul oficial `linux-firmware` (sau https://gitlab.com/kernel-firmware/linux-firmware, folderul `nvidia/ga102/gsp/`).
