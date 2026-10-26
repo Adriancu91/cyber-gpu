@@ -4,12 +4,13 @@
 //! processor model. The "program" runs on the CPU (`matmul_naive_on_cpu`,
 //! oracle `reference::matmul_fma_ftz`); nothing here runs on the RTX 3070 Ti.
 
-use gpu_sim::cmdproc::{CommandProcessor, Event, matmul_naive_on_cpu};
+use gpu_sim::cmdproc::{CommandProcessor, Event, matmul_coalesced_on_cpu, matmul_naive_on_cpu};
 use nvidia_ga104::push::{self, PushBuf};
 use nvidia_ga104::qmd::ComputeQmd;
 use nvidia_rm570::regs::clc7c0 as c;
 
 const MATMUL: &[u8] = include_bytes!("../../../tools/nak/out/matmul_naive.sm86.sass");
+const COALESCED: &[u8] = include_bytes!("../../../tools/nak/out/matmul_coalesced.sm86.sass");
 const PROG: u64 = 0x10_0000;
 const CBUF: u64 = 0x20_0000;
 const SEM: u64 = 0x30_0000;
@@ -138,4 +139,19 @@ fn wrong_block_shape_or_changed_program_is_refused() {
     cb[0] = 1; // non-zero workgroup base: not modelled
     cp.mem.write(CBUF, &cb);
     assert!(launch(&mut cp, [1, 1, 1]).is_err());
+}
+
+#[test]
+fn coalesced_step_gives_the_same_bits_with_the_grid_swapped() {
+    let (m, k, n) = (37usize, 19usize, 21usize);
+    let (mut cp, a, b) = setup(m as u32, k as u32, n as u32);
+    cp.register_program(COALESCED, matmul_coalesced_on_cpu);
+    cp.mem.write(PROG, COALESCED);
+    launch(&mut cp, [2, 3, 1]).unwrap(); // x covers 32 >= 21 columns, y 48 >= 37 rows
+    assert!(matches!(cp.events[1], Event::Launch { program: 1, .. }));
+    let got = cp.mem.read_f32s(C, m * n).unwrap();
+    let mut want = vec![0.0; m * n];
+    gpu_compute::reference::matmul_fma_ftz(&a, &b, &mut want, m, k, n).unwrap();
+    assert_eq!(bits(&got), bits(&want));
+    assert_ne!(COALESCED, MATMUL);
 }

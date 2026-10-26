@@ -1,0 +1,36 @@
+// Matmul step 2 (siboehm SGEMM_CUDA kernel 2 "global memory coalescing", MIT, idea only): C[M,N] = A[M,K] * B[K,N],
+// row-major f32, one thread per element of C, 16x16 threads per workgroup.
+// Thread x -> column, y -> row: neighbouring threads of a warp read neighbouring
+// B elements and write neighbouring C elements (the only change from step 1). The products are accumulated with `acc += a * b`; SPIR-V
+// allows the compiler to contract that into one fused multiply-add (FFMA), so the
+// oracle is gpu-compute::reference::matmul_fma (tools/nak/README.md says what NAK emitted).
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+
+layout(push_constant) uniform Args {
+    In a;
+    In b;
+    Out c;
+    uint m;
+    uint n;
+    uint k;
+} args;
+
+void main() {
+    uint row = gl_GlobalInvocationID.y;
+    uint col = gl_GlobalInvocationID.x;
+    if (row >= args.m || col >= args.n) {
+        return;
+    }
+    float acc = 0.0;
+    for (uint p = 0; p < args.k; p++) {
+        acc += args.a.v[row * args.k + p] * args.b.v[p * args.n + col];
+    }
+    args.c.v[row * args.n + col] = acc;
+}

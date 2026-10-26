@@ -38,6 +38,10 @@ cu rezultatul comparat bit cu bit cu `gpu-compute::reference::add`.
 | Argumente în bufferul constant 0 | a/b/c la 0x28/0x30/0x38 (ca la add64), **m/n/k la 0x40/0x44/0x48**; **baza grupurilor la 0x0/0x4** (NVK o adună la indicele blocului: lansatorul nostru trebuie s-o lase 0) |
 | Aritmetica | **`ffma.ftz`**: înmulțire + adunare într-o singură rotunjire, cu numerele subnormale aduse la 0 (FTZ). Și `add64` folosește **`fadd.ftz`** |
 
+**Treapta 2** (`sh tools/nak/build.sh matmul_coalesced`): aceeași, cu firul x → coloana (citiri/scrieri vecine pentru fire vecine). Tot 51 de
+instrucțiuni, 816 octeți, 19 registre, `ffma.ftz`; SHA-256 `2895cb3b765a56ba46eb73554322c0bb5af9057e425663b4816caa2b2cf8f929`. În model dă **aceiași biți**
+ca treapta 1 (doar ordinea firelor diferă); câștigul de viteză (×6 la siboehm pe A6000) se poate vedea **doar pe placă**.
+
 **Decizia pentru comparație (C-20 E, „tratarea FMA”):** oracolul fiecărui program NAK e funcția pe care o calculează codul compilat:
 `reference::add_ftz` pentru `add64`, `reference::matmul_fma_ftz` pentru matmul (`gpu-compute::math::fma_f32` = o singură rotunjire, verificată bit cu bit
 față de `std` pe 2 milioane de cazuri). `reference::matmul` (două rotunjiri, fără FTZ) rămâne oracolul backend-ului CPU; diferențele dintre ele sunt

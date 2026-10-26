@@ -383,6 +383,16 @@ pub fn add64_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
 /// y → column; 16×16 threads per block; threads outside C return. Each
 /// element is `reference::matmul_fma_ftz` (the dump shows `ffma.ftz`).
 pub fn matmul_naive_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    matmul_on_cpu(l, false)
+}
+
+/// Step 2 (`matmul_coalesced.sm86.sass`): the same, with thread x → column
+/// and y → row (the grid's x covers the columns).
+pub fn matmul_coalesced_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    matmul_on_cpu(l, true)
+}
+
+fn matmul_on_cpu(l: &mut Launch<'_>, x_is_col: bool) -> GpuResult<()> {
     if l.block != [16, 16, 1] || l.grid[2] != 1 {
         return Err(bad("SIM: matmul_naive cere blocuri de 16x16x1"));
     }
@@ -401,8 +411,8 @@ pub fn matmul_naive_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     let y = l.mem.read_f32s(b, k * n)?;
     let mut out = alloc::vec![0.0f32; m * n];
     gpu_compute::reference::matmul_fma_ftz(&x, &y, &mut out, m, k, n)?;
-    let rows = (l.grid[0] * 16) as usize;
-    let cols = (l.grid[1] * 16) as usize;
+    let (gx, gy) = ((l.grid[0] * 16) as usize, (l.grid[1] * 16) as usize);
+    let (rows, cols) = if x_is_col { (gy, gx) } else { (gx, gy) };
     // Only the elements some thread owns are written (a grid that is too
     // small leaves the rest of C untouched, as the real kernel would).
     for r in 0..m.min(rows) {

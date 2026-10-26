@@ -40,6 +40,9 @@ add64)
 matmul_naive)
     exec sh "$0" kernel matmul_naive 40
     ;;
+matmul_coalesced)
+    exec sh "$0" kernel matmul_coalesced 40
+    ;;
 kernel)
     NAME=${2:?nume}; PUSH=${3:?octeti push constants}
     OUT=$HERE/out; TMP=$(mktemp -d); mkdir -p "$OUT"
@@ -64,6 +67,6 @@ kernel)
     rm -rf "$TMP"
     ;;
 *)
-    echo "usage: $0 mesa|add64|matmul_naive|kernel <nume> <octeti>" >&2; exit 2
+    echo "usage: $0 mesa|add64|matmul_naive|matmul_coalesced|kernel <nume> <octeti>" >&2; exit 2
     ;;
 esac
