@@ -63,13 +63,10 @@ impl Sha256 {
             compress(&mut self.h, &b);
             self.fill = 0;
         }
-        let mut chunks = data.chunks_exact(64);
-        for c in &mut chunks {
-            let mut b = [0u8; 64];
-            b.copy_from_slice(c);
-            compress(&mut self.h, &b);
+        let (blocks, rest) = data.as_chunks::<64>();
+        for b in blocks {
+            compress(&mut self.h, b);
         }
-        let rest = chunks.remainder();
         self.block[..rest.len()].copy_from_slice(rest);
         self.fill = rest.len();
     }
