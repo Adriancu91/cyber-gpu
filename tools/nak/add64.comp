@@ -1,0 +1,24 @@
+// First test program for G5/I10 (docs/TOOLCHAIN.md): c[i] = a[i] + b[i] for 64 f32.
+// One workgroup of 64 threads. The three arrays are passed as 64-bit GPU
+// addresses in push constants (buffer device address), so the compiled code
+// does not depend on Vulkan descriptor sets — only on where push constants
+// live, which tools/nak/README.md records from the NAK dump.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+
+layout(push_constant) uniform Args {
+    In a;
+    In b;
+    Out c;
+} args;
+
+void main() {
+    uint i = gl_LocalInvocationID.x;
+    args.c.v[i] = args.a.v[i] + args.b.v[i];
+}

@@ -1,0 +1,32 @@
+NAK IR after calc_instr_deps:
+block.u 0 L0 [] -> {
+ r0    = s2r sr[0x21]                            // delay=6 wr:0
+ r1    = prmt r0 [0xbbbb] rZ                     // delay=1 wt=000001
+ r2    = shf.l.w.u64 r0 rZ 0x2                   // delay=5
+ r0    = shf.l.w.u64.hi r0 r1 0x2                // delay=1
+ r4 p0 = iadd3 r2 c[0x0][0x28] rZ                // delay=13
+ r5    = iadd3.x r0 c[0x0][0x2c] rZ p0 pF        // delay=6
+ r1    = ld.global.a64.constant.b32 [r4..6]      // delay=4 rd:0 wr:1
+ r4 p0 = iadd3 r2 c[0x0][0x30] rZ                // delay=13 wt=000001
+ r5    = iadd3.x r0 c[0x0][0x34] rZ p0 pF        // delay=6
+ r3    = ld.global.a64.constant.b32 [r4..6]      // delay=6 wr:0
+ r1    = fadd.ftz r1 r3                          // delay=1 wt=000011
+ r2 p0 = iadd3 r2 c[0x0][0x38] rZ                // delay=13
+ r3    = iadd3.x r0 c[0x0][0x3c] rZ p0 pF        // delay=6
+         st.global.a64.strong.sys.b32 [r2..4] r1 // delay=2 rd:0
+         exit                                    // delay=1 wt=000001
+} -> []
+
+Stage: compute
+Instruction count: 15
+Num GPRs: 19
+SLM size: 0
+Encoded shader:
+  00007919 00000000 00002100 000e0c00 00017816 0000bbbb 000000ff 001fc200
+  00027819 00000002 00000aff 000fca00 00007819 00000002 00010a01 000fc200
+  02047a10 00000a00 07f1e0ff 000fda00 00057a10 00000b00 007fe4ff 000fcc00
+  04017381 00000000 001e8900 00004800 02047a10 00000c00 07f1e0ff 001fda00
+  00057a10 00000d00 007fe4ff 000fcc00 04037381 00000000 001e8900 000e0c00
+  01017221 00000003 00010000 003fc200 02027a10 00000e00 07f1e0ff 000fda00
+  00037a10 00000f00 007fe4ff 000fcc00 02007386 00000001 00114900 0001c400
+  0000794d 00000000 03800000 001fc200

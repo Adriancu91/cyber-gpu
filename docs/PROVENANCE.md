@@ -26,7 +26,7 @@ codul GPL nu se copiază niciodată.
 | Specificația ELF-64 (System V gABI) | publică | `gsp/elf.rs` (căutarea unei secțiuni după nume; conținutul rămâne opac) |
 | linux-firmware (gitlab.com/kernel-firmware), commit `050f0a1e3a76`, tag `20261019` | `LICENCE.nvidia` | **doar** mărimea și SHA-256 ale celor 4 fișiere GSP 570.144 (calculate cu `sha256sum`, fișierele șterse imediat, conținutul neanalizat; s-a verificat doar că `gsp-570.144.bin` începe cu semnătura ELF, cum face orice încărcător) |
 | PCI Firmware Specification 3.0 | specificație | antetul ROM, structura PCIR (`vbios.rs`) |
-| Mesa NAK | MIT | identificat ca posibilă unealtă pe gazdă (TOOLCHAIN.md); necopiat |
+| Mesa 25.0.7 (NAK, NVK, drm-shim nouveau; archive.mesa3d.org, SHA-256 verificat) | MIT | **unealtă pe gazdă** (`tools/nak/`, C-18): compilează `add64.comp` pentru SM 8.6; nimic copiat în `crates/`; din sursă s-au citit doar `nak/api.rs` (formatul dump-ului), `nvk_shader.c` și `nouveau_noop.c` (cum se alege cipul) |
 | pci.ids | GPL-2.0+ / BSD-3 | date (ID-uri), citate |
 | linux-firmware `LICENCE.nvidia` | proprietară, redistribuibilă condiționat | inventarul fișierelor; fișierele nu sunt incluse |
 | Abramowitz & Stegun 7.1.26; metode clasice (Newton, reducerea intervalului) | domeniu public / manual | `gpu-compute::math` |

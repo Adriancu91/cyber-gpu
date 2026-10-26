@@ -4,7 +4,7 @@
 | Strat | Azi |
 |---|---|
 | Limbajul sursă al programelor | nedecis (opțiuni mai jos) |
-| Compilator / assembler | nimic al nostru |
+| Compilator / assembler | **Mesa NAK pe gazdă** (`tools/nak/`, C-18); nimic în OS |
 | Formatul binar | SASS SM86 (codificare **nedocumentată oficial**), ambalat de NVIDIA în cubin (ELF) |
 | Loader | inexistent; `KernelRef::Binary` e refuzat de backend-ul GA104 |
 | Protocolul de lansare | QMD V03_00 (`clc7c0qmd.h`, MIT) + metode `AMPERE_COMPUTE_B` — necodificat încă |
@@ -31,3 +31,10 @@ Nu inventăm un format binar. Niciun program nu e „executat pe GPU” până n
 ## Primul program propus (pentru G5)
 Adunarea a doi vectori f32 de 64 de elemente (`OpCode::Add`), un singur bloc de 64 de fire, rezultat comparat bit cu bit cu
 `reference::add` (exact în f32). Avantaj: nicio problemă de rotunjire, deci orice diferență e un defect al lanțului.
+
+## Unealta NAK pe gazdă (sesiunea 5, 26 oct 2026)
+Pregătită și folosită o dată: `tools/nak/` (README, `build.sh`). Mesa 25.0.7 construit în cloud (NVK + NAK + drm-shim nouveau, fără placă),
+`NOUVEAU_CHIPSET=174` (GA104, SM 8.6), `NAK_DEBUG=print`. Primul program, adunarea a 64 de f32 (`tools/nak/add64.comp`), compilat:
+**15 instrucțiuni, 240 de octeți**, `tools/nak/out/add64.sm86.sass` (SHA-256 `a890b75c…98ce`). **Compilat, nerulat**: rularea vine după I8–I10, pe placă.
+Constrângeri pentru lansator (I10): adresele a/b/c în bufferul constant 0 la 0x28/0x30/0x38, ≥ 19 registre, 64×1×1 fire.
+Decizie de lucru: NAK rămâne unealtă pe gazdă (nu în CI: construirea Mesa durează ~15 min); `out/` se regenerează doar când se schimbă programul.
