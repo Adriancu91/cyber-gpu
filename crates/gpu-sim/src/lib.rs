@@ -12,6 +12,7 @@
 extern crate alloc;
 
 pub mod clock;
+pub mod cmdproc;
 pub mod golden_log;
 pub mod mmio;
 pub mod pci;

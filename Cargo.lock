@@ -41,7 +41,9 @@ dependencies = [
 name = "gpu-sim"
 version = "0.1.0"
 dependencies = [
+ "gpu-compute",
  "gpu-core",
+ "nvidia-rm570",
 ]
 
 [[package]]
@@ -49,6 +51,7 @@ name = "nvidia-ga104"
 version = "0.1.0"
 dependencies = [
  "gpu-command",
+ "gpu-compute",
  "gpu-core",
  "gpu-pci",
  "gpu-sim",

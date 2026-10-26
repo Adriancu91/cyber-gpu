@@ -10,11 +10,12 @@ authors.workspace = true
 gpu-core.workspace = true
 gpu-pci.workspace = true
 gpu-command.workspace = true
+# Data only (offsets/fields generated from NVIDIA MIT headers), no_std, no deps.
+nvidia-rm570.workspace = true
 
 [dev-dependencies]
 gpu-sim.workspace = true
-# Test-only: checks our hand-written offsets against the headers (C-20 B).
-nvidia-rm570.workspace = true
+gpu-compute.workspace = true
 
 [features]
 # Off by default. Only for the workstation window with Adrian present (C-18):

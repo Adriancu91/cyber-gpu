@@ -8,3 +8,5 @@ authors.workspace = true
 
 [dependencies]
 gpu-core.workspace = true
+nvidia-rm570.workspace = true
+gpu-compute.workspace = true

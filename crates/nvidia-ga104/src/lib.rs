@@ -39,6 +39,7 @@ pub mod ids;
 pub mod init;
 pub mod probe;
 pub mod push;
+pub mod qmd;
 pub mod radix3;
 pub mod regs;
 pub mod sha256;
