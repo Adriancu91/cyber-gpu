@@ -4,6 +4,8 @@
 //! What is here (each submodule states its sources and confidence):
 //! - [`falcon`]: I6–I7 on registers (falcon reset/start, FWSEC-FRTS result,
 //!   Booter on SEC2), behind a write policy; SIMULARE only;
+//! - [`sequencer`]: GSP-RM's CPU sequencer requests and the wait for
+//!   `GSP_INIT_DONE` (I8), through the same write policy; SIMULARE only;
 //! - [`elf`]: finding a named section in the GSP-RM ELF container (like any
 //!   loader; the section contents stay opaque);
 //! - [`wpr_meta`]: the 256-byte `GspFwWprMeta` Booter reads (I7);
@@ -31,6 +33,7 @@ pub mod libos;
 pub mod msgq;
 pub mod registry;
 pub mod rpc;
+pub mod sequencer;
 #[cfg(test)]
 pub(crate) mod sim_peer;
 pub mod wpr_meta;

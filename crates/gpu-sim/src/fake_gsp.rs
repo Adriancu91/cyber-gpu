@@ -211,8 +211,13 @@ impl FakeGsp {
             },
             (SEC2_BASE, Some(SimUcode::BooterLoad), true) => {
                 let wpr2 = self.raw(fb::NV_PFB_PRI_MMU_WPR2_ADDR_HI) != 0;
-                let arg = u64::from(self.raw(mb0))
+                let mut arg = u64::from(self.raw(mb0))
                     | u64::from(self.raw(base + fv4::NV_PFALCON_FALCON_MAILBOX1)) << 32;
+                if arg == 0 {
+                    // Resume (sequencer CORE_RESUME): Booter re-runs with the
+                    // address it got at boot. SIM.
+                    arg = self.booter_arg.unwrap_or(0);
+                }
                 if !wpr2 || arg == 0 {
                     self.regs.insert(mb0, 0xbad1);
                     return;
@@ -251,8 +256,12 @@ impl FakeGsp {
                         SCRUB_POLLS
                     };
                 }
-                if base == GSP_BASE {
+                if base == GSP_BASE && v & 1 == 1 {
+                    // GSP reset stops GSP-RM and clears the stage-3 hand-off.
                     self.riscv_active = false;
+                    let h = gc6::NV_PGC6_BSI_SECURE_SCRATCH_14;
+                    let cleared = self.raw(h) & !(1 << 26);
+                    self.regs.insert(h, cleared);
                 }
                 self.regs.insert(base + rel, v);
             }
@@ -266,6 +275,14 @@ impl FakeGsp {
             _ => {
                 self.regs.insert(base + rel, v);
             }
+        }
+    }
+
+    fn finish_sec2(&mut self) {
+        if self.sec2.run_left.is_some() && self.fault != SimFault::NeverHalts {
+            self.sec2.run_left = None;
+            self.sec2.halted = true;
+            self.halt_effects(SEC2_BASE);
         }
     }
 
@@ -291,6 +308,12 @@ impl Mmio for FakeGsp {
     }
     fn read32_raw(&mut self, offset: u64) -> u32 {
         let off = offset as u32;
+        if off == gc6::NV_PGC6_BSI_SECURE_SCRATCH_14
+            || off == f2::NV_FALCON2_GSP_BASE + riscv::NV_PRISCV_RISCV_CPUCTL
+        {
+            // Polling the hand-off lets a started SEC2 finish (resume). SIM
+            self.finish_sec2();
+        }
         if off == f2::NV_FALCON2_GSP_BASE + riscv::NV_PRISCV_RISCV_CPUCTL {
             return riscv::NV_PRISCV_RISCV_CPUCTL_ACTIVE_STAT.set(0, u32::from(self.riscv_active));
         }

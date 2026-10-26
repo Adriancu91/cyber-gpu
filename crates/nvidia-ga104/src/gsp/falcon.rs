@@ -415,6 +415,35 @@ pub fn stage3_handoff_done<M: Mmio + ?Sized>(bar: &mut GuardedBar0<'_, M>) -> Gp
     )
 }
 
+/// Tests of later steps start from a board where I6 + I7 succeeded (SIM).
+#[cfg(test)]
+pub(crate) mod tests_support {
+    use super::*;
+    use gpu_sim::clock::SimClock;
+    use gpu_sim::fake_gsp::{FakeGsp, SimUcode};
+
+    pub(crate) fn booted() -> (FakeGsp, Journal, SimClock) {
+        let mut g = FakeGsp::new();
+        let mut j = Journal::new(512);
+        let mut c = SimClock::default();
+        let frts = g.frts;
+        let load = |b: &mut GuardedBar0<'_, FakeGsp>, e: Engine| {
+            let u = match e {
+                Engine::Gsp => SimUcode::FwsecFrts,
+                Engine::Sec2 => SimUcode::BooterLoad,
+            };
+            b.model().sim_load(e.base(), u);
+            Ok(())
+        };
+        {
+            let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+            fwsec_frts(&mut b, &mut c, load, frts).unwrap();
+            booter_load(&mut b, &mut c, load, 0x1_0000_0000).unwrap();
+        }
+        (g, j, c)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
