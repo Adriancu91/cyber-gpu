@@ -1,5 +1,7 @@
 # Cercetare I4–I8: firmware, memorie, falcon, GSP, canale
 
+> **Din 26 oct 2026:** starea fiecărei componente se ține într-un singur loc, `docs/COMPATIBILITATE_FIRMWARE.md` (C-18). Acest document rămâne ca istoric al cercetării.
+
 *Sesiunea 2, 23 oct 2026. Doar documentare: **niciun cod din acest document nu scrie în placă**. Etichete: CONFIRMAT (citit într-o sursă),
 DEDUS, NECUNOSCUT. Sursele sunt citite pentru idei, nimic copiat (clean-room, `PROVENANCE.md`).*
 

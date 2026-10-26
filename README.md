@@ -33,6 +33,7 @@ aceleași verificări pe stable și nightly.
 - [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) — auditul G0, ce e gata, parțial, blocat
 - [docs/GA104_INITIALIZATION.md](docs/GA104_INITIALIZATION.md) — secvența de inițializare, surse, necunoscute
 - [docs/MEMORY_INVARIANTS.md](docs/MEMORY_INVARIANTS.md) — invarianții M1–M6
+- [docs/COMPATIBILITATE_FIRMWARE.md](docs/COMPATIBILITATE_FIRMWARE.md) — **tabelul unic**: fiecare componentă, sursa, versiunea (570.144), fișierul Rust, testul, starea
 - [docs/RESEARCH_I4_I8.md](docs/RESEARCH_I4_I8.md) — cercetarea I4–I8 și argumentele pentru deciziile lui Adrian (firmware, compilator)
 - [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md) — formatul programelor SM86 și opțiunile legale
 - [docs/RISKS.md](docs/RISKS.md) — riscuri, blocaje, politica de siguranță hardware

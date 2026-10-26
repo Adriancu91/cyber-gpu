@@ -1,5 +1,7 @@
 # GA104 — inițializare (G3)
 
+> **Din 26 oct 2026:** starea fiecărei componente se ține într-un singur loc, `docs/COMPATIBILITATE_FIRMWARE.md` (C-18). Acest document rămâne ca istoric al cercetării.
+
 *Surse verificate pe 23 oct 2026 (fișiere brute din repo-uri, API GitHub/GitLab). „Confirmat” = citit în sursă;
 „dedus” = derivat din ce am citit. Liniile pot migra pe `master`.*
 
