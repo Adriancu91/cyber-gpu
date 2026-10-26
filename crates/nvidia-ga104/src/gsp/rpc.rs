@@ -43,6 +43,9 @@ pub mod function {
     pub const GET_GSP_STATIC_INFO: u32 = 65;
     pub const GSP_SET_SYSTEM_INFO: u32 = 72;
     pub const SET_REGISTRY: u32 = 73;
+    /// Carries the rest of an RPC larger than one message (`rpc.c`
+    /// `_issueRpcLarge`: same header, function replaced, payload continues).
+    pub const CONTINUATION_RECORD: u32 = 71;
     pub const GSP_RM_CONTROL: u32 = 76;
     pub const GSP_RM_ALLOC: u32 = 103;
 }
@@ -111,6 +114,70 @@ pub fn encode(function: u32, queue_seq: u32, rpc_seq: u32, payload: &[u8]) -> Gp
     put_u32(&mut m, off::CHECKSUM, c);
     debug_assert_eq!(checksum32(&m), 0);
     Ok(m)
+}
+
+/// Largest RPC payload [`encode_split`] accepts (our limit, not NVIDIA's):
+/// the boot RPCs are a few KiB; anything near this is a bug on our side.
+pub const MAX_SPLIT_PAYLOAD: usize = 1 << 20;
+
+/// Builds an RPC that may need more than one queue message: the first message
+/// has `function` and the first [`MAX_PAYLOAD`] bytes, each following one has
+/// [`function::CONTINUATION_RECORD`], the same `rpc_seq` and the next part.
+/// Queue sequence numbers go `first_queue_seq`, +1, +2, … (one per message).
+/// Rule read in open-gpu-kernel-modules@570.144 `src/nvidia/src/kernel/vgpu/rpc.c`
+/// (MIT), `_issueRpcLarge`; re-written. Also what tinygrad does (study, lesson 9).
+pub fn encode_split(
+    function: u32,
+    first_queue_seq: u32,
+    rpc_seq: u32,
+    payload: &[u8],
+) -> GpuResult<Vec<Vec<u8>>> {
+    if payload.len() > MAX_SPLIT_PAYLOAD {
+        return Err(GpuError::InvalidArgument("RPC: mesaj mai mare de 1 MiB"));
+    }
+    let mut out = Vec::new();
+    let mut parts = payload.chunks(MAX_PAYLOAD);
+    let first = parts.next().unwrap_or(&[]);
+    out.push(encode(function, first_queue_seq, rpc_seq, first)?);
+    for (i, part) in parts.enumerate() {
+        let qseq = first_queue_seq.wrapping_add(i as u32 + 1);
+        out.push(encode(function::CONTINUATION_RECORD, qseq, rpc_seq, part)?);
+    }
+    Ok(out)
+}
+
+/// Puts back together an RPC received as several messages (inverse of
+/// [`encode_split`]). The first must not be a continuation; every following
+/// one must be a continuation with the same RPC sequence and consecutive
+/// queue sequence numbers; otherwise the whole RPC is refused.
+pub fn join_split(parts: &[Message]) -> GpuResult<Message> {
+    let (first, rest) = parts
+        .split_first()
+        .ok_or(GpuError::InvalidArgument("RPC: niciun mesaj de unit"))?;
+    if first.function == function::CONTINUATION_RECORD {
+        return Err(GpuError::InvalidArgument(
+            "RPC: o continuare fara mesajul de inceput",
+        ));
+    }
+    let mut whole = first.clone();
+    for (i, m) in rest.iter().enumerate() {
+        if m.function != function::CONTINUATION_RECORD
+            || m.sequence != first.sequence
+            || m.queue_seq != first.queue_seq.wrapping_add(i as u32 + 1)
+        {
+            return Err(GpuError::InvalidArgument(
+                "RPC: continuare nepotrivita (functie, secventa sau ordine)",
+            ));
+        }
+        if whole.payload.len() + m.payload.len() > MAX_SPLIT_PAYLOAD {
+            return Err(GpuError::InvalidArgument(
+                "RPC: mesaj unit mai mare de 1 MiB",
+            ));
+        }
+        whole.payload.extend_from_slice(&m.payload);
+        whole.elem_count += m.elem_count;
+    }
+    Ok(whole)
 }
 
 /// A received message, checked.
@@ -275,5 +342,40 @@ mod tests {
         assert_eq!(s.reg_save[0], 0xdead);
         put_u32(&mut p, 0, 7); // more words than present
         assert!(decode_sequencer(&p).is_err());
+    }
+
+    #[test]
+    fn large_rpc_splits_into_continuation_records_and_joins_back() {
+        // 20 elements' worth of payload: 16 in the first message, rest after.
+        let payload: Vec<u8> = (0..20 * ELEMENT_SIZE).map(|i| (i * 7 + 3) as u8).collect();
+        let msgs = encode_split(function::GSP_SET_SYSTEM_INFO, 40, 9, &payload).unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(element_count(&msgs[0]), 16);
+        let decoded: Vec<Message> = msgs.iter().map(|m| decode(m).unwrap()).collect();
+        assert_eq!(decoded[0].function, function::GSP_SET_SYSTEM_INFO);
+        assert_eq!(decoded[0].payload.len(), MAX_PAYLOAD);
+        assert_eq!(decoded[1].function, function::CONTINUATION_RECORD);
+        assert_eq!((decoded[1].sequence, decoded[1].queue_seq), (9, 41));
+        let whole = join_split(&decoded).unwrap();
+        assert_eq!(whole.payload, payload);
+        assert_eq!(whole.function, function::GSP_SET_SYSTEM_INFO);
+
+        // A small RPC stays one message.
+        assert_eq!(
+            encode_split(function::NOP, 0, 0, &[1, 2, 3]).unwrap().len(),
+            1
+        );
+        assert!(encode_split(function::NOP, 0, 0, &vec![0; MAX_SPLIT_PAYLOAD + 1]).is_err());
+
+        // Wrong order, a foreign sequence or a lone continuation are refused.
+        let swapped = [decoded[1].clone(), decoded[0].clone()];
+        assert!(join_split(&swapped).is_err());
+        let mut other = decoded.clone();
+        other[1].sequence = 10;
+        assert!(join_split(&other).is_err());
+        let mut gap = decoded.clone();
+        gap[1].queue_seq = 43;
+        assert!(join_split(&gap).is_err());
+        assert!(join_split(&[]).is_err());
     }
 }

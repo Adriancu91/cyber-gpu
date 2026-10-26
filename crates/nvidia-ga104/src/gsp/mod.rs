@@ -7,6 +7,7 @@
 //! - [`wpr_meta`]: the 256-byte `GspFwWprMeta` Booter reads (I7);
 //! - [`libos`]: the LibOS memory-region arguments and `GSP_ARGUMENTS_CACHED`;
 //! - [`msgq`]: the shared memory with the command/status queues (I5, I8);
+//! - [`registry`]: the `SET_REGISTRY` table (`PACKED_REGISTRY_TABLE`);
 //! - [`rpc`]: one queue element = element header + RPC header + payload, with
 //!   the XOR checksum and sequence numbers (I8).
 //!
@@ -25,6 +26,7 @@
 pub mod elf;
 pub mod libos;
 pub mod msgq;
+pub mod registry;
 pub mod rpc;
 #[cfg(test)]
 pub(crate) mod sim_peer;
