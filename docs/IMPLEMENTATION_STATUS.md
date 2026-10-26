@@ -1,5 +1,35 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 6 — 26 octombrie 2026, ~19:25–19:50 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Tot ce scrie „PASS” e pe calculatorul gazdă: SIMULARE (modele software),
+aritmetică sau comparație cu antetele NVIDIA. Comanda lucrată: **C-20** (hub), în ordinea B → C → A (pregătire) → D. C-18 era deja gata.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| C-20 preluat | hub `COMENZI.md` C-20 → `preluat (19:27)` | gata |
+| **B** antete generate | crate nou `nvidia-rm570` (doar date, no_std): **1 419 valori** generate din antetele MIT NVIDIA (open-gpu-kernel-modules **570.144**, commit fixat; open-gpu-doc, commit fixat): registrele GA102 falcon/GSP/SEC2/RISC-V/FBIF/GC6, `WPR2_ADDR_*`, metodele C56F/C7C0, QMD V03_00; structurile `GspFwWprMeta`, `msgqTxHeader`, `GSP_ARGUMENTS_CACHED` prin bindgen-cli 0.71.1 (cu verificări de mărime/poziție la compilare). Unealta: `tools/gen-rm570/` (doar pe gazdă). Notificarea NVIDIA în `LICENSE-NVIDIA` | PASS: 7 teste + verificările bindgen |
+| B: verificarea codului vechi | offset-urile scrise de mână în sesiunea 5 (WPR meta, cozi, argumentele GSP, GFW_BOOT, pushbuffer/GPFIFO) comparate automat cu antetele | **PASS: toate egale** (`tests/rm570_crosscheck.rs`, 5 teste) |
+| **C** RPC mari | „continuation records” (funcția 71) după `rpc.c` 570.144: `rpc::encode_split` / `join_split` | PASS (SIMULARE): 1 test (20 de elemente → 16 + continuare; ordine/secvență greșită refuzată) |
+| C: SET_REGISTRY | `gsp::registry` (`PACKED_REGISTRY_TABLE`): cele 2 intrări folosite pe GA102 (`RMForcePcieConfigSave=1`, `RMSecBusResetEnable=1`), 82 de octeți | PASS (SIMULARE): 3 teste |
+| C: „golden image” | pas nou I8e notat în `COMPATIBILITATE_FIRMWARE.md`; nu e încă în `init.rs` (o variantă nouă în enumerarea publică ar putea strica OS-ul) | gata (documentat) |
+| **A** pregătire | `tools/proba-tinygrad/proba.sh` (tinygrad `9cf7829a6` + tinymesa/NAK, jurnalul `wreg:` pe stick; se oprește fără `CONFIRM_ADRIAN=da`, fără placă, cu nouveau încărcat sau cu sume greșite); instrucțiuni pe minute în `TEST_MATRIX.md` partea **P**; parserul `gpu-sim::golden_log` | script: **NERULAT** (verificat doar că refuză fără confirmare); parser PASS (SIMULARE): 3 teste pe un jurnal scris de mână |
+| **D** partea 1 | `gpu-sim::cmdproc`: procesorul de comenzi simulat (GPFIFO, pushbuffer, semafoare, `SET_OBJECT`, `SEND_PCAS_A` + `PCAS2_B`, QMD V03_00 citit cu valorile din antete); `nvidia-ga104::qmd` (construiește QMD-ul) | PASS (SIMULARE): `add64` (codul NAK real, 240 B) lansat cap-coadă, rezultatul **identic bit cu bit** cu `reference::add`, semaforul `release0` și cel de canal la valorile așteptate; lansări greșite refuzate. Programul „rulează” pe procesor, nu pe GPU |
+| D partea 2 (GSP fals la nivel de registre) | — | NOT TESTED (nescris; sesiunea următoare) |
+| E (NAK + matmul) | — | NOT TESTED (nescris; Mesa trebuie reconstruit în cloud; tratarea FMA de decis) |
+| CI | rulările 22 (B) și următoarele | PASS la 22; restul verificate la final |
+| Compatibilitate OS | `git diff 41e44ba HEAD` pe `gpu-core`, `gpu-pci`, `nvidia-ga104`, `gpu-compute`: tot o singură linie `pub` (valoarea `GSP_VERSION`, din sesiunea 5). **Nou:** `nvidia-ga104` depinde de `nvidia-rm570` (același repo, MIT) | PASS (doar adăugări) |
+
+Verificări (`tools/check.sh`, rustc 1.99.1 stable): format PASS, clippy `-D warnings` PASS, **157 de teste PASS** (1 ignorat: viteza),
+build `x86_64-unknown-none` PASS; și `--features hw-write`: clippy PASS. Nicio scriere în placă, nicăieri.
+
+**Următorul pas:** fără placă: D partea 2 (GSP fals pe registre: reset falcon, mailbox, WPR2 după FWSEC, INIT_DONE + o cerere de
+secvențiator), apoi I4c (antetele `bootloader`/`booter_load`, structura `nvfw_bin_hdr` în generator), apoi E (Mesa NAK reconstruit, matmul naiv f32 +
+oracol FMA). Cu placa (B0, 27–28 oct): I0–I3 + FWSEC + fișierele de pe stick; dacă rămâne timp și Adrian vrea: proba P (tinygrad).
+**De la Adrian:** fereastra B0; pentru proba P: un al doilea stick cu Ubuntu 24.04 live și laptopul pentru SSH.
+
+---
+
 ## Sesiunea 5 — 26 octombrie 2026, ~17:15–17:45 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Tot ce scrie „PASS” e pe calculatorul gazdă: SIMULARE (GSP simulat, imagini

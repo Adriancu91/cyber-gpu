@@ -1,6 +1,6 @@
 # Cum folosește OS-ul crate-urile cyber-gpu (pentru sesiunea cyber-universe)
 
-Actualizat: 26 octombrie 2026 (sesiunea 5). Nimic de aici nu e aplicat în `cyber-universe`; OS-ul decide singur.
+Actualizat: 26 octombrie 2026 (sesiunea 6). Nimic de aici nu e aplicat în `cyber-universe`; OS-ul decide singur.
 **Nimic nu e testat pe RTX 3070 Ti.**
 
 ## Starea de acum (C-16, făcut de sesiunea OS)
@@ -24,6 +24,15 @@ gpu-compute  = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "41e44ba
 - Schimbări de valoare: `firmware::GSP_VERSION` = `"570.144"`; `initialize()` fără firmware se oprește la I4 cu mesajul
   „I4: firmware-ul GSP 570.144 nu a fost dat …” (înainte: blocaj de licență la I4); `gpu plan` va arăta I4 ca implementat și oprirea la I5.
   Dacă un scenariu CI al OS-ului verifică textul vechi de la I4, trebuie actualizat.
+
+## Nou în sesiunea 6 (26 oct seara) — doar adăugări, opțional pentru OS
+- Crate nou **`nvidia-rm570`** (no_std, fără dependențe, doar date generate din antetele MIT NVIDIA 570.144 + open-gpu-doc, cu notificarea lor
+  în `crates/nvidia-rm570/LICENSE-NVIDIA`). **`nvidia-ga104` depinde acum de el** (același repo; cargo îl ia automat la `git = …, rev = …`).
+  Licența rămâne MIT.
+- `nvidia-ga104::qmd` (descrierea unei lansări, QMD V03_00), `gsp::registry` (tabelul SET_REGISTRY), `gsp::rpc::{encode_split, join_split}`.
+- `gpu-sim::cmdproc` (procesorul de comenzi simulat: rulează `add64` cap-coadă pe procesor) și `gpu-sim::golden_log` (parserul jurnalului
+  probei tinygrad) — **doar SIMULARE / teste**.
+- Nimic nu scrie în placă. Interfața veche (inclusiv tot ce folosește os-191 de la `dac2e32`) e neschimbată.
 
 ## Promisiunea de compatibilitate
 Față de `41e44ba`, interfața publică a `gpu-core`, `gpu-pci`, `nvidia-ga104` (probe) și `gpu-compute` se schimbă **doar prin adăugare**.

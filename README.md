@@ -4,6 +4,9 @@ Driverul de calcul GPU pentru **Cyber Universe OS** (Rust `no_std`, x86_64, UEFI
 Țintă principală: **NVIDIA GeForce RTX 3070 Ti** (GA104, Ampere, SM 8.6, 8 GB).
 Licență MIT, cod propriu (vezi [docs/PROVENANCE.md](docs/PROVENANCE.md)).
 
+> **Sesiunea 6 (26 oct seara, C-20):** crate nou `nvidia-rm570` cu valorile generate din antetele NVIDIA 570.144 (offset-urile vechi verificate:
+> toate egale); procesorul de comenzi simulat rulează `add64` cap-coadă (SIMULARE, programul rulat pe procesor); proba tinygrad pregătită, nerulată.
+>
 > **Stare (26 oct 2026, sesiunea 5):** firmware-ul NVIDIA 570.144 e aprobat (C-18): I4 (citirea și verificarea fișierelor de pe stick) și
 > structurile I5–I8 pentru GSP-RM sunt scrise și testate **doar în SIMULARE**; primul program GPU (adunarea a 64 de f32) e compilat cu Mesa NAK,
 > **nerulat**. **Niciun program nu a rulat pe GPU.** Nicio linie de cod nu scrie în placă. Tabelul unic: [docs/COMPATIBILITATE_FIRMWARE.md](docs/COMPATIBILITATE_FIRMWARE.md).
@@ -12,7 +15,7 @@ Licență MIT, cod propriu (vezi [docs/PROVENANCE.md](docs/PROVENANCE.md)).
 
 | Componentă | Crate | Ce face |
 |---|---|---|
-| **Driverul bare-metal** | `gpu-core`, `gpu-pci`, `gpu-memory`, `gpu-command`, `nvidia-ga104` | contractul I1, PCI, memorie, cozi, backend GA104 |
+| **Driverul bare-metal** | `gpu-core`, `gpu-pci`, `gpu-memory`, `gpu-command`, `nvidia-ga104`, `nvidia-rm570` (date generate din antetele NVIDIA) | contractul I1, PCI, memorie, cozi, backend GA104 |
 | **Motorul de calcul / toolchain** | `tools/nak/` (Mesa NAK pe gazdă, C-18; vezi [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md)) | programe SM86, încărcare, lansare |
 | **Runtime-ul tensorial** | `gpu-compute` | tensori (I2), operatorii Kronos în f32 (oracolul numeric), backend CPU |
 
