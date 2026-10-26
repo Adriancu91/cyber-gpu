@@ -9,7 +9,7 @@
 
 use crate::{Field, QmdField, Range};
 
-/// From `src/common/inc/swref/published/ampere/ga102/dev_boot.h` (open-gpu-doc).
+/// From `src/common/inc/swref/published/ampere/ga102/dev_boot.h` (open-gpu-kernel-modules 570.144).
 #[allow(non_snake_case, missing_docs, clippy::identity_op)]
 pub mod ga102_dev_boot {
     use super::Field;
@@ -38,7 +38,7 @@ pub mod ga102_dev_boot {
     // skipped (shape not translated): NV_PMC_DEVICE_ENABLE_STATUS_BIT = (i):(i)
 }
 
-/// From `src/common/inc/swref/published/ampere/ga102/dev_falcon_v4.h` (open-gpu-doc).
+/// From `src/common/inc/swref/published/ampere/ga102/dev_falcon_v4.h` (open-gpu-kernel-modules 570.144).
 #[allow(non_snake_case, missing_docs, clippy::identity_op)]
 pub mod ga102_dev_falcon_v4 {
     use super::Field;
@@ -247,7 +247,7 @@ pub mod ga102_dev_falcon_v4 {
     pub const NV_PFALCON_FALCON_BOOTVEC: u32 = 0x104;
 }
 
-/// From `src/common/inc/swref/published/ampere/ga102/dev_falcon_v4_addendum.h` (open-gpu-doc).
+/// From `src/common/inc/swref/published/ampere/ga102/dev_falcon_v4_addendum.h` (open-gpu-kernel-modules 570.144).
 #[allow(non_snake_case, missing_docs, clippy::identity_op)]
 pub mod ga102_dev_falcon_v4_addendum {
     use super::Field;
@@ -256,7 +256,7 @@ pub mod ga102_dev_falcon_v4_addendum {
     pub const NV_PFALCON_FALCON_HWCFG2_RESET_READY_FALSE: u32 = 0x0;
 }
 
-/// From `src/common/inc/swref/published/ampere/ga102/dev_falcon_second_pri.h` (open-gpu-doc).
+/// From `src/common/inc/swref/published/ampere/ga102/dev_falcon_second_pri.h` (open-gpu-kernel-modules 570.144).
 #[allow(non_snake_case, missing_docs, clippy::identity_op)]
 pub mod ga102_dev_falcon_second_pri {
     use super::Field;
@@ -281,7 +281,7 @@ pub mod ga102_dev_falcon_second_pri {
     }
 }
 
-/// From `src/common/inc/swref/published/ampere/ga102/dev_fbif_v4.h` (open-gpu-doc).
+/// From `src/common/inc/swref/published/ampere/ga102/dev_fbif_v4.h` (open-gpu-kernel-modules 570.144).
 #[allow(non_snake_case, missing_docs, clippy::identity_op)]
 pub mod ga102_dev_fbif_v4 {
     use super::Field;
@@ -306,7 +306,7 @@ pub mod ga102_dev_fbif_v4 {
     pub const NV_PFALCON_FBIF_CTL_ALLOW_PHYS_NO_CTX_ALLOW: u32 = 0x1;
 }
 
-/// From `src/common/inc/swref/published/ampere/ga102/dev_gsp.h` (open-gpu-doc).
+/// From `src/common/inc/swref/published/ampere/ga102/dev_gsp.h` (open-gpu-kernel-modules 570.144).
 #[allow(non_snake_case, missing_docs, clippy::identity_op)]
 pub mod ga102_dev_gsp {
     use super::Field;
@@ -345,13 +345,13 @@ pub mod ga102_dev_gsp {
     pub const NV_PGSP_QUEUE_HEAD_ADDRESS: Field = Field::new(31, 0);
 }
 
-/// From `src/common/inc/swref/published/ampere/ga102/dev_gsp_addendum.h` (open-gpu-doc).
+/// From `src/common/inc/swref/published/ampere/ga102/dev_gsp_addendum.h` (open-gpu-kernel-modules 570.144).
 #[allow(non_snake_case, missing_docs, clippy::identity_op)]
 pub mod ga102_dev_gsp_addendum {
     pub const NV_PGSP_FBIF_BASE: u32 = 0x110600;
 }
 
-/// From `src/common/inc/swref/published/ampere/ga102/dev_sec_pri.h` (open-gpu-doc).
+/// From `src/common/inc/swref/published/ampere/ga102/dev_sec_pri.h` (open-gpu-kernel-modules 570.144).
 #[allow(non_snake_case, missing_docs, clippy::identity_op)]
 pub mod ga102_dev_sec_pri {
     use super::Field;
@@ -377,13 +377,13 @@ pub mod ga102_dev_sec_pri {
     pub const NV_PSEC_MAILBOX_DATA_INIT: u32 = 0x0;
 }
 
-/// From `src/common/inc/swref/published/ampere/ga102/dev_sec_addendum.h` (open-gpu-doc).
+/// From `src/common/inc/swref/published/ampere/ga102/dev_sec_addendum.h` (open-gpu-kernel-modules 570.144).
 #[allow(non_snake_case, missing_docs, clippy::identity_op)]
 pub mod ga102_dev_sec_addendum {
     pub const NV_PSEC_FBIF_BASE: u32 = 0x840600;
 }
 
-/// From `src/common/inc/swref/published/ampere/ga102/dev_riscv_pri.h` (open-gpu-doc).
+/// From `src/common/inc/swref/published/ampere/ga102/dev_riscv_pri.h` (open-gpu-kernel-modules 570.144).
 #[allow(non_snake_case, missing_docs, clippy::identity_op)]
 pub mod ga102_dev_riscv_pri {
     use super::Field;
@@ -422,7 +422,7 @@ pub mod ga102_dev_riscv_pri {
     pub const NV_PRISCV_RISCV_BCR_CTRL_BRFETCH_FALSE: u32 = 0x0;
 }
 
-/// From `src/common/inc/swref/published/ampere/ga102/dev_gc6_island.h` (open-gpu-doc).
+/// From `src/common/inc/swref/published/ampere/ga102/dev_gc6_island.h` (open-gpu-kernel-modules 570.144).
 #[allow(non_snake_case, missing_docs, clippy::identity_op)]
 pub mod ga102_dev_gc6_island {
     use super::Field;
@@ -451,7 +451,7 @@ pub mod ga102_dev_gc6_island {
     pub const NV_PGC6_BSI_SECURE_SCRATCH_14: u32 = 0x1180f8;
 }
 
-/// From `src/common/inc/swref/published/ampere/ga102/dev_gc6_island_addendum.h` (open-gpu-doc).
+/// From `src/common/inc/swref/published/ampere/ga102/dev_gc6_island_addendum.h` (open-gpu-kernel-modules 570.144).
 #[allow(non_snake_case, missing_docs, clippy::identity_op)]
 pub mod ga102_dev_gc6_island_addendum {
     use super::Field;
@@ -474,7 +474,7 @@ pub mod ga102_dev_gc6_island_addendum {
     pub const NV_PGC6_BSI_SECURE_SCRATCH_14_BOOT_STAGE_3_HANDOFF_VALUE_DONE: u32 = 0x1;
 }
 
-/// From `src/common/inc/swref/published/turing/tu102/dev_fb.h` (open-gpu-doc).
+/// From `src/common/inc/swref/published/turing/tu102/dev_fb.h` (open-gpu-kernel-modules 570.144).
 #[allow(non_snake_case, missing_docs, clippy::identity_op)]
 pub mod tu102_dev_fb {
     use super::Field;
@@ -552,6 +552,105 @@ pub mod tu102_dev_fb {
     pub const NV_PFB_PRI_MMU_FILLUNIT_ECC_UNCORRECTED_ERR_COUNT_UNIQUE: Field = Field::new(31, 16);
     /// `RWE-V`
     pub const NV_PFB_PRI_MMU_FILLUNIT_ECC_UNCORRECTED_ERR_COUNT_UNIQUE_INIT: u32 = 0x0;
+}
+
+/// From `src/common/inc/swref/published/turing/tu102/dev_bus.h` (open-gpu-kernel-modules 570.144).
+#[allow(non_snake_case, missing_docs, clippy::identity_op)]
+pub mod tu102_dev_bus {
+    use super::Field;
+    pub const fn NV_PBUS_VBIOS_SCRATCH(i: u32) -> u32 {
+        0x1400 + i * 0x4
+    }
+    /// `RW-4A`
+    pub const fn NV_PBUS_SW_SCRATCH(i: u32) -> u32 {
+        0x1400 + i * 0x4
+    }
+    pub const NV_PBUS_IFR_FMT_FIXED0: u32 = 0x0;
+    pub const NV_PBUS_IFR_FMT_FIXED0_SIGNATURE: Field = Field::new(31, 0);
+    pub const NV_PBUS_IFR_FMT_FIXED0_SIGNATURE_VALUE: u32 = 0x4947564e;
+    pub const NV_PBUS_IFR_FMT_FIXED1: u32 = 0x4;
+    pub const NV_PBUS_IFR_FMT_FIXED1_VERSIONSW: Field = Field::new(15, 8);
+    pub const NV_PBUS_IFR_FMT_FIXED1_FIXED_DATA_SIZE: Field = Field::new(30, 16);
+    pub const NV_PBUS_IFR_FMT_FIXED2: u32 = 0x8;
+    pub const NV_PBUS_IFR_FMT_FIXED2_TOTAL_DATA_SIZE: Field = Field::new(19, 0);
+    /// `RW-4R`
+    pub const NV_PBUS_BAR1_BLOCK: u32 = 0x1704;
+    pub const NV_PBUS_BAR1_BLOCK_MAP: Field = Field::new(29, 0);
+    /// `RWIUF`
+    pub const NV_PBUS_BAR1_BLOCK_PTR: Field = Field::new(27, 0);
+    /// `RWI-V`
+    pub const NV_PBUS_BAR1_BLOCK_PTR_0: u32 = 0x0;
+    /// `RWIUF`
+    pub const NV_PBUS_BAR1_BLOCK_TARGET: Field = Field::new(29, 28);
+    /// `RWI-V`
+    pub const NV_PBUS_BAR1_BLOCK_TARGET_VID_MEM: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_PBUS_BAR1_BLOCK_TARGET_SYS_MEM_COHERENT: u32 = 0x2;
+    /// `RW--V`
+    pub const NV_PBUS_BAR1_BLOCK_TARGET_SYS_MEM_NONCOHERENT: u32 = 0x3;
+    /// `RWIUF`
+    pub const NV_PBUS_BAR1_BLOCK_MODE: Field = Field::new(31, 31);
+    /// `RWI-V`
+    pub const NV_PBUS_BAR1_BLOCK_MODE_PHYSICAL: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_PBUS_BAR1_BLOCK_MODE_VIRTUAL: u32 = 0x1;
+    pub const NV_PBUS_BAR1_BLOCK_PTR_SHIFT: u32 = 0xc;
+    /// `RW-4R`
+    pub const NV_PBUS_BAR2_BLOCK: u32 = 0x1714;
+    pub const NV_PBUS_BAR2_BLOCK_MAP: Field = Field::new(29, 0);
+    /// `RWIUF`
+    pub const NV_PBUS_BAR2_BLOCK_PTR: Field = Field::new(27, 0);
+    /// `RWI-V`
+    pub const NV_PBUS_BAR2_BLOCK_PTR_0: u32 = 0x0;
+    /// `RWIUF`
+    pub const NV_PBUS_BAR2_BLOCK_TARGET: Field = Field::new(29, 28);
+    /// `RWI-V`
+    pub const NV_PBUS_BAR2_BLOCK_TARGET_VID_MEM: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_PBUS_BAR2_BLOCK_TARGET_SYS_MEM_COHERENT: u32 = 0x2;
+    /// `RW--V`
+    pub const NV_PBUS_BAR2_BLOCK_TARGET_SYS_MEM_NONCOHERENT: u32 = 0x3;
+    /// `RWIUF`
+    pub const NV_PBUS_BAR2_BLOCK_DEBUG_CYA: Field = Field::new(30, 30);
+    /// `RW--V`
+    pub const NV_PBUS_BAR2_BLOCK_DEBUG_CYA_OFF: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_PBUS_BAR2_BLOCK_DEBUG_CYA_ON: u32 = 0x0;
+    /// `RWI-V`
+    pub const NV_PBUS_BAR2_BLOCK_DEBUG_CYA_INIT: u32 = 0x1;
+    /// `RWIUF`
+    pub const NV_PBUS_BAR2_BLOCK_MODE: Field = Field::new(31, 31);
+    /// `RWI-V`
+    pub const NV_PBUS_BAR2_BLOCK_MODE_PHYSICAL: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_PBUS_BAR2_BLOCK_MODE_VIRTUAL: u32 = 0x1;
+    pub const NV_PBUS_BAR2_BLOCK_PTR_SHIFT: u32 = 0xc;
+    pub const NV_PBUS_BAR2_BLOCK_RESERVED: Field = Field::new(30, 30);
+    pub const NV_PBUS_BAR2_BLOCK_RESERVED_DEFAULT: u32 = 0x1;
+    /// `R-IUF`
+    pub const NV_PBUS_BIND_STATUS_BAR1_PENDING: Field = Field::new(0, 0);
+    /// `R-I-V`
+    pub const NV_PBUS_BIND_STATUS_BAR1_PENDING_EMPTY: u32 = 0x0;
+    /// `R---V`
+    pub const NV_PBUS_BIND_STATUS_BAR1_PENDING_BUSY: u32 = 0x1;
+    /// `R-IUF`
+    pub const NV_PBUS_BIND_STATUS_BAR1_OUTSTANDING: Field = Field::new(1, 1);
+    /// `R-I-V`
+    pub const NV_PBUS_BIND_STATUS_BAR1_OUTSTANDING_FALSE: u32 = 0x0;
+    /// `R---V`
+    pub const NV_PBUS_BIND_STATUS_BAR1_OUTSTANDING_TRUE: u32 = 0x1;
+    /// `R-IUF`
+    pub const NV_PBUS_BIND_STATUS_BAR2_PENDING: Field = Field::new(2, 2);
+    /// `R-I-V`
+    pub const NV_PBUS_BIND_STATUS_BAR2_PENDING_EMPTY: u32 = 0x0;
+    /// `R---V`
+    pub const NV_PBUS_BIND_STATUS_BAR2_PENDING_BUSY: u32 = 0x1;
+    /// `R-IUF`
+    pub const NV_PBUS_BIND_STATUS_BAR2_OUTSTANDING: Field = Field::new(3, 3);
+    /// `R-I-V`
+    pub const NV_PBUS_BIND_STATUS_BAR2_OUTSTANDING_FALSE: u32 = 0x0;
+    /// `R---V`
+    pub const NV_PBUS_BIND_STATUS_BAR2_OUTSTANDING_TRUE: u32 = 0x1;
 }
 
 /// From `classes/host/clc56f.h` (open-gpu-doc).
