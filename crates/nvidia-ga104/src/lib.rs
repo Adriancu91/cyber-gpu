@@ -12,7 +12,8 @@
 //! - [`fwsec`]: I3, second half — where FWSEC_PROD sits in the VBIOS (read-only,
 //!   the ucode bytes are never read);
 //! - [`firmware`]: inventory of the NVIDIA-signed firmware files the sequence
-//!   needs, with their licence status;
+//!   needs; I4: the pinned 570.144 GSP set (size + SHA-256) read from the stick;
+//! - [`sha256`]: FIPS 180-4 digest for the I4 check;
 //! - [`push`]: pushbuffer method headers and GPFIFO entries (clc56f.h, MIT) —
 //!   encoding only, unverified on hardware;
 //! - [`radix3`]: the page list GSP reads to find its image in RAM (pure data);
@@ -37,6 +38,7 @@ pub mod probe;
 pub mod push;
 pub mod radix3;
 pub mod regs;
+pub mod sha256;
 pub mod vbios;
 
 pub use backend::Ga104Backend;

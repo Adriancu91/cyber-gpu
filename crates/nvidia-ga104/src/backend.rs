@@ -28,6 +28,7 @@ pub struct Ga104Backend<C: ConfigSpace, M: Mmio, K: Clock> {
     level0: Option<Level0>,
     gfw: Option<GfwStatus>,
     vbios: Option<VbiosLayout>,
+    firmware: Option<crate::firmware::GspFirmware>,
     plan: InitPlan,
     fences: FenceTimeline,
     pub journal: Journal,
@@ -47,6 +48,7 @@ impl<C: ConfigSpace, M: Mmio, K: Clock> Ga104Backend<C, M, K> {
             level0: None,
             gfw: None,
             vbios: None,
+            firmware: None,
             plan: InitPlan::ga104(),
             fences: FenceTimeline::new(),
             journal: Journal::new(512),
@@ -69,6 +71,17 @@ impl<C: ConfigSpace, M: Mmio, K: Clock> Ga104Backend<C, M, K> {
     /// Result of I3, once run (also kept when I3 found an incomplete VBIOS).
     pub fn vbios(&self) -> Option<&VbiosLayout> {
         self.vbios.as_ref()
+    }
+
+    /// I4: hands over the GSP set already read and verified by
+    /// [`crate::firmware::load_gsp_set`]. Without it `initialize` stops at I4.
+    pub fn set_firmware(&mut self, fw: crate::firmware::GspFirmware) {
+        self.firmware = Some(fw);
+    }
+
+    /// Whether I4's verified firmware set is present.
+    pub fn has_firmware(&self) -> bool {
+        self.firmware.is_some()
     }
 
     fn not_ready(&self) -> GpuError {
@@ -125,6 +138,7 @@ impl<C: ConfigSpace, M: Mmio, K: Clock> ComputeDevice for Ga104Backend<C, M, K> 
             state,
             gfw,
             vbios,
+            firmware,
             plan,
             journal,
             ..
@@ -152,7 +166,19 @@ impl<C: ConfigSpace, M: Mmio, K: Clock> ComputeDevice for Ga104Backend<C, M, K> 
                         ));
                     }
                 }
-                _ => {}
+                "I4" if firmware.is_none() => {
+                    return Err(GpuError::Blocked(
+                        "I4: firmware-ul GSP 570.144 nu a fost dat (firmware::load_gsp_set de pe stick)",
+                    ));
+                }
+                "I0" | "I1" | "I2" | "I3" | "I4" => {}
+                // A step marked Implemented without a case here must not be
+                // reported as done.
+                _ => {
+                    return Err(GpuError::NotImplemented(
+                        "ga104: pas marcat implementat, dar fara cod in backend",
+                    ));
+                }
             }
             Ok(())
         })
@@ -243,6 +269,22 @@ mod tests {
     }
 
     #[test]
+    fn with_verified_firmware_stops_at_i5_without_writing() {
+        // SIMULARE: synthetic bytes stand in for the verified set.
+        let mut d = sim();
+        d.set_firmware(crate::firmware::GspFirmware {
+            booter_load: alloc::vec![1],
+            booter_unload: alloc::vec![2],
+            bootloader: alloc::vec![3],
+            gsp_rm: b"\x7fELF".to_vec(),
+        });
+        assert!(d.has_firmware());
+        let r = d.initialize();
+        assert!(matches!(r, Err(GpuError::Blocked(w)) if w.contains("Bus Master")));
+        assert_eq!(d.journal.writes(), 0);
+    }
+
+    #[test]
     fn identifies_then_reports_exact_blocker() {
         let mut d = sim();
         let id = d.identify().unwrap();
@@ -251,7 +293,7 @@ mod tests {
         assert!(d.capabilities().has(Feature::Identify));
         assert!(!d.capabilities().has(Feature::Compute));
         let r = d.initialize();
-        assert!(matches!(r, Err(GpuError::Blocked(w)) if w.contains("LICENCE.nvidia")));
+        assert!(matches!(r, Err(GpuError::Blocked(w)) if w.contains("570.144")));
         assert_eq!(d.state(), DeviceState::Mapped);
         assert_eq!(d.gfw().unwrap().progress, 0xff);
         assert!(d.vbios().unwrap().complete());

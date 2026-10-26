@@ -56,17 +56,15 @@ pub const GA104_PLAN: &[Step] = &[
     },
     Step {
         id: "I4",
-        what: "incarcarea fisierelor de firmware semnate (booter_load, bootloader, gsp-*.bin) in memorie",
-        status: StepStatus::Blocked(
-            "decizia de licenta LICENCE.nvidia + transportul fisierelor in OS (initrd/stick)",
-        ),
+        what: "citirea fisierelor de firmware semnate 570.144 (booter_load, booter_unload, bootloader, gsp) de pe stick, cu marimea si SHA-256 verificate",
+        status: StepStatus::Implemented,
         writes_hardware: false,
     },
     Step {
         id: "I5",
         what: "buffere DMA in RAM pentru WPR meta, radix3 si cozile GSP; Bus Master",
         status: StepStatus::Blocked(
-            "Bus Master = prima scriere in placa (aprobarea lui Adrian); VT-d oprit pe workstation: DMA pe adrese fizice; necesita I4",
+            "Bus Master = prima scriere in placa: doar in fereastra pe workstation, cu Adrian de fata (HardwareWritePermit); structurile sunt pregatite si testate in SIMULARE (gsp::*)",
         ),
         writes_hardware: true,
     },
@@ -88,7 +86,7 @@ pub const GA104_PLAN: &[Step] = &[
         id: "I8",
         what: "protocolul RPC GSP-RM (SetSystemInfo, SetRegistry, secventiator, init done)",
         status: StepStatus::Blocked(
-            "structurile RPC depind de versiunea firmware-ului (r535/r570); nedocumentate oficial",
+            "necesita I5-I7 pe placa; cozile si mesajele RPC r570 sunt codate si testate doar in SIMULARE (gsp::msgq, gsp::rpc)",
         ),
         writes_hardware: true,
     },
@@ -164,10 +162,10 @@ mod tests {
             ran.push(s.id);
             Ok(())
         });
-        assert_eq!(ran, ["I0", "I1", "I2", "I3"]);
+        assert_eq!(ran, ["I0", "I1", "I2", "I3", "I4"]);
         assert!(matches!(r, Err(GpuError::Blocked(_))));
-        assert_eq!(p.first_gap().unwrap().id, "I4");
-        assert_eq!(p.done(), 4);
+        assert_eq!(p.first_gap().unwrap().id, "I5");
+        assert_eq!(p.done(), 5);
     }
 
     #[test]
