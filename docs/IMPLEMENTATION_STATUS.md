@@ -1,5 +1,30 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 10 — 27 octombrie 2026, ~19:05–19:55 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Tot ce scrie „PASS” e pe calculatorul gazdă: SIMULARE (modele software),
+compilare sau comparație cu antetele NVIDIA. Comenzi noi în hub: niciuna (C-18 și C-20 gata); am continuat pașii „fără placă” din sesiunea 9.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Pornire | CI rularea 38 verde; `tools/check.sh` verde înainte de orice schimbare (rustc 1.99.1); Mesa 25.0.7 reconstruit: `add64`, `matmul_smem`, `matmul_1d` **identice** (aceleași sume) | PASS |
+| **I9a** formatele | generatorul `tools/gen-rm570` produce și `nvidia-rm570::regs::tu102_dev_mmu_ver2`: câmpurile PDE / PDE dublu / PTE ale MMU v2 din `dev_mmu.h` (NVIDIA 570.144, MIT; copia completă e cea din `kernel-open/nvidia-uvm/hwref`, cea din `swref/published` e un ciot), tipul nou `EntryField` (câmpuri până la bitul 127, valorile prea mari refuzate, nu tăiate); restul `regs.rs` a ieșit **identic** | PASS (test nou: pozițiile = citirea de mână) |
+| **I9a** tabelele de pagini | `nvidia-ga104::mmu::GpuMemory`: VRAM și adresele GPU prin `gpu-memory::RangeAllocator` (fără suprapuneri), tabelele PD3→PD2→PD1→PD0 (dublu)→PT (pagini de 4 KiB) după nivelurile NVIDIA (`kern_gmmu_fmt_gp10x.c`), fiecare tabelă **golită înainte de legare**, mapare dublă refuzată fără nicio scriere; implementează `GoldenMemory` (înlocuiește alocatorul de test al sesiunii 9). **Verificare independentă:** `gpu-sim::vram` (VRAM cu „otravă” la octeții nescriși + un cititor al tabelelor cu pozițiile scrise de mână) | PASS (SIMULARE): 10 teste noi; „golden image” cap-coadă prin cozi cu tabelele reale: toate cele 10 buffere GR (3,3 MiB) verificate pagină cu pagină; nicio tabelă în interiorul unui buffer; o greșeală plantată într-un PTE e prinsă. **DEDUS** (tinygrad): `NO_ATS=1`, `KIND=6`, fereastra VA de la 64 GiB |
+| **E** treapta 5 matmul | `matmul_2d.comp` (siboehm „2D blocktiling”: 64 de fire pe grup, 8×8 rezultate pe fir): 1 953 instrucțiuni, 31 248 B, 94 registre, 4 KiB partajată, o barieră, **0 memorie locală**; `cmdproc::matmul_2d_on_cpu` urmează algoritmul. **Constatare:** fără `[[unroll]]` NAK ține sumele în memoria locală a firului (256 B), pe care lansatorul nostru nu o pregătește | PASS (SIMULARE): 5 forme **identice bit cu bit** cu `matmul_fma_ftz`; cazul −0,0; lansări greșite refuzate, 0 scrieri în C; o greșeală plantată prinsă |
+| Constatări | tabelul din `COMPATIBILITATE_FIRMWARE.md` („De verificat”): mărimea rădăcinii trimise lui RM (32 B la noi, 16 B la tinygrad); unde e imaginea ecranului UEFI în VRAM (de aflat la B0); invalidarea TLB după scrierea tabelelor (I9b, nescrisă) | notate |
+| CI | rulările 39 (I9a) și 40 (treapta 5) | 39 PASS; 40 verificată la final |
+| Compatibilitate OS | `git diff 41e44ba HEAD` pe `gpu-core`, `gpu-pci`, `nvidia-ga104`, `gpu-compute`: tot singura linie `pub` = valoarea `GSP_VERSION` (sesiunea 5). Nou: modulul `mmu`; `nvidia-ga104` depinde acum și de `gpu-memory` (din același repo) | PASS (doar adăugări) |
+
+Verificări (`tools/check.sh`, rustc 1.99.1 stable): format PASS, clippy `-D warnings` PASS, **211 teste PASS** (1 ignorat: viteza),
+build `x86_64-unknown-none` PASS; `nvidia-ga104 --features hw-write`: clippy + teste PASS. Nicio scriere în placă.
+
+**Următorul pas:** fără placă: încărcătorul DMA al ucode-ului (I6/I7, în spatele `hw-write`); I9b = scrierea VRAM printr-o fereastră BAR +
+invalidarea TLB (în spatele `hw-write`) și `SET_PAGE_DIRECTORY`; treapta 6 matmul (încărcări vectoriale). Cu placa (B0): I0–I3 + FWSEC + fișierele
+de pe stick, 0 scrieri, plus locul imaginii ecranului în VRAM; apoi, cu Adrian: proba P (tinygrad).
+**De la Adrian:** fereastra B0 (lista în `TEST_MATRIX.md`); fișierele firmware pe stick.
+
+---
+
 ## Sesiunea 9 — 27 octombrie 2026, ~13:05–13:55 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Tot ce scrie „PASS” e pe calculatorul gazdă: SIMULARE (modele software),
