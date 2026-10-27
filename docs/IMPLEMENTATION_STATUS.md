@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 11 — 28 octombrie 2026, ~01:25–01:50 (ora României), în cloud, FĂRĂ placă
+## Sesiunea 11 — 28 octombrie 2026, ~01:25–01:45 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Tot ce scrie „PASS” e pe calculatorul gazdă: SIMULARE (modele software)
 sau comparație cu antetele NVIDIA. Comenzi noi în hub: niciuna (C-18 și C-20 gata); am continuat pașii „fără placă” din sesiunea 10.
