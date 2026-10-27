@@ -43,6 +43,13 @@ gpu-compute  = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "41e44ba
 - `gpu-compute`: `math::fma_f32`, `math::ftz`, `reference::add_ftz`, `reference::matmul_fma`, `reference::matmul_fma_ftz` (oracolele programelor NAK).
 - `gpu-sim`: `fake_gsp` (GSP fals pe registre), `cmdproc::matmul_naive_on_cpu` / `matmul_coalesced_on_cpu`.
 
+## Nou în sesiunea 8 (27 oct dimineața) — doar adăugări, opțional pentru OS
+- `nvidia-rm570::sysinfo` (generat din antetul NVIDIA MIT) și `nvidia-ga104::gsp::sysinfo` (conținutul mesajului `GSP_SET_SYSTEM_INFO`, doar date).
+- `nvidia-ga104::qmd`: `SharedMemory`, `MAX_SHARED_BYTES`, `sm_config_shared_units`, `ComputeQmd::encode_with_shared` / `to_bytes_with_shared`
+  (`encode` / `to_bytes` neschimbate).
+- `gpu-sim::cmdproc`: `Needs`, `register_program_with_needs`, `MATMUL_SMEM_NEEDS`, `matmul_smem_on_cpu` (doar pentru teste).
+- Nimic șters, nimic redenumit; nimic nou nu scrie în placă. Fixarea OS-ului pe `dac2e32` rămâne valabilă.
+
 ## Promisiunea de compatibilitate
 Față de `41e44ba`, interfața publică a `gpu-core`, `gpu-pci`, `nvidia-ga104` (probe) și `gpu-compute` se schimbă **doar prin adăugare**.
 Verificare: `git diff 41e44ba HEAD -- crates/gpu-core crates/gpu-pci crates/nvidia-ga104 crates/gpu-compute | grep -E '^-.*\bpub\b'`

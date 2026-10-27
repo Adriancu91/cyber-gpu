@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 8 — 27 octombrie 2026, ~08:05–08:50 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Tot ce scrie „PASS” e pe calculatorul gazdă: SIMULARE (modele software),
+compilare sau comparație cu antetele NVIDIA. Comenzi noi în hub: niciuna (C-18 și C-20 erau gata); am continuat pașii „fără placă” notați în sesiunea 7.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Pornire | CI rularea 32 verde; `tools/check.sh` verde înainte de orice schimbare; rustc actualizat la 1.99.1 | PASS |
+| **I8c'** `GspSystemInfo` | generatorul `tools/gen-rm570` produce și `nvidia-rm570::sysinfo` (`gsp_static_config.h`@570.144, MIT, 928 B, cu verificările bindgen); `regs.rs`/`structs.rs` au ieșit **identice** la regenerare. `nvidia-ga104::gsp::sysinfo::encode`: BAR0/BAR1/BAR3, `domain<<32 \| bus<<8 \| slot`, ID-urile PCI ca dword-urile citite, oglinda PCFG 0x88000/0x1000, pagina 4 KiB, limita VA; ACPI/SR-IOV/hypervisor = 0 („absent”); intrările imposibile (alt producător, BAR0 lipsă/nealiniat…) refuzate | PASS (SIMULARE): 3 teste + verificarea față de antet; pornirea simulată cap-coadă trimite acum conținutul real `SET_SYSTEM_INFO` (plăcuța workstation-ului) și tabela reală `SET_REGISTRY`. **DEDUS:** că GSP-RM acceptă zerourile pe placa reală |
+| **E** treapta 3 matmul | Mesa 25.0.7 reconstruit (add64 și coalesced: aceleași sume); `matmul_smem.comp` (plăci 16×16 în memoria partajată, o barieră): 218 instrucțiuni, 3 488 B, 19 registre, 2 KiB partajată, `ffma.ftz`; `qmd::encode_with_shared` (câmpurile pentru memoria partajată + bariere, după Mesa NAK `qmd.rs`); `gpu-sim::cmdproc::register_program_with_needs` | PASS (SIMULARE): 4 forme (inclusiv plăci parțiale) **identice bit cu bit** cu `matmul_fma_ftz`; cazul −0,0 prinde o variantă care ar aduna zerouri (verificat: varianta greșită pică); QMD fără memorie partajată/barieră = refuzat, 0 scrieri în C |
+| Constatare | Mesa NAK pune mereu în QMD trei câmpuri pe care noi nu le punem (`API_VISIBLE_CALL_LIMIT`, `SAMPLER_INDEX`, `SM_GLOBAL_CACHING_ENABLE`) | notat în `COMPATIBILITATE_FIRMWARE.md` („De verificat”), de aliniat cu jurnalul probei P |
+| CI | rulările 33 (I8c') și 34 (treapta 3) | 33 PASS; 34 verificată la final |
+| Compatibilitate OS | `git diff 41e44ba HEAD` pe `gpu-core`, `gpu-pci`, `nvidia-ga104`, `gpu-compute`: tot singura linie `pub` = valoarea `GSP_VERSION` (sesiunea 5) | PASS (doar adăugări) |
+
+Verificări (`tools/check.sh`, rustc 1.99.1 stable): format PASS, clippy `-D warnings` PASS, **184 de teste PASS** (1 ignorat: viteza),
+build `x86_64-unknown-none` PASS; `nvidia-ga104 --features hw-write`: clippy + teste PASS. Nicio scriere în placă.
+
+**Următorul pas:** fără placă: treapta 4 matmul (mai multe rezultate pe fir, 1D blocktiling); „golden image” (I8e, după tinygrad, în SIMULARE
+pe GSP-ul fals); încărcătorul DMA al ucode-ului (I6/I7, în spatele `hw-write`). Cu placa (B0): I0–I3 + FWSEC + fișierele de pe stick, 0 scrieri;
+apoi, cu Adrian: proba P (tinygrad), care dă jurnalul de comparat cu GSP-ul fals (și cu câmpurile QMD de mai sus).
+**De la Adrian:** fereastra B0 (lista în `TEST_MATRIX.md`); fișierele firmware pe stick.
+
+---
+
 ## Sesiunea 7 — 27 octombrie 2026, ~01:25–02:05 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Tot ce scrie „PASS” e pe calculatorul gazdă: SIMULARE (modele software),
