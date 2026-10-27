@@ -669,4 +669,68 @@ mod tests {
                 .all(|(b, m)| m.pa >= 64 << 20 && m.pa + b.size <= vram - (512 << 20))
         );
     }
+
+    /// I9b: the same, but the page tables go into (simulated) VRAM through
+    /// the BAR0 window (`vram_window::VramWindow` on `gpu_sim::pramin`), with
+    /// the screen and GSP-RM's area protected, then one TLB invalidate. The
+    /// GR buffers are walked by the independent walker afterwards. SIMULARE.
+    #[test]
+    fn golden_image_through_the_bar0_window() {
+        use crate::mmu::GpuMemory;
+        use crate::vram_window::VramWindow;
+        use gpu_core::diag::Journal;
+        use gpu_core::hal::Mmio;
+        use gpu_sim::pramin::SimBar0Vram;
+        use gpu_sim::vram::{SimVram, translate};
+        let l = QueueLayout::standard();
+        let mut shm = alloc::vec![0u8; l.total_size];
+        let pages: Vec<u64> = (0..l.page_table_entries as u64)
+            .map(|i| 0x0500_0000 + i * 0x1000)
+            .collect();
+        let mut q = CpuQueues::init(&mut shm, l, &pages).unwrap();
+        let mut gsp = SimGsp::start(&mut shm, l.cmd_queue_offset, l.stat_queue_offset);
+        q.link_rx(&shm).unwrap();
+        let mut rm = FakeRm::new();
+        let mut clock = SimClock::default();
+        let vram = 8u64 << 30;
+        let screen = (0, 16 << 20);
+        let gsp_area = (vram - (512 << 20), vram);
+        let mut bar = SimBar0Vram::new(SimVram::new(vram), 0);
+        let mut j = Journal::new(256);
+        let w = VramWindow::new(&mut bar, &mut j, None, vram, &[screen, gsp_area]).unwrap();
+        let mut mem = GpuMemory::new(64 << 20, gsp_area.0, w).unwrap();
+        let g = {
+            let mut t = QueueTransport {
+                q: &mut q,
+                mem: &mut shm,
+                clock: &mut clock,
+                timeout_us: RM_REPLY_US,
+                poll: |m: &mut dyn SharedMem| {
+                    gsp.service_with(m, |f, p| rm.handle(f, p));
+                },
+                events: Vec::new(),
+            };
+            init_golden_image(&mut t, &mut mem).unwrap()
+        };
+        let root = mem.root();
+        let words = mem.writer().words;
+        assert_eq!(words, 2 * mem.writes);
+        mem.writer_mut().invalidate_tlb(&mut clock, root).unwrap();
+        mem.writer_mut().restore().unwrap();
+        drop(mem);
+        assert_eq!(rm.log.allocs.len(), 7);
+        assert!(bar.stray_writes.is_empty());
+        assert_eq!(bar.invalidates.len(), 1);
+        assert_eq!(bar.invalidates[0].pdb, root);
+        assert_eq!(bar.invalidates[0].after_words, words);
+        for (b, m) in &g.gr_bufs {
+            for off in (0..b.size).step_by(0x1000).chain([b.size - 1]) {
+                let t = translate(&bar.vram, root, m.va + off).unwrap();
+                assert_eq!(t.pa, m.pa + off, "buffer {} + {off:#x}", b.id);
+            }
+        }
+        assert!(!bar.vram.touched(screen.0, screen.1 - screen.0));
+        assert!(!bar.vram.touched(gsp_area.0, gsp_area.1 - gsp_area.0));
+        assert_eq!(bar.read32_raw(gpu_sim::pramin::BAR0_WINDOW), 0);
+    }
 }
