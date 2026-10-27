@@ -612,3 +612,105 @@ pub fn matmul_1d_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     }
     Ok(())
 }
+
+/// What `tools/nak/out/matmul_2d.sm86.sass` (step 5) needs: the 64×8 tile of
+/// A and the 8×64 tile of B (4 KiB) and one barrier.
+pub const MATMUL_2D_NEEDS: Needs = Needs {
+    shared_bytes: (64 * 8 + 8 * 64) * 4,
+    barriers: 1,
+};
+
+/// The CPU stand-in for step 5 (`matmul_2d.sm86.sass`, siboehm "2D
+/// blocktiling"): workgroups of 64 threads, each owning a 64×64 block of C;
+/// thread `tid` owns the 8×8 cells at rows `(tid / 8) * 8 ..+8`, columns
+/// `(tid % 8) * 8 ..+8`. It follows the kernel's own algorithm: per K-tile of
+/// 8, the "shared" tiles are filled exactly as the 64 threads load them (A:
+/// rows `tid / 8 + 8r`, column `tid % 8`; B: rows `r`, column `tid`; zeros
+/// outside A/B), then for each p ≤ min(8, K − t) the thread copies 8 values of
+/// A and 8 of B to "registers" and accumulates the 64 products. Grid x →
+/// column blocks, y → row blocks; cbuf0 as steps 1–4. Oracle:
+/// `reference::matmul_fma_ftz`.
+pub fn matmul_2d_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    const BM: usize = 64;
+    const BN: usize = 64;
+    const BK: usize = 8;
+    const TM: usize = 8;
+    const TN: usize = 8;
+    const THREADS: usize = (BM / TM) * (BN / TN);
+    if l.block != [THREADS as u32, 1, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: matmul_2d cere blocuri de 64x1x1"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let a = l.mem.read_u64(l.cbuf0 + 0x28)?;
+    let b = l.mem.read_u64(l.cbuf0 + 0x30)?;
+    let c = l.mem.read_u64(l.cbuf0 + 0x38)?;
+    let m = l.mem.read_u32(l.cbuf0 + 0x40)? as usize;
+    let n = l.mem.read_u32(l.cbuf0 + 0x44)? as usize;
+    let k = l.mem.read_u32(l.cbuf0 + 0x48)? as usize;
+    let x = l.mem.read_f32s(a, m * k)?;
+    let y = l.mem.read_f32s(b, k * n)?;
+    let fma_f32_ftz = gpu_compute::math::fma_f32_ftz;
+    for gy in 0..l.grid[1] as usize {
+        for gx in 0..l.grid[0] as usize {
+            let (row0, col0) = (gy * BM, gx * BN);
+            let mut acc = alloc::vec![[0.0f32; TM * TN]; THREADS];
+            let mut t = 0;
+            while t < k {
+                let mut as_ = [0.0f32; BM * BK];
+                let mut bs_ = [0.0f32; BK * BN];
+                for tid in 0..THREADS {
+                    let (ar, ac) = (tid / BK, tid % BK);
+                    for off in (0..BM).step_by(THREADS / BK) {
+                        if row0 + ar + off < m && t + ac < k {
+                            as_[(ar + off) * BK + ac] = x[(row0 + ar + off) * k + t + ac];
+                        }
+                    }
+                    let bc = tid % BN;
+                    for r in 0..BK {
+                        if t + r < k && col0 + bc < n {
+                            bs_[r * BN + bc] = y[(t + r) * n + col0 + bc];
+                        }
+                    }
+                }
+                // barrier()
+                let len = BK.min(k - t);
+                for (tid, acc_t) in acc.iter_mut().enumerate() {
+                    let (trow, tcol) = (tid / (BN / TN), tid % (BN / TN));
+                    for p in 0..len {
+                        let reg_m: [f32; TM] =
+                            core::array::from_fn(|i| as_[(trow * TM + i) * BK + p]);
+                        let reg_n: [f32; TN] =
+                            core::array::from_fn(|j| bs_[p * BN + tcol * TN + j]);
+                        for i in 0..TM {
+                            for j in 0..TN {
+                                acc_t[i * TN + j] =
+                                    fma_f32_ftz(reg_m[i], reg_n[j], acc_t[i * TN + j]);
+                            }
+                        }
+                    }
+                }
+                // barrier()
+                t += BK;
+            }
+            for (tid, acc_t) in acc.iter().enumerate() {
+                let (trow, tcol) = (tid / (BN / TN), tid % (BN / TN));
+                for i in 0..TM {
+                    for j in 0..TN {
+                        let (row, col) = (row0 + trow * TM + i, col0 + tcol * TN + j);
+                        if row < m && col < n {
+                            l.mem.write_u32(
+                                c + 4 * (row * n + col) as u64,
+                                acc_t[i * TN + j].to_bits(),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}

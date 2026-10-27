@@ -5,8 +5,8 @@
 //! oracle `reference::matmul_fma_ftz`); nothing here runs on the RTX 3070 Ti.
 
 use gpu_sim::cmdproc::{
-    CommandProcessor, Event, MATMUL_1D_NEEDS, MATMUL_SMEM_NEEDS, matmul_1d_on_cpu,
-    matmul_coalesced_on_cpu, matmul_naive_on_cpu, matmul_smem_on_cpu,
+    CommandProcessor, Event, MATMUL_1D_NEEDS, MATMUL_2D_NEEDS, MATMUL_SMEM_NEEDS, matmul_1d_on_cpu,
+    matmul_2d_on_cpu, matmul_coalesced_on_cpu, matmul_naive_on_cpu, matmul_smem_on_cpu,
 };
 use nvidia_ga104::push::{self, PushBuf};
 use nvidia_ga104::qmd::{ComputeQmd, MAX_SHARED_BYTES, SharedMemory};
@@ -16,6 +16,7 @@ const MATMUL: &[u8] = include_bytes!("../../../tools/nak/out/matmul_naive.sm86.s
 const COALESCED: &[u8] = include_bytes!("../../../tools/nak/out/matmul_coalesced.sm86.sass");
 const SMEM: &[u8] = include_bytes!("../../../tools/nak/out/matmul_smem.sm86.sass");
 const ONE_D: &[u8] = include_bytes!("../../../tools/nak/out/matmul_1d.sm86.sass");
+const TWO_D: &[u8] = include_bytes!("../../../tools/nak/out/matmul_2d.sm86.sass");
 const PROG: u64 = 0x10_0000;
 const CBUF: u64 = 0x20_0000;
 const SEM: u64 = 0x30_0000;
@@ -330,4 +331,88 @@ fn one_d_step_keeps_negative_zero_and_refuses_wrong_launches() {
         "refused launches wrote nothing"
     );
     assert_ne!(ONE_D, SMEM);
+}
+
+/// Step 5 (session 10): 2D blocktiling, 8x8 results per thread, 64 threads.
+/// NAK: 1953 instructions, 31248 B, 94 registers, 4 KiB shared, 1 barrier,
+/// 64 `ffma.ftz` (inner loops unrolled; no local memory).
+fn two_d_cp(m: usize, k: usize, n: usize) -> (CommandProcessor, Vec<f32>, Vec<f32>) {
+    let (mut cp, a, b) = setup(m as u32, k as u32, n as u32);
+    cp.register_program_with_needs(TWO_D, matmul_2d_on_cpu, MATMUL_2D_NEEDS);
+    cp.mem.write(PROG, TWO_D);
+    (cp, a, b)
+}
+
+#[test]
+fn two_d_step_matches_the_ffma_ftz_oracle_including_partial_blocks() {
+    for (m, k, n) in [
+        (37usize, 37usize, 21usize),
+        (64, 8, 64),
+        (5, 1, 3),
+        (130, 19, 70),
+        (71, 64, 129),
+    ] {
+        let (mut cp, a, b) = two_d_cp(m, k, n);
+        let grid = [n.div_ceil(64) as u32, m.div_ceil(64) as u32, 1];
+        launch_with(&mut cp, grid, [64, 1, 1], 94, Some(ONE_D_QMD)).unwrap();
+        assert!(matches!(cp.events[1], Event::Launch { program: 1, .. }));
+        let got = cp.mem.read_f32s(C, m * n + 16).unwrap();
+        let mut want = vec![0.0; m * n];
+        gpu_compute::reference::matmul_fma_ftz(&a, &b, &mut want, m, k, n).unwrap();
+        assert_eq!(bits(&got[..m * n]), bits(&want), "{m}x{k}x{n}");
+        assert!(got[m * n..].iter().all(|&x| x == SENTINEL), "wrote after C");
+        assert_eq!(cp.mem.read_u32(SEM).unwrap(), 1);
+    }
+}
+
+#[test]
+fn two_d_step_keeps_negative_zero_and_refuses_wrong_launches() {
+    let (m, k, n) = (9usize, 11usize, 2usize);
+    let (mut cp, ..) = two_d_cp(m, k, n);
+    let tiny = f32::from_bits(0x1c80_0000);
+    cp.mem.write_f32s(A, &vec![-tiny; m * k]);
+    cp.mem.write_f32s(B, &vec![tiny; k * n]);
+    launch_with(&mut cp, [1, 1, 1], [64, 1, 1], 94, Some(ONE_D_QMD)).unwrap();
+    let got = cp.mem.read_f32s(C, m * n).unwrap();
+    assert!(got.iter().all(|x| x.to_bits() == 0x8000_0000));
+    // Step 4's block shape, step 3's shared memory, no barrier: all refused.
+    let (mut cp, ..) = two_d_cp(64, 8, 64);
+    assert!(launch_with(&mut cp, [1, 1, 1], [512, 1, 1], 94, Some(ONE_D_QMD)).is_err());
+    assert!(launch_with(&mut cp, [1, 1, 1], [64, 1, 1], 94, Some(SMEM_QMD)).is_err());
+    let no_bar = SharedMemory {
+        barriers: 0,
+        ..ONE_D_QMD
+    };
+    assert!(launch_with(&mut cp, [1, 1, 1], [64, 1, 1], 94, Some(no_bar)).is_err());
+    let got = cp.mem.read_f32s(C, 64 * 64).unwrap();
+    assert!(
+        got.iter().all(|&x| x == SENTINEL),
+        "refused launches wrote nothing"
+    );
+    assert_ne!(TWO_D, ONE_D);
+}
+
+/// A planted mistake in the step 5 model (the 8x8 cell of a thread taken
+/// transposed) must be caught by the oracle comparison.
+#[test]
+fn two_d_wrong_cell_layout_is_caught() {
+    fn transposed(l: &mut gpu_sim::cmdproc::Launch<'_>) -> Result<(), gpu_core::error::GpuError> {
+        matmul_2d_on_cpu(l)?;
+        // Swap two cells of C as a wrong thread->cell mapping would.
+        let c = l.mem.read_u64(l.cbuf0 + 0x38)?;
+        let n = l.mem.read_u32(l.cbuf0 + 0x44)? as u64;
+        let (x, y) = (l.mem.read_u32(c + 4)?, l.mem.read_u32(c + 4 * n)?);
+        l.mem.write_u32(c + 4, y);
+        l.mem.write_u32(c + 4 * n, x);
+        Ok(())
+    }
+    let (m, k, n) = (16usize, 9usize, 16usize);
+    let (mut cp, a, b) = setup(m as u32, k as u32, n as u32);
+    cp.register_program_with_needs(TWO_D, transposed, MATMUL_2D_NEEDS);
+    cp.mem.write(PROG, TWO_D);
+    launch_with(&mut cp, [1, 1, 1], [64, 1, 1], 94, Some(ONE_D_QMD)).unwrap();
+    let got = cp.mem.read_f32s(C, m * n).unwrap();
+    let mut want = vec![0.0; m * n];
+    gpu_compute::reference::matmul_fma_ftz(&a, &b, &mut want, m, k, n).unwrap();
+    assert_ne!(bits(&got), bits(&want));
 }

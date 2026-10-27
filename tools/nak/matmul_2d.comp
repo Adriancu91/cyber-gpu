@@ -1,0 +1,86 @@
+// Matmul step 5 (siboehm SGEMM_CUDA kernel 5 "2D blocktiling", MIT, idea only): C[M,N] = A[M,K] * B[K,N],
+// row-major f32. One workgroup = 64 threads computes a 64x64 block of C; each thread computes an 8x8 sub-block
+// (TM x TN = 64 results) kept in registers. Thread tid owns rows (tid / 8) * 8 .. +8 and columns (tid % 8) * 8 .. +8
+// of the block.
+// Per K-tile of BK = 8: the 64 threads load the 64x8 tile of A (8 elements each, rows tid/8 + 8*r) and the 8x64
+// tile of B (8 elements each, rows r, column tid) into shared memory (4 KiB), barrier, then for p in the tile:
+// 8 values of A and 8 of B go to registers and give the 64 products (outer product). The inner loop stops at K
+// exactly (no zero padding is accumulated), so each element of C is still the same chain of fused multiply-adds in
+// the order p = 0..K-1 as steps 1-4: the oracle stays gpu-compute::reference::matmul_fma_ftz, bit for bit.
+// Threads whose cells are outside C still load (zeros) and wait at the barriers; they only skip the stores.
+// The fixed-size loops are unrolled ([[unroll]]) so the 64 accumulators stay in registers: without it NAK keeps
+// them in per-thread local memory (SLM 256 B), which our QMD does not set up.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_control_flow_attributes : require
+
+#define BM 64u
+#define BN 64u
+#define BK 8u
+#define TM 8u
+#define TN 8u
+#define THREADS 64u
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+
+layout(push_constant) uniform Args {
+    In a;
+    In b;
+    Out c;
+    uint m;
+    uint n;
+    uint k;
+} args;
+
+shared float as_[BM * BK];
+shared float bs_[BK * BN];
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint thread_row = tid / (BN / TN);   // 0..7
+    uint thread_col = tid % (BN / TN);   // 0..7
+    uint row0 = gl_WorkGroupID.y * BM;
+    uint col0 = gl_WorkGroupID.x * BN;
+    uint a_row = tid / BK, a_col = tid % BK;   // first element of the A tile this thread loads
+    uint a_stride = THREADS / BK;              // 8 rows further for the next one
+    uint b_col = tid % BN;                     // column of the B tile this thread loads (rows 0..7)
+    float acc[TM * TN];
+    [[unroll]] for (uint i = 0; i < TM * TN; i++) acc[i] = 0.0;
+    float reg_m[TM];
+    float reg_n[TN];
+    for (uint t = 0; t < args.k; t += BK) {
+        [[unroll]] for (uint off = 0; off < BM; off += a_stride) {
+            uint ar = row0 + a_row + off, ak = t + a_col;
+            as_[(a_row + off) * BK + a_col] = (ar < args.m && ak < args.k) ? args.a.v[ar * args.k + ak] : 0.0;
+        }
+        [[unroll]] for (uint r = 0; r < BK; r++) {
+            uint bk = t + r, bc = col0 + b_col;
+            bs_[r * BN + b_col] = (bk < args.k && bc < args.n) ? args.b.v[bk * args.n + bc] : 0.0;
+        }
+        barrier();
+        uint len = min(BK, args.k - t);
+        for (uint p = 0; p < len; p++) {
+            [[unroll]] for (uint i = 0; i < TM; i++) reg_m[i] = as_[(thread_row * TM + i) * BK + p];
+            [[unroll]] for (uint j = 0; j < TN; j++) reg_n[j] = bs_[p * BN + thread_col * TN + j];
+            [[unroll]] for (uint i = 0; i < TM; i++) {
+                [[unroll]] for (uint j = 0; j < TN; j++) {
+                    acc[i * TN + j] += reg_m[i] * reg_n[j];
+                }
+            }
+        }
+        barrier();
+    }
+    [[unroll]] for (uint i = 0; i < TM; i++) {
+        uint row = row0 + thread_row * TM + i;
+        [[unroll]] for (uint j = 0; j < TN; j++) {
+            uint col = col0 + thread_col * TN + j;
+            if (row < args.m && col < args.n) {
+                args.c.v[row * args.n + col] = acc[i * TN + j];
+            }
+        }
+    }
+}
