@@ -43,6 +43,14 @@ gpu-compute  = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "41e44ba
 - `gpu-compute`: `math::fma_f32`, `math::ftz`, `reference::add_ftz`, `reference::matmul_fma`, `reference::matmul_fma_ftz` (oracolele programelor NAK).
 - `gpu-sim`: `fake_gsp` (GSP fals pe registre), `cmdproc::matmul_naive_on_cpu` / `matmul_coalesced_on_cpu`.
 
+## Nou în sesiunea 10 (27 oct, seara) — doar adăugări, opțional pentru OS
+- `nvidia-rm570`: tipul `EntryField` și modulul generat `regs::tu102_dev_mmu_ver2` (formatele intrărilor din tabelele de pagini).
+- `nvidia-ga104::mmu` (`GpuMemory`, `VramWrite`, `PageAttr`, `LEVELS`, `encode_pde/_dual_pde/_pte`): memoria video și tabelele de pagini
+  ale plăcii (I9a), implementează `GoldenMemory`. Scrie doar prin `VramWrite`; pe placă nu există încă o implementare (I9b, `hw-write`).
+  **Atenție la fixare:** `nvidia-ga104` depinde acum și de `gpu-memory` (același repo, aceeași licență MIT).
+- `gpu-sim::vram` (VRAM simulată + cititorul independent al tabelelor) și `cmdproc::matmul_2d_on_cpu` + `MATMUL_2D_NEEDS` (treapta 5 matmul).
+- Observație nouă: `B0_adresa-ecranului.md` (o linie de afișat în `hw`, doar citire). Nimic șters sau redenumit; `os-191` rămâne valabil.
+
 ## Nou în sesiunea 9 (27 oct, prânz) — doar adăugări, opțional pentru OS
 - `nvidia-rm570::rmapi` (date generate din antetele NVIDIA 570.144).
 - `nvidia-ga104::gsp::rmapi` (mesajele `GSP_RM_ALLOC` / `GSP_RM_CONTROL` și parametrii lor) și `gsp::golden` (`init_golden_image`,
