@@ -528,3 +528,87 @@ pub fn matmul_smem_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     }
     Ok(())
 }
+
+/// What `tools/nak/out/matmul_1d.sm86.sass` (step 4) needs: the 64×8 tile of
+/// A at 0 and the 8×64 tile of B at 0x800 (4 KiB) and one barrier.
+pub const MATMUL_1D_NEEDS: Needs = Needs {
+    shared_bytes: (64 * 8 + 8 * 64) * 4,
+    barriers: 1,
+};
+
+/// The CPU stand-in for step 4 (`matmul_1d.sm86.sass`, siboehm "1D
+/// blocktiling"): workgroups of 512 threads, each owning a 64×64 block of C;
+/// thread `tid` owns column `tid % 64` and the 8 rows `(tid / 64) * 8 ..+8`.
+/// It follows the kernel's own algorithm: per K-tile of 8, the 64×8 and 8×64
+/// "shared" tiles are filled exactly as the 512 threads load them (zeros
+/// outside A/B), then each thread reuses one B value for its 8 accumulators,
+/// over min(8, K − t) entries only. Grid x → column blocks, y → row blocks;
+/// cbuf0 layout as steps 1–3. Oracle: `reference::matmul_fma_ftz`.
+pub fn matmul_1d_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    const BM: usize = 64;
+    const BN: usize = 64;
+    const BK: usize = 8;
+    const TM: usize = 8;
+    const THREADS: usize = BM * BN / TM;
+    if l.block != [THREADS as u32, 1, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: matmul_1d cere blocuri de 512x1x1"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let a = l.mem.read_u64(l.cbuf0 + 0x28)?;
+    let b = l.mem.read_u64(l.cbuf0 + 0x30)?;
+    let c = l.mem.read_u64(l.cbuf0 + 0x38)?;
+    let m = l.mem.read_u32(l.cbuf0 + 0x40)? as usize;
+    let n = l.mem.read_u32(l.cbuf0 + 0x44)? as usize;
+    let k = l.mem.read_u32(l.cbuf0 + 0x48)? as usize;
+    let x = l.mem.read_f32s(a, m * k)?;
+    let y = l.mem.read_f32s(b, k * n)?;
+    let fma_f32_ftz = gpu_compute::math::fma_f32_ftz;
+    for gy in 0..l.grid[1] as usize {
+        for gx in 0..l.grid[0] as usize {
+            let (row0, col0) = (gy * BM, gx * BN);
+            let mut acc = alloc::vec![[0.0f32; TM]; THREADS];
+            let mut t = 0;
+            while t < k {
+                let mut as_ = [0.0f32; BM * BK];
+                let mut bs_ = [0.0f32; BK * BN];
+                for tid in 0..THREADS {
+                    let (ar, ac) = (tid / BK, tid % BK);
+                    if row0 + ar < m && t + ac < k {
+                        as_[ar * BK + ac] = x[(row0 + ar) * k + t + ac];
+                    }
+                    let (br, bc) = (tid / BN, tid % BN);
+                    if t + br < k && col0 + bc < n {
+                        bs_[br * BN + bc] = y[(t + br) * n + col0 + bc];
+                    }
+                }
+                // barrier()
+                let len = BK.min(k - t);
+                for (tid, acc_t) in acc.iter_mut().enumerate() {
+                    let (tcol, trow) = (tid % BN, tid / BN);
+                    for p in 0..len {
+                        let bv = bs_[p * BN + tcol];
+                        for (i, acc_el) in acc_t.iter_mut().enumerate() {
+                            *acc_el = fma_f32_ftz(as_[(trow * TM + i) * BK + p], bv, *acc_el);
+                        }
+                    }
+                }
+                // barrier()
+                t += BK;
+            }
+            for (tid, acc_t) in acc.iter().enumerate() {
+                let col = col0 + tid % BN;
+                for (i, &v) in acc_t.iter().enumerate() {
+                    let row = row0 + (tid / BN) * TM + i;
+                    if row < m && col < n {
+                        l.mem.write_u32(c + 4 * (row * n + col) as u64, v.to_bits());
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}

@@ -5,8 +5,8 @@
 //! oracle `reference::matmul_fma_ftz`); nothing here runs on the RTX 3070 Ti.
 
 use gpu_sim::cmdproc::{
-    CommandProcessor, Event, MATMUL_SMEM_NEEDS, matmul_coalesced_on_cpu, matmul_naive_on_cpu,
-    matmul_smem_on_cpu,
+    CommandProcessor, Event, MATMUL_1D_NEEDS, MATMUL_SMEM_NEEDS, matmul_1d_on_cpu,
+    matmul_coalesced_on_cpu, matmul_naive_on_cpu, matmul_smem_on_cpu,
 };
 use nvidia_ga104::push::{self, PushBuf};
 use nvidia_ga104::qmd::{ComputeQmd, MAX_SHARED_BYTES, SharedMemory};
@@ -15,6 +15,7 @@ use nvidia_rm570::regs::clc7c0 as c;
 const MATMUL: &[u8] = include_bytes!("../../../tools/nak/out/matmul_naive.sm86.sass");
 const COALESCED: &[u8] = include_bytes!("../../../tools/nak/out/matmul_coalesced.sm86.sass");
 const SMEM: &[u8] = include_bytes!("../../../tools/nak/out/matmul_smem.sm86.sass");
+const ONE_D: &[u8] = include_bytes!("../../../tools/nak/out/matmul_1d.sm86.sass");
 const PROG: u64 = 0x10_0000;
 const CBUF: u64 = 0x20_0000;
 const SEM: u64 = 0x30_0000;
@@ -71,13 +72,23 @@ fn launch_shared(
     grid: [u32; 3],
     shared: Option<SharedMemory>,
 ) -> Result<(), gpu_core::error::GpuError> {
+    launch_with(cp, grid, [16, 16, 1], 19, shared)
+}
+
+fn launch_with(
+    cp: &mut CommandProcessor,
+    grid: [u32; 3],
+    block: [u32; 3],
+    registers: u32,
+    shared: Option<SharedMemory>,
+) -> Result<(), gpu_core::error::GpuError> {
     let q = ComputeQmd {
         program_va: PROG,
-        registers: 19,
+        registers,
         cbuf0_va: CBUF,
         cbuf0_size: 0x100,
         grid,
-        block: [16, 16, 1],
+        block,
         release: Some((SEM, 1)),
     };
     let qmd = match shared {
@@ -252,4 +263,71 @@ fn smem_step_refuses_a_qmd_without_shared_memory_or_barrier() {
         "refused launches wrote nothing"
     );
     assert_ne!(SMEM, COALESCED);
+}
+
+/// Step 4 (session 9): 1D blocktiling, 8 results per thread. NAK: 478
+/// instructions, 7648 B, 24 registers, 4 KiB shared, 1 barrier, `ffma.ftz`.
+fn one_d_cp(m: usize, k: usize, n: usize) -> (CommandProcessor, Vec<f32>, Vec<f32>) {
+    let (mut cp, a, b) = setup(m as u32, k as u32, n as u32);
+    cp.register_program_with_needs(ONE_D, matmul_1d_on_cpu, MATMUL_1D_NEEDS);
+    cp.mem.write(PROG, ONE_D);
+    (cp, a, b)
+}
+
+const ONE_D_QMD: SharedMemory = SharedMemory {
+    bytes: 4096,
+    max_bytes: MAX_SHARED_BYTES,
+    barriers: 1,
+};
+
+#[test]
+fn one_d_step_matches_the_ffma_ftz_oracle_including_partial_blocks() {
+    // K = 37 = 4 full tiles of 8 + 5; M, N not multiples of 64; a 2x2 grid.
+    for (m, k, n) in [
+        (37usize, 37usize, 21usize),
+        (64, 8, 64),
+        (5, 1, 3),
+        (130, 19, 70),
+    ] {
+        let (mut cp, a, b) = one_d_cp(m, k, n);
+        let grid = [n.div_ceil(64) as u32, m.div_ceil(64) as u32, 1];
+        launch_with(&mut cp, grid, [512, 1, 1], 24, Some(ONE_D_QMD)).unwrap();
+        assert!(matches!(cp.events[1], Event::Launch { program: 1, .. }));
+        let got = cp.mem.read_f32s(C, m * n + 16).unwrap();
+        let mut want = vec![0.0; m * n];
+        gpu_compute::reference::matmul_fma_ftz(&a, &b, &mut want, m, k, n).unwrap();
+        assert_eq!(bits(&got[..m * n]), bits(&want), "{m}x{k}x{n}");
+        assert!(got[m * n..].iter().all(|&x| x == SENTINEL), "wrote after C");
+        assert_eq!(cp.mem.read_u32(SEM).unwrap(), 1);
+    }
+}
+
+#[test]
+fn one_d_step_keeps_negative_zero_and_refuses_wrong_launches() {
+    // As in step 3: K = 11 = 8 + 3, every product flushed to -0.0; padding
+    // the last tile with zeros and accumulating them would give +0.0.
+    let (m, k, n) = (9usize, 11usize, 2usize);
+    let (mut cp, ..) = one_d_cp(m, k, n);
+    let tiny = f32::from_bits(0x1c80_0000);
+    let (a, b) = (vec![-tiny; m * k], vec![tiny; k * n]);
+    cp.mem.write_f32s(A, &a);
+    cp.mem.write_f32s(B, &b);
+    launch_with(&mut cp, [1, 1, 1], [512, 1, 1], 24, Some(ONE_D_QMD)).unwrap();
+    let got = cp.mem.read_f32s(C, m * n).unwrap();
+    assert!(got.iter().all(|x| x.to_bits() == 0x8000_0000));
+    // Step 3's 2 KiB of shared memory, a 16x16 block, no barrier: refused.
+    let (mut cp, ..) = one_d_cp(64, 8, 64);
+    assert!(launch_with(&mut cp, [1, 1, 1], [512, 1, 1], 24, Some(SMEM_QMD)).is_err());
+    assert!(launch_with(&mut cp, [1, 1, 1], [16, 16, 1], 24, Some(ONE_D_QMD)).is_err());
+    let no_bar = SharedMemory {
+        barriers: 0,
+        ..ONE_D_QMD
+    };
+    assert!(launch_with(&mut cp, [1, 1, 1], [512, 1, 1], 24, Some(no_bar)).is_err());
+    let got = cp.mem.read_f32s(C, 64 * 64).unwrap();
+    assert!(
+        got.iter().all(|&x| x == SENTINEL),
+        "refused launches wrote nothing"
+    );
+    assert_ne!(ONE_D, SMEM);
 }

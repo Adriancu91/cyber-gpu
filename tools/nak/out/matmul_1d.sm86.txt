@@ -1,0 +1,904 @@
+NAK IR after calc_instr_deps:
+block.u 0 L2 [] -> {
+      b0       = bclear                                   // delay=1
+      b0       = bssy b0 pT L0                            // delay=1
+                 bsync b0 pT                              // delay=1 yld
+                 nop L0                                   // delay=1
+      r0       = s2r sr[0x21]                             // delay=6 wr:0
+      r1       = lop3.LUT[0xc0] r0 0x3f rZ                // delay=1 wt=000001
+      r2       = shf.r.w.u32.hi rZ r0 0x6                 // delay=1
+      r3       = s2r sr[0x25]                             // delay=1 wr:0
+      r4       = s2r sr[0x26]                             // delay=5 wr:1
+      r3       = iadd3 r3 c[0x0][0x0] rZ                  // delay=1 wt=000001
+      r4       = iadd3 r4 c[0x0][0x4] rZ                  // delay=6 wt=000010
+      r4       = shf.l.w.i32 r4 rZ 0x6                    // delay=1
+      r3       = shf.l.w.i32 r3 rZ 0x6                    // delay=6
+      r3       = iadd3 r3 r1 rZ                           // delay=1
+      r5       = shf.r.w.u32.hi rZ r0 0x3                 // delay=1
+      r6       = lop3.LUT[0xc0] r0 0x7 rZ                 // delay=1
+      up0 null = plop3 pT pF pT LUT[0xcc] LUT[0x0]        // delay=1
+      r7       = shf.l.w.i32 r2 rZ 0x3                    // delay=1
+      r8       = mov rZ                                   // delay=1
+      r9       = mov rZ                                   // delay=1
+      r10      = mov rZ                                   // delay=1
+      r11      = mov rZ                                   // delay=1
+      r12      = mov rZ                                   // delay=1
+      r13      = mov rZ                                   // delay=1
+      r14      = mov rZ                                   // delay=1
+      r15      = mov rZ                                   // delay=1
+      ur0      = mov rZ                                   // delay=12
+} -> [1]
+block.u 1 L1 [0, 89] -> {
+      ur1      = ldc.b32 c[0x0][+0x48]                    // delay=12 wr:0
+      up1      = isetp.ge.u32 ur0 ur1                     // delay=11 wt=000001
+      p0 null  = plop3 pT pT up1 LUT[0xaa] LUT[0x0]       // delay=13
+@!p0             bra L3                                   // delay=1
+} -> [2, 51]
+block.u 2 L5 [1] -> {
+} -> [3]
+block.u 3 L4 [2] -> {
+      r0       = iadd3 r4 r7 rZ                           // delay=6
+      p0       = isetp.lt.u32 r0 c[0x0][0x40]             // delay=11
+      b0       = bclear                                   // delay=1
+      b0       = bssy b0 pT L6                            // delay=1
+@!p0             bra L7                                   // delay=1
+} -> [4, 5]
+block 4 L9 [3] -> {
+      p0       = isetp.lt.u32 r3 c[0x0][0x44]             // delay=12
+                 bra L8                                   // delay=1
+} -> [6]
+block 5 L7 [3] -> {
+      p0 null  = plop3 pT pT up0 LUT[0xaa] LUT[0x0]       // delay=13
+} -> [6]
+block.u 6 L8 [4, 5] -> {
+                 bsync b0 pT                              // delay=1 yld
+                 nop L6                                   // delay=1
+      b0       = bclear                                   // delay=1
+      b0       = bssy b0 pT L10                           // delay=1
+@!p0             bra L11                                  // delay=1
+} -> [7, 8]
+block 7 L13 [6] -> {
+      r1       = imad r0 c[0x0][0x44] r3                  // delay=6
+      r2       = prmt r1 [0xbbbb] rZ                      // delay=4
+      r4       = shf.l.w.u64 r1 rZ 0x2                    // delay=2
+      r1       = shf.l.w.u64.hi r1 r2 0x2                 // delay=4
+      r2 p0    = iadd3 r4 c[0x0][0x38] rZ                 // delay=13
+      r4       = iadd3.x r1 c[0x0][0x3c] rZ p0 pF         // delay=6
+      r7       = mov r4                                   // delay=1
+      r6       = mov r2                                   // delay=6
+                 st.global.a64.strong.sys.b32 [r6..8] r15 // delay=2 rd:0
+                 bra L12                                  // delay=1 wt=000001
+} -> [9]
+block 8 L11 [6] -> {
+} -> [9]
+block.u 9 L12 [7, 8] -> {
+                 bsync b0 pT                              // delay=1 yld
+                 nop L10                                  // delay=1
+      r1       = iadd3 r0 0x1 rZ                          // delay=6
+      p0       = isetp.lt.u32 r1 c[0x0][0x40]             // delay=11
+      b0       = bclear                                   // delay=1
+      b0       = bssy b0 pT L14                           // delay=1
+@!p0             bra L15                                  // delay=1
+} -> [10, 11]
+block 10 L17 [9] -> {
+      p0       = isetp.lt.u32 r3 c[0x0][0x44]             // delay=12
+                 bra L16                                  // delay=1
+} -> [12]
+block 11 L15 [9] -> {
+      p0 null  = plop3 pT pT up0 LUT[0xaa] LUT[0x0]       // delay=13
+} -> [12]
+block.u 12 L16 [10, 11] -> {
+                 bsync b0 pT                              // delay=1 yld
+                 nop L14                                  // delay=1
+      b0       = bclear                                   // delay=1
+      b0       = bssy b0 pT L18                           // delay=1
+@!p0             bra L19                                  // delay=1
+} -> [13, 14]
+block 13 L21 [12] -> {
+      r1       = imad r1 c[0x0][0x44] r3                  // delay=6
+      r2       = prmt r1 [0xbbbb] rZ                      // delay=4
+      r4       = shf.l.w.u64 r1 rZ 0x2                    // delay=2
+      r1       = shf.l.w.u64.hi r1 r2 0x2                 // delay=4
+      r2 p0    = iadd3 r4 c[0x0][0x38] rZ                 // delay=13
+      r4       = iadd3.x r1 c[0x0][0x3c] rZ p0 pF         // delay=6
+      r7       = mov r4                                   // delay=1
+      r6       = mov r2                                   // delay=6
+                 st.global.a64.strong.sys.b32 [r6..8] r14 // delay=2 rd:0
+                 bra L20                                  // delay=1 wt=000001
+} -> [15]
+block 14 L19 [12] -> {
+} -> [15]
+block.u 15 L20 [13, 14] -> {
+                 bsync b0 pT                              // delay=1 yld
+                 nop L18                                  // delay=1
+      r1       = iadd3 r0 0x2 rZ                          // delay=6
+      p0       = isetp.lt.u32 r1 c[0x0][0x40]             // delay=11
+      b0       = bclear                                   // delay=1
+      b0       = bssy b0 pT L22                           // delay=1
+@!p0             bra L23                                  // delay=1
+} -> [16, 17]
+block 16 L25 [15] -> {
+      p0       = isetp.lt.u32 r3 c[0x0][0x44]             // delay=12
+                 bra L24                                  // delay=1
+} -> [18]
+block 17 L23 [15] -> {
+      p0 null  = plop3 pT pT up0 LUT[0xaa] LUT[0x0]       // delay=13
+} -> [18]
+block.u 18 L24 [16, 17] -> {
+                 bsync b0 pT                              // delay=1 yld
+                 nop L22                                  // delay=1
+      b0       = bclear                                   // delay=1
+      b0       = bssy b0 pT L26                           // delay=1
+@!p0             bra L27                                  // delay=1
+} -> [19, 20]
+block 19 L29 [18] -> {
+      r1       = imad r1 c[0x0][0x44] r3                  // delay=6
+      r2       = prmt r1 [0xbbbb] rZ                      // delay=4
+      r4       = shf.l.w.u64 r1 rZ 0x2                    // delay=2
+      r1       = shf.l.w.u64.hi r1 r2 0x2                 // delay=4
+      r2 p0    = iadd3 r4 c[0x0][0x38] rZ                 // delay=13
+      r4       = iadd3.x r1 c[0x0][0x3c] rZ p0 pF         // delay=6
+      r7       = mov r4                                   // delay=1
+      r6       = mov r2                                   // delay=6
+                 st.global.a64.strong.sys.b32 [r6..8] r13 // delay=2 rd:0
+                 bra L28                                  // delay=1 wt=000001
+} -> [21]
+block 20 L27 [18] -> {
+} -> [21]
+block.u 21 L28 [19, 20] -> {
+                 bsync b0 pT                              // delay=1 yld
+                 nop L26                                  // delay=1
+      r1       = iadd3 r0 0x3 rZ                          // delay=6
+      p0       = isetp.lt.u32 r1 c[0x0][0x40]             // delay=11
+      b0       = bclear                                   // delay=1
+      b0       = bssy b0 pT L30                           // delay=1
+@!p0             bra L31                                  // delay=1
+} -> [22, 23]
+block 22 L33 [21] -> {
+      p0       = isetp.lt.u32 r3 c[0x0][0x44]             // delay=12
+                 bra L32                                  // delay=1
+} -> [24]
+block 23 L31 [21] -> {
+      p0 null  = plop3 pT pT up0 LUT[0xaa] LUT[0x0]       // delay=13
+} -> [24]
+block.u 24 L32 [22, 23] -> {
+                 bsync b0 pT                              // delay=1 yld
+                 nop L30                                  // delay=1
+      b0       = bclear                                   // delay=1
+      b0       = bssy b0 pT L34                           // delay=1
+@!p0             bra L35                                  // delay=1
+} -> [25, 26]
+block 25 L37 [24] -> {
+      r1       = imad r1 c[0x0][0x44] r3                  // delay=6
+      r2       = prmt r1 [0xbbbb] rZ                      // delay=4
+      r4       = shf.l.w.u64 r1 rZ 0x2                    // delay=2
+      r1       = shf.l.w.u64.hi r1 r2 0x2                 // delay=4
+      r2 p0    = iadd3 r4 c[0x0][0x38] rZ                 // delay=13
+      r4       = iadd3.x r1 c[0x0][0x3c] rZ p0 pF         // delay=6
+      r7       = mov r4                                   // delay=1
+      r6       = mov r2                                   // delay=6
+                 st.global.a64.strong.sys.b32 [r6..8] r12 // delay=2 rd:0
+                 bra L36                                  // delay=1 wt=000001
+} -> [27]
+block 26 L35 [24] -> {
+} -> [27]
+block.u 27 L36 [25, 26] -> {
+                 bsync b0 pT                              // delay=1 yld
+                 nop L34                                  // delay=1
+      r1       = iadd3 r0 0x4 rZ                          // delay=6
+      p0       = isetp.lt.u32 r1 c[0x0][0x40]             // delay=11
+      b0       = bclear                                   // delay=1
+      b0       = bssy b0 pT L38                           // delay=1
+@!p0             bra L39                                  // delay=1
+} -> [28, 29]
+block 28 L41 [27] -> {
+      p0       = isetp.lt.u32 r3 c[0x0][0x44]             // delay=12
+                 bra L40                                  // delay=1
+} -> [30]
+block 29 L39 [27] -> {
+      p0 null  = plop3 pT pT up0 LUT[0xaa] LUT[0x0]       // delay=13
+} -> [30]
+block.u 30 L40 [28, 29] -> {
+                 bsync b0 pT                              // delay=1 yld
+                 nop L38                                  // delay=1
+      b0       = bclear                                   // delay=1
+      b0       = bssy b0 pT L42                           // delay=1
+@!p0             bra L43                                  // delay=1
+} -> [31, 32]
+block 31 L45 [30] -> {
+      r1       = imad r1 c[0x0][0x44] r3                  // delay=6
+      r2       = prmt r1 [0xbbbb] rZ                      // delay=4
+      r4       = shf.l.w.u64 r1 rZ 0x2                    // delay=2
+      r1       = shf.l.w.u64.hi r1 r2 0x2                 // delay=4
+      r2 p0    = iadd3 r4 c[0x0][0x38] rZ                 // delay=13
+      r4       = iadd3.x r1 c[0x0][0x3c] rZ p0 pF         // delay=6
+      r7       = mov r4                                   // delay=1
+      r6       = mov r2                                   // delay=6
+                 st.global.a64.strong.sys.b32 [r6..8] r11 // delay=2 rd:0
+                 bra L44                                  // delay=1 wt=000001
+} -> [33]
+block 32 L43 [30] -> {
+} -> [33]
+block.u 33 L44 [31, 32] -> {
+                 bsync b0 pT                              // delay=1 yld
+                 nop L42                                  // delay=1
+      r1       = iadd3 r0 0x5 rZ                          // delay=6
+      p0       = isetp.lt.u32 r1 c[0x0][0x40]             // delay=11
+      b0       = bclear                                   // delay=1
+      b0       = bssy b0 pT L46                           // delay=1
+@!p0             bra L47                                  // delay=1
+} -> [34, 35]
+block 34 L49 [33] -> {
+      p0       = isetp.lt.u32 r3 c[0x0][0x44]             // delay=12
+                 bra L48                                  // delay=1
+} -> [36]
+block 35 L47 [33] -> {
+      p0 null  = plop3 pT pT up0 LUT[0xaa] LUT[0x0]       // delay=13
+} -> [36]
+block.u 36 L48 [34, 35] -> {
+                 bsync b0 pT                              // delay=1 yld
+                 nop L46                                  // delay=1
+      b0       = bclear                                   // delay=1
+      b0       = bssy b0 pT L50                           // delay=1
+@!p0             bra L51                                  // delay=1
+} -> [37, 38]
+block 37 L53 [36] -> {
+      r1       = imad r1 c[0x0][0x44] r3                  // delay=6
+      r2       = prmt r1 [0xbbbb] rZ                      // delay=4
+      r4       = shf.l.w.u64 r1 rZ 0x2                    // delay=2
+      r1       = shf.l.w.u64.hi r1 r2 0x2                 // delay=4
+      r2 p0    = iadd3 r4 c[0x0][0x38] rZ                 // delay=13
+      r4       = iadd3.x r1 c[0x0][0x3c] rZ p0 pF         // delay=6
+      r7       = mov r4                                   // delay=1
+      r6       = mov r2                                   // delay=6
+                 st.global.a64.strong.sys.b32 [r6..8] r10 // delay=2 rd:0
+                 bra L52                                  // delay=1 wt=000001
+} -> [39]
+block 38 L51 [36] -> {
+} -> [39]
+block.u 39 L52 [37, 38] -> {
+                 bsync b0 pT                              // delay=1 yld
+                 nop L50                                  // delay=1
+      r1       = iadd3 r0 0x6 rZ                          // delay=6
+      p0       = isetp.lt.u32 r1 c[0x0][0x40]             // delay=11
+      b0       = bclear                                   // delay=1
+      b0       = bssy b0 pT L54                           // delay=1
+@!p0             bra L55                                  // delay=1
+} -> [40, 41]
+block 40 L57 [39] -> {
+      p0       = isetp.lt.u32 r3 c[0x0][0x44]             // delay=12
+                 bra L56                                  // delay=1
+} -> [42]
+block 41 L55 [39] -> {
+      p0 null  = plop3 pT pT up0 LUT[0xaa] LUT[0x0]       // delay=13
+} -> [42]
+block.u 42 L56 [40, 41] -> {
+                 bsync b0 pT                              // delay=1 yld
+                 nop L54                                  // delay=1
+      b0       = bclear                                   // delay=1
+      b0       = bssy b0 pT L58                           // delay=1
+@!p0             bra L59                                  // delay=1
+} -> [43, 44]
+block 43 L61 [42] -> {
+      r1       = imad r1 c[0x0][0x44] r3                  // delay=6
+      r2       = prmt r1 [0xbbbb] rZ                      // delay=4
+      r4       = shf.l.w.u64 r1 rZ 0x2                    // delay=2
+      r1       = shf.l.w.u64.hi r1 r2 0x2                 // delay=4
+      r2 p0    = iadd3 r4 c[0x0][0x38] rZ                 // delay=13
+      r4       = iadd3.x r1 c[0x0][0x3c] rZ p0 pF         // delay=6
+      r7       = mov r4                                   // delay=1
+      r6       = mov r2                                   // delay=6
+                 st.global.a64.strong.sys.b32 [r6..8] r9  // delay=2 rd:0
+                 bra L60                                  // delay=1 wt=000001
+} -> [45]
+block 44 L59 [42] -> {
+} -> [45]
+block.u 45 L60 [43, 44] -> {
+                 bsync b0 pT                              // delay=1 yld
+                 nop L58                                  // delay=1
+      r0       = iadd3 r0 0x7 rZ                          // delay=6
+      p0       = isetp.lt.u32 r0 c[0x0][0x40]             // delay=11
+      b0       = bclear                                   // delay=1
+      b0       = bssy b0 pT L62                           // delay=1
+@!p0             bra L63                                  // delay=1
+} -> [46, 47]
+block 46 L65 [45] -> {
+      p0       = isetp.lt.u32 r3 c[0x0][0x44]             // delay=12
+                 bra L64                                  // delay=1
+} -> [48]
+block 47 L63 [45] -> {
+      p0 null  = plop3 pT pT up0 LUT[0xaa] LUT[0x0]       // delay=13
+} -> [48]
+block.u 48 L64 [46, 47] -> {
+                 bsync b0 pT                              // delay=1 yld
+                 nop L62                                  // delay=1
+@!p0             bra L66                                  // delay=1
+} -> [49, 50]
+block 49 L68 [48] -> {
+      r0       = imad r0 c[0x0][0x44] r3                  // delay=6
+      r1       = prmt r0 [0xbbbb] rZ                      // delay=1
+      r2       = shf.l.w.u64 r0 rZ 0x2                    // delay=5
+      r0       = shf.l.w.u64.hi r0 r1 0x2                 // delay=1
+      r2 p0    = iadd3 r2 c[0x0][0x38] rZ                 // delay=13
+      r3       = iadd3.x r0 c[0x0][0x3c] rZ p0 pF         // delay=6
+                 st.global.a64.strong.sys.b32 [r2..4] r8  // delay=2 rd:0
+                 exit                                     // delay=1 wt=000001
+} -> []
+block 50 L66 [48] -> {
+                 exit                                     // delay=1
+} -> []
+block.u 51 L3 [1] -> {
+} -> [52]
+block.u 52 L69 [51] -> {
+      r16      = iadd3 r4 r5 rZ                           // delay=1
+      r17      = iadd3 r6 ur0 rZ                          // delay=1
+      r18      = lop3.LUT[0xc0] r0 0xfffffff8 rZ          // delay=6
+      r18      = iadd3 r18 r6 rZ                          // delay=1
+      p0       = isetp.lt.u32 r16 c[0x0][0x40]            // delay=11
+      b0       = bclear                                   // delay=1
+      b0       = bssy b0 pT L70                           // delay=1
+@!p0             bra L71                                  // delay=1
+} -> [53, 54]
+block 53 L73 [52] -> {
+      p0       = isetp.lt.u32 r17 c[0x0][0x48]            // delay=12
+                 bra L72                                  // delay=1
+} -> [55]
+block 54 L71 [52] -> {
+      p0 null  = plop3 pT pT up0 LUT[0xaa] LUT[0x0]       // delay=13
+} -> [55]
+block.u 55 L72 [53, 54] -> {
+                 bsync b0 pT                              // delay=1 yld
+                 nop L70                                  // delay=1
+      b0       = bclear                                   // delay=1
+      b0       = bssy b0 pT L74                           // delay=1
+@!p0             bra L75                                  // delay=1
+} -> [56, 57]
+block 56 L77 [55] -> {
+      r16      = imad r16 c[0x0][0x48] r17                // delay=6
+      r17      = prmt r16 [0xbbbb] rZ                     // delay=1
+      r19      = shf.l.w.u64 r16 rZ 0x2                   // delay=5
+      r16      = shf.l.w.u64.hi r16 r17 0x2               // delay=1
+      r20 p0   = iadd3 r19 c[0x0][0x28] rZ                // delay=13
+      r16      = iadd3.x r16 c[0x0][0x2c] rZ p0 pF        // delay=2
+      r17      = mov r1                                   // delay=4
+      r1       = mov r16                                  // delay=4
+      r16      = mov r0                                   // delay=4
+      r0       = mov r20                                  // delay=6
+      r0       = ld.global.a64.constant.b32 [r0..2]       // delay=5 wr:0
+                 bra L76                                  // delay=1 wt=000001
+} -> [58]
+block 57 L75 [55] -> {
+      r16      = mov rZ                                   // delay=1
+      r17      = mov r1                                   // delay=1
+      r21      = mov r0                                   // delay=4
+      r0       = mov r16                                  // delay=4
+      r16      = mov r21                                  // delay=6
+} -> [58]
+block.u 58 L76 [56, 57] -> {
+                 bsync b0 pT                              // delay=1 yld
+                 nop L74                                  // delay=1
+      r1       = shf.l.w.i32 r18 rZ 0x2                   // delay=6
+                 st.shared.strong.cta.b32 [r1] r0         // delay=4 rd:0
+      r0       = iadd3 r2 ur0 rZ                          // delay=1 wt=000001
+      r1       = lop3.LUT[0xc0] r16 0xffffffc0 rZ         // delay=6
+      r18      = iadd3 r1 r17 rZ                          // delay=1
+      p0       = isetp.lt.u32 r0 c[0x0][0x48]             // delay=11
+      b0       = bclear                                   // delay=1
+      b0       = bssy b0 pT L78                           // delay=1
+@!p0             bra L79                                  // delay=1
+} -> [59, 60]
+block 59 L81 [58] -> {
+      p0       = isetp.lt.u32 r3 c[0x0][0x44]             // delay=12
+                 bra L80                                  // delay=1
+} -> [61]
+block 60 L79 [58] -> {
+      p0 null  = plop3 pT pT up0 LUT[0xaa] LUT[0x0]       // delay=13
+} -> [61]
+block.u 61 L80 [59, 60] -> {
+                 bsync b0 pT                              // delay=1 yld
+                 nop L78                                  // delay=1
+      b0       = bclear                                   // delay=1
+      b0       = bssy b0 pT L82                           // delay=1
+@!p0             bra L83                                  // delay=1
+} -> [62, 63]
+block 62 L85 [61] -> {
+      r0       = imad r0 c[0x0][0x44] r3                  // delay=6
+      r19      = prmt r0 [0xbbbb] rZ                      // delay=1
+      r20      = shf.l.w.u64 r0 rZ 0x2                    // delay=5
+      r0       = shf.l.w.u64.hi r0 r19 0x2                // delay=1
+      r20 p0   = iadd3 r20 c[0x0][0x30] rZ                // delay=13
+      r0       = iadd3.x r0 c[0x0][0x34] rZ p0 pF         // delay=2
+      r19      = mov r1                                   // delay=4
+      r1       = mov r0                                   // delay=4
+      r0       = mov r20                                  // delay=6
+      r0       = ld.global.a64.constant.b32 [r0..2]       // delay=5 wr:0
+                 bra L84                                  // delay=1 wt=000001
+} -> [64]
+block 63 L83 [61] -> {
+      r0       = mov rZ                                   // delay=1
+      r19      = mov r1                                   // delay=6
+} -> [64]
+block.u 64 L84 [62, 63] -> {
+                 bsync b0 pT                              // delay=1 yld
+                 nop L82                                  // delay=1
+      r1       = shf.l.w.i32 r18 rZ 0x2                   // delay=6
+                 st.shared.strong.cta.b32 [r1+0x800] r0   // delay=1 rd:0
+                 bar.sync                                 // delay=6 yld
+                 nop                                      // delay=2
+                 membar.sc..gpu                           // delay=6
+                 nop                                      // delay=2
+      ur1      = iadd3 ur1 -ur0 rZ                        // delay=12
+      up1      = isetp.lt.u32 rZ ur1                      // delay=11
+      p0 null  = plop3 pT pT up1 LUT[0xaa] LUT[0x0]       // delay=13
+@!p0             bra L86                                  // delay=1 wt=000001
+} -> [65, 87]
+block.u 65 L88 [64] -> {
+      r0       = shf.l.w.i32 r17 rZ 0x2                   // delay=6
+      r1       = ld.shared.strong.cta.b32 [r0+0x800]      // delay=1 wr:0
+      r18      = shf.l.w.i32 r19 rZ 0x2                   // delay=6
+      r19      = ld.shared.strong.cta.b32 [r18]           // delay=6 wr:1
+      r15      = ffma.ftz r19 r1 r15                      // delay=4 wt=000011
+      r19      = ld.shared.strong.cta.b32 [r18+0x20]      // delay=6 wr:0
+      r14      = ffma.ftz r19 r1 r14                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x40]      // delay=6 wr:0
+      r13      = ffma.ftz r19 r1 r13                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x60]      // delay=6 wr:0
+      r12      = ffma.ftz r19 r1 r12                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x80]      // delay=6 wr:0
+      r11      = ffma.ftz r19 r1 r11                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xa0]      // delay=6 wr:0
+      r10      = ffma.ftz r19 r1 r10                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xc0]      // delay=6 wr:0
+      r9       = ffma.ftz r19 r1 r9                       // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xe0]      // delay=6 wr:0
+      r8       = ffma.ftz r19 r1 r8                       // delay=1 wt=000001
+      up1      = isetp.gt.u32 ur1 0x1                     // delay=11
+      p0 null  = plop3 pT pT up1 LUT[0xaa] LUT[0x0]       // delay=13
+@!p0             bra L87                                  // delay=1
+} -> [66, 85]
+block.u 66 L90 [65] -> {
+      r1       = ld.shared.strong.cta.b32 [r0+0x900]      // delay=1 wr:0
+      r19      = ld.shared.strong.cta.b32 [r18+0x4]       // delay=6 wr:1
+      r15      = ffma.ftz r19 r1 r15                      // delay=4 wt=000011
+      r19      = ld.shared.strong.cta.b32 [r18+0x24]      // delay=6 wr:0
+      r14      = ffma.ftz r19 r1 r14                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x44]      // delay=6 wr:0
+      r13      = ffma.ftz r19 r1 r13                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x64]      // delay=6 wr:0
+      r12      = ffma.ftz r19 r1 r12                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x84]      // delay=6 wr:0
+      r11      = ffma.ftz r19 r1 r11                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xa4]      // delay=6 wr:0
+      r10      = ffma.ftz r19 r1 r10                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xc4]      // delay=6 wr:0
+      r9       = ffma.ftz r19 r1 r9                       // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xe4]      // delay=6 wr:0
+      r8       = ffma.ftz r19 r1 r8                       // delay=1 wt=000001
+      up1      = isetp.gt.u32 ur1 0x2                     // delay=11
+      p0 null  = plop3 pT pT up1 LUT[0xaa] LUT[0x0]       // delay=13
+@!p0             bra L89                                  // delay=1
+} -> [67, 83]
+block.u 67 L92 [66] -> {
+      r1       = ld.shared.strong.cta.b32 [r0+0xa00]      // delay=1 wr:0
+      r19      = ld.shared.strong.cta.b32 [r18+0x8]       // delay=6 wr:1
+      r15      = ffma.ftz r19 r1 r15                      // delay=4 wt=000011
+      r19      = ld.shared.strong.cta.b32 [r18+0x28]      // delay=6 wr:0
+      r14      = ffma.ftz r19 r1 r14                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x48]      // delay=6 wr:0
+      r13      = ffma.ftz r19 r1 r13                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x68]      // delay=6 wr:0
+      r12      = ffma.ftz r19 r1 r12                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x88]      // delay=6 wr:0
+      r11      = ffma.ftz r19 r1 r11                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xa8]      // delay=6 wr:0
+      r10      = ffma.ftz r19 r1 r10                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xc8]      // delay=6 wr:0
+      r9       = ffma.ftz r19 r1 r9                       // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xe8]      // delay=6 wr:0
+      r8       = ffma.ftz r19 r1 r8                       // delay=1 wt=000001
+      up1      = isetp.gt.u32 ur1 0x3                     // delay=11
+      p0 null  = plop3 pT pT up1 LUT[0xaa] LUT[0x0]       // delay=13
+@!p0             bra L91                                  // delay=1
+} -> [68, 81]
+block.u 68 L94 [67] -> {
+      r1       = ld.shared.strong.cta.b32 [r0+0xb00]      // delay=1 wr:0
+      r19      = ld.shared.strong.cta.b32 [r18+0xc]       // delay=6 wr:1
+      r15      = ffma.ftz r19 r1 r15                      // delay=4 wt=000011
+      r19      = ld.shared.strong.cta.b32 [r18+0x2c]      // delay=6 wr:0
+      r14      = ffma.ftz r19 r1 r14                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x4c]      // delay=6 wr:0
+      r13      = ffma.ftz r19 r1 r13                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x6c]      // delay=6 wr:0
+      r12      = ffma.ftz r19 r1 r12                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x8c]      // delay=6 wr:0
+      r11      = ffma.ftz r19 r1 r11                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xac]      // delay=6 wr:0
+      r10      = ffma.ftz r19 r1 r10                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xcc]      // delay=6 wr:0
+      r9       = ffma.ftz r19 r1 r9                       // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xec]      // delay=6 wr:0
+      r8       = ffma.ftz r19 r1 r8                       // delay=1 wt=000001
+      up1      = isetp.gt.u32 ur1 0x4                     // delay=11
+      p0 null  = plop3 pT pT up1 LUT[0xaa] LUT[0x0]       // delay=13
+@!p0             bra L93                                  // delay=1
+} -> [69, 79]
+block.u 69 L96 [68] -> {
+      r1       = ld.shared.strong.cta.b32 [r0+0xc00]      // delay=1 wr:0
+      r19      = ld.shared.strong.cta.b32 [r18+0x10]      // delay=6 wr:1
+      r15      = ffma.ftz r19 r1 r15                      // delay=4 wt=000011
+      r19      = ld.shared.strong.cta.b32 [r18+0x30]      // delay=6 wr:0
+      r14      = ffma.ftz r19 r1 r14                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x50]      // delay=6 wr:0
+      r13      = ffma.ftz r19 r1 r13                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x70]      // delay=6 wr:0
+      r12      = ffma.ftz r19 r1 r12                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x90]      // delay=6 wr:0
+      r11      = ffma.ftz r19 r1 r11                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xb0]      // delay=6 wr:0
+      r10      = ffma.ftz r19 r1 r10                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xd0]      // delay=6 wr:0
+      r9       = ffma.ftz r19 r1 r9                       // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xf0]      // delay=6 wr:0
+      r8       = ffma.ftz r19 r1 r8                       // delay=1 wt=000001
+      up1      = isetp.gt.u32 ur1 0x5                     // delay=11
+      p0 null  = plop3 pT pT up1 LUT[0xaa] LUT[0x0]       // delay=13
+@!p0             bra L95                                  // delay=1
+} -> [70, 77]
+block.u 70 L98 [69] -> {
+      r1       = ld.shared.strong.cta.b32 [r0+0xd00]      // delay=1 wr:0
+      r19      = ld.shared.strong.cta.b32 [r18+0x14]      // delay=6 wr:1
+      r15      = ffma.ftz r19 r1 r15                      // delay=4 wt=000011
+      r19      = ld.shared.strong.cta.b32 [r18+0x34]      // delay=6 wr:0
+      r14      = ffma.ftz r19 r1 r14                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x54]      // delay=6 wr:0
+      r13      = ffma.ftz r19 r1 r13                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x74]      // delay=6 wr:0
+      r12      = ffma.ftz r19 r1 r12                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x94]      // delay=6 wr:0
+      r11      = ffma.ftz r19 r1 r11                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xb4]      // delay=6 wr:0
+      r10      = ffma.ftz r19 r1 r10                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xd4]      // delay=6 wr:0
+      r9       = ffma.ftz r19 r1 r9                       // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xf4]      // delay=6 wr:0
+      r8       = ffma.ftz r19 r1 r8                       // delay=1 wt=000001
+      up1      = isetp.gt.u32 ur1 0x6                     // delay=11
+      p0 null  = plop3 pT pT up1 LUT[0xaa] LUT[0x0]       // delay=13
+@!p0             bra L97                                  // delay=1
+} -> [71, 75]
+block.u 71 L100 [70] -> {
+      r1       = ld.shared.strong.cta.b32 [r0+0xe00]      // delay=1 wr:0
+      r19      = ld.shared.strong.cta.b32 [r18+0x18]      // delay=6 wr:1
+      r15      = ffma.ftz r19 r1 r15                      // delay=4 wt=000011
+      r19      = ld.shared.strong.cta.b32 [r18+0x38]      // delay=6 wr:0
+      r14      = ffma.ftz r19 r1 r14                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x58]      // delay=6 wr:0
+      r13      = ffma.ftz r19 r1 r13                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x78]      // delay=6 wr:0
+      r12      = ffma.ftz r19 r1 r12                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0x98]      // delay=6 wr:0
+      r11      = ffma.ftz r19 r1 r11                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xb8]      // delay=6 wr:0
+      r10      = ffma.ftz r19 r1 r10                      // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xd8]      // delay=6 wr:0
+      r9       = ffma.ftz r19 r1 r9                       // delay=4 wt=000001
+      r19      = ld.shared.strong.cta.b32 [r18+0xf8]      // delay=6 wr:0
+      r8       = ffma.ftz r19 r1 r8                       // delay=1 wt=000001
+      up1      = isetp.gt.u32 ur1 0x7                     // delay=11
+      p0 null  = plop3 pT pT up1 LUT[0xaa] LUT[0x0]       // delay=13
+@!p0             bra L99                                  // delay=1
+} -> [72, 73]
+block.u 72 L102 [71] -> {
+      r0       = ld.shared.strong.cta.b32 [r0+0xf00]      // delay=1 wr:0
+      r1       = ld.shared.strong.cta.b32 [r18+0x1c]      // delay=6 wr:1
+      r15      = ffma.ftz r1 r0 r15                       // delay=4 wt=000011
+      r1       = ld.shared.strong.cta.b32 [r18+0x3c]      // delay=6 wr:0
+      r14      = ffma.ftz r1 r0 r14                       // delay=4 wt=000001
+      r1       = ld.shared.strong.cta.b32 [r18+0x5c]      // delay=6 wr:0
+      r13      = ffma.ftz r1 r0 r13                       // delay=4 wt=000001
+      r1       = ld.shared.strong.cta.b32 [r18+0x7c]      // delay=6 wr:0
+      r12      = ffma.ftz r1 r0 r12                       // delay=4 wt=000001
+      r1       = ld.shared.strong.cta.b32 [r18+0x9c]      // delay=6 wr:0
+      r11      = ffma.ftz r1 r0 r11                       // delay=4 wt=000001
+      r1       = ld.shared.strong.cta.b32 [r18+0xbc]      // delay=6 wr:0
+      r10      = ffma.ftz r1 r0 r10                       // delay=4 wt=000001
+      r1       = ld.shared.strong.cta.b32 [r18+0xdc]      // delay=6 wr:0
+      r9       = ffma.ftz r1 r0 r9                        // delay=4 wt=000001
+      r1       = ld.shared.strong.cta.b32 [r18+0xfc]      // delay=6 wr:0
+      r8       = ffma.ftz r1 r0 r8                        // delay=5 wt=000001
+                 bra L101                                 // delay=1
+} -> [74]
+block.u 73 L99 [71] -> {
+} -> [74]
+block.u 74 L101 [72, 73] -> {
+                 bra L103                                 // delay=1
+} -> [76]
+block.u 75 L97 [70] -> {
+} -> [76]
+block.u 76 L103 [74, 75] -> {
+                 bra L104                                 // delay=1
+} -> [78]
+block.u 77 L95 [69] -> {
+} -> [78]
+block.u 78 L104 [76, 77] -> {
+                 bra L105                                 // delay=1
+} -> [80]
+block.u 79 L93 [68] -> {
+} -> [80]
+block.u 80 L105 [78, 79] -> {
+                 bra L106                                 // delay=1
+} -> [82]
+block.u 81 L91 [67] -> {
+} -> [82]
+block.u 82 L106 [80, 81] -> {
+                 bra L107                                 // delay=1
+} -> [84]
+block.u 83 L89 [66] -> {
+} -> [84]
+block.u 84 L107 [82, 83] -> {
+                 bra L108                                 // delay=1
+} -> [86]
+block.u 85 L87 [65] -> {
+} -> [86]
+block.u 86 L108 [84, 85] -> {
+                 bra L109                                 // delay=1
+} -> [88]
+block.u 87 L86 [64] -> {
+} -> [88]
+block.u 88 L109 [86, 87] -> {
+                 bar.sync                                 // delay=6 yld
+                 nop                                      // delay=2
+                 membar.sc..gpu                           // delay=6
+                 nop                                      // delay=2
+      ur0      = iadd3 ur0 0x8 rZ                         // delay=12
+} -> [89]
+block.u 89 L110 [88] -> {
+      r1       = mov r17                                  // delay=1
+      r0       = mov r16                                  // delay=5
+                 bra L1                                   // delay=1
+} -> [1]
+
+Stage: compute
+Instruction count: 478
+Num GPRs: 24
+SLM size: 0
+Encoded shader:
+  00ff7355 00000000 00100000 000fc200 00007945 00000010 03800000 000fc200
+  00007941 00000000 03800000 000fe200 00007918 00000000 00000000 000fc200
+  00007919 00000000 00002100 000e0c00 00017812 0000003f 078ec0ff 001fc200
+  ff027819 00000006 00011e00 000fc200 00037919 00000000 00002500 000e0200
+  00047919 00000000 00002600 000e4a00 03037a10 00000000 07ffe0ff 001fc200
+  04047a10 00000100 07ffe0ff 002fcc00 04047819 00000006 00000cff 000fc200
+  03037819 00000006 00000cff 000fcc00 03037210 00000001 07ffe0ff 000fc200
+  ff057819 00000003 00011e00 000fc200 00067812 00000007 078ec0ff 000fc200
+  0000789c 00000000 03f1f974 000fc200 02077819 00000003 00000cff 000fc200
+  00087202 000000ff 00000f00 000fc200 00097202 000000ff 00000f00 000fc200
+  000a7202 000000ff 00000f00 000fc200 000b7202 000000ff 00000f00 000fc200
+  000c7202 000000ff 00000f00 000fc200 000d7202 000000ff 00000f00 000fc200
+  000e7202 000000ff 00000f00 000fc200 000f7202 000000ff 00000f00 000fc200
+  00007c82 0000003f 08000000 000fd800 00017ab9 00001200 00000800 000e1800
+  0000728c 00000001 0bf26070 001fd600 0000781c 00000000 03f0f51a 000fda00
+  00008947 00000c30 03800000 000fc200 04007210 00000007 07ffe0ff 000fcc00
+  00007a0c 00001000 03f01070 000fd600 00ff7355 00000000 00100000 000fc200
+  00007945 00000050 03800000 000fc200 00008947 00000020 03800000 000fc200
+  03007a0c 00001100 03f01070 000fd800 00007947 00000010 03800000 000fc200
+  0000781c 00000000 03f0f50a 000fda00 00007941 00000000 03800000 000fe200
+  00007918 00000000 00000000 000fc200 00ff7355 00000000 00100000 000fc200
+  00007945 000000c0 03800000 000fc200 00008947 000000a0 03800000 000fc200
+  00017a24 00001100 000e0003 000fcc00 01027816 0000bbbb 000000ff 000fc800
+  01047819 00000002 00000aff 000fc400 01017819 00000002 00010a02 000fc800
+  04027a10 00000e00 07f1e0ff 000fda00 01047a10 00000f00 007fe4ff 000fcc00
+  00077202 00000004 00000f00 000fc200 00067202 00000002 00000f00 000fcc00
+  06007386 0000000f 00114900 0001c400 00007947 00000000 03800000 001fc200
+  00007941 00000000 03800000 000fe200 00007918 00000000 00000000 000fc200
+  00017810 00000001 07ffe0ff 000fcc00 01007a0c 00001000 03f01070 000fd600
+  00ff7355 00000000 00100000 000fc200 00007945 00000050 03800000 000fc200
+  00008947 00000020 03800000 000fc200 03007a0c 00001100 03f01070 000fd800
+  00007947 00000010 03800000 000fc200 0000781c 00000000 03f0f50a 000fda00
+  00007941 00000000 03800000 000fe200 00007918 00000000 00000000 000fc200
+  00ff7355 00000000 00100000 000fc200 00007945 000000c0 03800000 000fc200
+  00008947 000000a0 03800000 000fc200 01017a24 00001100 000e0003 000fcc00
+  01027816 0000bbbb 000000ff 000fc800 01047819 00000002 00000aff 000fc400
+  01017819 00000002 00010a02 000fc800 04027a10 00000e00 07f1e0ff 000fda00
+  01047a10 00000f00 007fe4ff 000fcc00 00077202 00000004 00000f00 000fc200
+  00067202 00000002 00000f00 000fcc00 06007386 0000000e 00114900 0001c400
+  00007947 00000000 03800000 001fc200 00007941 00000000 03800000 000fe200
+  00007918 00000000 00000000 000fc200 00017810 00000002 07ffe0ff 000fcc00
+  01007a0c 00001000 03f01070 000fd600 00ff7355 00000000 00100000 000fc200
+  00007945 00000050 03800000 000fc200 00008947 00000020 03800000 000fc200
+  03007a0c 00001100 03f01070 000fd800 00007947 00000010 03800000 000fc200
+  0000781c 00000000 03f0f50a 000fda00 00007941 00000000 03800000 000fe200
+  00007918 00000000 00000000 000fc200 00ff7355 00000000 00100000 000fc200
+  00007945 000000c0 03800000 000fc200 00008947 000000a0 03800000 000fc200
+  01017a24 00001100 000e0003 000fcc00 01027816 0000bbbb 000000ff 000fc800
+  01047819 00000002 00000aff 000fc400 01017819 00000002 00010a02 000fc800
+  04027a10 00000e00 07f1e0ff 000fda00 01047a10 00000f00 007fe4ff 000fcc00
+  00077202 00000004 00000f00 000fc200 00067202 00000002 00000f00 000fcc00
+  06007386 0000000d 00114900 0001c400 00007947 00000000 03800000 001fc200
+  00007941 00000000 03800000 000fe200 00007918 00000000 00000000 000fc200
+  00017810 00000003 07ffe0ff 000fcc00 01007a0c 00001000 03f01070 000fd600
+  00ff7355 00000000 00100000 000fc200 00007945 00000050 03800000 000fc200
+  00008947 00000020 03800000 000fc200 03007a0c 00001100 03f01070 000fd800
+  00007947 00000010 03800000 000fc200 0000781c 00000000 03f0f50a 000fda00
+  00007941 00000000 03800000 000fe200 00007918 00000000 00000000 000fc200
+  00ff7355 00000000 00100000 000fc200 00007945 000000c0 03800000 000fc200
+  00008947 000000a0 03800000 000fc200 01017a24 00001100 000e0003 000fcc00
+  01027816 0000bbbb 000000ff 000fc800 01047819 00000002 00000aff 000fc400
+  01017819 00000002 00010a02 000fc800 04027a10 00000e00 07f1e0ff 000fda00
+  01047a10 00000f00 007fe4ff 000fcc00 00077202 00000004 00000f00 000fc200
+  00067202 00000002 00000f00 000fcc00 06007386 0000000c 00114900 0001c400
+  00007947 00000000 03800000 001fc200 00007941 00000000 03800000 000fe200
+  00007918 00000000 00000000 000fc200 00017810 00000004 07ffe0ff 000fcc00
+  01007a0c 00001000 03f01070 000fd600 00ff7355 00000000 00100000 000fc200
+  00007945 00000050 03800000 000fc200 00008947 00000020 03800000 000fc200
+  03007a0c 00001100 03f01070 000fd800 00007947 00000010 03800000 000fc200
+  0000781c 00000000 03f0f50a 000fda00 00007941 00000000 03800000 000fe200
+  00007918 00000000 00000000 000fc200 00ff7355 00000000 00100000 000fc200
+  00007945 000000c0 03800000 000fc200 00008947 000000a0 03800000 000fc200
+  01017a24 00001100 000e0003 000fcc00 01027816 0000bbbb 000000ff 000fc800
+  01047819 00000002 00000aff 000fc400 01017819 00000002 00010a02 000fc800
+  04027a10 00000e00 07f1e0ff 000fda00 01047a10 00000f00 007fe4ff 000fcc00
+  00077202 00000004 00000f00 000fc200 00067202 00000002 00000f00 000fcc00
+  06007386 0000000b 00114900 0001c400 00007947 00000000 03800000 001fc200
+  00007941 00000000 03800000 000fe200 00007918 00000000 00000000 000fc200
+  00017810 00000005 07ffe0ff 000fcc00 01007a0c 00001000 03f01070 000fd600
+  00ff7355 00000000 00100000 000fc200 00007945 00000050 03800000 000fc200
+  00008947 00000020 03800000 000fc200 03007a0c 00001100 03f01070 000fd800
+  00007947 00000010 03800000 000fc200 0000781c 00000000 03f0f50a 000fda00
+  00007941 00000000 03800000 000fe200 00007918 00000000 00000000 000fc200
+  00ff7355 00000000 00100000 000fc200 00007945 000000c0 03800000 000fc200
+  00008947 000000a0 03800000 000fc200 01017a24 00001100 000e0003 000fcc00
+  01027816 0000bbbb 000000ff 000fc800 01047819 00000002 00000aff 000fc400
+  01017819 00000002 00010a02 000fc800 04027a10 00000e00 07f1e0ff 000fda00
+  01047a10 00000f00 007fe4ff 000fcc00 00077202 00000004 00000f00 000fc200
+  00067202 00000002 00000f00 000fcc00 06007386 0000000a 00114900 0001c400
+  00007947 00000000 03800000 001fc200 00007941 00000000 03800000 000fe200
+  00007918 00000000 00000000 000fc200 00017810 00000006 07ffe0ff 000fcc00
+  01007a0c 00001000 03f01070 000fd600 00ff7355 00000000 00100000 000fc200
+  00007945 00000050 03800000 000fc200 00008947 00000020 03800000 000fc200
+  03007a0c 00001100 03f01070 000fd800 00007947 00000010 03800000 000fc200
+  0000781c 00000000 03f0f50a 000fda00 00007941 00000000 03800000 000fe200
+  00007918 00000000 00000000 000fc200 00ff7355 00000000 00100000 000fc200
+  00007945 000000c0 03800000 000fc200 00008947 000000a0 03800000 000fc200
+  01017a24 00001100 000e0003 000fcc00 01027816 0000bbbb 000000ff 000fc800
+  01047819 00000002 00000aff 000fc400 01017819 00000002 00010a02 000fc800
+  04027a10 00000e00 07f1e0ff 000fda00 01047a10 00000f00 007fe4ff 000fcc00
+  00077202 00000004 00000f00 000fc200 00067202 00000002 00000f00 000fcc00
+  06007386 00000009 00114900 0001c400 00007947 00000000 03800000 001fc200
+  00007941 00000000 03800000 000fe200 00007918 00000000 00000000 000fc200
+  00007810 00000007 07ffe0ff 000fcc00 00007a0c 00001000 03f01070 000fd600
+  00ff7355 00000000 00100000 000fc200 00007945 00000050 03800000 000fc200
+  00008947 00000020 03800000 000fc200 03007a0c 00001100 03f01070 000fd800
+  00007947 00000010 03800000 000fc200 0000781c 00000000 03f0f50a 000fda00
+  00007941 00000000 03800000 000fe200 00007918 00000000 00000000 000fc200
+  00008947 00000080 03800000 000fc200 00007a24 00001100 000e0003 000fcc00
+  00017816 0000bbbb 000000ff 000fc200 00027819 00000002 00000aff 000fca00
+  00007819 00000002 00010a01 000fc200 02027a10 00000e00 07f1e0ff 000fda00
+  00037a10 00000f00 007fe4ff 000fcc00 02007386 00000008 00114900 0001c400
+  0000794d 00000000 03800000 001fc200 0000794d 00000000 03800000 000fc200
+  04107210 00000005 07ffe0ff 000fc200 06117c10 00000000 0fffe0ff 000fc200
+  00127812 fffffff8 078ec0ff 000fcc00 12127210 00000006 07ffe0ff 000fc200
+  10007a0c 00001000 03f01070 000fd600 00ff7355 00000000 00100000 000fc200
+  00007945 00000050 03800000 000fc200 00008947 00000020 03800000 000fc200
+  11007a0c 00001200 03f01070 000fd800 00007947 00000010 03800000 000fc200
+  0000781c 00000000 03f0f50a 000fda00 00007941 00000000 03800000 000fe200
+  00007918 00000000 00000000 000fc200 00ff7355 00000000 00100000 000fc200
+  00007945 00000130 03800000 000fc200 00008947 000000c0 03800000 000fc200
+  10107a24 00001200 000e0011 000fcc00 10117816 0000bbbb 000000ff 000fc200
+  10137819 00000002 00000aff 000fca00 10107819 00000002 00010a11 000fc200
+  13147a10 00000a00 07f1e0ff 000fda00 10107a10 00000b00 007fe4ff 000fc400
+  00117202 00000001 00000f00 000fc800 00017202 00000010 00000f00 000fc800
+  00107202 00000000 00000f00 000fc800 00007202 00000014 00000f00 000fcc00
+  00007381 00000000 001e8900 000e0a00 00007947 00000050 03800000 001fc200
+  00107202 000000ff 00000f00 000fc200 00117202 00000001 00000f00 000fc200
+  00157202 00000000 00000f00 000fc800 00007202 00000010 00000f00 000fc800
+  00107202 00000015 00000f00 000fcc00 00007941 00000000 03800000 000fe200
+  00007918 00000000 00000000 000fc200 12017819 00000002 00000cff 000fcc00
+  01007388 00000000 00000800 0001c800 02007c10 00000000 0fffe0ff 001fc200
+  10017812 ffffffc0 078ec0ff 000fcc00 01127210 00000011 07ffe0ff 000fc200
+  00007a0c 00001200 03f01070 000fd600 00ff7355 00000000 00100000 000fc200
+  00007945 00000050 03800000 000fc200 00008947 00000020 03800000 000fc200
+  03007a0c 00001100 03f01070 000fd800 00007947 00000010 03800000 000fc200
+  0000781c 00000000 03f0f50a 000fda00 00007941 00000000 03800000 000fe200
+  00007918 00000000 00000000 000fc200 00ff7355 00000000 00100000 000fc200
+  00007945 000000f0 03800000 000fc200 00008947 000000b0 03800000 000fc200
+  00007a24 00001100 000e0003 000fcc00 00137816 0000bbbb 000000ff 000fc200
+  00147819 00000002 00000aff 000fca00 00007819 00000002 00010a13 000fc200
+  14147a10 00000c00 07f1e0ff 000fda00 00007a10 00000d00 007fe4ff 000fc400
+  00137202 00000001 00000f00 000fc800 00017202 00000000 00000f00 000fc800
+  00007202 00000014 00000f00 000fcc00 00007381 00000000 001e8900 000e0a00
+  00007947 00000020 03800000 001fc200 00007202 000000ff 00000f00 000fc200
+  00137202 00000001 00000f00 000fcc00 00007941 00000000 03800000 000fe200
+  00007918 00000000 00000000 000fc200 12017819 00000002 00000cff 000fcc00
+  01007388 00080000 00000800 0001c200 00007b1d 00000000 00000000 000fec00
+  00007918 00000000 00000000 000fc400 00007992 00000000 00002000 000fcc00
+  00007918 00000000 00000000 000fc400 01017290 80000000 0fffe03f 000fd800
+  3f00728c 00000001 0bf21070 000fd600 0000781c 00000000 03f0f51a 000fda00
+  00008947 00000a70 03800000 001fc200 11007819 00000002 00000cff 000fcc00
+  00017984 00080000 00000800 000e0200 13127819 00000002 00000cff 000fcc00
+  12137984 00000000 00000800 000e4c00 130f7223 00000001 0001000f 003fc800
+  12137984 00002000 00000800 000e0c00 130e7223 00000001 0001000e 001fc800
+  12137984 00004000 00000800 000e0c00 130d7223 00000001 0001000d 001fc800
+  12137984 00006000 00000800 000e0c00 130c7223 00000001 0001000c 001fc800
+  12137984 00008000 00000800 000e0c00 130b7223 00000001 0001000b 001fc800
+  12137984 0000a000 00000800 000e0c00 130a7223 00000001 0001000a 001fc800
+  12137984 0000c000 00000800 000e0c00 13097223 00000001 00010009 001fc800
+  12137984 0000e000 00000800 000e0c00 13087223 00000001 00010008 001fc200
+  0100788c 00000001 0bf24070 000fd600 0000781c 00000000 03f0f51a 000fda00
+  00008947 00000900 03800000 000fc200 00017984 00090000 00000800 000e0200
+  12137984 00000400 00000800 000e4c00 130f7223 00000001 0001000f 003fc800
+  12137984 00002400 00000800 000e0c00 130e7223 00000001 0001000e 001fc800
+  12137984 00004400 00000800 000e0c00 130d7223 00000001 0001000d 001fc800
+  12137984 00006400 00000800 000e0c00 130c7223 00000001 0001000c 001fc800
+  12137984 00008400 00000800 000e0c00 130b7223 00000001 0001000b 001fc800
+  12137984 0000a400 00000800 000e0c00 130a7223 00000001 0001000a 001fc800
+  12137984 0000c400 00000800 000e0c00 13097223 00000001 00010009 001fc800
+  12137984 0000e400 00000800 000e0c00 13087223 00000001 00010008 001fc200
+  0100788c 00000002 0bf24070 000fd600 0000781c 00000000 03f0f51a 000fda00
+  00008947 000007b0 03800000 000fc200 00017984 000a0000 00000800 000e0200
+  12137984 00000800 00000800 000e4c00 130f7223 00000001 0001000f 003fc800
+  12137984 00002800 00000800 000e0c00 130e7223 00000001 0001000e 001fc800
+  12137984 00004800 00000800 000e0c00 130d7223 00000001 0001000d 001fc800
+  12137984 00006800 00000800 000e0c00 130c7223 00000001 0001000c 001fc800
+  12137984 00008800 00000800 000e0c00 130b7223 00000001 0001000b 001fc800
+  12137984 0000a800 00000800 000e0c00 130a7223 00000001 0001000a 001fc800
+  12137984 0000c800 00000800 000e0c00 13097223 00000001 00010009 001fc800
+  12137984 0000e800 00000800 000e0c00 13087223 00000001 00010008 001fc200
+  0100788c 00000003 0bf24070 000fd600 0000781c 00000000 03f0f51a 000fda00
+  00008947 00000660 03800000 000fc200 00017984 000b0000 00000800 000e0200
+  12137984 00000c00 00000800 000e4c00 130f7223 00000001 0001000f 003fc800
+  12137984 00002c00 00000800 000e0c00 130e7223 00000001 0001000e 001fc800
+  12137984 00004c00 00000800 000e0c00 130d7223 00000001 0001000d 001fc800
+  12137984 00006c00 00000800 000e0c00 130c7223 00000001 0001000c 001fc800
+  12137984 00008c00 00000800 000e0c00 130b7223 00000001 0001000b 001fc800
+  12137984 0000ac00 00000800 000e0c00 130a7223 00000001 0001000a 001fc800
+  12137984 0000cc00 00000800 000e0c00 13097223 00000001 00010009 001fc800
+  12137984 0000ec00 00000800 000e0c00 13087223 00000001 00010008 001fc200
+  0100788c 00000004 0bf24070 000fd600 0000781c 00000000 03f0f51a 000fda00
+  00008947 00000510 03800000 000fc200 00017984 000c0000 00000800 000e0200
+  12137984 00001000 00000800 000e4c00 130f7223 00000001 0001000f 003fc800
+  12137984 00003000 00000800 000e0c00 130e7223 00000001 0001000e 001fc800
+  12137984 00005000 00000800 000e0c00 130d7223 00000001 0001000d 001fc800
+  12137984 00007000 00000800 000e0c00 130c7223 00000001 0001000c 001fc800
+  12137984 00009000 00000800 000e0c00 130b7223 00000001 0001000b 001fc800
+  12137984 0000b000 00000800 000e0c00 130a7223 00000001 0001000a 001fc800
+  12137984 0000d000 00000800 000e0c00 13097223 00000001 00010009 001fc800
+  12137984 0000f000 00000800 000e0c00 13087223 00000001 00010008 001fc200
+  0100788c 00000005 0bf24070 000fd600 0000781c 00000000 03f0f51a 000fda00
+  00008947 000003c0 03800000 000fc200 00017984 000d0000 00000800 000e0200
+  12137984 00001400 00000800 000e4c00 130f7223 00000001 0001000f 003fc800
+  12137984 00003400 00000800 000e0c00 130e7223 00000001 0001000e 001fc800
+  12137984 00005400 00000800 000e0c00 130d7223 00000001 0001000d 001fc800
+  12137984 00007400 00000800 000e0c00 130c7223 00000001 0001000c 001fc800
+  12137984 00009400 00000800 000e0c00 130b7223 00000001 0001000b 001fc800
+  12137984 0000b400 00000800 000e0c00 130a7223 00000001 0001000a 001fc800
+  12137984 0000d400 00000800 000e0c00 13097223 00000001 00010009 001fc800
+  12137984 0000f400 00000800 000e0c00 13087223 00000001 00010008 001fc200
+  0100788c 00000006 0bf24070 000fd600 0000781c 00000000 03f0f51a 000fda00
+  00008947 00000270 03800000 000fc200 00017984 000e0000 00000800 000e0200
+  12137984 00001800 00000800 000e4c00 130f7223 00000001 0001000f 003fc800
+  12137984 00003800 00000800 000e0c00 130e7223 00000001 0001000e 001fc800
+  12137984 00005800 00000800 000e0c00 130d7223 00000001 0001000d 001fc800
+  12137984 00007800 00000800 000e0c00 130c7223 00000001 0001000c 001fc800
+  12137984 00009800 00000800 000e0c00 130b7223 00000001 0001000b 001fc800
+  12137984 0000b800 00000800 000e0c00 130a7223 00000001 0001000a 001fc800
+  12137984 0000d800 00000800 000e0c00 13097223 00000001 00010009 001fc800
+  12137984 0000f800 00000800 000e0c00 13087223 00000001 00010008 001fc200
+  0100788c 00000007 0bf24070 000fd600 0000781c 00000000 03f0f51a 000fda00
+  00008947 00000120 03800000 000fc200 00007984 000f0000 00000800 000e0200
+  12017984 00001c00 00000800 000e4c00 010f7223 00000000 0001000f 003fc800
+  12017984 00003c00 00000800 000e0c00 010e7223 00000000 0001000e 001fc800
+  12017984 00005c00 00000800 000e0c00 010d7223 00000000 0001000d 001fc800
+  12017984 00007c00 00000800 000e0c00 010c7223 00000000 0001000c 001fc800
+  12017984 00009c00 00000800 000e0c00 010b7223 00000000 0001000b 001fc800
+  12017984 0000bc00 00000800 000e0c00 010a7223 00000000 0001000a 001fc800
+  12017984 0000dc00 00000800 000e0c00 01097223 00000000 00010009 001fc800
+  12017984 0000fc00 00000800 000e0c00 01087223 00000000 00010008 001fca00
+  00007947 00000000 03800000 000fc200 00007947 00000000 03800000 000fc200
+  00007947 00000000 03800000 000fc200 00007947 00000000 03800000 000fc200
+  00007947 00000000 03800000 000fc200 00007947 00000000 03800000 000fc200
+  00007947 00000000 03800000 000fc200 00007947 00000000 03800000 000fc200
+  00007b1d 00000000 00000000 000fec00 00007918 00000000 00000000 000fc400
+  00007992 00000000 00002000 000fcc00 00007918 00000000 00000000 000fc400
+  00007890 00000008 0fffe03f 000fd800 00017202 00000011 00000f00 000fc200
+  00007202 00000010 00000f00 000fca00 00007947 ffffe3d0 0383ffff 000fc200
