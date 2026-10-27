@@ -12,6 +12,8 @@ output so nothing is silently dropped:
   * `0xHI:0xLO` (device range)  -> pub const NAME: Range
   * `(0xBASE+(i)*STRIDE)`      -> pub const fn NAME(i: u32) -> u32
   * another NAME / NAME(n)     -> resolved alias (u32)
+  * in ENTRY_MODULES (I9, page-table entries): `a:b` with small sums such as
+    `(35-3):8`                 -> pub const NAME: EntryField (bits of a u128)
 
 Second source (C-20 B, methods and QMD): NVIDIA open-gpu-doc (MIT), for the
 channel class C56F, the compute class C7C0 and the QMD V03_00 layout:
@@ -39,10 +41,18 @@ HEADERS = [
     ("ga102_dev_gc6_island_addendum", "ogkm", "src/common/inc/swref/published/ampere/ga102/dev_gc6_island_addendum.h", None),
     ("tu102_dev_fb", "ogkm", "src/common/inc/swref/published/turing/tu102/dev_fb.h", None),
     ("tu102_dev_bus", "ogkm", "src/common/inc/swref/published/turing/tu102/dev_bus.h", None),
+    # I9: the GPU page-table entry formats (MMU version 2, used by Pascal..Ampere).
+    # The published swref copy of dev_mmu.h is a stub; the full one ships with UVM.
+    ("tu102_dev_mmu_ver2", "ogkm", "kernel-open/nvidia-uvm/hwref/turing/tu102/dev_mmu.h", "NV_MMU_VER2_"),
     ("clc56f", "ogd", "classes/host/clc56f.h", None),
     ("clc7c0", "ogd", "classes/compute/clc7c0.h", None),
     ("qmd_v03_00", "ogd", "classes/compute/clc6c0qmd.h", "NVC6C0_QMDV03_00_"),
 ]
+
+# Modules whose bit fields describe page-table entries (64 or 128 bits wide,
+# not 32-bit registers): every `hi:lo` there becomes an `EntryField`, and the
+# two ends may be small sums such as `(35-3):8` or `99:(100-3)`.
+ENTRY_MODULES = {"tu102_dev_mmu_ver2"}
 
 DEFINE = re.compile(r"^#define\s+([A-Za-z_][A-Za-z0-9_]*)(\([a-z]\))?\s+(.*?)\s*(/\*\s*(.*?)\s*\*/)?\s*$")
 NUM = re.compile(r"^\(?(0x[0-9A-Fa-f]+|[0-9]+)[uU]?\)?$")
@@ -51,6 +61,16 @@ MW_I = re.compile(r"^MW\(\(([0-9]+)\+\(i\)\*([0-9]+)\):\(([0-9]+)\+\(i\)\*([0-9]
 FIELD = re.compile(r"^([0-9]+):([0-9]+)$")
 RANGE = re.compile(r"^(0x[0-9A-Fa-f]+):(0x[0-9A-Fa-f]+)$")
 INDEXED = re.compile(r"^\((0x[0-9A-Fa-f]+|[0-9]+)\+\(([a-z])\)\*(0x[0-9A-Fa-f]+|[0-9]+)\)$")
+SUM = r"\(?[0-9]+(?:[-+][0-9]+)*\)?"
+EFIELD = re.compile(r"^(" + SUM + r"):(" + SUM + r")$")
+
+
+def eval_sum(text):
+    """Value of `n`, `(n)`, `(n-m)`, `(n+m-k)`: digits, + and - only."""
+    terms = re.findall(r"([-+]?)([0-9]+)", text.strip("()"))
+    return sum(-int(v) if sign == "-" else int(v) for sign, v in terms)
+
+
 ALIAS = re.compile(r"^\(?([A-Z][A-Z0-9_]*)(\(([0-9]+)\))?\)?$")
 
 
@@ -96,6 +116,11 @@ def main(roots, dst):
                 v = int(NUM.match(value).group(1), 0)
                 plain[name] = v
                 items.append(("const", name, v, access))
+            elif mod in ENTRY_MODULES and param is None and EFIELD.match(value):
+                hi, lo = (eval_sum(x) for x in EFIELD.match(value).groups())
+                if not (0 <= lo <= hi < 128):
+                    sys.exit(f"{rel}: {name} = {value} is not a field of a 128-bit entry")
+                items.append(("efield", name, (hi, lo), access))
             elif param is None and FIELD.match(value):
                 hi, lo = map(int, FIELD.match(value).groups())
                 items.append(("field", name, (hi, lo), access))
@@ -135,7 +160,7 @@ def main(roots, dst):
     w.append("// Access codes in the doc comments are NVIDIA's (first letter R = readable,")
     w.append("// second W = writable). Nothing here performs any register access.")
     w.append("")
-    w.append("use crate::{Field, QmdField, Range};")
+    w.append("use crate::{EntryField, Field, QmdField, Range};")
     for mod, key, rel, items, skipped in modules:
         w.append("")
         src = "open-gpu-kernel-modules 570.144" if key == "ogkm" else "open-gpu-doc"
@@ -144,6 +169,8 @@ def main(roots, dst):
         w.append(f"pub mod {mod} {{")
         if any(k == "field" for k, *_ in items):
             w.append("    use super::Field;")
+        if any(k == "efield" for k, *_ in items):
+            w.append("    use super::EntryField;")
         if any(k == "range" for k, *_ in items):
             w.append("    use super::Range;")
         if any(k in ("mw", "mwfn") for k, *_ in items):
@@ -157,6 +184,8 @@ def main(roots, dst):
                 w.append(f"    pub const {name}: {ty} = {v:#x};")
             elif kind == "field":
                 w.append(f"    pub const {name}: Field = Field::new({v[0]}, {v[1]});")
+            elif kind == "efield":
+                w.append(f"    pub const {name}: EntryField = EntryField::new({v[0]}, {v[1]});")
             elif kind == "mw":
                 w.append(f"    pub const {name}: QmdField = QmdField::new({v[0]}, {v[1]});")
             elif kind == "mwfn":

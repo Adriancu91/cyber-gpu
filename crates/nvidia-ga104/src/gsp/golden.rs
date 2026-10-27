@@ -599,4 +599,74 @@ mod tests {
             Err(GpuError::Timeout { .. })
         ));
     }
+
+    /// I9a: the same sequence through the queues, with the driver's real
+    /// memory manager (`mmu::GpuMemory`) instead of the bump allocator. Every
+    /// mapped GR buffer and the GPFIFO are then walked by the independent
+    /// page-table walker of `gpu_sim::vram`. SIMULARE.
+    #[test]
+    fn golden_image_with_real_page_tables() {
+        use crate::mmu::{GpuMemory, VramWrite};
+        use gpu_sim::vram::{SimVram, translate};
+        struct Sim(SimVram);
+        impl VramWrite for Sim {
+            fn write_u64(&mut self, pa: u64, v: u64) -> GpuResult<()> {
+                self.0.write_u64(pa, v).map_err(GpuError::InvalidArgument)
+            }
+        }
+        let l = QueueLayout::standard();
+        let mut shm = alloc::vec![0u8; l.total_size];
+        let pages: Vec<u64> = (0..l.page_table_entries as u64)
+            .map(|i| 0x0500_0000 + i * 0x1000)
+            .collect();
+        let mut q = CpuQueues::init(&mut shm, l, &pages).unwrap();
+        let mut gsp = SimGsp::start(&mut shm, l.cmd_queue_offset, l.stat_queue_offset);
+        q.link_rx(&shm).unwrap();
+        let mut rm = FakeRm::new();
+        let mut clock = SimClock::default();
+        let vram = 8u64 << 30;
+        let mut mem =
+            GpuMemory::new(64 << 20, vram - (512 << 20), Sim(SimVram::new(vram))).unwrap();
+        let g = {
+            let mut t = QueueTransport {
+                q: &mut q,
+                mem: &mut shm,
+                clock: &mut clock,
+                timeout_us: RM_REPLY_US,
+                poll: |m: &mut dyn SharedMem| {
+                    gsp.service_with(m, |f, p| rm.handle(f, p));
+                },
+                events: Vec::new(),
+            };
+            init_golden_image(&mut t, &mut mem).unwrap()
+        };
+        assert_eq!(rm.log.allocs.len(), 7);
+        assert!(rm.log.allocs.iter().all(|&(_, s)| s == status::OK));
+        assert!(rm.log.controls.iter().all(|&(_, s)| s == status::OK));
+        let v = &mem.writer().0;
+        let mut mapped = 0;
+        for (b, m) in &g.gr_bufs {
+            for off in (0..b.size).step_by(0x1000).chain([b.size - 1]) {
+                let t = translate(v, mem.root(), m.va + off).unwrap();
+                assert_eq!(t.pa, m.pa + off, "buffer {} + {off:#x}", b.id);
+            }
+            mapped += b.size;
+        }
+        assert_eq!(mapped, 0x35_5000); // the SIM context sizes, all walked
+        // The reserved range: tables up to PD1, nothing below (RM's part).
+        assert!(translate(v, mem.root(), g.reserved_va).is_err());
+        // No page table lies inside a buffer, and all buffers lie in the zone.
+        for t in mem.table_addresses() {
+            assert!(
+                g.gr_bufs
+                    .iter()
+                    .all(|(b, m)| t + 0x1000 <= m.pa || t >= m.pa + b.size)
+            );
+        }
+        assert!(
+            g.gr_bufs
+                .iter()
+                .all(|(b, m)| m.pa >= 64 << 20 && m.pa + b.size <= vram - (512 << 20))
+        );
+    }
 }

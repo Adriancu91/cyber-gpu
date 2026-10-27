@@ -18,6 +18,8 @@
 //! - [`sha256`]: FIPS 180-4 digest for the I4 check;
 //! - [`push`]: pushbuffer method headers and GPFIFO entries (clc56f.h, MIT) —
 //!   encoding only, unverified on hardware;
+//! - [`mmu`]: I9a — VRAM/GPU-VA allocation and the MMU v2 page tables, written
+//!   through a `VramWrite` sink — SIMULARE only, no board access;
 //! - [`radix3`]: the page list GSP reads to find its image in RAM (pure data);
 //! - [`backend`]: the I1 contract for GA104.
 //!
@@ -38,6 +40,7 @@ pub mod gfw;
 pub mod gsp;
 pub mod ids;
 pub mod init;
+pub mod mmu;
 pub mod probe;
 pub mod push;
 pub mod qmd;

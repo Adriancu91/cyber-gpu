@@ -53,6 +53,42 @@ impl Field {
     }
 }
 
+/// A bit field `hi:lo` of a page-table entry (64-bit PDE/PTE or 128-bit dual
+/// PDE), as written in NVIDIA's `dev_mmu.h`. Pure arithmetic on a `u128`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EntryField {
+    pub hi: u8,
+    pub lo: u8,
+}
+
+impl EntryField {
+    pub const fn new(hi: u8, lo: u8) -> Self {
+        assert!(hi >= lo && hi < 128);
+        EntryField { hi, lo }
+    }
+
+    pub const fn width(self) -> u32 {
+        (self.hi - self.lo) as u32 + 1
+    }
+
+    pub const fn mask(self) -> u128 {
+        (u128::MAX >> (128 - self.width())) << self.lo
+    }
+
+    pub const fn get(self, entry: u128) -> u128 {
+        (entry & self.mask()) >> self.lo
+    }
+
+    /// `entry` with the field set to `v`, or `None` if `v` does not fit
+    /// (never silently truncated: a cut address would point elsewhere).
+    pub const fn set(self, entry: u128, v: u128) -> Option<u128> {
+        if self.width() < 128 && v >> self.width() != 0 {
+            return None;
+        }
+        Some((entry & !self.mask()) | (v << self.lo))
+    }
+}
+
 /// A field of a 2048-bit QMD, as `MW(hi:lo)` in NVIDIA's QMD headers: bit
 /// positions counted from bit 0 of the first little-endian u32.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -258,6 +294,50 @@ mod tests {
         assert_eq!(clc7c0::AMPERE_COMPUTE_B, 0xc7c0);
         assert_eq!(clc7c0::NVC7C0_SEND_PCAS_A, 0x2b4);
         assert_eq!(clc7c0::NVC7C0_SEND_SIGNALING_PCAS2_B, 0x2c0);
+    }
+
+    /// I9: the MMU v2 entry formats (UVM's full `dev_mmu.h`), as read by hand
+    /// for `gpu_sim::vram`; the dual PDE's small half lives in bits 64..127.
+    #[test]
+    fn mmu_ver2_formats_match_the_hand_reading() {
+        use tu102_dev_mmu_ver2 as m;
+        assert_eq!(m::NV_MMU_VER2_PDE_APERTURE, EntryField::new(2, 1));
+        assert_eq!(m::NV_MMU_VER2_PDE_ADDRESS_VID, EntryField::new(32, 8));
+        assert_eq!(m::NV_MMU_VER2_PDE_NO_ATS, EntryField::new(5, 5));
+        assert_eq!(
+            m::NV_MMU_VER2_DUAL_PDE_APERTURE_SMALL,
+            EntryField::new(66, 65)
+        );
+        assert_eq!(
+            m::NV_MMU_VER2_DUAL_PDE_ADDRESS_SMALL_VID,
+            EntryField::new(96, 72)
+        );
+        assert_eq!(
+            m::NV_MMU_VER2_DUAL_PDE_ADDRESS_BIG_VID,
+            EntryField::new(32, 4)
+        );
+        assert_eq!(m::NV_MMU_VER2_DUAL_PDE_ADDRESS_BIG_SHIFT, 8);
+        assert_eq!(m::NV_MMU_VER2_PTE_VALID, EntryField::new(0, 0));
+        assert_eq!(m::NV_MMU_VER2_PTE_VOL, EntryField::new(3, 3));
+        assert_eq!(m::NV_MMU_VER2_PTE_KIND, EntryField::new(63, 56));
+        // PTE aperture 0 = video memory; PDE aperture 1 = video memory.
+        assert_eq!(m::NV_MMU_VER2_PTE_APERTURE_VIDEO_MEMORY, 0);
+        assert_eq!(m::NV_MMU_VER2_PDE_APERTURE_VIDEO_MEMORY, 1);
+        assert_eq!(
+            (
+                m::NV_MMU_VER2_PDE__SIZE,
+                m::NV_MMU_VER2_DUAL_PDE__SIZE,
+                m::NV_MMU_VER2_PTE__SIZE
+            ),
+            (8, 16, 8)
+        );
+        // EntryField arithmetic, including a field above bit 64.
+        let f = m::NV_MMU_VER2_DUAL_PDE_ADDRESS_SMALL_VID;
+        let e = f.set(0, 0x1ff_ffff).unwrap();
+        assert_eq!(f.get(e), 0x1ff_ffff);
+        assert_eq!(e >> 64, 0x1ff_ffff << 8);
+        assert_eq!(f.set(0, 1 << 25), None); // would be cut: refused
+        assert_eq!(EntryField::new(127, 0).set(0, u128::MAX), Some(u128::MAX));
     }
 
     #[test]

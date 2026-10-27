@@ -10,6 +10,8 @@ authors.workspace = true
 gpu-core.workspace = true
 gpu-pci.workspace = true
 gpu-command.workspace = true
+# I9: the first-fit range allocator (VRAM and GPU VA bookkeeping, M3).
+gpu-memory.workspace = true
 # Data only (offsets/fields generated from NVIDIA MIT headers), no_std, no deps.
 nvidia-rm570.workspace = true
 

@@ -26,6 +26,8 @@ if [ ! -d "$src/.git" ]; then
     /src/nvidia/arch/nvalloc/common/inc/ /src/common/shared/msgq/inc/msgq/ /src/nvidia/inc/kernel/gpu/gsp/ \
     /src/common/sdk/nvidia/inc/
 fi
+# I9: the full MMU format header (dev_mmu.h with the VER2 entries) ships with UVM.
+git -C "$src" sparse-checkout add /kernel-open/nvidia-uvm/hwref/turing/tu102/
 # GspSystemInfo (I8c') pulls in RM's kernel headers (NVOC-generated ones included):
 # widen the sparse checkout once; still only MIT files from the same commit.
 git -C "$src" sparse-checkout add /src/common/inc/ /src/common/nvlink/inband/interface/ \

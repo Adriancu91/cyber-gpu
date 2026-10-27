@@ -7,7 +7,7 @@
 // Access codes in the doc comments are NVIDIA's (first letter R = readable,
 // second W = writable). Nothing here performs any register access.
 
-use crate::{Field, QmdField, Range};
+use crate::{EntryField, Field, QmdField, Range};
 
 /// From `src/common/inc/swref/published/ampere/ga102/dev_boot.h` (open-gpu-kernel-modules 570.144).
 #[allow(non_snake_case, missing_docs, clippy::identity_op)]
@@ -651,6 +651,211 @@ pub mod tu102_dev_bus {
     pub const NV_PBUS_BIND_STATUS_BAR2_OUTSTANDING_FALSE: u32 = 0x0;
     /// `R---V`
     pub const NV_PBUS_BIND_STATUS_BAR2_OUTSTANDING_TRUE: u32 = 0x1;
+}
+
+/// From `kernel-open/nvidia-uvm/hwref/turing/tu102/dev_mmu.h` (open-gpu-kernel-modules 570.144).
+#[allow(non_snake_case, missing_docs, clippy::identity_op)]
+pub mod tu102_dev_mmu_ver2 {
+    use super::EntryField;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PDE_IS_PTE: EntryField = EntryField::new(0, 0);
+    /// `RW--V`
+    pub const NV_MMU_VER2_PDE_IS_PTE_TRUE: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PDE_IS_PTE_FALSE: u32 = 0x0;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PDE_IS_PDE: EntryField = EntryField::new(0, 0);
+    /// `RW--V`
+    pub const NV_MMU_VER2_PDE_IS_PDE_TRUE: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PDE_IS_PDE_FALSE: u32 = 0x1;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PDE_VALID: EntryField = EntryField::new(0, 0);
+    /// `RW--V`
+    pub const NV_MMU_VER2_PDE_VALID_TRUE: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PDE_VALID_FALSE: u32 = 0x0;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PDE_APERTURE: EntryField = EntryField::new(2, 1);
+    /// `RW--V`
+    pub const NV_MMU_VER2_PDE_APERTURE_INVALID: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PDE_APERTURE_VIDEO_MEMORY: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PDE_APERTURE_SYSTEM_COHERENT_MEMORY: u32 = 0x2;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PDE_APERTURE_SYSTEM_NON_COHERENT_MEMORY: u32 = 0x3;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PDE_VOL: EntryField = EntryField::new(3, 3);
+    /// `RW--V`
+    pub const NV_MMU_VER2_PDE_VOL_TRUE: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PDE_VOL_FALSE: u32 = 0x0;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PDE_NO_ATS: EntryField = EntryField::new(5, 5);
+    /// `RW--V`
+    pub const NV_MMU_VER2_PDE_NO_ATS_TRUE: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PDE_NO_ATS_FALSE: u32 = 0x0;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PDE_ADDRESS_SYS: EntryField = EntryField::new(53, 8);
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PDE_ADDRESS_VID: EntryField = EntryField::new(32, 8);
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PDE_ADDRESS_VID_PEER: EntryField = EntryField::new(35, 33);
+    /// `RW--V`
+    pub const NV_MMU_VER2_PDE_ADDRESS_VID_PEER_0: u32 = 0x0;
+    pub const NV_MMU_VER2_PDE_ADDRESS_SHIFT: u32 = 0xc;
+    pub const NV_MMU_VER2_PDE__SIZE: u32 = 0x8;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_DUAL_PDE_IS_PTE: EntryField = EntryField::new(0, 0);
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_IS_PTE_TRUE: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_IS_PTE_FALSE: u32 = 0x0;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_DUAL_PDE_IS_PDE: EntryField = EntryField::new(0, 0);
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_IS_PDE_TRUE: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_IS_PDE_FALSE: u32 = 0x1;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_DUAL_PDE_VALID: EntryField = EntryField::new(0, 0);
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_VALID_TRUE: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_VALID_FALSE: u32 = 0x0;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_DUAL_PDE_APERTURE_BIG: EntryField = EntryField::new(2, 1);
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_APERTURE_BIG_INVALID: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_APERTURE_BIG_VIDEO_MEMORY: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_APERTURE_BIG_SYSTEM_COHERENT_MEMORY: u32 = 0x2;
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_APERTURE_BIG_SYSTEM_NON_COHERENT_MEMORY: u32 = 0x3;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_DUAL_PDE_VOL_BIG: EntryField = EntryField::new(3, 3);
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_VOL_BIG_TRUE: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_VOL_BIG_FALSE: u32 = 0x0;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_DUAL_PDE_NO_ATS: EntryField = EntryField::new(5, 5);
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_NO_ATS_TRUE: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_NO_ATS_FALSE: u32 = 0x0;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_DUAL_PDE_ADDRESS_BIG_SYS: EntryField = EntryField::new(53, 4);
+    /// `RWXVF`
+    pub const NV_MMU_VER2_DUAL_PDE_ADDRESS_BIG_VID: EntryField = EntryField::new(32, 4);
+    /// `RWXVF`
+    pub const NV_MMU_VER2_DUAL_PDE_ADDRESS_BIG_VID_PEER: EntryField = EntryField::new(35, 33);
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_ADDRESS_BIG_VID_PEER_0: u32 = 0x0;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_DUAL_PDE_APERTURE_SMALL: EntryField = EntryField::new(66, 65);
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_APERTURE_SMALL_INVALID: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_APERTURE_SMALL_VIDEO_MEMORY: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_APERTURE_SMALL_SYSTEM_COHERENT_MEMORY: u32 = 0x2;
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_APERTURE_SMALL_SYSTEM_NON_COHERENT_MEMORY: u32 = 0x3;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_DUAL_PDE_VOL_SMALL: EntryField = EntryField::new(67, 67);
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_VOL_SMALL_TRUE: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_VOL_SMALL_FALSE: u32 = 0x0;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_DUAL_PDE_ADDRESS_SMALL_SYS: EntryField = EntryField::new(117, 72);
+    /// `RWXVF`
+    pub const NV_MMU_VER2_DUAL_PDE_ADDRESS_SMALL_VID: EntryField = EntryField::new(96, 72);
+    /// `RWXVF`
+    pub const NV_MMU_VER2_DUAL_PDE_ADDRESS_SMALL_VID_PEER: EntryField = EntryField::new(99, 97);
+    /// `RW--V`
+    pub const NV_MMU_VER2_DUAL_PDE_ADDRESS_SMALL_VID_PEER_0: u32 = 0x0;
+    pub const NV_MMU_VER2_DUAL_PDE_ADDRESS_SHIFT: u32 = 0xc;
+    pub const NV_MMU_VER2_DUAL_PDE_ADDRESS_BIG_SHIFT: u32 = 0x8;
+    pub const NV_MMU_VER2_DUAL_PDE__SIZE: u32 = 0x10;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PTE_VALID: EntryField = EntryField::new(0, 0);
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_VALID_TRUE: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_VALID_FALSE: u32 = 0x0;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PTE_APERTURE: EntryField = EntryField::new(2, 1);
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_APERTURE_VIDEO_MEMORY: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_APERTURE_PEER_MEMORY: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_APERTURE_SYSTEM_COHERENT_MEMORY: u32 = 0x2;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_APERTURE_SYSTEM_NON_COHERENT_MEMORY: u32 = 0x3;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PTE_VOL: EntryField = EntryField::new(3, 3);
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_VOL_TRUE: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_VOL_FALSE: u32 = 0x0;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PTE_ENCRYPTED: EntryField = EntryField::new(4, 4);
+    /// `R---V`
+    pub const NV_MMU_VER2_PTE_ENCRYPTED_TRUE: u32 = 0x1;
+    /// `R---V`
+    pub const NV_MMU_VER2_PTE_ENCRYPTED_FALSE: u32 = 0x0;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PTE_PRIVILEGE: EntryField = EntryField::new(5, 5);
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_PRIVILEGE_TRUE: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_PRIVILEGE_FALSE: u32 = 0x0;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PTE_READ_ONLY: EntryField = EntryField::new(6, 6);
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_READ_ONLY_TRUE: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_READ_ONLY_FALSE: u32 = 0x0;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PTE_ATOMIC_DISABLE: EntryField = EntryField::new(7, 7);
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_ATOMIC_DISABLE_TRUE: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_ATOMIC_DISABLE_FALSE: u32 = 0x0;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PTE_ADDRESS_SYS: EntryField = EntryField::new(53, 8);
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PTE_ADDRESS_VID: EntryField = EntryField::new(32, 8);
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PTE_ADDRESS_VID_PEER: EntryField = EntryField::new(35, 33);
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_ADDRESS_VID_PEER_0: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_ADDRESS_VID_PEER_1: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_ADDRESS_VID_PEER_2: u32 = 0x2;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_ADDRESS_VID_PEER_3: u32 = 0x3;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_ADDRESS_VID_PEER_4: u32 = 0x4;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_ADDRESS_VID_PEER_5: u32 = 0x5;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_ADDRESS_VID_PEER_6: u32 = 0x6;
+    /// `RW--V`
+    pub const NV_MMU_VER2_PTE_ADDRESS_VID_PEER_7: u32 = 0x7;
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PTE_COMPTAGLINE: EntryField = EntryField::new(55, 36);
+    /// `RWXVF`
+    pub const NV_MMU_VER2_PTE_KIND: EntryField = EntryField::new(63, 56);
+    pub const NV_MMU_VER2_PTE_ADDRESS_SHIFT: u32 = 0xc;
+    pub const NV_MMU_VER2_PTE__SIZE: u32 = 0x8;
 }
 
 /// From `classes/host/clc56f.h` (open-gpu-doc).

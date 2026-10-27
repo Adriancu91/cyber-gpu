@@ -53,6 +53,7 @@ dependencies = [
  "gpu-command",
  "gpu-compute",
  "gpu-core",
+ "gpu-memory",
  "gpu-pci",
  "gpu-sim",
  "nvidia-rm570",

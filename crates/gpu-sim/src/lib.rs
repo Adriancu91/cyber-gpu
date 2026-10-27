@@ -19,4 +19,5 @@ pub mod golden_log;
 pub mod mmio;
 pub mod pci;
 pub mod rom;
+pub mod vram;
 pub mod workstation;
