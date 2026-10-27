@@ -1,5 +1,30 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 9 — 27 octombrie 2026, ~13:05–13:55 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Tot ce scrie „PASS” e pe calculatorul gazdă: SIMULARE (modele software),
+compilare sau comparație cu antetele NVIDIA. Comenzi noi în hub: niciuna (C-18 și C-20 gata); am continuat pașii „fără placă” notați în sesiunea 8.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Pornire | CI rularea 35 verde; `tools/check.sh` verde înainte de orice schimbare (rustc 1.99.1); Mesa 25.0.7 reconstruit: `add64`, `matmul_naive`, `matmul_smem` **identice** (aceleași sume) | PASS |
+| **I8e** structurile | generatorul `tools/gen-rm570` produce `nvidia-rm570::rmapi` din antetele NVIDIA 570.144 (MIT): parametrii pentru client/dispozitiv/subdispozitiv/spațiu de adrese/canal, tabela motoarelor, PDE rezervate, bufferele de context GR, PROMOTE_CTX, numerele claselor și comenzilor; antetele `rpc_gsp_rm_alloc/control_v03_00` (tablou flexibil) → poziții calculate de clang, emise ca constante (fără `unsafe`). `regs.rs`, `structs.rs`, `sysinfo.rs` au ieșit **identice** la regenerare | PASS (verificările bindgen la compilare + `rm_api_layouts_570_144`) |
+| **I8e** „golden image” | `gsp::rmapi` (mesajele `GSP_RM_ALLOC`/`GSP_RM_CONTROL`, toate pozițiile prin `offset_of!` pe structurile generate) + `gsp::golden` (`init_golden_image`, ordinea după tinygrad `ip.py`: client → dispozitiv → subdispozitiv → spațiu de adrese → tabela motoarelor → PDE rezervate 512 MiB → canal 32 intrări GR0 → mărimile bufferelor GR → 10 buffere, 9 promovate → compute + copiere); `QueueTransport` (cozile reale, evenimentele GSP păstrate deoparte, limită de timp). **Verificare independentă:** `gpu-sim::fake_rm`, cu pozițiile scrise de mână din antete, care cere părinți corecți, mărimi 570.144, VA space existent, și refuză obiectul compute fără context promovat | PASS (SIMULARE): 10 teste noi; secvența cap-coadă prin cozi: 7 alocări + 4 comenzi acceptate, alocările VRAM nu se suprapun; refuzurile RM întorc codul RM (niciodată succes); GSP tăcut = limită de timp. Două greșeli plantate (un buffer nepromovat, `hVASpace` pus în alt câmp) **sunt prinse**. **DEDUS:** valorile empirice tinygrad (`flags=0x200320`, `internalFlags=0x1a`, `cid=3`, clientul `0xc1e00004`) |
+| Constatări | tinygrad trimite `bIsPassthru=1` în `GspSystemInfo` (noi 0); la clientul RM, `hObject` diferă între tinygrad și nouveau | notate în `COMPATIBILITATE_FIRMWARE.md` („De verificat”), de lămurit cu jurnalul probei P |
+| **E** treapta 4 matmul | `matmul_1d.comp` (siboehm „1D blocktiling”: 512 fire pe grup, 8 rezultate pe fir, plăci 64×8 și 8×64): 478 instrucțiuni, 7 648 B, 24 registre, 4 KiB partajată, o barieră, `ffma.ftz`, determinist; `cmdproc::matmul_1d_on_cpu` urmează algoritmul | PASS (SIMULARE): 4 forme **identice bit cu bit** cu `matmul_fma_ftz`; cazul −0,0; lansări greșite refuzate, 0 scrieri în C; două greșeli plantate prinse |
+| CI | rulările 36 (I8e) și 37 (treapta 4) | PASS |
+| Compatibilitate OS | `git diff 41e44ba HEAD` pe `gpu-core`, `gpu-pci`, `nvidia-ga104`, `gpu-compute`: tot singura linie `pub` = valoarea `GSP_VERSION` (sesiunea 5) | PASS (doar adăugări) |
+
+Verificări (`tools/check.sh`, rustc 1.99.1 stable): format PASS, clippy `-D warnings` PASS, **196 de teste PASS** (1 ignorat: viteza),
+build `x86_64-unknown-none` PASS; `nvidia-ga104 --features hw-write`: clippy + teste PASS. Nicio scriere în placă.
+
+**Următorul pas:** fără placă: încărcătorul DMA al ucode-ului (I6/I7, în spatele `hw-write`); alocatorul VRAM + tabelele de pagini Ampere
+(I9, care vor implementa `GoldenMemory`); treapta 5 matmul (2D blocktiling). Cu placa (B0): I0–I3 + FWSEC + fișierele de pe stick, 0 scrieri;
+apoi, cu Adrian: proba P (tinygrad), al cărei jurnal se compară cu GSP-ul fals, cu RM-ul fals (golden image) și cu câmpurile QMD.
+**De la Adrian:** fereastra B0 (lista în `TEST_MATRIX.md`); fișierele firmware pe stick.
+
+---
+
 ## Sesiunea 8 — 27 octombrie 2026, ~08:05–08:50 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Tot ce scrie „PASS” e pe calculatorul gazdă: SIMULARE (modele software),

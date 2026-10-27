@@ -63,6 +63,22 @@ Test (SIMULARE, `sim_matmul.rs`, 3 teste noi): modelul pe procesor urmează algo
 identic bit cu bit cu oracolul pentru 4 forme (inclusiv plăci parțiale); un caz cu −0,0 dovedește că ultima placă nu adună zerouri (o variantă
 „cu zerouri” a modelului pică testul); un QMD fără memorie partajată sau fără barieră e refuzat, fără nicio scriere în C.
 
+## Treapta 4 matmul: „1D blocktiling”, 8 rezultate pe fir (27 oct 2026, sesiunea 9, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh matmul_1d` (Mesa 25.0.7 reconstruit în cloud; `add64`, `matmul_naive`, `matmul_smem` au ieșit **identice**, aceleași sume).
+
+| Ce | Valoare |
+|---|---|
+| Program | `matmul_1d.comp`: un grup de **512 fire** calculează un bloc 64×64 din C; fiecare fir ține **8 rezultate** (o coloană, 8 rânduri) în registre. Pe fiecare placă de K = 8: fiecare fir aduce un element din placa 64×8 a lui A și unul din placa 8×64 a lui B în memoria partajată, barieră, apoi o valoare din B e refolosită pentru cele 8 sume |
+| Ieșire | 478 instrucțiuni, **7 648 octeți**, **24 registre**; memorie partajată **4 KiB** (`as_` la 0, `bs_` la 0x800), o barieră |
+| SHA-256 `matmul_1d.sm86.sass` | `2166ded6f1c288ea6b0fc648ecccf743c86ec309856468e828bf96bcdde1946c` (identic la două compilări) |
+| Aritmetica | `ffma.ftz` (64 pe o placă plină, bucla desfăcută). Bucla se oprește exact la K → același șir de FMA, în aceeași ordine: oracolul rămâne `matmul_fma_ftz`, bit cu bit |
+| Lansare | bloc 512×1×1, grilă x = coloane/64, y = rânduri/64; QMD cu 4 KiB partajată + 1 barieră (`encode_with_shared`), 24 registre |
+
+Test (SIMULARE, `sim_matmul.rs`, 2 teste noi): modelul `matmul_1d_on_cpu` urmează algoritmul (cum încarcă cele 512 fire plăcile, apoi cele 8
+sume pe fir), identic bit cu bit cu oracolul pentru 4 forme (inclusiv o grilă 2×3 și plăci parțiale); cazul −0,0 prinde o variantă „cu zerouri”,
+iar o variantă care citește coloana greșită din B pică (verificat); lansările cu 2 KiB, cu bloc 16×16 sau fără barieră sunt refuzate, 0 scrieri în C.
+Câștigul de viteză (siboehm: ×2–3 față de treapta 3) se poate vedea **doar pe placă**.
+
 ## Ce trebuie să respecte lansatorul nostru (I10), din dump — DEDUS, de confirmat pe placă
 1. Bufferul constant 0 legat în QMD, cu adresele a, b, c la 0x28, 0x30, 0x38 (restul tabelei rădăcină NVK nu e citit de program).
 2. Numărul de registre în QMD ≥ 19 (rotunjirea cerută de hardware: necunoscută încă).
