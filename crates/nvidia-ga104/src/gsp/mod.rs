@@ -12,6 +12,7 @@
 //! - [`libos`]: the LibOS memory-region arguments and `GSP_ARGUMENTS_CACHED`;
 //! - [`msgq`]: the shared memory with the command/status queues (I5, I8);
 //! - [`registry`]: the `SET_REGISTRY` table (`PACKED_REGISTRY_TABLE`);
+//! - [`sysinfo`]: the `GSP_SET_SYSTEM_INFO` payload (`GspSystemInfo`, I8c');
 //! - [`rpc`]: one queue element = element header + RPC header + payload, with
 //!   the XOR checksum and sequence numbers (I8).
 //!
@@ -38,6 +39,7 @@ pub mod rpc;
 pub mod sequencer;
 #[cfg(test)]
 pub(crate) mod sim_peer;
+pub mod sysinfo;
 pub mod wpr_meta;
 
 use gpu_core::error::{GpuError, GpuResult};

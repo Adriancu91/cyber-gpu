@@ -162,3 +162,53 @@ fn pushbuffer_encoding_matches_the_header() {
     // Kept as is until I9; recorded in docs/COMPATIBILITATE_FIRMWARE.md.
     assert_eq!(h::NVC56F_GP_ENTRY1_LEVEL.get(e.entry1), 0);
 }
+
+#[test]
+fn system_info_matches_the_header() {
+    use nvidia_ga104::gsp::sysinfo::{self, off};
+    use nvidia_rm570::sysinfo::{ACPI_METHOD_DATA, GSP_VF_INFO, GspSystemInfo as S};
+    assert_eq!(sysinfo::SIZE, size_of::<S>());
+    let pairs = [
+        (off::GPU_PHYS_ADDR, offset_of!(S, gpuPhysAddr)),
+        (off::GPU_PHYS_FB_ADDR, offset_of!(S, gpuPhysFbAddr)),
+        (off::GPU_PHYS_INST_ADDR, offset_of!(S, gpuPhysInstAddr)),
+        (off::GPU_PHYS_IO_ADDR, offset_of!(S, gpuPhysIoAddr)),
+        (
+            off::NV_DOMAIN_BUS_DEVICE_FUNC,
+            offset_of!(S, nvDomainBusDeviceFunc),
+        ),
+        (off::MAX_USER_VA, offset_of!(S, maxUserVa)),
+        (
+            off::PCI_CONFIG_MIRROR_BASE,
+            offset_of!(S, pciConfigMirrorBase),
+        ),
+        (
+            off::PCI_CONFIG_MIRROR_SIZE,
+            offset_of!(S, pciConfigMirrorSize),
+        ),
+        (off::PCI_DEVICE_ID, offset_of!(S, PCIDeviceID)),
+        (off::PCI_SUB_DEVICE_ID, offset_of!(S, PCISubDeviceID)),
+        (off::PCI_REVISION_ID, offset_of!(S, PCIRevisionID)),
+        (off::OOR_ARCH, offset_of!(S, oorArch)),
+        (off::ACPI_METHOD_DATA, offset_of!(S, acpiMethodData)),
+        (off::HYPERVISOR_TYPE, offset_of!(S, hypervisorType)),
+        (off::GSP_VF_INFO, offset_of!(S, gspVFInfo)),
+        (off::B_IS_PRIMARY, offset_of!(S, bIsPrimary)),
+        (off::HOST_PAGE_SIZE, offset_of!(S, hostPageSize)),
+    ];
+    for (ours, theirs) in pairs {
+        assert_eq!(ours, theirs);
+    }
+    // The zero-filled "absent" blocks cover exactly NVIDIA's structs.
+    assert_eq!(
+        off::ACPI_METHOD_DATA + size_of::<ACPI_METHOD_DATA>(),
+        off::HYPERVISOR_TYPE
+    );
+    assert_eq!(offset_of!(ACPI_METHOD_DATA, bValid), 0);
+    assert_eq!(
+        off::GSP_VF_INFO + size_of::<GSP_VF_INFO>(),
+        off::B_IS_PRIMARY
+    );
+    // It fits one queue element (no continuation records needed).
+    const { assert!(sysinfo::SIZE <= nvidia_ga104::gsp::rpc::MAX_PAYLOAD) };
+}

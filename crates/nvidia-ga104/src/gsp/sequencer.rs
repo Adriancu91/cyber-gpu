@@ -470,10 +470,12 @@ mod tests {
             .map(|i| 0x0500_0000 + i * 0x1000)
             .collect();
         let mut q = CpuQueues::init(&mut mem, l, &pages).unwrap();
-        q.send_rpc(&mut mem, function::GSP_SET_SYSTEM_INFO, &[0; 64])
+        // The real payloads (I8c', I8c), built for the workstation's board.
+        let sys = crate::gsp::sysinfo::encode(&crate::gsp::sysinfo::tests::workstation()).unwrap();
+        q.send_rpc(&mut mem, function::GSP_SET_SYSTEM_INFO, &sys)
             .unwrap();
-        q.send_rpc(&mut mem, function::SET_REGISTRY, &[0; 82])
-            .unwrap();
+        let reg = crate::gsp::registry::encode(&crate::gsp::registry::boot_entries()).unwrap();
+        q.send_rpc(&mut mem, function::SET_REGISTRY, &reg).unwrap();
         let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
         falcon::ring_doorbell(&mut b).unwrap();
         let mut peer = SimGsp::start(&mut mem, l.cmd_queue_offset, l.stat_queue_offset);
