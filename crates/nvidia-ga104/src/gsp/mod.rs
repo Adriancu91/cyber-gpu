@@ -14,7 +14,11 @@
 //! - [`registry`]: the `SET_REGISTRY` table (`PACKED_REGISTRY_TABLE`);
 //! - [`sysinfo`]: the `GSP_SET_SYSTEM_INFO` payload (`GspSystemInfo`, I8c');
 //! - [`rpc`]: one queue element = element header + RPC header + payload, with
-//!   the XOR checksum and sequence numbers (I8).
+//!   the XOR checksum and sequence numbers (I8);
+//! - [`rmapi`]: the `GSP_RM_ALLOC` / `GSP_RM_CONTROL` messages and their
+//!   parameter blocks (layouts generated from the 570.144 headers, I8e);
+//! - [`golden`]: the "golden image" sequence after `GSP_INIT_DONE` (client,
+//!   device, VA space, channel, GR context promotion, compute object), I8e.
 //!
 //! The layouts follow NVIDIA's MIT headers from open-gpu-kernel-modules at tag
 //! `570.144` (`gsp_fw_wpr_meta.h`, `msgq_priv.h`, `message_queue_priv.h`,
@@ -32,9 +36,11 @@
 
 pub mod elf;
 pub mod falcon;
+pub mod golden;
 pub mod libos;
 pub mod msgq;
 pub mod registry;
+pub mod rmapi;
 pub mod rpc;
 pub mod sequencer;
 #[cfg(test)]

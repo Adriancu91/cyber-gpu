@@ -81,6 +81,18 @@ impl SimGsp {
 
     /// Consumes every command and answers each with the same function, result 0.
     pub fn service(&mut self, mem: &mut dyn SharedMem) {
+        self.service_with(mem, |_, _| None);
+    }
+
+    /// Like [`Self::service`], but `answer(function, payload)` may produce the
+    /// reply (RPC result, payload) — e.g. `gpu_sim::fake_rm` for the RM API;
+    /// `None` falls back to the echo reply. Multi-element commands are joined
+    /// from the queue pages before `answer` sees them.
+    pub fn service_with(
+        &mut self,
+        mem: &mut dyn SharedMem,
+        mut answer: impl FnMut(u32, &[u8]) -> Option<(u32, Vec<u8>)>,
+    ) {
         loop {
             let w = rd(mem, self.cmd + 16);
             if w == self.read {
@@ -90,11 +102,23 @@ impl SimGsp {
             let n = rd(mem, base + 40);
             let function = rd(mem, base + 60);
             let seq = rd(mem, base + 72);
+            let len = rd(mem, base + 56) as usize; // RPC length (header + payload)
+            let mut raw = Vec::with_capacity(n as usize * 0x1000);
+            for i in 0..n {
+                let slot = (self.read + i) % self.count;
+                let mut page = alloc::vec![0u8; 0x1000];
+                mem.read(self.cmd + 0x1000 + slot as usize * 0x1000, &mut page);
+                raw.extend_from_slice(&page);
+            }
+            let payload = raw[80..48 + len.max(32)].to_vec();
             self.served.push((function, seq));
             self.read = (self.read + n) % self.count;
             // GSP's read pointer of the command queue: status queue rx header.
             mem.write_u32(self.stat + 32, self.read);
-            self.post(mem, function, 0, &seq.to_le_bytes());
+            match answer(function, &payload) {
+                Some((result, reply)) => self.post(mem, function, result, &reply),
+                None => self.post(mem, function, 0, &seq.to_le_bytes()),
+            }
         }
     }
 }
