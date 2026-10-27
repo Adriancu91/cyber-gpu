@@ -858,6 +858,183 @@ pub mod tu102_dev_mmu_ver2 {
     pub const NV_MMU_VER2_PTE__SIZE: u32 = 0x8;
 }
 
+/// From `src/common/inc/swref/published/turing/tu102/dev_ram.h` (open-gpu-kernel-modules 570.144).
+#[allow(non_snake_case, missing_docs, clippy::identity_op)]
+pub mod tu102_dev_ram {
+    use super::Range;
+    /// `RW--M`
+    pub const NV_PRAMIN: Range = Range::new(0x700000, 0x7fffff);
+}
+
+/// From `src/common/inc/swref/published/maxwell/gm107/dev_bus.h` (open-gpu-kernel-modules 570.144).
+#[allow(non_snake_case, missing_docs, clippy::identity_op)]
+pub mod gm107_dev_bus {
+    use super::Field;
+    /// `RW-4R`
+    pub const NV_PBUS_BAR0_WINDOW: u32 = 0x1700;
+    /// `RWIUF`
+    pub const NV_PBUS_BAR0_WINDOW_BASE: Field = Field::new(23, 0);
+    /// `RWI-V`
+    pub const NV_PBUS_BAR0_WINDOW_BASE_0: u32 = 0x0;
+    /// `RWIUF`
+    pub const NV_PBUS_BAR0_WINDOW_TARGET: Field = Field::new(25, 24);
+    /// `RWI-V`
+    pub const NV_PBUS_BAR0_WINDOW_TARGET_VID_MEM: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_PBUS_BAR0_WINDOW_TARGET_SYS_MEM_COHERENT: u32 = 0x2;
+    /// `RW--V`
+    pub const NV_PBUS_BAR0_WINDOW_TARGET_SYS_MEM_NONCOHERENT: u32 = 0x3;
+    pub const NV_PBUS_BAR0_WINDOW_BASE_SHIFT: u32 = 0x10;
+}
+
+/// From `src/common/inc/swref/published/turing/tu102/dev_vm.h` (open-gpu-kernel-modules 570.144).
+#[allow(non_snake_case, missing_docs, clippy::identity_op)]
+pub mod tu102_dev_vm {
+    use super::Field;
+    use super::Range;
+    /// `RW--D`
+    pub const NV_VIRTUAL_FUNCTION_FULL_PHYS_OFFSET: Range = Range::new(0xb80000, 0xbbffff);
+    /// `RW-4R`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_PDB: u32 = 0x30a0;
+    /// `RWEVF`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_PDB_APERTURE: Field = Field::new(1, 1);
+    /// `RWE-V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_PDB_APERTURE_INIT: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_PDB_APERTURE_VID_MEM: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_PDB_APERTURE_SYS_MEM: u32 = 0x1;
+    /// `RWEVF`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_PDB_ADDR: Field = Field::new(31, 4);
+    /// `RWE-V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_PDB_ADDR_INIT: u32 = 0x0;
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_PDB_ADDR_ALIGNMENT: u32 = 0xc;
+    /// `RW-4R`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_UPPER_PDB: u32 = 0x30a4;
+    /// `RWEVF`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_UPPER_PDB_ADDR: Field = Field::new(19, 0);
+    /// `RWE-V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_UPPER_PDB_ADDR_INIT: u32 = 0x0;
+    /// `RW-4R`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE: u32 = 0x30b0;
+    /// `RWXVF`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_ALL_VA: Field = Field::new(0, 0);
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_ALL_VA_FALSE: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_ALL_VA_TRUE: u32 = 0x1;
+    /// `RWXVF`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_ALL_PDB: Field = Field::new(1, 1);
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_ALL_PDB_FALSE: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_ALL_PDB_TRUE: u32 = 0x1;
+    /// `RWXVF`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_HUBTLB_ONLY: Field = Field::new(2, 2);
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_HUBTLB_ONLY_FALSE: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_HUBTLB_ONLY_TRUE: u32 = 0x1;
+    /// `RWXVF`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_REPLAY: Field = Field::new(5, 3);
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_REPLAY_NONE: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_REPLAY_START: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_REPLAY_START_ACK_ALL: u32 = 0x2;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_REPLAY_CANCEL_TARGETED: u32 = 0x3;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_REPLAY_CANCEL_GLOBAL: u32 = 0x4;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_REPLAY_CANCEL_VA_GLOBAL: u32 = 0x5;
+    /// `RWXVF`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_SYS_MEMBAR: Field = Field::new(6, 6);
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_SYS_MEMBAR_FALSE: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_SYS_MEMBAR_TRUE: u32 = 0x1;
+    /// `RWXVF`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_ACK: Field = Field::new(8, 7);
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_ACK_NONE_REQUIRED: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_ACK_INTRANODE: u32 = 0x2;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_ACK_GLOBALLY: u32 = 0x1;
+    /// `RWXVF`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CANCEL_CLIENT_ID: Field = Field::new(14, 9);
+    /// `RWXVF`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CANCEL_GPC_ID: Field = Field::new(19, 15);
+    /// `RWXVF`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CANCEL_CLIENT_TYPE: Field =
+        Field::new(20, 20);
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CANCEL_CLIENT_TYPE_GPC: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CANCEL_CLIENT_TYPE_HUB: u32 = 0x1;
+    /// `RWXVF`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_USE_PASID: Field = Field::new(21, 21);
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_USE_PASID_FALSE: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_USE_PASID_TRUE: u32 = 0x1;
+    /// `RWXVF`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_USE_SIZE: Field = Field::new(22, 22);
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_USE_SIZE_FALSE: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_USE_SIZE_TRUE: u32 = 0x1;
+    /// `RWXVF`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_PROP_FLUSH: Field = Field::new(23, 23);
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_PROP_FLUSH_FALSE: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_PROP_FLUSH_TRUE: u32 = 0x1;
+    /// `RWXVF`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CACHE_LEVEL: Field = Field::new(26, 24);
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CACHE_LEVEL_ALL: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CACHE_LEVEL_PTE_ONLY: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CACHE_LEVEL_UP_TO_PDE0: u32 = 0x2;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CACHE_LEVEL_UP_TO_PDE1: u32 = 0x3;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CACHE_LEVEL_UP_TO_PDE2: u32 = 0x4;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CACHE_LEVEL_UP_TO_PDE3: u32 = 0x5;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CACHE_LEVEL_UP_TO_PDE4: u32 = 0x6;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CACHE_LEVEL_UP_TO_PDE5: u32 = 0x7;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CACHE_LEVEL_CANCEL_READ: u32 = 0x0;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CACHE_LEVEL_CANCEL_WRITE: u32 = 0x1;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CACHE_LEVEL_CANCEL_ATOMIC_STRONG: u32 = 0x2;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CACHE_LEVEL_CANCEL_RSVRVD: u32 = 0x3;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CACHE_LEVEL_CANCEL_ATOMIC_WEAK: u32 = 0x4;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CACHE_LEVEL_CANCEL_ATOMIC_ALL: u32 = 0x5;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CACHE_LEVEL_CANCEL_WRITE_AND_ATOMIC: u32 =
+        0x6;
+    /// `RW--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_CACHE_LEVEL_CANCEL_ALL: u32 = 0x7;
+    /// `-WEVF`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_TRIGGER: Field = Field::new(31, 31);
+    /// `-WE-V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_TRIGGER_FALSE: u32 = 0x0;
+    /// `-W--V`
+    pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_TRIGGER_TRUE: u32 = 0x1;
+}
+
 /// From `classes/host/clc56f.h` (open-gpu-doc).
 #[allow(non_snake_case, missing_docs, clippy::identity_op)]
 pub mod clc56f {

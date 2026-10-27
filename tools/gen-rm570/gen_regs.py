@@ -25,7 +25,8 @@ Usage: gen_regs.py <ogkm-checkout> <open-gpu-doc-checkout> <output.rs>
 import re
 import sys
 
-# (module, source key, path, only names starting with this prefix or None)
+# (module, source key, path, only names starting with this prefix — or one of
+#  a tuple of prefixes — or None)
 HEADERS = [
     ("ga102_dev_boot", "ogkm", "src/common/inc/swref/published/ampere/ga102/dev_boot.h", None),
     ("ga102_dev_falcon_v4", "ogkm", "src/common/inc/swref/published/ampere/ga102/dev_falcon_v4.h", None),
@@ -44,6 +45,13 @@ HEADERS = [
     # I9: the GPU page-table entry formats (MMU version 2, used by Pascal..Ampere).
     # The published swref copy of dev_mmu.h is a stub; the full one ships with UVM.
     ("tu102_dev_mmu_ver2", "ogkm", "kernel-open/nvidia-uvm/hwref/turing/tu102/dev_mmu.h", "NV_MMU_VER2_"),
+    # I9b: writing VRAM through the BAR0 window (PRAMIN) and the TLB invalidate.
+    # NV_PBUS_BAR0_WINDOW is published only in the Maxwell header; RM 570.144
+    # uses that layout (kbusSetBAR0WindowVidOffset_GM107) on TU10x..AD10x, GA104 included.
+    ("tu102_dev_ram", "ogkm", "src/common/inc/swref/published/turing/tu102/dev_ram.h", "NV_PRAMIN"),
+    ("gm107_dev_bus", "ogkm", "src/common/inc/swref/published/maxwell/gm107/dev_bus.h", "NV_PBUS_BAR0_WINDOW"),
+    ("tu102_dev_vm", "ogkm", "src/common/inc/swref/published/turing/tu102/dev_vm.h",
+     ("NV_VIRTUAL_FUNCTION_FULL_PHYS_OFFSET", "NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE")),
     ("clc56f", "ogd", "classes/host/clc56f.h", None),
     ("clc7c0", "ogd", "classes/compute/clc7c0.h", None),
     ("qmd_v03_00", "ogd", "classes/compute/clc6c0qmd.h", "NVC6C0_QMDV03_00_"),

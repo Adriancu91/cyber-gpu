@@ -98,8 +98,8 @@ pub const LEVELS: [Level; 5] = [
     },
 ];
 
-/// Where the driver writes VRAM. SIMULARE: a model; board: a BAR window
-/// behind `hw-write` (not written yet).
+/// Where the driver writes VRAM. SIMULARE: a model; board: the BAR0 window
+/// of [`crate::vram_window`] (I9b, behind `hw-write`).
 pub trait VramWrite {
     fn write_u64(&mut self, pa: u64, value: u64) -> GpuResult<()>;
 }
@@ -246,6 +246,11 @@ impl<W: VramWrite> GpuMemory<W> {
 
     pub fn writer(&self) -> &W {
         &self.w
+    }
+
+    /// The sink, e.g. to invalidate the TLB once the tables are written (I9b).
+    pub fn writer_mut(&mut self) -> &mut W {
+        &mut self.w
     }
 
     fn write(&mut self, pa: u64, v: u64) -> GpuResult<()> {

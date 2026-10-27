@@ -20,6 +20,9 @@
 //!   encoding only, unverified on hardware;
 //! - [`mmu`]: I9a — VRAM/GPU-VA allocation and the MMU v2 page tables, written
 //!   through a `VramWrite` sink — SIMULARE only, no board access;
+//! - [`vram_window`]: I9b — that sink on the board: VRAM through the BAR0
+//!   window + the MMU TLB invalidate; four registers, journaled, behind
+//!   `hw-write` on a real BAR — SIMULARE only;
 //! - [`radix3`]: the page list GSP reads to find its image in RAM (pure data);
 //! - [`backend`]: the I1 contract for GA104.
 //!
@@ -48,5 +51,6 @@ pub mod radix3;
 pub mod regs;
 pub mod sha256;
 pub mod vbios;
+pub mod vram_window;
 
 pub use backend::Ga104Backend;

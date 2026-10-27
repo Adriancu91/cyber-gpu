@@ -18,6 +18,7 @@ pub mod fake_rm;
 pub mod golden_log;
 pub mod mmio;
 pub mod pci;
+pub mod pramin;
 pub mod rom;
 pub mod vram;
 pub mod workstation;
