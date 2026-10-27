@@ -1,5 +1,30 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 11 — 28 octombrie 2026, ~01:25–01:50 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Tot ce scrie „PASS” e pe calculatorul gazdă: SIMULARE (modele software)
+sau comparație cu antetele NVIDIA. Comenzi noi în hub: niciuna (C-18 și C-20 gata); am continuat pașii „fără placă” din sesiunea 10.
+Din hub: C-26 e gata în OS (os-192 afișează în `hw` rândul „ecran: framebuffer la adresa fizica …”) — folosit mai jos.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Pornire | CI rularea 42 verde; `tools/check.sh` verde înainte de orice schimbare (211 teste, rustc 1.99.1) | PASS |
+| **I9b** registrele | generatorul `tools/gen-rm570` produce și `tu102_dev_ram` (`NV_PRAMIN` = `0x700000–0x7fffff`), `gm107_dev_bus` (`NV_PBUS_BAR0_WINDOW` = `0x1700`; publicat doar în antetul Maxwell, dar RM 570.144 îl folosește pe GA104: `kbusSetBAR0WindowVidOffset_GM107`), `tu102_dev_vm` (invalidarea TLB, baza PF `0xb80000`); restul `regs.rs` a ieșit **identic** | PASS |
+| **I9b** fereastra VRAM + TLB | `nvidia-ga104::vram_window::VramWindow` (implementează `mmu::VramWrite`): mută fereastra de 1 MiB în pași de 64 KiB, scrie VRAM, **recitește fiecare cuvânt**, refuză zonele protejate (ecranul, GSP-RM) înainte de orice acces; `invalidate_tlb` (PDB = rădăcina, ALL_VA, așteptare până la TRIGGER = 0, limită de timp); `restore` pune fereastra la loc. Scrie **doar** 4 registre, fiecare în jurnal cu înainte/după; pe placa reală cere `hw-write`. Model independent: `gpu-sim::pramin` (pozițiile scrise de mână, 3 defecte) | PASS (SIMULARE): 8 teste noi; tabelele I9a scrise prin fereastră și citite de cititorul independent; „golden image” cap-coadă prin fereastră (10 buffere GR verificate, ecranul și zona GSP-RM neatinse, o invalidare după toate scrierile). 3 greșeli plantate (jumătățile inversate, împărțirea PDB greșită, fără recitire) **prinse**. **DEDUS:** valoarea invalidării; că fereastra merge după UEFI |
+| Ecranul (C-26) | `vram_window::screen_vram_range`: rândul „ecran:” din `hw` (os-192) + BAR1 → zona din VRAM a ecranului, rotunjită la 64 KiB; `TEST_MATRIX.md` B0 folosește os-192 și pasul 9 cere poza acestui rând | PASS (aritmetică). **DEDUS:** BAR1 = vedere liniară a VRAM-ului după UEFI |
+| CI | rulările 43–45 | 43, 44 PASS; 45 verificată la final |
+| Compatibilitate OS | `git diff 41e44ba HEAD` pe `gpu-core`, `gpu-pci`, `nvidia-ga104`, `gpu-compute`: tot singura linie `pub` = valoarea `GSP_VERSION` (sesiunea 5). Nou: `vram_window`, `GpuMemory::writer_mut` | PASS (doar adăugări) |
+
+Verificări (`tools/check.sh`, rustc 1.99.1 stable): format PASS, clippy `-D warnings` PASS, **220 de teste PASS** (1 ignorat: viteza),
+build `x86_64-unknown-none` PASS; `nvidia-ga104 --features hw-write`: clippy + teste PASS. Nicio scriere în placă.
+
+**Următorul pas:** fără placă: încărcătorul DMA al ucode-ului (I6/I7, în spatele `hw-write`); treapta 6 matmul (încărcări vectoriale);
+`SET_PAGE_DIRECTORY` pentru canal. Cu placa (B0, os-192): I0–I3 + FWSEC + fișierele de pe stick + rândul „ecran:”, 0 scrieri;
+apoi, cu Adrian: proba P (tinygrad). Pașii „fără placă” se împuținează: după încărcătorul DMA, restul I0–I10 cere placa.
+**De la Adrian:** fereastra B0 (lista în `TEST_MATRIX.md`); fișierele firmware pe stick.
+
+---
+
 ## Sesiunea 10 — 27 octombrie 2026, ~19:05–19:55 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Tot ce scrie „PASS” e pe calculatorul gazdă: SIMULARE (modele software),
