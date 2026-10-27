@@ -7,13 +7,45 @@
 //! 15–16) — re-written here. The program's register count and memory sizes
 //! come from the NAK "fișă" (`tools/nak/README.md`).
 //!
-//! STATUS: SIMULARE only (checked by `gpu-sim::cmdproc`). Fields a real board
-//! will also need (shared/local memory windows, barrier count, caching
-//! controls) are not set yet; they come with I9/I10 and the golden log.
+//! STATUS: SIMULARE only (checked by `gpu-sim::cmdproc`). Shared memory and
+//! the barrier count: [`ComputeQmd::encode_with_shared`] (session 8). Not set
+//! yet, though Mesa NAK sets them in every QMD V03_00 (`Qmd3_0::new`):
+//! `API_VISIBLE_CALL_LIMIT = NO_CHECK`, `SAMPLER_INDEX = INDEPENDENTLY`,
+//! `SM_GLOBAL_CACHING_ENABLE = 1` — to align with the golden log before the
+//! first real launch (docs/COMPATIBILITATE_FIRMWARE.md, „De verificat”).
 
 use gpu_core::error::{GpuError, GpuResult};
 use nvidia_rm570::regs::qmd_v03_00 as q;
 use nvidia_rm570::{QMD_SIZE, QmdField};
+
+/// Shared memory + barriers a program needs (from the NAK dump / the GLSL
+/// declaration). Added in session 8 for matmul step 3; [`ComputeQmd::encode`]
+/// alone leaves these fields 0 (enough for programs without shared memory).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SharedMemory {
+    /// Bytes of `shared` variables per workgroup (rounded up to 256 here).
+    pub bytes: u32,
+    /// Largest per-workgroup size the driver allows (Mesa NVK: 48 KiB).
+    pub max_bytes: u32,
+    /// Hardware barriers used (`bar.sync` → 1).
+    pub barriers: u8,
+}
+
+/// NVK's limit (`NVK_MAX_SHARED_SIZE`, Mesa 25.0.7).
+pub const MAX_SHARED_BYTES: u32 = 48 * 1024;
+
+/// The SM's L1/shared split for a size, in QMD units (Mesa NAK `qmd.rs`
+/// `gv100_sm_config_smem_size`, MIT, re-written): 8/16/32/64/96 KiB → n/4 KiB + 1.
+pub fn sm_config_shared_units(bytes: u32) -> u32 {
+    let kib = match bytes {
+        b if b > 64 * 1024 => 96,
+        b if b > 32 * 1024 => 64,
+        b if b > 16 * 1024 => 32,
+        b if b > 8 * 1024 => 16,
+        _ => 8,
+    };
+    kib / 4 + 1
+}
 
 /// Inputs for one launch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,15 +159,57 @@ impl ComputeQmd {
         Ok(m)
     }
 
+    /// [`Self::encode`] plus shared memory and barriers, filled the way Mesa
+    /// NAK fills QMD V03_00 (`set_smem_size` bounded, `set_barrier_count`).
+    pub fn encode_with_shared(&self, s: &SharedMemory) -> GpuResult<[u32; QMD_SIZE / 4]> {
+        let bytes = s.bytes.next_multiple_of(0x100);
+        if s.max_bytes > MAX_SHARED_BYTES || bytes > s.max_bytes {
+            return Err(GpuError::InvalidArgument(
+                "QMD: memoria partajata depaseste limita",
+            ));
+        }
+        if s.barriers > 16 {
+            return Err(GpuError::InvalidArgument("QMD: prea multe bariere"));
+        }
+        let mut m = self.encode()?;
+        put(&mut m, q::NVC6C0_QMDV03_00_SHARED_MEMORY_SIZE, bytes)?;
+        let units = sm_config_shared_units(bytes);
+        put(
+            &mut m,
+            q::NVC6C0_QMDV03_00_MIN_SM_CONFIG_SHARED_MEM_SIZE,
+            units,
+        )?;
+        put(
+            &mut m,
+            q::NVC6C0_QMDV03_00_MAX_SM_CONFIG_SHARED_MEM_SIZE,
+            sm_config_shared_units(s.max_bytes),
+        )?;
+        put(
+            &mut m,
+            q::NVC6C0_QMDV03_00_TARGET_SM_CONFIG_SHARED_MEM_SIZE,
+            units,
+        )?;
+        put(&mut m, q::NVC6C0_QMDV03_00_BARRIER_COUNT, s.barriers as u32)?;
+        Ok(m)
+    }
+
+    /// [`Self::encode_with_shared`] as little-endian bytes.
+    pub fn to_bytes_with_shared(&self, s: &SharedMemory) -> GpuResult<[u8; QMD_SIZE]> {
+        Ok(words_to_bytes(&self.encode_with_shared(s)?))
+    }
+
     /// The QMD as little-endian bytes, ready to be copied to GPU memory.
     pub fn to_bytes(&self) -> GpuResult<[u8; QMD_SIZE]> {
-        let w = self.encode()?;
-        let mut b = [0u8; QMD_SIZE];
-        for (i, x) in w.iter().enumerate() {
-            b[4 * i..4 * i + 4].copy_from_slice(&x.to_le_bytes());
-        }
-        Ok(b)
+        Ok(words_to_bytes(&self.encode()?))
     }
+}
+
+fn words_to_bytes(w: &[u32; QMD_SIZE / 4]) -> [u8; QMD_SIZE] {
+    let mut b = [0u8; QMD_SIZE];
+    for (i, x) in w.iter().enumerate() {
+        b[4 * i..4 * i + 4].copy_from_slice(&x.to_le_bytes());
+    }
+    b
 }
 
 #[cfg(test)]
@@ -180,5 +254,60 @@ mod tests {
         let mut x = add64();
         x.release = Some((0x30_0002, 1));
         assert!(x.encode().is_err());
+    }
+
+    #[test]
+    fn shared_memory_like_mesa_nak() {
+        // Units: 8/16/32/64/96 KiB -> 3/5/9/17/25.
+        for (b, u) in [
+            (0, 3),
+            (2048, 3),
+            (8192, 3),
+            (8193, 5),
+            (16 << 10, 5),
+            (48 << 10, 17),
+            (65 << 10, 25),
+        ] {
+            assert_eq!(sm_config_shared_units(b), u, "{b}");
+        }
+        let s = SharedMemory {
+            bytes: 2000,
+            max_bytes: MAX_SHARED_BYTES,
+            barriers: 1,
+        };
+        let m = add64().encode_with_shared(&s).unwrap();
+        assert_eq!(q::NVC6C0_QMDV03_00_SHARED_MEMORY_SIZE.get(&m), 0x800); // rounded to 256
+        assert_eq!(q::NVC6C0_QMDV03_00_MIN_SM_CONFIG_SHARED_MEM_SIZE.get(&m), 3);
+        assert_eq!(
+            q::NVC6C0_QMDV03_00_TARGET_SM_CONFIG_SHARED_MEM_SIZE.get(&m),
+            3
+        );
+        assert_eq!(
+            q::NVC6C0_QMDV03_00_MAX_SM_CONFIG_SHARED_MEM_SIZE.get(&m),
+            17
+        );
+        assert_eq!(q::NVC6C0_QMDV03_00_BARRIER_COUNT.get(&m), 1);
+        // Everything encode() wrote is unchanged.
+        let plain = add64().encode().unwrap();
+        for f in [
+            q::NVC6C0_QMDV03_00_PROGRAM_ADDRESS_LOWER,
+            q::NVC6C0_QMDV03_00_CTA_RASTER_WIDTH,
+        ] {
+            assert_eq!(f.get(&m), f.get(&plain));
+        }
+        assert_eq!(q::NVC6C0_QMDV03_00_SHARED_MEMORY_SIZE.get(&plain), 0);
+        for bad in [
+            SharedMemory {
+                bytes: 49 << 10,
+                ..s
+            },
+            SharedMemory {
+                max_bytes: 64 << 10,
+                ..s
+            },
+            SharedMemory { barriers: 17, ..s },
+        ] {
+            assert!(add64().encode_with_shared(&bad).is_err(), "{bad:?}");
+        }
     }
 }

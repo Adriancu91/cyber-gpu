@@ -48,6 +48,21 @@ față de `std` pe 2 milioane de cazuri). `reference::matmul` (două rotunjiri, 
 în ultimii biți (test: `sim_matmul.rs`). Dacă vrem vreodată numerele subnormale păstrate, se poate cere în SPIR-V (`DenormPreserve`) — nefăcut.
 **NECUNOSCUT:** dacă placa decide „rezultat subnormal” înainte sau după rotunjire (contează doar la o unitate de 2⁻¹²⁶); noi aducem la 0 după.
 
+## Treapta 3 matmul: plăci în memoria partajată (27 oct 2026, sesiunea 8, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh matmul_smem` (Mesa 25.0.7 reconstruit din nou în cloud; `add64` și `matmul_coalesced` au ieșit **identice**, aceleași sume).
+
+| Ce | Valoare |
+|---|---|
+| Program | `matmul_smem.comp`: fiecare grup de 16×16 fire copiază o placă 16×16 din A și una din B în memoria partajată, așteaptă (`barrier`), apoi fiecare fir face cele 16 produse; firul x → coloana, y → rândul (ca treapta 2) |
+| Ieșire | 218 instrucțiuni, **3 488 octeți**, 19 registre; memorie partajată **2 KiB** (`as_` la 0, `bs_` la 0x400), **o barieră** (`bar.sync`, de 2 ori) |
+| SHA-256 `matmul_smem.sm86.sass` | `2d0cc12dc2053ede4235e3ff87bb15e1fa34b7c7fef7a1df5a456d026cecda7d` |
+| Aritmetica | tot `ffma.ftz` (16 pe placă, bucla internă desfăcută). Bucla se oprește exact la K (fără zerouri adunate) → **același șir de FMA, în aceeași ordine**, ca treptele 1–2: oracolul rămâne `matmul_fma_ftz`, bit cu bit |
+| QMD | în plus față de treptele 1–2: `SHARED_MEMORY_SIZE` = 0x800, configurarea L1/partajată (MIN/TARGET = 3, MAX = 17, formula NAK `gv100_sm_config_smem_size`), `BARRIER_COUNT` = 1 → `ComputeQmd::encode_with_shared` |
+
+Test (SIMULARE, `sim_matmul.rs`, 3 teste noi): modelul pe procesor urmează algoritmul cu plăci (umple cele două plăci ca firele, apoi lanțul FMA),
+identic bit cu bit cu oracolul pentru 4 forme (inclusiv plăci parțiale); un caz cu −0,0 dovedește că ultima placă nu adună zerouri (o variantă
+„cu zerouri” a modelului pică testul); un QMD fără memorie partajată sau fără barieră e refuzat, fără nicio scriere în C.
+
 ## Ce trebuie să respecte lansatorul nostru (I10), din dump — DEDUS, de confirmat pe placă
 1. Bufferul constant 0 legat în QMD, cu adresele a, b, c la 0x28, 0x30, 0x38 (restul tabelei rădăcină NVK nu e citit de program).
 2. Numărul de registre în QMD ≥ 19 (rotunjirea cerută de hardware: necunoscută încă).
@@ -56,4 +71,4 @@ față de `std` pe 2 milioane de cazuri). `reference::matmul` (două rotunjiri, 
 
 ## Licențe
 Mesa (NAK, NVK, drm-shim): MIT, folosit ca unealtă — nimic copiat în `crates/`. Binarul din `out/` e ieșirea compilatorului pentru
-programul nostru (`add64.comp`, MIT); nu conține cod NVIDIA. `ptxas` nu se folosește (C-18).
+programele noastre (`add64.comp`, `matmul_*.comp`, MIT); nu conține cod NVIDIA. `ptxas` nu se folosește (C-18).

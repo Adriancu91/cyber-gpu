@@ -6,6 +6,7 @@
 #   sh tools/nak/build.sh mesa     # once: download + build Mesa 25.0.7 into $NAK_HOME (~15 min, 2 cores)
 #   sh tools/nak/build.sh add64    # compile add64.comp for GA104 -> tools/nak/out/add64.sm86.{sass,txt}
 #   sh tools/nak/build.sh matmul_naive   # the same for matmul_naive.comp (C-20 E, step 1)
+#   sh tools/nak/build.sh matmul_smem    # step 3: shared-memory tiles (session 8)
 #   sh tools/nak/build.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): apt install glslang-tools spirv-tools libvulkan-dev libdrm-dev
@@ -43,6 +44,9 @@ matmul_naive)
 matmul_coalesced)
     exec sh "$0" kernel matmul_coalesced 40
     ;;
+matmul_smem)
+    exec sh "$0" kernel matmul_smem 40
+    ;;
 kernel)
     NAME=${2:?nume}; PUSH=${3:?octeti push constants}
     OUT=$HERE/out; TMP=$(mktemp -d); mkdir -p "$OUT"
@@ -67,6 +71,6 @@ kernel)
     rm -rf "$TMP"
     ;;
 *)
-    echo "usage: $0 mesa|add64|matmul_naive|matmul_coalesced|kernel <nume> <octeti>" >&2; exit 2
+    echo "usage: $0 mesa|add64|matmul_naive|matmul_coalesced|matmul_smem|kernel <nume> <octeti>" >&2; exit 2
     ;;
 esac

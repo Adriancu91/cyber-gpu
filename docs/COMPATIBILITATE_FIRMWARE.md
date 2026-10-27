@@ -66,8 +66,11 @@ Verificarea pe Windows, înainte de copiere (PowerShell): `Get-FileHash .\gsp-57
 | Bitul `GP_ENTRY1_LEVEL` în GPFIFO | 0 (`push.rs`, verificat față de antet în sesiunea 6) | 1 la fiecare intrare | de aliniat la varianta dovedită pentru primul test real (I9) |
 | Pas între I8 și I9 („golden image”) | rândul I8e în acest tabel (sesiunea 6); încă nu în `init.rs` (o variantă nouă în planul public ar putea strica OS-ul) | există | se adaugă în cod odată cu I8 |
 | Registrele falcon GA10x (I6–I7) | **generate** în `nvidia-rm570` (sesiunea 6); folosite de `gsp/falcon.rs` (sesiunea 7) | publicate MIT în `swref/published/ampere/ga102/` | I6–I7 = SIMULARE pe GSP-ul fals; lipsește încărcătorul DMA |
+| Câmpurile QMD pe care NAK le pune mereu (`API_VISIBLE_CALL_LIMIT=NO_CHECK`, `SAMPLER_INDEX=INDEPENDENTLY`, `SM_GLOBAL_CACHING_ENABLE=1`) | nesetate (`qmd.rs`); memoria partajată + barierele: da (sesiunea 8) | Mesa NAK `qmd.rs` (citit în sesiunea 8) | de aliniat cu jurnalul probei P înainte de prima lansare reală |
 | Mărimea VRAM | `fb_size_from_scratch42` | registrul `0x1183a4` (`NV_USABLE_FB_SIZE_IN_MB`, antet NVIDIA MIT) | citire nouă, doar-citire, de adăugat pe lista permisă la C-20 |
 
 **Sesiunea 6:** toate offset-urile scrise de mână în sesiunea 5 (`GspFwWprMeta`, cozile msgq, `GSP_ARGUMENTS_CACHED`, GFW_BOOT, codificarea pushbuffer/GPFIFO) au fost comparate automat cu valorile generate din antete: **toate egale** (`crates/nvidia-ga104/tests/rm570_crosscheck.rs`).
+
+**Sesiunea 8 (27 oct):** I8c' are cod (`gsp::sysinfo`, structura generată din antet, trimisă în pornirea simulată); matmul treapta 3 (memorie partajată) compilată cu NAK și lansată în model cu QMD-ul complet pentru memoria partajată. Nimic nu a rulat pe placă.
 
 **Sesiunea 7 (27 oct):** I6, I7, I8d au cod (SIMULARE pe `gpu-sim::fake_gsp`), I4c are cod (SIMULARE pe fișiere sintetice); după I10: matmul treptele 1–2 compilate cu NAK (`ffma.ftz`) și lansate în modelul de comenzi, oracol `matmul_fma_ftz` (`tools/nak/README.md`). Nimic nu a rulat pe placă.

@@ -102,6 +102,14 @@ pub struct Launch<'a> {
 
 pub type ProgramFn = fn(&mut Launch<'_>) -> GpuResult<()>;
 
+/// What a program needs from its QMD besides the code (session 8). The model
+/// refuses a launch whose QMD gives less, as a real SM would misbehave.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Needs {
+    pub shared_bytes: u32,
+    pub barriers: u32,
+}
+
 /// Events the model records, in order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -113,7 +121,7 @@ pub enum Event {
 
 pub struct CommandProcessor {
     pub mem: GpuMem,
-    programs: Vec<(Vec<u8>, ProgramFn)>,
+    programs: Vec<(Vec<u8>, ProgramFn, Needs)>,
     objects: [u32; 8],
     sem_addr: u64,
     sem_payload: u64,
@@ -147,7 +155,18 @@ impl CommandProcessor {
     /// The model will "run" `run` when a QMD points at exactly `code`.
     /// Returns the program index used in [`Event::Launch`].
     pub fn register_program(&mut self, code: &[u8], run: ProgramFn) -> usize {
-        self.programs.push((code.to_vec(), run));
+        self.register_program_with_needs(code, run, Needs::default())
+    }
+
+    /// Like [`Self::register_program`], for a program that uses shared memory
+    /// and barriers: the QMD must declare at least `needs`.
+    pub fn register_program_with_needs(
+        &mut self,
+        code: &[u8],
+        run: ProgramFn,
+        needs: Needs,
+    ) -> usize {
+        self.programs.push((code.to_vec(), run, needs));
         self.programs.len() - 1
     }
 
@@ -309,7 +328,7 @@ impl CommandProcessor {
         let index = self
             .programs
             .iter()
-            .position(|(code, _)| {
+            .position(|(code, _, _)| {
                 let mut buf = alloc::vec![0u8; code.len()];
                 self.mem.read(prog, &mut buf).is_ok() && &buf == code
             })
@@ -332,7 +351,17 @@ impl CommandProcessor {
         if grid.contains(&0) || block.contains(&0) {
             return Err(bad("SIM: dimensiune 0 in QMD"));
         }
-        let run = self.programs[index].1;
+        let (run, needs) = (self.programs[index].1, self.programs[index].2);
+        if g(q::NVC6C0_QMDV03_00_SHARED_MEMORY_SIZE) < needs.shared_bytes {
+            return Err(bad(
+                "SIM: QMD da mai putina memorie partajata decat cere programul",
+            ));
+        }
+        if g(q::NVC6C0_QMDV03_00_BARRIER_COUNT) < needs.barriers {
+            return Err(bad(
+                "SIM: QMD declara mai putine bariere decat foloseste programul",
+            ));
+        }
         run(&mut Launch {
             mem: &mut self.mem,
             cbuf0,
@@ -419,6 +448,82 @@ fn matmul_on_cpu(l: &mut Launch<'_>, x_is_col: bool) -> GpuResult<()> {
         for col in 0..n.min(cols) {
             l.mem
                 .write_u32(c + 4 * (r * n + col) as u64, out[r * n + col].to_bits());
+        }
+    }
+    Ok(())
+}
+
+/// What `tools/nak/out/matmul_smem.sm86.sass` (step 3) needs: two 16×16 f32
+/// tiles (`as_` at 0, `bs_` at 0x400 in the dump) and one `bar.sync` barrier.
+pub const MATMUL_SMEM_NEEDS: Needs = Needs {
+    shared_bytes: 2 * 16 * 16 * 4,
+    barriers: 1,
+};
+
+/// The CPU stand-in for step 3 (`matmul_smem.sm86.sass`, shared-memory
+/// tiles). Unlike steps 1–2 it follows the kernel's own algorithm: for each
+/// workgroup, tile by tile, it fills the two 16×16 "shared" arrays exactly as
+/// the threads would (zeros outside A/B), then every "thread" does its
+/// `ffma.ftz` chain over min(16, K − t) entries, then the next tile. So the
+/// test checks the tiling index arithmetic and the edge handling, and that
+/// the result equals the plain FMA+FTZ oracle bit for bit. Thread x → column,
+/// y → row; cbuf0 layout as steps 1–2.
+pub fn matmul_smem_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    const T: usize = 16;
+    if l.block != [16, 16, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: matmul_smem cere blocuri de 16x16x1"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let a = l.mem.read_u64(l.cbuf0 + 0x28)?;
+    let b = l.mem.read_u64(l.cbuf0 + 0x30)?;
+    let c = l.mem.read_u64(l.cbuf0 + 0x38)?;
+    let m = l.mem.read_u32(l.cbuf0 + 0x40)? as usize;
+    let n = l.mem.read_u32(l.cbuf0 + 0x44)? as usize;
+    let k = l.mem.read_u32(l.cbuf0 + 0x48)? as usize;
+    let x = l.mem.read_f32s(a, m * k)?;
+    let y = l.mem.read_f32s(b, k * n)?;
+    let fma_f32_ftz = gpu_compute::math::fma_f32_ftz;
+    for gy in 0..l.grid[1] as usize {
+        for gx in 0..l.grid[0] as usize {
+            let mut acc = [[0.0f32; T]; T]; // [ty][tx]
+            let mut t = 0;
+            while t < k {
+                let (mut as_, mut bs_) = ([[0.0f32; T]; T], [[0.0f32; T]; T]);
+                for ty in 0..T {
+                    for tx in 0..T {
+                        let (row, col) = (gy * T + ty, gx * T + tx);
+                        if row < m && t + tx < k {
+                            as_[ty][tx] = x[row * k + t + tx];
+                        }
+                        if t + ty < k && col < n {
+                            bs_[ty][tx] = y[(t + ty) * n + col];
+                        }
+                    }
+                }
+                // barrier()
+                let len = T.min(k - t);
+                for (ty, acc_row) in acc.iter_mut().enumerate() {
+                    for (tx, acc_el) in acc_row.iter_mut().enumerate() {
+                        for p in 0..len {
+                            *acc_el = fma_f32_ftz(as_[ty][p], bs_[p][tx], *acc_el);
+                        }
+                    }
+                }
+                // barrier()
+                t += T;
+            }
+            for (ty, acc_row) in acc.iter().enumerate() {
+                for (tx, &v) in acc_row.iter().enumerate() {
+                    let (row, col) = (gy * T + ty, gx * T + tx);
+                    if row < m && col < n {
+                        l.mem.write_u32(c + 4 * (row * n + col) as u64, v.to_bits());
+                    }
+                }
+            }
         }
     }
     Ok(())

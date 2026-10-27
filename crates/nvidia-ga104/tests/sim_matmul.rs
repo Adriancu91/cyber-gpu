@@ -4,13 +4,17 @@
 //! processor model. The "program" runs on the CPU (`matmul_naive_on_cpu`,
 //! oracle `reference::matmul_fma_ftz`); nothing here runs on the RTX 3070 Ti.
 
-use gpu_sim::cmdproc::{CommandProcessor, Event, matmul_coalesced_on_cpu, matmul_naive_on_cpu};
+use gpu_sim::cmdproc::{
+    CommandProcessor, Event, MATMUL_SMEM_NEEDS, matmul_coalesced_on_cpu, matmul_naive_on_cpu,
+    matmul_smem_on_cpu,
+};
 use nvidia_ga104::push::{self, PushBuf};
-use nvidia_ga104::qmd::ComputeQmd;
+use nvidia_ga104::qmd::{ComputeQmd, MAX_SHARED_BYTES, SharedMemory};
 use nvidia_rm570::regs::clc7c0 as c;
 
 const MATMUL: &[u8] = include_bytes!("../../../tools/nak/out/matmul_naive.sm86.sass");
 const COALESCED: &[u8] = include_bytes!("../../../tools/nak/out/matmul_coalesced.sm86.sass");
+const SMEM: &[u8] = include_bytes!("../../../tools/nak/out/matmul_smem.sm86.sass");
 const PROG: u64 = 0x10_0000;
 const CBUF: u64 = 0x20_0000;
 const SEM: u64 = 0x30_0000;
@@ -59,6 +63,14 @@ fn setup(m: u32, k: u32, n: u32) -> (CommandProcessor, Vec<f32>, Vec<f32>) {
 }
 
 fn launch(cp: &mut CommandProcessor, grid: [u32; 3]) -> Result<(), gpu_core::error::GpuError> {
+    launch_shared(cp, grid, None)
+}
+
+fn launch_shared(
+    cp: &mut CommandProcessor,
+    grid: [u32; 3],
+    shared: Option<SharedMemory>,
+) -> Result<(), gpu_core::error::GpuError> {
     let q = ComputeQmd {
         program_va: PROG,
         registers: 19,
@@ -68,7 +80,11 @@ fn launch(cp: &mut CommandProcessor, grid: [u32; 3]) -> Result<(), gpu_core::err
         block: [16, 16, 1],
         release: Some((SEM, 1)),
     };
-    cp.mem.write(QMD, &q.to_bytes().unwrap());
+    let qmd = match shared {
+        Some(s) => q.to_bytes_with_shared(&s).unwrap(),
+        None => q.to_bytes().unwrap(),
+    };
+    cp.mem.write(QMD, &qmd);
     let mut w = [0u32; 16];
     let mut p = PushBuf::new(&mut w);
     p.inc(1, c::NVC7C0_SET_OBJECT, &[c::AMPERE_COMPUTE_B])
@@ -154,4 +170,86 @@ fn coalesced_step_gives_the_same_bits_with_the_grid_swapped() {
     gpu_compute::reference::matmul_fma_ftz(&a, &b, &mut want, m, k, n).unwrap();
     assert_eq!(bits(&got), bits(&want));
     assert_ne!(COALESCED, MATMUL);
+}
+
+/// Step 3 (session 8): shared-memory tiles. NAK: 218 instructions, 3488 B,
+/// 19 registers, 2 KiB shared, 1 barrier, `ffma.ftz` (tools/nak/README.md).
+fn smem_cp(m: usize, k: usize, n: usize) -> (CommandProcessor, Vec<f32>, Vec<f32>) {
+    let (mut cp, a, b) = setup(m as u32, k as u32, n as u32);
+    cp.register_program_with_needs(SMEM, matmul_smem_on_cpu, MATMUL_SMEM_NEEDS);
+    cp.mem.write(PROG, SMEM);
+    (cp, a, b)
+}
+
+const SMEM_QMD: SharedMemory = SharedMemory {
+    bytes: 2048,
+    max_bytes: MAX_SHARED_BYTES,
+    barriers: 1,
+};
+
+#[test]
+fn smem_step_matches_the_ffma_ftz_oracle_including_partial_tiles() {
+    // K = 37: two full tiles + a partial one of 5; M, N not multiples of 16.
+    for (m, k, n) in [
+        (37usize, 37usize, 21usize),
+        (16, 16, 16),
+        (5, 1, 3),
+        (33, 48, 17),
+    ] {
+        let (mut cp, a, b) = smem_cp(m, k, n);
+        let grid = [n.div_ceil(16) as u32, m.div_ceil(16) as u32, 1];
+        launch_shared(&mut cp, grid, Some(SMEM_QMD)).unwrap();
+        assert!(matches!(cp.events[1], Event::Launch { program: 1, .. }));
+        let got = cp.mem.read_f32s(C, m * n + 16).unwrap();
+        let mut want = vec![0.0; m * n];
+        gpu_compute::reference::matmul_fma_ftz(&a, &b, &mut want, m, k, n).unwrap();
+        assert_eq!(bits(&got[..m * n]), bits(&want), "{m}x{k}x{n}");
+        assert!(got[m * n..].iter().all(|&x| x == SENTINEL), "wrote after C");
+        assert_eq!(cp.mem.read_u32(SEM).unwrap(), 1);
+    }
+}
+
+#[test]
+fn smem_step_keeps_negative_zero_like_the_oracle() {
+    // Every product is -2^-140: subnormal, flushed by FFMA.FTZ to -0.0, and
+    // -0.0 + (-0.0) stays -0.0. If the last, partial tile (K = 19 = 16 + 3)
+    // were padded with zeros and accumulated, -0.0 + 0*0 would give +0.0.
+    let (m, k, n) = (3usize, 19usize, 2usize);
+    let (mut cp, ..) = smem_cp(m, k, n);
+    let tiny = f32::from_bits(0x1c80_0000); // 2^-70, a normal f32
+    let a = vec![-tiny; m * k];
+    let b = vec![tiny; k * n];
+    cp.mem.write_f32s(A, &a);
+    cp.mem.write_f32s(B, &b);
+    launch_shared(&mut cp, [1, 1, 1], Some(SMEM_QMD)).unwrap();
+    let got = cp.mem.read_f32s(C, m * n).unwrap();
+    let mut want = vec![0.0; m * n];
+    gpu_compute::reference::matmul_fma_ftz(&a, &b, &mut want, m, k, n).unwrap();
+    assert!(
+        want.iter().all(|x| x.to_bits() == 0x8000_0000),
+        "the case must give -0.0"
+    );
+    assert_eq!(bits(&got), bits(&want));
+}
+
+#[test]
+fn smem_step_refuses_a_qmd_without_shared_memory_or_barrier() {
+    let (mut cp, ..) = smem_cp(16, 16, 16);
+    assert!(launch(&mut cp, [1, 1, 1]).is_err()); // plain QMD: 0 shared bytes
+    let few = SharedMemory {
+        bytes: 1024,
+        ..SMEM_QMD
+    };
+    assert!(launch_shared(&mut cp, [1, 1, 1], Some(few)).is_err());
+    let no_bar = SharedMemory {
+        barriers: 0,
+        ..SMEM_QMD
+    };
+    assert!(launch_shared(&mut cp, [1, 1, 1], Some(no_bar)).is_err());
+    let got = cp.mem.read_f32s(C, 16 * 16).unwrap();
+    assert!(
+        got.iter().all(|&x| x == SENTINEL),
+        "refused launches wrote nothing"
+    );
+    assert_ne!(SMEM, COALESCED);
 }

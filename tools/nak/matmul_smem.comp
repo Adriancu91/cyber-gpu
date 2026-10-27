@@ -1,0 +1,52 @@
+// Matmul step 3 (siboehm SGEMM_CUDA kernel 3 "shared memory cache-blocking", MIT, idea only): C[M,N] = A[M,K] * B[K,N],
+// row-major f32, one thread per element of C, 16x16 threads per workgroup (thread x -> column, y -> row, as step 2).
+// The workgroup copies a 16x16 tile of A and one of B into shared memory, waits (barrier), and every thread
+// accumulates its 16 products from shared memory; then the next tile. The inner loop stops at K exactly
+// (no zero padding is accumulated), so each element is the same chain of fused multiply-adds, in the same
+// order p = 0..K-1, as steps 1 and 2: the oracle stays gpu-compute::reference::matmul_fma_ftz, bit for bit.
+// Threads outside C still take part in the loads and barriers (they load zeros) and only skip the store.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+#define TILE 16u
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+
+layout(push_constant) uniform Args {
+    In a;
+    In b;
+    Out c;
+    uint m;
+    uint n;
+    uint k;
+} args;
+
+shared float as_[TILE * TILE];
+shared float bs_[TILE * TILE];
+
+void main() {
+    uint tx = gl_LocalInvocationID.x;
+    uint ty = gl_LocalInvocationID.y;
+    uint row = gl_WorkGroupID.y * TILE + ty;
+    uint col = gl_WorkGroupID.x * TILE + tx;
+    float acc = 0.0;
+    for (uint t = 0; t < args.k; t += TILE) {
+        uint ak = t + tx;
+        uint bk = t + ty;
+        as_[ty * TILE + tx] = (row < args.m && ak < args.k) ? args.a.v[row * args.k + ak] : 0.0;
+        bs_[ty * TILE + tx] = (bk < args.k && col < args.n) ? args.b.v[bk * args.n + col] : 0.0;
+        barrier();
+        uint len = min(TILE, args.k - t);
+        for (uint p = 0; p < len; p++) {
+            acc += as_[ty * TILE + p] * bs_[p * TILE + tx];
+        }
+        barrier();
+    }
+    if (row < args.m && col < args.n) {
+        args.c.v[row * args.n + col] = acc;
+    }
+}
