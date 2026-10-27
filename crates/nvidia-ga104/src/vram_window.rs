@@ -263,6 +263,29 @@ impl<'a, M: Mmio + ?Sized> VramWindow<'a, M> {
     }
 }
 
+/// The VRAM range the screen uses, from what the OS prints in `hw` (C-26,
+/// os-192: the framebuffer's physical address and size, from Limine) and
+/// the board's BAR1 (`lspci` / `gpu identifica`), rounded out to 64 KiB.
+/// `None` if the framebuffer is not inside BAR1 (then it is not in this
+/// board's VRAM, or BAR1 is not a plain view of VRAM).
+///
+/// DEDUS: UEFI GOP leaves BAR1 as a linear view of VRAM from its start, so
+/// VRAM address = physical address − BAR1 base. To confirm with the B0
+/// numbers; until then [`VramWindow`] callers keep a wider margin.
+pub fn screen_vram_range(
+    fb_phys: u64,
+    fb_size: u64,
+    bar1_base: u64,
+    bar1_len: u64,
+) -> Option<(u64, u64)> {
+    let end = fb_phys.checked_add(fb_size)?;
+    if fb_size == 0 || fb_phys < bar1_base || end > bar1_base.checked_add(bar1_len)? {
+        return None;
+    }
+    let start = (fb_phys - bar1_base) / WINDOW_STEP * WINDOW_STEP;
+    Some((start, (end - bar1_base).next_multiple_of(WINDOW_STEP)))
+}
+
 impl<M: Mmio + ?Sized> VramWrite for VramWindow<'_, M> {
     /// Little-endian: the low word at `pa`, the high word at `pa + 4`.
     fn write_u64(&mut self, pa: u64, value: u64) -> GpuResult<()> {
@@ -423,6 +446,29 @@ mod tests {
         w.invalidate_tlb(&mut clock, pdb).unwrap();
         drop(w);
         assert_eq!(bar.invalidates[0].pdb, pdb);
+    }
+
+    #[test]
+    fn screen_range_from_the_hw_line() {
+        // Workstation (K0): BAR1 256 MiB; a 1920x1080x4 framebuffer at BAR1 + 0.
+        let bar1 = 0xc000_0000;
+        let fb = 1920 * 1080 * 4;
+        assert_eq!(
+            screen_vram_range(bar1, fb, bar1, 256 << 20),
+            Some((0, 0x7f_0000))
+        );
+        // Not at the start of BAR1: rounded out to whole 64 KiB steps.
+        assert_eq!(
+            screen_vram_range(bar1 + 0x1_2340, 0x100, bar1, 256 << 20),
+            Some((0x1_0000, 0x2_0000))
+        );
+        // Outside BAR1 (QEMU's 0x80000000, or another board): not ours.
+        assert_eq!(screen_vram_range(0x8000_0000, fb, bar1, 256 << 20), None);
+        assert_eq!(
+            screen_vram_range(bar1 + (256 << 20) - 4, 8, bar1, 256 << 20),
+            None
+        );
+        assert_eq!(screen_vram_range(bar1, 0, bar1, 256 << 20), None);
     }
 
     /// A real BAR (not a model) without the permit: refused, nothing touched.

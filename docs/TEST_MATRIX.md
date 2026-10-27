@@ -70,7 +70,7 @@ Cod: ramura `g0-g2-fundatie`. Toolchain: rustc 1.99.1 `stable-x86_64-pc-windows-
 nu e încă scris; când va fi, va avea o fereastră separată, cu Adrian de față și o listă nouă.
 
 **Pregătire (acasă sau la birou, înainte; ~10 min, o singură dată):**
-1. Release-ul OS de folosit: cel scos de sesiunea OS pentru C-19 (are `gpu gfw`, `gpu vbios`). Dacă OS-ul are și comanda `gpu firmware`
+1. Release-ul OS de folosit: **`os-192`** (are `gpu gfw`, `gpu vbios` din C-19 și rândul „ecran:” în `hw` din C-26). Dacă OS-ul are și comanda `gpu firmware`
    (propunerea din `integration/cyber-universe/I4_gpu-firmware.md`), cu atât mai bine; dacă nu, pasul 8 de mai jos se sare.
 2. Pe stick, în rădăcina lui, creează folderele `firmware\nvidia\ga102\gsp\` și copiază acolo, din pachetul oficial `linux-firmware`
    (https://gitlab.com/kernel-firmware/linux-firmware → folderul `nvidia/ga102/gsp/`, butonul de descărcare al fiecărui fișier):
@@ -90,7 +90,7 @@ nu e încă scris; când va fi, va avea o fereastră separată, cu Adrian de fa�
 | 6 | `gpu gfw` (I2) | `0x118128` bit 0 = 1, progres `0xff`, < 4 s, 0 scrieri | oprire (nu se trece la 7) |
 | 7 | `gpu vbios` (I3, I3b) | `aa55` sau `NVGI` la `0x300000`; PCI-AT + EFI + FWSEC (`0xe0`); BIT cu `0x70`; FWSEC_PROD (`0x85`) găsit; 0 scrieri; ecranul viu | poză cu valorile; BLOCKED dacă nu e semnătură |
 | 8 | `gpu firmware` (I4, dacă există în OS) | 4 rânduri „ok” (nume, mărime, SHA-256 = cele din tabel); 0 scrieri în placă | poză; „marimea”/„SHA-256” = alt fișier pe stick |
-| 9 | `hw`, `log pci 40` | — (doar pentru context); dacă OS-ul afișează adresa framebuffer-ului, poza ei + BAR1 (I9a: unde e ecranul în VRAM, `integration/cyber-universe/B0_adresa-ecranului.md`) | — |
+| 9 | `hw`, `log pci 40` | poza rândului „ecran: framebuffer la adresa fizica 0x…, mărime, LxI” (os-192) + BAR1 al plăcii (din `lspci`/`gpu identifica`): din ele `vram_window::screen_vram_range` calculează zona din VRAM pe care driverul n-o atinge niciodată | dacă adresa nu e în BAR1: se notează (zona se alege conservator) |
 | 10 | `reboot` → Windows, Secure Boot pe **Enabled**, Kronos pornit, `nvidia-smi` OK | Kronos merge ca înainte | anunță sesiunea Kronos |
 
 **Ce trimiți înapoi:** pozele de la pașii 3–8 (sau textul de pe ecran) → hub `rezultate/2026-10-2x-workstation-gpu/`. Durată: ~20–30 min.

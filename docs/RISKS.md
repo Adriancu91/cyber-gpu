@@ -8,6 +8,10 @@
    (`0x840000–0x843fff`), fiecare scriere cu valoarea înainte/după în jurnal; pe o placă reală (orice `Mmio` care nu e model `gpu-sim`) cere
    `HardwareWritePermit`, care există doar cu opțiunea `hw-write`. Cererile secvențiatorului GSP în afara acestor ferestre sunt **refuzate**
    (pornirea se oprește cu eroare), nu executate.
+   **A doua excepție (sesiunea 11, I9b):** `vram_window::VramWindow` scrie **doar** 4 registre (`0x1700` fereastra VRAM, `0xb830a0`/`a4`/`b0`
+   invalidarea TLB, fiecare în jurnal cu înainte/după) și VRAM prin fereastra `0x700000–0x7fffff`, niciodată în zonele protejate
+   (ecranul, regiunile GSP-RM); fiecare cuvânt scris e recitit. Pe placa reală cere același `HardwareWritePermit` (`hw-write`). Fereastra
+   se pune la loc (`restore`) la final.
 3. Dimensionarea BAR-urilor cere `SizingPermit` explicit, oprește decodarea, restaurează și verifică; la eșec → placa e „Faulted”.
    În kernel e o opțiune separată (`gpu dimensiuni da`), cu întreruperile oprite. Preferăm ReBAR (doar citire) pentru BAR1.
 4. `reset_or_recover(Full)` → `NotPermitted`: GPU-ul principal nu se resetează fără protocol de recuperare.

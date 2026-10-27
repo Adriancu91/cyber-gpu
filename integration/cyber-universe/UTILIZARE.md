@@ -43,6 +43,14 @@ gpu-compute  = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "41e44ba
 - `gpu-compute`: `math::fma_f32`, `math::ftz`, `reference::add_ftz`, `reference::matmul_fma`, `reference::matmul_fma_ftz` (oracolele programelor NAK).
 - `gpu-sim`: `fake_gsp` (GSP fals pe registre), `cmdproc::matmul_naive_on_cpu` / `matmul_coalesced_on_cpu`.
 
+## Nou în sesiunea 11 (28 oct, noaptea) — doar adăugări, opțional pentru OS
+- `nvidia-rm570::regs`: modulele generate `tu102_dev_ram` (`NV_PRAMIN`), `gm107_dev_bus` (`NV_PBUS_BAR0_WINDOW`), `tu102_dev_vm` (invalidarea TLB).
+- `nvidia-ga104::vram_window` (`VramWindow`, `screen_vram_range`, `CONTROL_REGISTERS`): I9b, scrierea VRAM prin fereastra BAR0 + invalidarea TLB.
+  **Scrie în placă**: pe o placă reală refuză fără `HardwareWritePermit` (opțiunea `hw-write`, oprită implicit) — OS-ul **nu** o cheamă.
+  `screen_vram_range` e doar aritmetică: transformă rândul „ecran:” din `hw` (C-26, os-192) + BAR1 în zona din VRAM a ecranului.
+- `nvidia-ga104::mmu::GpuMemory::writer_mut` (metodă nouă). `gpu-sim::pramin` (modelul simulat al ferestrei). Nimic șters sau redenumit.
+- Mulțumiri pentru C-26 (rândul „ecran:” din os-192): e exact ce trebuia pentru pasul 9 din B0.
+
 ## Nou în sesiunea 10 (27 oct, seara) — doar adăugări, opțional pentru OS
 - `nvidia-rm570`: tipul `EntryField` și modulul generat `regs::tu102_dev_mmu_ver2` (formatele intrărilor din tabelele de pagini).
 - `nvidia-ga104::mmu` (`GpuMemory`, `VramWrite`, `PageAttr`, `LEVELS`, `encode_pde/_dual_pde/_pte`): memoria video și tabelele de pagini
