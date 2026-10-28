@@ -4,7 +4,10 @@
 //! - optional IFR header "NVGI" at ROM offset 0 and, for version 3, the ROM
 //!   directory "RFRD" that gives the start of the PCI ROM images — Linux
 //!   nova-core VBIOS documentation (docs.kernel.org/gpu/nova/core/vbios.html);
-//! - the PCI expansion ROM chain: 0xAA55 signature, pointer to the PCIR
+//! - the PCI expansion ROM chain: 0xAA55 signature (also 0xBB77 and 0x4E56
+//!   "NV", and the PCIR signatures "NPDS"/"RGIS", as nouveau `bios/image.c`,
+//!   `pcir.c` accept them — MIT; the workstation's ASUS RTX 3070 Ti has an
+//!   "NV" image at 0x24600, hub C-30), pointer to the PCIR
 //!   structure at +0x18, PCIR fields (vendor +4, device +6, length +0x0a,
 //!   image length in 512-byte units +0x10, code type +0x14, indicator +0x15,
 //!   bit 7 = last image) — PCI Firmware Specification 3.0;
@@ -34,6 +37,7 @@ use gpu_core::error::{GpuError, GpuResult};
 use gpu_core::hal::{Clock, Mmio};
 
 use crate::regs::{INIT_WINDOW, PROM_SIZE, ReadOnlyBar0, is_priv_error};
+use crate::vbios_diag::{BreakReason, ROM_SIGNATURES};
 
 pub const CODE_PCI_AT: u8 = 0x00;
 pub const CODE_EFI: u8 = 0x03;
@@ -51,7 +55,6 @@ const MAX_BIT_TOKENS: usize = 64;
 const SIG_NVGI: u32 = 0x4947_564e; // "NVGI"
 const SIG_RFRD: u32 = 0x4452_4652; // "RFRD"
 const SIG_PCIR: u32 = 0x5249_4350; // "PCIR"
-const SIG_NPDE: u32 = 0x4544_504e; // "NPDE"
 const SIG_BIT: [u8; 5] = [0xff, 0xb8, b'B', b'I', b'T'];
 
 pub fn code_name(t: u8) -> &'static str {
@@ -239,9 +242,35 @@ pub fn read_layout<M: Mmio + ?Sized, K: Clock + ?Sized>(
     })
 }
 
+/// The I3 parser stops at the first image that does not follow the rules
+/// (the listing of [`crate::vbios_diag`] goes on); the error names it.
+fn strict_error(off: u32, r: BreakReason) -> GpuError {
+    match r {
+        BreakReason::UnknownSignature(s) => GpuError::VerifyFailed {
+            offset: off,
+            expected: 0xaa55,
+            actual: s as u32,
+        },
+        BreakReason::BadPcir { at, signature } => GpuError::VerifyFailed {
+            offset: at,
+            expected: SIG_PCIR,
+            actual: signature,
+        },
+        BreakReason::ZeroSize => GpuError::InvalidArgument("I3: imagine ROM de marime 0"),
+        BreakReason::OutsideWindow { offset } => GpuError::OutOfBounds {
+            offset,
+            len: 4,
+            limit: PROM_SIZE,
+        },
+        BreakReason::TooManyImages => GpuError::NotPermitted("I3: prea multe imagini ROM"),
+        BreakReason::NoRomStart => GpuError::Blocked("I3: inceputul imaginilor PCI negasit"),
+        BreakReason::Read(e) => e,
+    }
+}
+
 fn scan<M: Mmio + ?Sized, K: Clock + ?Sized>(rom: &mut Rom<'_, M, K>) -> GpuResult<VbiosLayout> {
     let head = rom.u32(0)?;
-    let (ifr_version, rom_start) = if head & 0xffff == 0xaa55 {
+    let (ifr_version, rom_start) = if ROM_SIGNATURES.contains(&(head as u16)) {
         (None, 0)
     } else if head == SIG_NVGI {
         let fixed1 = rom.u32(4)?;
@@ -280,54 +309,12 @@ fn scan<M: Mmio + ?Sized, K: Clock + ?Sized>(rom: &mut Rom<'_, M, K>) -> GpuResu
         if images.len() == MAX_IMAGES {
             return Err(GpuError::NotPermitted("I3: prea multe imagini ROM"));
         }
-        let sig = rom.u16(off)?;
-        if sig != 0xaa55 {
-            return Err(GpuError::VerifyFailed {
-                offset: off,
-                expected: 0xaa55,
-                actual: sig as u32,
-            });
-        }
-        let pcir = in_window(off as u64 + rom.u16(off + 0x18)? as u64)?;
-        let p = rom.u32(pcir)?;
-        if p != SIG_PCIR {
-            return Err(GpuError::VerifyFailed {
-                offset: pcir,
-                expected: SIG_PCIR,
-                actual: p,
-            });
-        }
-        let vendor = rom.u16(pcir + 4)?;
-        let device = rom.u16(pcir + 6)?;
-        let pcir_len = rom.u16(pcir + 0x0a)? as u32;
-        let mut size = rom.u16(pcir + 0x10)? as u32 * 512;
-        let code_type = rom.u8(pcir + 0x14)?;
-        let mut last = rom.u8(pcir + 0x15)? & 0x80 != 0;
-        let npde = in_window(((pcir + pcir_len + 0xf) & !0xf) as u64)?;
-        let has_npde = rom.u32(npde)? == SIG_NPDE;
-        if has_npde {
-            let sub = rom.u16(npde + 8)? as u32 * 512;
-            if sub != 0 {
-                size = sub;
-            }
-            last = rom.u8(npde + 0x0a)? & 0x80 != 0;
-        }
-        if size == 0 {
-            return Err(GpuError::InvalidArgument("I3: imagine ROM de marime 0"));
-        }
-        images.push(RomImage {
-            offset: off,
-            size,
-            code_type,
-            vendor,
-            device,
-            last,
-            has_npde,
-        });
-        if last {
+        let img = crate::vbios_diag::read_image(rom, off).map_err(|r| strict_error(off, r))?;
+        images.push(img.rom_image());
+        if img.last {
             break;
         }
-        off = in_window(off as u64 + size as u64)?;
+        off = in_window(off as u64 + img.size as u64)?;
     }
 
     let bit = match images.first() {
@@ -465,6 +452,64 @@ mod tests {
         assert_eq!(l.images.len(), 2);
         assert!(l.images[1].last && !l.images[1].has_npde);
         assert!(!l.complete(), "no FWSEC, no BIT: I3 is not passed");
+    }
+
+    #[test]
+    fn workstation_chain_with_nv_images_is_complete() {
+        // SIMULARE of the 28 Oct board result: "NV" (0x4E56) at 0x24600.
+        let mut m = board(&rom::asus_like_chain());
+        let (r, j) = run(&mut m);
+        let l = r.unwrap();
+        let got: Vec<(u32, u8)> = l.images.iter().map(|i| (i.offset, i.code_type)).collect();
+        assert_eq!(
+            got,
+            [
+                (0, CODE_PCI_AT),
+                (0x12000, CODE_EFI),
+                (0x24600, CODE_FWSEC),
+                (0x28600, CODE_FWSEC)
+            ]
+        );
+        assert!(l.complete());
+        assert!(m.writes.is_empty() && j.writes() == 0);
+    }
+
+    #[test]
+    fn npds_and_rgis_pcir_signatures_are_accepted_others_not() {
+        for (sig, ok) in [(*b"NPDS", true), (*b"RGIS", true), (*b"PCIX", false)] {
+            let mut bytes = rom::ga10x_like_chain();
+            let at = 0x10000 + rom::SIM_PCIR_AT;
+            bytes[at..at + 4].copy_from_slice(&sig);
+            let mut m = board(&bytes);
+            let r = run(&mut m).0;
+            if ok {
+                assert!(r.unwrap().complete());
+            } else {
+                assert_eq!(
+                    r,
+                    Err(GpuError::VerifyFailed {
+                        offset: at as u32,
+                        expected: SIG_PCIR,
+                        actual: u32::from_le_bytes(sig)
+                    })
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_image_signature_is_still_refused() {
+        let mut bytes = rom::asus_like_chain();
+        rom::set_signature(&mut bytes, 0x24600, 0x4e57);
+        let mut m = board(&bytes);
+        assert_eq!(
+            run(&mut m).0,
+            Err(GpuError::VerifyFailed {
+                offset: 0x24600,
+                expected: 0xaa55,
+                actual: 0x4e57
+            })
+        );
     }
 
     #[test]

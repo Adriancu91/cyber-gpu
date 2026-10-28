@@ -360,6 +360,18 @@ mod tests {
     }
 
     #[test]
+    fn fwsec_is_located_in_the_workstation_like_chain() {
+        // SIMULARE: FWSEC images with the "NV" signature after 0x24600.
+        let mut m = board(&rom::asus_like_chain_with_fwsec(&SimFwsec::ga10x_like()));
+        let l = run(&mut m).0.unwrap();
+        assert_eq!(l.sections, [(0x24600, 0x4000), (0x28600, 0x4000)]);
+        assert_eq!(l.pmu_apps, [0x05, 0x85]);
+        assert_eq!(l.desc_prom, 0x24a00);
+        assert!(l.fits());
+        assert!(m.writes.is_empty());
+    }
+
+    #[test]
     fn fwsec_prod_is_located_without_reading_the_ucode() {
         let mut m = with(SimFwsec::ga10x_like());
         let (r, j) = run(&mut m);
