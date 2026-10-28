@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 15 — 28 octombrie 2026, ~22:35–23:15 (ora României), în cloud, FĂRĂ placă
+## Sesiunea 15 — 28 octombrie 2026, ~22:30–22:55 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti sau pe fișierele firmware reale.** Comandă nouă în hub: **C-36** (firmware-ul
 570.144 e la Adrian; pregătirea ferestrei I3 → I4, posibil 29 oct). Tot ce scrie „PASS” e pe gazdă: SIMULARE.
