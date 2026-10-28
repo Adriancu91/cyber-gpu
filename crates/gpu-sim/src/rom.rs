@@ -233,3 +233,65 @@ pub fn ga10x_like_chain_with_fwsec(f: &SimFwsec) -> Vec<u8> {
     put_fwsec(&mut b, 0x10000, &[(0x18000, 0x4000), (0x1c000, 0x4000)], f);
     b
 }
+
+/// Replace the ROM signature of the image at `offset` (0xAA55 by default
+/// in [`build_chain`]).
+pub fn set_signature(chain: &mut [u8], offset: usize, signature: u16) {
+    put16(chain, offset, signature);
+}
+
+/// Where the images of [`asus_like_chain`] start.
+pub const ASUS_LIKE_OFFSETS: [usize; 4] = [0, 0x12000, 0x24600, 0x28600];
+
+/// A chain shaped after what the workstation's RTX 3070 Ti (ASUS,
+/// subsystem 1043:8813) showed on 28 Oct 2026: the image at **0x24600**
+/// starts with the bytes "VN" (signature 0x4E56) instead of 0xAA55. Only
+/// that offset and that signature come from the board; the split before
+/// it (PCI-AT + EFI), the image types and all sizes are SIM guesses. The
+/// two images after 0x24600 are FWSEC images with the "NV" signature.
+pub fn asus_like_chain() -> Vec<u8> {
+    let mut b = build_chain(&[
+        SimImage {
+            code_type: 0x00,
+            blocks: 0x90,
+            npde: true,
+            bit: Some((0x1000, vec![(0x42, 1, 0x20, 0x2000), (0x70, 1, 4, 0x3000)])),
+        },
+        SimImage {
+            code_type: 0x03,
+            blocks: 0x93,
+            npde: true,
+            bit: None,
+        },
+        SimImage {
+            code_type: 0xe0,
+            blocks: 32,
+            npde: true,
+            bit: None,
+        },
+        SimImage {
+            code_type: 0xe0,
+            blocks: 32,
+            npde: true,
+            bit: None,
+        },
+    ]);
+    set_signature(&mut b, ASUS_LIKE_OFFSETS[2], 0x4e56);
+    set_signature(&mut b, ASUS_LIKE_OFFSETS[3], 0x4e56);
+    b
+}
+
+/// [`asus_like_chain`] with the FWSEC pieces of `f`.
+pub fn asus_like_chain_with_fwsec(f: &SimFwsec) -> Vec<u8> {
+    let mut b = asus_like_chain();
+    put_fwsec(
+        &mut b,
+        ASUS_LIKE_OFFSETS[1] as u32,
+        &[
+            (ASUS_LIKE_OFFSETS[2], 0x4000),
+            (ASUS_LIKE_OFFSETS[3], 0x4000),
+        ],
+        f,
+    );
+    b
+}

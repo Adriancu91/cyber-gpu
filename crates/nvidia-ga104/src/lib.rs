@@ -9,6 +9,8 @@
 //! - [`init`]: the GA10x bring-up sequence as an explicit plan whose
 //!   unimplemented steps return `Blocked` with the exact blocker;
 //! - [`fb_layout`]: where GSP-RM's regions go in VRAM (pure arithmetic, no access);
+//! - [`vbios_diag`]: I3 diagnostic — the VBIOS chain structure listed line by
+//!   line (offsets, signatures, PCIR/NPDE fields, breaks), read-only (C-30);
 //! - [`fwsec`]: I3, second half — where FWSEC_PROD sits in the VBIOS (read-only,
 //!   the ucode bytes are never read);
 //! - [`firmware`]: inventory of the NVIDIA-signed firmware files the sequence
@@ -51,6 +53,7 @@ pub mod radix3;
 pub mod regs;
 pub mod sha256;
 pub mod vbios;
+pub mod vbios_diag;
 pub mod vram_window;
 
 pub use backend::Ga104Backend;

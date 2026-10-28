@@ -343,7 +343,7 @@ fn scan<M: Mmio + ?Sized, K: Clock + ?Sized>(rom: &mut Rom<'_, M, K>) -> GpuResu
     })
 }
 
-fn find_bit<M: Mmio + ?Sized, K: Clock + ?Sized>(
+pub(crate) fn find_bit<M: Mmio + ?Sized, K: Clock + ?Sized>(
     rom: &mut Rom<'_, M, K>,
     img: &RomImage,
 ) -> GpuResult<Option<(u32, Vec<BitToken>)>> {
