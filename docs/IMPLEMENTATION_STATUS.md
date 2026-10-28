@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 13 — 28 octombrie 2026, ~13:35–14:05 (ora României), în cloud, FĂRĂ placă
+## Sesiunea 13 — 28 octombrie 2026, ~13:35–13:50 (ora României), în cloud, FĂRĂ placă
 
 **Prima dată cu date de pe placa reală** (fereastra lui Adrian de azi, 10:00–10:35, os-195, hub `rezultate/2026-10-28-workstation-kronos-in-os/`):
 **I0, I1, I2 = PASS pe RTX 3070 Ti** (`BOOT_0 = b74000a1`, `BOOT_42 = 174a1000`, GFW `0xff` în 3 µs, 0 scrieri); **I3 = FAIL**: la `0x24600`
