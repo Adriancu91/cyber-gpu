@@ -160,23 +160,53 @@ pub struct GoldenImage {
     pub reserved_va: u64,
 }
 
-struct Rm<'a, T: RmTransport + ?Sized> {
-    t: &'a mut T,
-    next: u32,
+impl GoldenImage {
+    /// The first object handle not used by the golden image (handles come
+    /// from one counter, as in tinygrad's `handle_gen`); the next client
+    /// (I9c) starts there.
+    pub fn next_handle(&self) -> u32 {
+        [
+            self.device,
+            self.subdevice,
+            self.vaspace,
+            self.channel,
+            self.compute,
+            self.dma,
+        ]
+        .into_iter()
+        .max()
+        .unwrap_or(FIRST_HANDLE)
+            + 1
+    }
+}
+
+/// One RM client's allocations and controls, handles from a counter.
+pub(crate) struct Rm<'a, T: RmTransport + ?Sized> {
+    pub(crate) t: &'a mut T,
+    pub(crate) client: u32,
+    pub(crate) next: u32,
 }
 
 impl<T: RmTransport + ?Sized> Rm<'_, T> {
-    fn alloc(&mut self, parent: u32, class: u32, params: &[u8]) -> GpuResult<u32> {
+    pub(crate) fn alloc(&mut self, parent: u32, class: u32, params: &[u8]) -> GpuResult<u32> {
         let h = self.next;
-        self.next += 1;
-        let sent = rmapi::encode_alloc(CLIENT, parent, h, class, params);
+        self.next = self
+            .next
+            .checked_add(1)
+            .ok_or(GpuError::InvalidArgument("RM: handle-urile s-au terminat"))?;
+        let sent = rmapi::encode_alloc(self.client, parent, h, class, params);
         let reply = self.t.call(function::GSP_RM_ALLOC, &sent)?;
         rmapi::check_alloc_reply(&sent, &reply)?;
         Ok(h)
     }
 
-    fn control(&mut self, object: u32, command: u32, params: &[u8]) -> GpuResult<Vec<u8>> {
-        let sent = rmapi::encode_control(CLIENT, object, command, params);
+    pub(crate) fn control(
+        &mut self,
+        object: u32,
+        command: u32,
+        params: &[u8],
+    ) -> GpuResult<Vec<u8>> {
+        let sent = rmapi::encode_control(self.client, object, command, params);
         let reply = self.t.call(function::GSP_RM_CONTROL, &sent)?;
         rmapi::check_control_reply(&sent, &reply)
     }
@@ -191,6 +221,7 @@ pub fn init_golden_image<T: RmTransport + ?Sized, M: GoldenMemory + ?Sized>(
 ) -> GpuResult<GoldenImage> {
     let mut rm = Rm {
         t,
+        client: CLIENT,
         next: FIRST_HANDLE,
     };
     // 1. Objects. The root allocation names the client in hClient; GSP-RM
@@ -541,6 +572,7 @@ mod tests {
         let mut r2 = Direct(core::mem::take(&mut rm));
         let mut seq = Rm {
             t: &mut r2,
+            client: CLIENT,
             next: FIRST_HANDLE,
         };
         seq.alloc(0, class::ROOT, &rmapi::root_params()).unwrap();

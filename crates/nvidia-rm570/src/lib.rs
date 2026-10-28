@@ -402,5 +402,14 @@ mod rmapi_tests {
         );
         assert_eq!(NV2080_CTRL_CMD_GPU_PROMOTE_CTX, 0x2080_012b);
         assert_eq!(GMMU_FMT_MAX_LEVELS, 6);
+        // I9c: the SET_PAGE_DIRECTORY RPC.
+        assert_eq!(size_of::<rpc_set_page_directory_v1E_05>(), 48);
+        assert_eq!(offset_of!(rpc_set_page_directory_v1E_05, params), 16);
+        assert_eq!(
+            size_of::<NV0080_CTRL_DMA_SET_PAGE_DIRECTORY_PARAMS_v1E_05>(),
+            32
+        );
+        assert_eq!(NV0080_CTRL_CMD_DMA_SET_PAGE_DIRECTORY, 0x80_1813);
+        assert_eq!(NV_DEVICE_ALLOCATION_VAMODE_OPTIONAL_MULTIPLE_VASPACES, 0);
     }
 }

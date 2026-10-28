@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 16 — 29 octombrie 2026, ~01:25–01:50 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comenzi noi în hub pentru noi: niciuna (C-36 gata; fereastra I3 → I4 așteaptă
+pe Adrian). Am făcut un pas „fără placă” din listă: `SET_PAGE_DIRECTORY` (I9c). Tot ce scrie „PASS” e pe gazdă: SIMULARE.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Pornire | CI rularea 60 (vârful `0d06f4d`) verde; `tools/check.sh` verde înainte de orice schimbare (251 teste; rustc 1.97.0, ținta `x86_64-unknown-none` instalată); generatorul `tools/gen-rm570` (bindgen-cli 0.71.1 instalat în sesiune) a reprodus **identic** fișierele generate | PASS |
+| Antete | generatorul produce și `rpc_set_page_directory_v1E_05` (48 B) + `NV0080_CTRL_DMA_SET_PAGE_DIRECTORY_PARAMS_v1E_05` (32 B), comanda `0x801813` și valorile `FLAGS` (`ctrl0080dma.h`); restul `rmapi.rs` neschimbat | PASS (dimensiuni fixate în `rm_api_layouts_570_144`) |
+| **I9c** clientul de lucru | `nvidia-ga104::gsp::user_space::open_user_space`: după „golden image”, al doilea client (`0xc1000000`, ca tinygrad), dispozitiv, subdispozitiv, spațiu de adrese **deținut din afară** (`IS_EXTERNALLY_OWNED \| ENABLE_PAGE_FAULTING`, `vaBase 0x1000`), apoi RPC-ul `SET_PAGE_DIRECTORY` (funcția 54) cu rădăcina PD3 a tabelelor noastre (4 intrări, VRAM, toate canalele). Rădăcină greșită = refuz înainte de primul mesaj. `rmapi::{user_vaspace_params, set_page_directory_rpc, check_root}`; `GoldenImage::next_handle`. Regulile din RM 570.144 (`dma.c`, `gpu_vaspace.c`, MIT, citite ca specificație): doar spațiu de adrese deținut din afară / administrare comună, o singură rădăcină, intrările trebuie să acopere limita | PASS (SIMULARE): 5 teste noi; cap-coadă prin cozile reale către `gpu-sim::fake_rm` (acum cu mai mulți clienți și cu `SET_PAGE_DIRECTORY`, poziții scrise de mână); din rădăcina primită de model, cititorul independent găsește bufferele „golden” și unul mapat după RPC; 6 refuzuri RM întorc codul RM; **5 greșeli plantate în octeți + 4 în codificator, toate prinse** |
+| Constatare | RM spune că „copiază mereu PDE-urile administrate de RM” în directorul nou → GSP-RM ar putea scrie singur în rădăcina noastră; tinygrad nu vede probleme | notat în `COMPATIBILITATE_FIRMWARE.md` („De verificat”) |
+| Compatibilitate OS | `git diff 0d06f4d HEAD` pe `gpu-core`, `gpu-pci`, `nvidia-ga104`, `gpu-compute`: nicio linie `pub` ștearsă; doar adăugări (`gsp::user_space`, funcții noi în `rmapi`, `rpc::function::SET_PAGE_DIRECTORY`, `GoldenImage::next_handle`). În `gpu-sim::fake_rm` (model de test): câmpul nou `RmLog::page_dirs` | PASS |
+
+Verificări (`tools/check.sh`): format PASS, clippy `-D warnings` PASS, **256 de teste PASS** (1 ignorat: viteza), build no_std PASS;
+`nvidia-ga104 --features hw-write`: clippy + teste PASS. Nicio scriere în placă.
+
+**Următorul pas:** fereastra C-36 (cu Adrian): pașii 1 → 2 → (3) din `docs/FEREASTRA_C-36.md`. Fără placă: restul I9 pentru clientul de lucru
+(grupul de canale `KEPLER_CHANNEL_GROUP_A`, `FERMI_CONTEXT_SHARE_A`, canalul GPFIFO, promovarea contextului GR pentru obiectul compute, jetonul
+soneriei); treapta 6 matmul (Mesa NAK pe gazdă).
+
+---
+
 ## Sesiunea 15 — 28 octombrie 2026, ~22:30–22:55 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti sau pe fișierele firmware reale.** Comandă nouă în hub: **C-36** (firmware-ul

@@ -20,7 +20,9 @@
 //! - [`rmapi`]: the `GSP_RM_ALLOC` / `GSP_RM_CONTROL` messages and their
 //!   parameter blocks (layouts generated from the 570.144 headers, I8e);
 //! - [`golden`]: the "golden image" sequence after `GSP_INIT_DONE` (client,
-//!   device, VA space, channel, GR context promotion, compute object), I8e.
+//!   device, VA space, channel, GR context promotion, compute object), I8e;
+//! - [`user_space`]: the working client whose VA space runs on the driver's
+//!   page tables (`SET_PAGE_DIRECTORY`), I9c.
 //!
 //! The layouts follow NVIDIA's MIT headers from open-gpu-kernel-modules at tag
 //! `570.144` (`gsp_fw_wpr_meta.h`, `msgq_priv.h`, `message_queue_priv.h`,
@@ -51,6 +53,7 @@ pub mod sequencer;
 #[cfg(test)]
 pub(crate) mod sim_peer;
 pub mod sysinfo;
+pub mod user_space;
 pub mod wpr_meta;
 
 use gpu_core::error::{GpuError, GpuResult};

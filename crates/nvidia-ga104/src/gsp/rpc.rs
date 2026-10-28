@@ -40,6 +40,8 @@ pub const MAX_PAYLOAD: usize =
 /// sequence and the first compute work need.
 pub mod function {
     pub const NOP: u32 = 0;
+    /// I9c: the driver's root page table for a VA space (`SET_PAGE_DIRECTORY`).
+    pub const SET_PAGE_DIRECTORY: u32 = 54;
     pub const GET_GSP_STATIC_INFO: u32 = 65;
     pub const GSP_SET_SYSTEM_INFO: u32 = 72;
     pub const SET_REGISTRY: u32 = 73;

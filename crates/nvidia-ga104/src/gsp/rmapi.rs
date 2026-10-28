@@ -371,6 +371,91 @@ pub fn reserved_pdes_params(va_lo: u64, size: u64, levels: &[PdeLevel]) -> GpuRe
     Ok(b)
 }
 
+/// `NV_VASPACE_ALLOCATION_FLAGS_*` from `nvos.h` (570.144). Written by hand:
+/// the header defines them as `BIT(n)`, which bindgen cannot evaluate.
+pub mod vaspace_flags {
+    pub const SHARED_MANAGEMENT: u32 = 1 << 2;
+    pub const IS_EXTERNALLY_OWNED: u32 = 1 << 3;
+    pub const ENABLE_PAGE_FAULTING: u32 = 1 << 6;
+}
+
+/// I9c: the VA space of the driver's working client. tinygrad (`ops_nv.py`
+/// `NVDevice.__init__`, MIT, 9cf7829a6) asks for this range and these flags;
+/// RM 570.144 (`gpu_vaspace.c` `gvaspaceExternalRootDirCommit`, MIT) accepts
+/// `SET_PAGE_DIRECTORY` only on a VA space that is `IS_EXTERNALLY_OWNED` (or
+/// `SHARED_MANAGEMENT`). The range values themselves are DEDUS.
+pub const USER_VA_BASE: u64 = 0x1000;
+pub const USER_VA_SIZE: u64 = 0x1_ffff_fb00_0000;
+
+/// `NV_VASPACE_ALLOCATION_PARAMETERS` for the working client: page tables
+/// owned by the driver (externally owned), page faulting on, as tinygrad.
+pub fn user_vaspace_params() -> Vec<u8> {
+    type P = r::NV_VASPACE_ALLOCATION_PARAMETERS;
+    let mut b = alloc::vec![0u8; size_of::<P>()];
+    put_u32(
+        &mut b,
+        offset_of!(P, flags),
+        vaspace_flags::IS_EXTERNALLY_OWNED | vaspace_flags::ENABLE_PAGE_FAULTING,
+    );
+    put_u64(&mut b, offset_of!(P, vaBase), USER_VA_BASE);
+    put_u64(&mut b, offset_of!(P, vaSize), USER_VA_SIZE);
+    b
+}
+
+/// `pasid` tinygrad sends (no ATS on this VA space, so RM ignores it). DEDUS.
+pub const NO_PASID: u32 = 0xffff_ffff;
+
+/// A root table GSP-RM can be told about: a non-zero, 4 KiB-aligned VRAM
+/// address (the instance block holds it in 4 KiB units).
+pub fn check_root(root_pa: u64) -> GpuResult<()> {
+    if root_pa == 0 || !root_pa.is_multiple_of(0x1000) || root_pa >= crate::mmu::PA_LIMIT {
+        return Err(GpuError::InvalidArgument(
+            "SET_PAGE_DIRECTORY: radacina nu e o adresa VRAM aliniata la 4 KiB",
+        ));
+    }
+    Ok(())
+}
+
+/// Payload of the `SET_PAGE_DIRECTORY` RPC (`rpc_set_page_directory_v1E_05`
+/// with `NV0080_CTRL_DMA_SET_PAGE_DIRECTORY_PARAMS_v1E_05`, generated): tells
+/// GSP-RM that the VA space `vaspace` of `device` uses the driver's root
+/// table (PD3) at `root_pa` in video memory, `entries` entries, for all its
+/// channels (`ALL_CHANNELS`, as tinygrad; subdevice 1 = the only GPU).
+/// Refused before anything is sent: a root that fails [`check_root`], or no
+/// entries.
+pub fn set_page_directory_rpc(
+    client: u32,
+    device: u32,
+    vaspace: u32,
+    root_pa: u64,
+    entries: u32,
+) -> GpuResult<Vec<u8>> {
+    type R = r::rpc_set_page_directory_v1E_05;
+    type P = r::NV0080_CTRL_DMA_SET_PAGE_DIRECTORY_PARAMS_v1E_05;
+    check_root(root_pa)?;
+    if entries == 0 || vaspace == 0 {
+        return Err(GpuError::InvalidArgument(
+            "SET_PAGE_DIRECTORY: fara intrari sau fara spatiu de adrese",
+        ));
+    }
+    // flags: APERTURE (1:0) = VIDMEM, ALL_CHANNELS (bit 3) = TRUE (ctrl0080dma.h).
+    let flags = r::NV0080_CTRL_DMA_SET_PAGE_DIRECTORY_FLAGS_APERTURE_VIDMEM
+        | r::NV0080_CTRL_DMA_SET_PAGE_DIRECTORY_FLAGS_ALL_CHANNELS_TRUE << 3;
+    let mut b = alloc::vec![0u8; size_of::<R>()];
+    put_u32(&mut b, offset_of!(R, hClient), client);
+    put_u32(&mut b, offset_of!(R, hDevice), device);
+    put_u32(&mut b, offset_of!(R, pasid), NO_PASID);
+    let p = offset_of!(R, params);
+    put_u64(&mut b, p + offset_of!(P, physAddress), root_pa);
+    put_u32(&mut b, p + offset_of!(P, numEntries), entries);
+    put_u32(&mut b, p + offset_of!(P, flags), flags);
+    put_u32(&mut b, p + offset_of!(P, hVASpace), vaspace);
+    put_u32(&mut b, p + offset_of!(P, chId), 0);
+    put_u32(&mut b, p + offset_of!(P, subDeviceId), 1);
+    put_u32(&mut b, p + offset_of!(P, pasid), NO_PASID);
+    Ok(b)
+}
+
 /// `NV2080_CTRL_INTERNAL_STATIC_KGR_GET_CONTEXT_BUFFERS_INFO_PARAMS` request.
 pub fn ctx_buffers_info_request() -> Vec<u8> {
     alloc::vec![0u8; size_of::<r::NV2080_CTRL_INTERNAL_STATIC_KGR_GET_CONTEXT_BUFFERS_INFO_PARAMS>()]
@@ -557,6 +642,64 @@ mod tests {
         assert_eq!(promote_params(1, 2, 3, &[e]).unwrap().len(), fs::PROMOTE);
         assert_eq!((ALLOC_HDR, CONTROL_HDR), (32, 24));
         assert_eq!(CTX_ENGINE_IDS, 26);
+    }
+
+    /// I9c: the SET_PAGE_DIRECTORY message and the working client's VA
+    /// space, at the offsets the model reads by hand.
+    #[test]
+    fn page_directory_fields_land_where_the_model_reads_them() {
+        use gpu_sim::fake_rm::{FN_SET_PAGE_DIRECTORY, size as fs, va_flags as fv};
+        assert_eq!(
+            super::super::rpc::function::SET_PAGE_DIRECTORY,
+            FN_SET_PAGE_DIRECTORY
+        );
+        let b = set_page_directory_rpc(0xc100_0000, 0xcf00_0007, 0xcf00_0009, 0x7_0000_0000, 4)
+            .unwrap();
+        assert_eq!(b.len(), fs::SET_PAGE_DIRECTORY);
+        assert_eq!(
+            (get_u32(&b, 0), get_u32(&b, 4), get_u32(&b, 8)),
+            (0xc100_0000, 0xcf00_0007, NO_PASID)
+        );
+        assert_eq!(
+            (get_u64(&b, 16), get_u32(&b, 24), get_u32(&b, 28)),
+            (0x7_0000_0000, 4, 0x8)
+        );
+        assert_eq!(
+            (
+                get_u32(&b, 32),
+                get_u32(&b, 36),
+                get_u32(&b, 40),
+                get_u32(&b, 44)
+            ),
+            (0xcf00_0009, 0, 1, NO_PASID)
+        );
+        assert_eq!(cmd_set_page_directory(), 0x80_1813);
+        let v = user_vaspace_params();
+        assert_eq!(v.len(), fs::VASPACE);
+        assert_eq!(get_u32(&v, 4), fv::IS_EXTERNALLY_OWNED | 1 << 6);
+        assert_eq!(
+            (get_u64(&v, 8), get_u64(&v, 40)),
+            (USER_VA_SIZE, USER_VA_BASE)
+        );
+        assert_eq!(
+            (
+                vaspace_flags::SHARED_MANAGEMENT,
+                vaspace_flags::IS_EXTERNALLY_OWNED
+            ),
+            (fv::SHARED_MANAGEMENT, fv::IS_EXTERNALLY_OWNED)
+        );
+        // Refused before anything is built.
+        for root in [0, 0x1800, crate::mmu::PA_LIMIT] {
+            assert!(set_page_directory_rpc(1, 2, 3, root, 4).is_err());
+        }
+        assert!(set_page_directory_rpc(1, 2, 3, 0x1000, 0).is_err());
+        assert!(set_page_directory_rpc(1, 2, 0, 0x1000, 4).is_err());
+    }
+
+    /// The control number of the same operation, for the record (the RPC is
+    /// used, not the control): `NV0080_CTRL_CMD_DMA_SET_PAGE_DIRECTORY`.
+    fn cmd_set_page_directory() -> u32 {
+        r::NV0080_CTRL_CMD_DMA_SET_PAGE_DIRECTORY
     }
 
     #[test]

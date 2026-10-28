@@ -23,6 +23,7 @@ use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 /// `rpc_global_enums.h` (570.144).
+pub const FN_SET_PAGE_DIRECTORY: u32 = 54;
 pub const FN_GSP_RM_CONTROL: u32 = 76;
 pub const FN_GSP_RM_ALLOC: u32 = 103;
 
@@ -38,6 +39,7 @@ pub mod status {
     pub const INVALID_OBJECT_PARENT: u32 = 0x36;
     pub const INVALID_PARAM_STRUCT: u32 = 0x3a;
     pub const INVALID_STATE: u32 = 0x40;
+    pub const NOT_SUPPORTED: u32 = 0x56;
 }
 
 /// Class numbers (`cl0000.h`, `cl0080.h`, `cl2080.h`, `cl90f1.h`,
@@ -71,6 +73,8 @@ pub mod size {
     pub const KGR_INFO: usize = 1664;
     pub const PROMOTE: usize = 560;
     pub const RESERVED_PDES: usize = 184;
+    /// `rpc_set_page_directory_v1E_05` (the whole RPC payload).
+    pub const SET_PAGE_DIRECTORY: usize = 48;
 }
 
 /// GR context buffers (`NV0080_CTRL_FIFO_GET_ENGINE_CONTEXT_PROPERTIES_ENGINE_ID_*`):
@@ -101,9 +105,24 @@ pub const REQUIRED_PROMOTED: [u16; 3] = [0, 2, 10];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Obj {
+    client: u32,
     class: u32,
     parent: u32,
+    /// VA spaces: `NV_VASPACE_ALLOCATION_PARAMETERS.flags` and the last VA.
+    va_flags: u32,
+    va_limit: u64,
 }
+
+/// `NV_VASPACE_ALLOCATION_FLAGS_*` (`nvos.h`, `BIT(2)`, `BIT(3)`).
+pub mod va_flags {
+    pub const SHARED_MANAGEMENT: u32 = 1 << 2;
+    pub const IS_EXTERNALLY_OWNED: u32 = 1 << 3;
+}
+
+/// The highest VA a page directory can cover: MMU v2, 49 bits.
+pub const VA_LIMIT_MAX: u64 = (1 << 49) - 1;
+/// What one PD3 entry covers (bits 48:47 index it: 2^47 bytes each).
+pub const PD3_ENTRY_COVERS: u64 = 1 << 47;
 
 /// Everything the model has seen, for the tests.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -112,13 +131,17 @@ pub struct RmLog {
     pub allocs: Vec<(u32, u32)>,
     /// (command, status) per GSP_RM_CONTROL, in order.
     pub controls: Vec<(u32, u32)>,
+    /// (VA space handle, status) per SET_PAGE_DIRECTORY, in order.
+    pub page_dirs: Vec<(u32, u32)>,
 }
 
 /// SIMULARE: the resource manager behind the queues.
 #[derive(Clone, Debug, Default)]
 pub struct FakeRm {
-    client: Option<u32>,
+    clients: Vec<u32>,
     objects: BTreeMap<u32, Obj>,
+    /// (client, VA space) → (root table, entries) accepted by SET_PAGE_DIRECTORY.
+    page_dirs: BTreeMap<(u32, u32), (u64, u32)>,
     /// channel handle → promoted buffer ids
     promoted: BTreeMap<u32, Vec<u16>>,
     reserved_pdes_copied: bool,
@@ -146,12 +169,26 @@ impl FakeRm {
         match function {
             FN_GSP_RM_ALLOC => Some(self.alloc(payload)),
             FN_GSP_RM_CONTROL => Some(self.control(payload)),
+            FN_SET_PAGE_DIRECTORY => Some(self.set_page_directory(payload)),
             _ => None,
         }
     }
 
-    fn class_of(&self, h: u32) -> Option<u32> {
-        self.objects.get(&h).map(|o| o.class)
+    /// The root table a VA space was given, if SET_PAGE_DIRECTORY was accepted.
+    pub fn page_directory(&self, client: u32, vaspace: u32) -> Option<(u64, u32)> {
+        self.page_dirs.get(&(client, vaspace)).copied()
+    }
+
+    fn has_client(&self, c: u32) -> bool {
+        self.clients.contains(&c)
+    }
+
+    /// The class of `h` if it belongs to `client`.
+    fn class_in(&self, client: u32, h: u32) -> Option<u32> {
+        self.objects
+            .get(&h)
+            .filter(|o| o.client == client)
+            .map(|o| o.class)
     }
 
     // rpc_gsp_rm_alloc_v03_00: hClient 0, hParent 4, hObject 8, hClass 12,
@@ -175,9 +212,31 @@ impl FakeRm {
         };
         if st == status::OK {
             if class == class::ROOT {
-                self.client = Some(client);
+                self.clients.push(client);
             } else {
-                self.objects.insert(object, Obj { class, parent });
+                // NV_VASPACE_ALLOCATION_PARAMETERS: flags 4, vaSize 8, vaBase 40.
+                let (va_flags, va_limit) = if class == class::VASPACE {
+                    let (flags, size, base) = (rd32(p, 32 + 4), rd64(p, 32 + 8), rd64(p, 32 + 40));
+                    // vaSize 0 = RM's default: the whole 49-bit range.
+                    let limit = if size == 0 {
+                        VA_LIMIT_MAX
+                    } else {
+                        base.saturating_add(size - 1)
+                    };
+                    (flags, limit)
+                } else {
+                    (0, 0)
+                };
+                self.objects.insert(
+                    object,
+                    Obj {
+                        client,
+                        class,
+                        parent,
+                        va_flags,
+                        va_limit,
+                    },
+                );
             }
         }
         wr32(&mut reply, 16, st);
@@ -187,23 +246,23 @@ impl FakeRm {
 
     fn check_alloc(&self, client: u32, parent: u32, object: u32, class: u32, params: &[u8]) -> u32 {
         if class == class::ROOT {
-            return match (self.client, parent, params.len()) {
-                (Some(_), _, _) => status::INSERT_DUPLICATE_NAME,
-                (None, 0, size::ROOT) => status::OK,
-                (None, 0, _) => status::INVALID_PARAM_STRUCT,
+            return match (self.has_client(client), parent, params.len()) {
+                (true, _, _) => status::INSERT_DUPLICATE_NAME,
+                (false, 0, size::ROOT) => status::OK,
+                (false, 0, _) => status::INVALID_PARAM_STRUCT,
                 _ => status::INVALID_OBJECT_PARENT,
             };
         }
-        if self.client != Some(client) {
+        if !self.has_client(client) {
             return status::INVALID_CLIENT;
         }
-        if object == client || self.objects.contains_key(&object) {
+        if self.has_client(object) || self.objects.contains_key(&object) {
             return status::INSERT_DUPLICATE_NAME;
         }
         let parent_class = if parent == client {
             Some(class::ROOT)
         } else {
-            self.class_of(parent)
+            self.class_in(client, parent)
         };
         let (want_parent, want_size) = match class {
             class::DEVICE => (class::ROOT, size::DEVICE),
@@ -222,7 +281,7 @@ impl FakeRm {
         match class {
             // NV0080_ALLOC_PARAMETERS.hClientShare (offset 4) must name our client.
             class::DEVICE if rd32(params, 4) != client => status::INVALID_ARGUMENT,
-            class::CHANNEL_GPFIFO => self.check_channel(params),
+            class::CHANNEL_GPFIFO => self.check_channel(client, params),
             class::COMPUTE => {
                 let got = self.promoted.get(&parent).cloned().unwrap_or_default();
                 if REQUIRED_PROMOTED.iter().all(|b| got.contains(b)) {
@@ -239,9 +298,9 @@ impl FakeRm {
     // hVASpace 28, userdOffset[0] 64, engineType 128, cid 132,
     // instanceMem 144, userdMem 168, ramfcMem 192, mthdbufMem 216
     // (NV_MEMORY_DESC_PARAMS: base 0, size 8, addressSpace 16, cacheAttrib 20).
-    fn check_channel(&self, c: &[u8]) -> u32 {
+    fn check_channel(&self, client: u32, c: &[u8]) -> u32 {
         let entries = rd32(c, 16);
-        if self.class_of(rd32(c, 28)) != Some(class::VASPACE) {
+        if self.class_in(client, rd32(c, 28)) != Some(class::VASPACE) {
             return status::INVALID_OBJECT_HANDLE;
         }
         if entries < 2
@@ -275,10 +334,10 @@ impl FakeRm {
         let mut reply = p.to_vec();
         let st = if p.len() != 24 + psize {
             status::INVALID_PARAM_STRUCT
-        } else if self.client != Some(client) {
+        } else if !self.has_client(client) {
             status::INVALID_CLIENT
         } else {
-            let class = self.class_of(object);
+            let class = self.class_in(client, object);
             let params = &mut reply[24..];
             match (command, class) {
                 (cmd::GET_DEVICE_INFO_TABLE, Some(class::SUBDEVICE)) => Self::device_info(params),
@@ -307,6 +366,71 @@ impl FakeRm {
         wr32(&mut reply, 12, st);
         self.log.controls.push((command, st));
         (0, reply)
+    }
+
+    // rpc_set_page_directory_v1E_05: hClient 0, hDevice 4, pasid 8, params 16
+    // (NV0080_CTRL_DMA_SET_PAGE_DIRECTORY_PARAMS: physAddress 0, numEntries 8,
+    // flags 12, hVASpace 16, chId 20, subDeviceId 24, pasid 28). Our reading
+    // of `deviceCtrlCmdDmaSetPageDirectory` + `gvaspaceExternalRootDirCommit`
+    // (RM 570.144): the VA space must be the device's, externally owned (or
+    // shared management), get a root only once if externally owned; the
+    // entries must cover its limit without passing 49 bits. Not modelled:
+    // VA spaces with ATS, the default VA space (hVASpace = 0), sysmem roots
+    // on coherent platforms. The answer is the RPC result (no status field).
+    fn set_page_directory(&mut self, p: &[u8]) -> (u32, Vec<u8>) {
+        let (st, vas) = self.check_page_directory(p);
+        if st == status::OK {
+            let (client, root, n) = (rd32(p, 0), rd64(p, 16), rd32(p, 16 + 8));
+            self.page_dirs.insert((client, vas), (root, n));
+        }
+        self.log.page_dirs.push((vas, st));
+        (st, p.to_vec())
+    }
+
+    fn check_page_directory(&self, p: &[u8]) -> (u32, u32) {
+        if p.len() != size::SET_PAGE_DIRECTORY {
+            return (status::INVALID_PARAM_STRUCT, 0);
+        }
+        let (client, device) = (rd32(p, 0), rd32(p, 4));
+        let q = &p[16..];
+        let (root, n, flags, vas, sub) = (
+            rd64(q, 0),
+            rd32(q, 8),
+            rd32(q, 12),
+            rd32(q, 16),
+            rd32(q, 24),
+        );
+        if !self.has_client(client) {
+            return (status::INVALID_CLIENT, vas);
+        }
+        if self.class_in(client, device) != Some(class::DEVICE) {
+            return (status::INVALID_OBJECT_HANDLE, vas);
+        }
+        let Some(o) = self
+            .objects
+            .get(&vas)
+            .filter(|o| o.client == client && o.class == class::VASPACE && o.parent == device)
+        else {
+            return (status::INVALID_OBJECT_HANDLE, vas);
+        };
+        if flags & 3 == 3 || sub > 1 {
+            return (status::INVALID_ARGUMENT, vas); // aperture 3 does not exist; one GPU
+        }
+        if root == 0 || root % 0x1000 != 0 {
+            return (status::INVALID_ARGUMENT, vas);
+        }
+        let covers = (n as u64).saturating_mul(PD3_ENTRY_COVERS);
+        if n == 0 || covers - 1 < o.va_limit || covers - 1 > VA_LIMIT_MAX {
+            return (status::INVALID_ARGUMENT, vas);
+        }
+        let external = o.va_flags & va_flags::IS_EXTERNALLY_OWNED != 0;
+        if !external && o.va_flags & va_flags::SHARED_MANAGEMENT == 0 {
+            return (status::NOT_SUPPORTED, vas);
+        }
+        if external && self.page_dirs.contains_key(&(client, vas)) {
+            return (status::INVALID_STATE, vas); // its root is set already
+        }
+        (status::OK, vas)
     }
 
     // baseIndex 0, numEntries 4, bMore 8, entries 12 (100 B each:
@@ -381,7 +505,7 @@ impl FakeRm {
         if engine != 1 || chan_client != client || n == 0 || n > 16 {
             return status::INVALID_ARGUMENT;
         }
-        if self.class_of(chan) != Some(class::CHANNEL_GPFIFO) {
+        if self.class_in(client, chan) != Some(class::CHANNEL_GPFIFO) {
             return status::INVALID_OBJECT_HANDLE;
         }
         if !self.reserved_pdes_copied {
