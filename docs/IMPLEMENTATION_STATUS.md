@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 12 — 28 octombrie 2026, ~07:15–07:50 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Tot ce scrie „PASS” e pe calculatorul gazdă: SIMULARE (modele software,
+imagini sintetice — niciun fișier firmware NVIDIA real). Comenzi noi în hub: niciuna (C-18 și C-20 gata); am continuat pașii „fără placă” din sesiunea 11.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Pornire | CI rularea de la sesiunea 11 verde; `tools/check.sh` verde înainte de orice schimbare (220 teste, rustc 1.99.1) | PASS |
+| **I6/I7** încărcătorul DMA | `nvidia-ga104::gsp::hs_load`: `HsUcode` (descriptorii FWSEC v3 și Booter „BOOT_FROM_HS”, cu verificările RM + cele cerute de blocurile DMA de 256 B), `fwsec_image` / `booter_image` (semnătura aleasă copiată la locul ei; Booter: numărată de la coadă, ca RM), `dma_load` (FBIF_CTL, DMACTL=0, TRANSCFG = RAM coerent fizic, blocuri `DMATRF*` cu așteptare FULL/IDLE, IMEM cu SEC=1, apoi BROM: semnătura, motorul, ucode-ul, RSA-3K, și BOOTVEC). **Toate verificările înainte de prima scriere.** `falcon::{fwsec_frts_dma, booter_load_dma}` îl folosesc (funcțiile vechi rămân). Sursa: RM 570.144 (MIT) `kernel_gsp_falcon_ga102.c`, `kernel_gsp_fwsec.c`, `kernel_gsp_booter.c` | PASS (SIMULARE): 6 teste; în `gpu-sim::fake_gsp` am adăugat un motor DMA și un „boot ROM” simulate (acceptă programul doar dacă octeții, blocurile sigure, registrele BROM și BOOTVEC sunt exact cum trebuie): FWSEC → Booter cap-coadă prin DMA, RISC-V pornit; semnătura pentru altă siguranță și 4 valori BROM greșite refuzate; 5 intrări greșite = 0 scrieri; coadă plină / DMA blocat = limită de timp; RAM negătit = eroare. **7 greșeli plantate în încărcător, toate prinse.** **DEDUS:** `meta_data` din fișierul Booter = `patchMeta` din RM; alinierea 256 B |
+| **I6** comanda FRTS | `hs_load::{frts_command, patch_fwsec_command, fwsec_frts_image}`: FWSEC primește comanda 0x15 (FRTS) în „DMEM mapper”-ul din tabela lui de interfață, cu regiunea de 1 MiB din `fb_layout` (RM `kernel_gsp_frts_tu102.c`). Mai strict decât RM: buffer prea mic sau suprapus peste semnătură = refuzat. Se ating doar tabela de interfață, `init_cmd` și bufferul de intrare (interfața documentată de NVIDIA); codul FWSEC rămâne opac | PASS (SIMULARE): 3 teste; FWSEC-ul simulat face WPR2 exact unde cere comanda; comanda pentru altă regiune = `VerifyFailed`; fără comandă = cod de eroare; 7 tabele stricate refuzate; **5 greșeli plantate în comandă prinse** |
+| Constatare | RM 570.144 pe GA102 cere ca imaginile FWSEC/Booter să fie în **RAM** (nu în VRAM, cum face tinygrad) → pe placă e nevoie de Bus Master (I5g, nescris intenționat) și de o zonă de RAM pusă deoparte de OS. Versiunea din siguranțe (care semnătură) nu e citită încă: e parametru | notate în `COMPATIBILITATE_FIRMWARE.md` și `RISKS.md` |
+| CI | rularea pentru încărcător; a doua (comanda FRTS) verificată la final | PASS / la final |
+| Compatibilitate OS | `git diff 41e44ba HEAD` pe `gpu-core`, `gpu-pci`, `nvidia-ga104`, `gpu-compute`: tot singura linie `pub` = valoarea `GSP_VERSION` (sesiunea 5). Nou: `gsp::hs_load`, `falcon::{fwsec_frts_dma, booter_load_dma}`; în `gpu-sim`: variante noi în `SimFault` (model de test) | PASS (doar adăugări) |
+
+Verificări (`tools/check.sh`, rustc 1.99.1 stable): format PASS, clippy `-D warnings` PASS, **229 de teste PASS** (1 ignorat: viteza),
+build `x86_64-unknown-none` PASS; `nvidia-ga104 --features hw-write`: clippy + teste PASS. Nicio scriere în placă.
+
+**Următorul pas:** fără placă au mai rămas puține: treapta 6 matmul (încărcări vectoriale); `SET_PAGE_DIRECTORY` pentru canal; citirea
+versiunii din siguranțe (doar citire, după B0). Restul I0–I10 cere placa. Cu placa (B0, os-192): I0–I3 + FWSEC + fișierele de pe stick +
+rândul „ecran:”, 0 scrieri; apoi, cu Adrian: proba P (tinygrad).
+**De la Adrian:** fereastra B0 (lista în `TEST_MATRIX.md`); fișierele firmware pe stick.
+
+---
+
 ## Sesiunea 11 — 28 octombrie 2026, ~01:25–01:45 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Tot ce scrie „PASS” e pe calculatorul gazdă: SIMULARE (modele software)
