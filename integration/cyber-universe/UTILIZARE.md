@@ -3,6 +3,14 @@
 Actualizat: 26 octombrie 2026 (sesiunea 6). Nimic de aici nu e aplicat în `cyber-universe`; OS-ul decide singur.
 **Nimic nu e testat pe RTX 3070 Ti.**
 
+## Nou în sesiunea 15 (28 oct seara) — C-36, doar adăugări
+- `nvidia_ga104::fw_check` (`check_stick`, `FwCheck::lines`, `MemSource`, `pin_of`, `ROLE_ORDER`, `LICENCE`): verificarea, doar citire, a celor
+  4 fișiere GSP 570.144 de pe stick, cu raport pentru fiecare; **0 accese la placă**.
+- `nvidia_ga104::fwsec::FwsecLocation::lines()`: rândurile I3b pentru ecran.
+- `gpu_sim::fw_stick`: fișiere de probă (NU NVIDIA) pentru `--sim`.
+- Schița comenzilor `gpu firmware` și `gpu fwsec`: [`C-36_gpu-firmware-fwsec.md`](C-36_gpu-firmware-fwsec.md) (compilată într-o copie de lucru a OS-ului).
+  Fixare: orice commit ≥ `2c9c90c`. Față de `8313973`: nimic redenumit sau șters.
+
 ## Nou în sesiunea 14 (28 oct seara) — licența (C-33) și copia din hub (C-34)
 - De la commit-ul de după `8313973`, codul cyber-gpu e **proprietar** (`LICENSE`, „toate drepturile rezervate”), ca OS-ul (C-32);
   versiunile până la `8313973` inclusiv rămân MIT. Fișierele generate din antetele NVIDIA rămân MIT NVIDIA (`crates/nvidia-rm570/LICENSE-NVIDIA`).

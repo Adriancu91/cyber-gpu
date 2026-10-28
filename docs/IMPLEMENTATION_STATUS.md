@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 15 — 28 octombrie 2026, ~22:35–23:15 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti sau pe fișierele firmware reale.** Comandă nouă în hub: **C-36** (firmware-ul
+570.144 e la Adrian; pregătirea ferestrei I3 → I4, posibil 29 oct). Tot ce scrie „PASS” e pe gazdă: SIMULARE.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Pornire | `tools/check.sh` verde înainte de orice schimbare (243 teste; rustc 1.97.0 stable în acest container, ținta `x86_64-unknown-none` instalată); C-36 preluat în hub | PASS |
+| **C-36 (2)** I4 pe stick | `nvidia_ga104::fw_check::check_stick`: citește pe rând cele 4 fișiere + `LICENCE.nvidia`, **nu se oprește** la primul greșit, raportează pentru fiecare: lipsă / necitibil / altă mărime / alt SHA-256 / oficial; antetul (`fw_hdr`, `gsp::elf`) se citește **doar** la fișierele oficiale și se raportează separat („fișier greșit” ≠ „parserul nostru greșit”); `FwCheck::lines()` cu `criteriul I4`; 0 accese la placă. `gpu_sim::fw_stick`: fișiere de probă scrise independent (NU NVIDIA). Commit `2c9c90c` | PASS (SIMULARE): 7 teste; 3 greșeli plantate (fără SHA, fără mărime, antet necitit) prinse; fișierele de probă nu trec niciodată drept cele reale |
+| **C-36 (1c)** I3b pe ecran | `FwsecLocation::lines()`: 5 rânduri (imaginile FWSEC, tabela PMU, descriptorul, semnăturile, `criteriul I3b`); doar poziții și mărimi, ucode-ul necitit | PASS (SIMULARE, lanțul de tip ASUS) |
+| OS | `integration/cyber-universe/C-36_gpu-firmware-fwsec.md` (schița `gpu firmware [--sim]` + `gpu fwsec [--sim]`); compilată într-o copie de lucru a OS-ului (repo-ul OS neatins) cu cyber-gpu local: build normal și `test-gpu-sim` PASS; în hub, comanda-propunere `idei/2026-10-28_cyber-universe_gpu-firmware-fwsec.md` | PASS (compilare); QEMU: NOT TESTED |
+| **C-36 (1–3)** pașii ferestrei | `docs/FEREASTRA_C-36.md`: 0 pregătire (sumele pe Windows), 1 I3 (`gpu vbios`, `--detalii`, `gpu fwsec`), 2 I4 (`gpu firmware` sau varianta fără comandă), 3 doar dacă 1+2 trec: proba tinygrad (**scrie în placă**, oprire sigură descrisă); pornirea cu driverul nostru NU în fereastra asta | gata (document) |
+| Compatibilitate OS | `git diff 8313973 HEAD -- crates/*/src`: nicio linie `pub` ștearsă; doar adăugări | PASS |
+| CI GitHub | nu pornește (repo privat, fără minute; sesiunea 14) | BLOCKED (nu e o eroare de cod) |
+
+Verificări (`tools/check.sh`): format PASS, clippy `-D warnings` PASS, **251 de teste PASS** (1 ignorat: viteza), build no_std PASS;
+`nvidia-ga104 --features hw-write`: clippy + teste PASS. Nicio scriere în placă.
+
+**Următorul pas:** fereastra C-36 (29 oct, cu Adrian): pașii 1 → 2 → (3). Sesiunea OS: comanda-propunere din `idei/` (dacă e aprobată).
+Fără placă: treapta 6 matmul (Mesa NAK pe gazdă); `SET_PAGE_DIRECTORY`.
+
+---
+
 ## Sesiunea 14 — 28 octombrie 2026, ~19:30–19:50 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comenzi noi în hub: **C-33** (licența) și **C-34** (copia din hub). Codul driverului

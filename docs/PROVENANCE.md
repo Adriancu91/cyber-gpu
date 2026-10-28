@@ -56,4 +56,6 @@ codul GPL nu se copiază niciodată.
 | Abramowitz & Stegun 7.1.26; metode clasice (Newton, reducerea intervalului) | domeniu public / manual | `gpu-compute::math` |
 | Posturi forum cu `lspci` (bbs.archlinux.org, pciutils #151) | fără licență | doar ca fapt observat (BAR-uri) |
 
+`fw_check.rs` (C-36) și `gpu-sim/src/fw_stick.rs` sunt scrise de noi; refolosesc citirile formatelor deja notate mai sus (`fw_hdr.rs`, `gsp/elf.rs`, `RM_RISCV_UCODE_DESC` generat). Fișierele din `fw_stick` sunt octeți inventați de noi, nu firmware NVIDIA.
+
 Componente binare externe de care va depinde calea GSP: firmware-urile NVIDIA semnate (`firmware.rs`) și VBIOS-ul plăcii.

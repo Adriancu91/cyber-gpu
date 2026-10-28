@@ -1,5 +1,13 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 15 (28 oct 2026, cloud, fără placă) — C-36
+| Id | Test | Comandă | Așteptat | Obținut | Clasificare |
+|---|---|---|---|---|---|
+| T27 | I4 pe stick, raport complet (`fw_check`) | `cargo test -p nvidia-ga104 fw_check` | toate 4 fișierele raportate (lipsă / altă mărime / alt conținut / oficial), antetul citit doar la cele oficiale, „0 accese la placa” | 7 teste trec; 3 greșeli plantate (fără SHA, fără mărime, antet necitit) prinse | PASS (SIMULARE, fișiere de probă `gpu-sim::fw_stick`, nu NVIDIA) |
+| T28 | Rândurile I3b (`FwsecLocation::lines`) | `cargo test -p nvidia-ga104 fwsec` | 5 rânduri, `criteriul I3b: TRECE` pe lanțul de tip ASUS | conform | PASS (SIMULARE) |
+| T29 | Schița pentru OS (`gpu firmware`, `gpu fwsec`) compilată în kernel | copie de lucru a OS-ului (repo-ul OS neatins), cyber-gpu local | build normal și `test-gpu-sim` | ambele trec | PASS (compilare); rulare în QEMU: NOT TESTED |
+| T30 | Fereastra C-36 pe workstation | `docs/FEREASTRA_C-36.md` | — | — | NOT TESTED (posibil 29 oct, cu Adrian) |
+
 ## Rezultate — sesiunea 5 (26 oct 2026, cloud, fără placă)
 | Id | Test | Comandă | Așteptat | Obținut | Clasificare |
 |---|---|---|---|---|---|
