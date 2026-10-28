@@ -145,6 +145,11 @@ pub struct FakeGsp {
     pub dma_faults: u32,
     /// DMA blocks copied.
     pub dma_blocks: u32,
+    /// SIM: when set, the "FWSEC" program reads its command from its DMEM
+    /// mapper at this DMEM offset (positions written by hand from RM's
+    /// `FALCON_APPLICATION_INTERFACE_DMEM_MAPPER_V3` / `FWSECLIC_FRTS_CMD`)
+    /// and creates WPR2 where the command says, instead of at `frts`.
+    pub fwsec_mapper_at: Option<u32>,
     mem: [FalconMem; 2],
 }
 
@@ -183,6 +188,7 @@ impl FakeGsp {
             expected: Vec::new(),
             dma_faults: 0,
             dma_blocks: 0,
+            fwsec_mapper_at: None,
             mem: [FalconMem::new(), FalconMem::new()],
         }
     }
@@ -253,6 +259,28 @@ impl FakeGsp {
             }
             _ => self.dma_faults += 1,
         }
+    }
+
+    /// SIM "FWSEC": init_cmd must be FRTS (0x15) and the FRTS command well
+    /// formed; returns the region it asks for.
+    fn sim_fwsec_command(&self, m: usize) -> Option<(u64, u64)> {
+        let d = &self.mem[0].dmem;
+        let w = |o: usize| -> Option<u32> {
+            Some(u32::from_le_bytes(d.get(o..o + 4)?.try_into().ok()?))
+        };
+        if w(m + 44)? != 0x15 {
+            return None;
+        }
+        let c = w(m + 8)? as usize;
+        let ok = w(c)? == 1
+            && w(c + 4)? == 24
+            && w(c + 20)? == 2
+            && w(c + 24)? == 1
+            && w(c + 28)? == 20
+            && w(c + 40)? == 2;
+        let start = u64::from(w(c + 32)?) << 12;
+        let size = u64::from(w(c + 36)?) << 12;
+        (ok && start != 0 && size != 0).then_some((start, start + size))
     }
 
     /// SIM reset value: REQUIRE_CTX set until the driver writes DMACTL.
@@ -382,6 +410,16 @@ impl FakeGsp {
                     self.regs.insert(bus::NV_PBUS_SW_SCRATCH(0xe), 0);
                 }
                 _ => {
+                    if let Some(m) = self.fwsec_mapper_at {
+                        match self.sim_fwsec_command(m as usize) {
+                            Some(r) => self.frts = r,
+                            None => {
+                                // SIM error code: command missing or malformed.
+                                self.regs.insert(bus::NV_PBUS_SW_SCRATCH(0xe), 0x00e1 << 16);
+                                return;
+                            }
+                        }
+                    }
                     self.regs.insert(bus::NV_PBUS_SW_SCRATCH(0xe), 0);
                     let enc = |a: u64| ((a >> 12) << 4) as u32;
                     self.regs

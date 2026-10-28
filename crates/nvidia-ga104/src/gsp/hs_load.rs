@@ -294,6 +294,139 @@ pub fn fwsec_image(d: &FalconUcodeDescV3, ucode: &[u8], signature: &[u8]) -> Gpu
     Ok(img)
 }
 
+/// FWSEC command "FRTS" (`FALCON_APPLICATION_INTERFACE_DMEM_MAPPER_V3_CMD_FRTS`,
+/// RM `kernel_gsp_frts_tu102.c`).
+pub const FWSEC_CMD_FRTS: u32 = 0x15;
+/// Interface entry id of the DMEM mapper.
+pub const FWSEC_IFACE_DMEMMAPPER: u32 = 0x4;
+/// `sizeof(FALCON_APPLICATION_INTERFACE_DMEM_MAPPER_V3)`: 4+2+2+14*4.
+pub const DMEM_MAPPER_LEN: u32 = 64;
+/// Offsets inside the DMEM mapper (C layout of the same struct).
+pub const MAPPER_CMD_IN_OFFSET: usize = 8;
+pub const MAPPER_CMD_IN_SIZE: usize = 12;
+pub const MAPPER_INIT_CMD: usize = 44;
+/// `sizeof(FWSECLIC_FRTS_CMD)`: READ_VBIOS_DESC (24, 8-aligned) + FRTS_REGION_DESC (20), padded to 48.
+pub const FRTS_CMD_LEN: usize = 48;
+/// FRTS region size RM asks for: 1 MiB in 4 KiB units.
+pub const FRTS_SIZE_4K: u32 = 0x100;
+
+fn rd32(b: &[u8], o: usize) -> GpuResult<u32> {
+    let x = b
+        .get(
+            o..o.checked_add(4)
+                .ok_or(GpuError::InvalidArgument("FWSEC: offset"))?,
+        )
+        .ok_or(GpuError::OutOfBounds {
+            offset: o as u64,
+            len: 4,
+            limit: b.len() as u64,
+        })?;
+    Ok(u32::from_le_bytes([x[0], x[1], x[2], x[3]]))
+}
+
+/// The bytes of `FWSECLIC_FRTS_CMD` for an FRTS region at VRAM `frts_offset`
+/// (RM `s_prepareForFwsec_TU102`: read-VBIOS v1 with flags 2, region v1 of
+/// 1 MiB in VRAM, media type 2 = FB).
+pub fn frts_command(frts_offset: u64) -> GpuResult<[u8; FRTS_CMD_LEN]> {
+    if frts_offset == 0
+        || !frts_offset.is_multiple_of(0x1000)
+        || frts_offset >> 12 > u64::from(u32::MAX)
+    {
+        return Err(GpuError::InvalidArgument(
+            "FRTS: offset 0, nealiniat la 4 KiB sau prea mare",
+        ));
+    }
+    let mut c = [0u8; FRTS_CMD_LEN];
+    let mut put = |o: usize, v: u32| c[o..o + 4].copy_from_slice(&v.to_le_bytes());
+    put(0, 1); // readVbiosDesc.version
+    put(4, 24); // readVbiosDesc.size
+    // gfwImageOffset (u64 at 8) = 0, gfwImageSize (16) = 0
+    put(20, 2); // flags = FWSECLIC_READ_VBIOS_STRUCT_FLAGS
+    put(24, 1); // frtsRegionDesc.version
+    put(28, 20); // frtsRegionDesc.size
+    put(32, (frts_offset >> 12) as u32);
+    put(36, FRTS_SIZE_4K);
+    put(40, 2); // FWSECLIC_FRTS_REGION_MEDIA_FB
+    Ok(c)
+}
+
+/// RM `s_vbiosPatchInterfaceData`: in FWSEC's data (`data` = the DMEM
+/// image), follow the interface table at `interface_offset` to the DMEM
+/// mapper, set `init_cmd` and copy `cmd` into its input buffer. Stricter
+/// than RM: a too-small input buffer, or one overlapping `keep_out` (the
+/// signature), is refused instead of only logged.
+pub fn patch_fwsec_command(
+    data: &mut [u8],
+    interface_offset: u32,
+    init_cmd: u32,
+    cmd: &[u8],
+    keep_out: core::ops::Range<usize>,
+) -> GpuResult<()> {
+    let bad = GpuError::InvalidArgument;
+    let io = interface_offset as usize;
+    let hdr = data
+        .get(io..io + 4)
+        .ok_or(bad("FWSEC: interfata in afara datelor"))?;
+    let count = usize::from(hdr[3]);
+    if count < 2 {
+        return Err(bad("FWSEC: prea putine intrari in interfata"));
+    }
+    let mut mapper = None;
+    for i in 0..count {
+        let e = io + 4 + 8 * i;
+        if rd32(data, e)? == FWSEC_IFACE_DMEMMAPPER {
+            mapper = Some(rd32(data, e + 4)? as usize);
+        }
+    }
+    let m = mapper.ok_or(bad("FWSEC: lipseste DMEM mapper-ul"))?;
+    if m.checked_add(DMEM_MAPPER_LEN as usize)
+        .is_none_or(|e| e > data.len())
+    {
+        return Err(bad("FWSEC: DMEM mapper-ul in afara datelor"));
+    }
+    let in_off = rd32(data, m + MAPPER_CMD_IN_OFFSET)? as usize;
+    let in_size = rd32(data, m + MAPPER_CMD_IN_SIZE)? as usize;
+    if in_size < cmd.len() {
+        return Err(bad("FWSEC: bufferul de comanda prea mic"));
+    }
+    let end = in_off
+        .checked_add(cmd.len())
+        .filter(|&e| e <= data.len())
+        .ok_or(bad("FWSEC: bufferul de comanda in afara datelor"))?;
+    let overlaps = |a: usize, b: usize| a < keep_out.end && keep_out.start < b;
+    if overlaps(in_off, end) || overlaps(m + MAPPER_INIT_CMD, m + MAPPER_INIT_CMD + 4) {
+        return Err(bad("FWSEC: comanda s-ar suprapune peste semnatura"));
+    }
+    data[m + MAPPER_INIT_CMD..m + MAPPER_INIT_CMD + 4].copy_from_slice(&init_cmd.to_le_bytes());
+    data[in_off..end].copy_from_slice(cmd);
+    Ok(())
+}
+
+/// The FWSEC image for I6: [`fwsec_image`] plus the FRTS command for the
+/// region at VRAM `frts_offset` (from `fb_layout`).
+pub fn fwsec_frts_image(
+    d: &FalconUcodeDescV3,
+    ucode: &[u8],
+    signature: &[u8],
+    frts_offset: u64,
+) -> GpuResult<Vec<u8>> {
+    let mut img = fwsec_image(d, ucode, signature)?;
+    let u = HsUcode::from_fwsec_v3(d)?;
+    let (ds, de) = (
+        u.data_offset as usize,
+        (u.data_offset + u.dmem_size) as usize,
+    );
+    let sig = u.sig_dmem_addr as usize..(u.sig_dmem_addr + RSA3K_SIG_LEN) as usize;
+    patch_fwsec_command(
+        &mut img[ds..de],
+        d.interface_offset,
+        FWSEC_CMD_FRTS,
+        &frts_command(frts_offset)?,
+        sig,
+    )?;
+    Ok(img)
+}
+
 fn pad(img: &mut Vec<u8>) -> GpuResult<()> {
     let n = u32::try_from(img.len())
         .ok()
@@ -815,6 +948,155 @@ mod tests {
             ));
         }
         assert_eq!(g.dma_faults, 20);
+    }
+
+    /// SIMULARE: FWSEC with an interface table in its data (hand-written
+    /// positions): header at DMEM 0x300 (2 entries), DMEM mapper at 0x340,
+    /// command input buffer at 0x380 (0x40 bytes); signature at 0x100.
+    fn fwsec_iface_desc() -> FalconUcodeDescV3 {
+        FalconUcodeDescV3 {
+            stored_size: 0x1600,
+            dmem_load_size: 0x600,
+            interface_offset: 0x300,
+            ..fwsec_desc()
+        }
+    }
+
+    fn fwsec_iface_ucode() -> Vec<u8> {
+        let mut u = pattern(0x1600, 0x22);
+        let d = 0x1000;
+        u[d + 0x300..d + 0x304].copy_from_slice(&[1, 4, 8, 2]);
+        put(&mut u, d + 0x304, 1);
+        put(&mut u, d + 0x308, 0);
+        put(&mut u, d + 0x30c, 4);
+        put(&mut u, d + 0x310, 0x340);
+        put(&mut u, d + 0x340 + 8, 0x380);
+        put(&mut u, d + 0x340 + 12, 0x40);
+        u
+    }
+
+    /// What the DMEM must hold after a correct patch, built by hand.
+    fn fwsec_iface_expected(frts_at: u64) -> Vec<u8> {
+        let mut data = fwsec_iface_ucode()[0x1000..0x1600].to_vec();
+        put(&mut data, 0x340 + 44, 0x15);
+        for (i, v) in [
+            1,
+            24,
+            0,
+            0,
+            0,
+            2,
+            1,
+            20,
+            (frts_at >> 12) as u32,
+            0x100,
+            2,
+            0,
+        ]
+        .iter()
+        .enumerate()
+        {
+            put(&mut data, 0x380 + 4 * i, *v);
+        }
+        data[0x100..0x100 + 384].copy_from_slice(&pattern(384, 0x5a));
+        data
+    }
+
+    fn fwsec_iface_board(img: Vec<u8>, expected_data: Vec<u8>) -> (FakeGsp, HsUcode, DmaImage) {
+        let u = HsUcode::from_fwsec_v3(&fwsec_iface_desc()).unwrap();
+        let mut g = FakeGsp::new();
+        g.frts = (0, 0); // FWSEC must take the region from the command
+        g.fwsec_mapper_at = Some(0x340);
+        g.sim_expect(SimHsImage {
+            falcon: GSP_BASE,
+            ucode: SimUcode::FwsecFrts,
+            imem_pa: 0,
+            code: fwsec_iface_ucode()[..0x1000].to_vec(),
+            dmem_pa: 0,
+            data: expected_data,
+            sig_dmem_addr: 0x100,
+            ucode_id: 5,
+            engine_id_mask: 0x400,
+            bootvec: 0,
+        });
+        let image = DmaImage {
+            phys: PHYS,
+            len: img.len() as u32,
+        };
+        g.sysmem = Some((PHYS, img));
+        (g, u, image)
+    }
+
+    const FRTS_AT: (u64, u64) = ((8 << 30) - (2 << 20), (8 << 30) - (1 << 20));
+
+    #[test]
+    fn fwsec_frts_command_creates_wpr2_where_asked_simulated() {
+        let d = fwsec_iface_desc();
+        let sig = pattern(384, 0x5a);
+        let img = fwsec_frts_image(&d, &fwsec_iface_ucode(), &sig, FRTS_AT.0).unwrap();
+        assert_eq!(&img[0x1000..0x1600], &fwsec_iface_expected(FRTS_AT.0)[..]);
+        let (mut g, u, image) = fwsec_iface_board(img, fwsec_iface_expected(FRTS_AT.0));
+        let mut j = Journal::new(4096);
+        let mut c = SimClock::default();
+        let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+        let w = fwsec_frts_dma(&mut b, &mut c, &u, &image, FRTS_AT).unwrap();
+        assert_eq!((w.start, w.end), FRTS_AT);
+    }
+
+    #[test]
+    fn fwsec_without_or_with_a_wrong_command_is_an_error() {
+        let d = fwsec_iface_desc();
+        let sig = pattern(384, 0x5a);
+        let mut j = Journal::new(4096);
+        let mut c = SimClock::default();
+        // Command for another region than the layout asks: the driver sees
+        // WPR2 in the wrong place.
+        let other = FRTS_AT.0 - (1 << 20);
+        let img = fwsec_frts_image(&d, &fwsec_iface_ucode(), &sig, other).unwrap();
+        let (mut g, u, image) = fwsec_iface_board(img, fwsec_iface_expected(other));
+        let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+        assert!(matches!(
+            fwsec_frts_dma(&mut b, &mut c, &u, &image, FRTS_AT),
+            Err(GpuError::VerifyFailed { .. })
+        ));
+        // No command patched (image accepted by the ROM, init_cmd not FRTS):
+        // FWSEC reports an error code, never a success.
+        let img = fwsec_image(&d, &fwsec_iface_ucode(), &sig).unwrap();
+        let data = img[0x1000..0x1600].to_vec();
+        let (mut g, u, image) = fwsec_iface_board(img, data);
+        let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+        assert!(matches!(
+            fwsec_frts_dma(&mut b, &mut c, &u, &image, FRTS_AT),
+            Err(GpuError::HardwareFault { code: 0xe1 })
+        ));
+    }
+
+    #[test]
+    fn broken_fwsec_interfaces_are_refused() {
+        let cmd = frts_command(FRTS_AT.0).unwrap();
+        let data = || fwsec_iface_ucode()[0x1000..0x1600].to_vec();
+        let sig = 0x100..0x280;
+        let mut ok = data();
+        assert!(patch_fwsec_command(&mut ok, 0x300, FWSEC_CMD_FRTS, &cmd, sig.clone()).is_ok());
+        let mut x = data();
+        x[0x303] = 1; // one entry
+        assert!(patch_fwsec_command(&mut x, 0x300, FWSEC_CMD_FRTS, &cmd, sig.clone()).is_err());
+        let mut x = data();
+        put(&mut x, 0x30c, 3); // no DMEM mapper
+        assert!(patch_fwsec_command(&mut x, 0x300, FWSEC_CMD_FRTS, &cmd, sig.clone()).is_err());
+        let mut x = data();
+        put(&mut x, 0x340 + 12, 0x20); // input buffer too small
+        assert!(patch_fwsec_command(&mut x, 0x300, FWSEC_CMD_FRTS, &cmd, sig.clone()).is_err());
+        let mut x = data();
+        put(&mut x, 0x340 + 8, 0x200); // input buffer over the signature
+        assert!(patch_fwsec_command(&mut x, 0x300, FWSEC_CMD_FRTS, &cmd, sig.clone()).is_err());
+        let mut x = data();
+        put(&mut x, 0x340 + 8, 0x5f0); // past the data
+        assert!(patch_fwsec_command(&mut x, 0x300, FWSEC_CMD_FRTS, &cmd, sig.clone()).is_err());
+        let mut x = data();
+        assert!(patch_fwsec_command(&mut x, 0x5fe, FWSEC_CMD_FRTS, &cmd, sig).is_err());
+        assert!(frts_command(0).is_err());
+        assert!(frts_command(0x1234).is_err());
     }
 
     #[test]
