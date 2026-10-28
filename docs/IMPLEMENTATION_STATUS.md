@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 13 — 28 octombrie 2026, ~13:35–14:05 (ora României), în cloud, FĂRĂ placă
+
+**Prima dată cu date de pe placa reală** (fereastra lui Adrian de azi, 10:00–10:35, os-195, hub `rezultate/2026-10-28-workstation-kronos-in-os/`):
+**I0, I1, I2 = PASS pe RTX 3070 Ti** (`BOOT_0 = b74000a1`, `BOOT_42 = 174a1000`, GFW `0xff` în 3 µs, 0 scrieri); **I3 = FAIL**: la `0x24600`
+parserul aștepta `0xAA55` și a citit `0x4E56` („NV”). Comanda nouă din hub: **C-30**. Tot ce scrie mai jos „PASS” e pe gazdă: SIMULARE.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Pornire | CI rularea 50 verde; `tools/check.sh` verde înainte de orice schimbare (229 teste, rustc 1.99.1); C-30 preluat în hub | PASS |
+| **C-30 (1)** diagnostic | `nvidia-ga104::vbios_diag::diagnose` + `VbiosDiag::lines()`: pentru fiecare imagine offset, semnătură, PCIR (vendor, device, clasă, tip, lungime, blocuri, indicator), NPDE; la rupturi primii 16 octeți + căutare înainte (pas 512 B) și reluare; semnăturile de după ultima imagine; tabela BIT; rezumat cu „0 scrieri”. Fără conținutul imaginilor. Limitat: ≤ 16 imagini, ≤ 4 rupturi, ≤ 16 semnături (sub 200 de rânduri) | PASS (SIMULARE): 9 teste (lanț curat, cazul workstation, ruptură + reluare, PCIR lipsă, mărime 0, semnături după „ultima”, nicio semnătură, IFR v3, lanț lung, placă absentă); 0 scrieri, doar citiri în fereastra PROM |
+| **C-30 (2)** parserul | `vbios::read_layout` acceptă ca nouveau `image.c`/`pcir.c` (MIT) semnăturile de imagine `AA55`/`BB77`/`4E56` și PCIR „PCIR”/„RGIS”/„NPDS” (nova-core la fel, citit doar ca specificație); parserul și diagnosticul folosesc **aceeași** funcție de citire a unei imagini. `gpu-sim::rom::asus_like_chain` reproduce placa (imaginile „NV” la `0x24600`; restul mărimilor = presupuneri SIM) | PASS (SIMULARE): lanțul trece I3, FWSEC găsit în imaginile „NV”; o semnătură necunoscută tot refuzată; „NPDS”/„RGIS” acceptate, altele nu. **Greșeală plantată** (doar `AA55` acceptat) → 3 teste pică. Pe placă: **NOT TESTED** — de confirmat la fereastra următoare |
+| Ecranul | raportul OS: framebuffer la `0xe0000000` = începutul BAR1 → `screen_vram_range` dă VRAM `0x0–0x870000` (protejată la I9b); test cu valorile reale | PASS (aritmetică) |
+| OS (C-31) | nota `integration/cyber-universe/C-31_gpu-vbios-detalii.md`; OS-ul construit (copie de lucru, repo-ul OS neatins) cu fixarea mutată pe `4538f90`: build normal și `test-gpu-sim` PASS | PASS (compilare) |
+| CI | rulările 51, 52, 54 verzi; **53 roșie** (format uitat la commit-ul cu docs, reparat imediat în 54) | PASS la final |
+| Compatibilitate OS | `git diff 41e44ba HEAD`: tot singura linie `pub` = `GSP_VERSION` (sesiunea 5). Nou: `vbios_diag`; în `gpu-sim::rom`: `set_signature`, `asus_like_chain(_with_fwsec)`, `ASUS_LIKE_OFFSETS` | PASS (doar adăugări) |
+
+Verificări (`tools/check.sh`, rustc 1.99.1 stable): format PASS, clippy `-D warnings` PASS, **243 de teste PASS** (1 ignorat: viteza),
+build `x86_64-unknown-none` PASS; `nvidia-ga104 --features hw-write`: clippy + teste PASS. Nicio scriere în placă.
+
+**Următorul pas:** sesiunea OS face C-31 (`gpu vbios --detalii`, fixare pe `4538f90` sau mai nou). La fereastra următoare: `gpu vbios` +
+`gpu vbios --detalii` (poze) — dacă I3 trece, urmează I3b (`fwsec::locate`, încă neafișat în OS) și fișierele de pe stick (I4).
+Fără placă: treapta 6 matmul; `SET_PAGE_DIRECTORY`.
+**De la Adrian:** fereastra pe workstation cu Release-ul care conține C-31; fișierele firmware pe stick.
+
+---
+
 ## Sesiunea 12 — 28 octombrie 2026, ~07:15–07:50 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Tot ce scrie „PASS” e pe calculatorul gazdă: SIMULARE (modele software,
