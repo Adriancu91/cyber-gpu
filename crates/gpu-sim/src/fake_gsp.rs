@@ -11,8 +11,14 @@
 //! every failure?" — never "does the RTX 3070 Ti do this".
 //!
 //! The firmware itself is not modelled at all: a test says which program is
-//! "loaded" with [`FakeGsp::sim_load`]. Loading real ucode (IMEM/DMEM DMA) is
-//! a separate, unwritten step.
+//! "loaded" with [`FakeGsp::sim_load`], or (session 12) registers a synthetic
+//! image with [`FakeGsp::sim_expect`] and lets the driver's DMA loader put it
+//! in place: the falcon DMA engine below copies 256-byte blocks from a SIM
+//! system memory ([`FakeGsp::sysmem`]) into IMEM/DMEM, and at `STARTCPU` the
+//! "boot ROM" accepts the program only if the bytes, the secure flag of the
+//! code blocks, the BROM registers and BOOTVEC are all exactly as expected
+//! (SIM stand-in for the signature check; no real signature is checked).
+//! Register positions: `nvidia-rm570` (NVIDIA MIT headers); behaviour: ours.
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -20,6 +26,7 @@ use alloc::vec::Vec;
 use gpu_core::hal::Mmio;
 use nvidia_rm570::regs::ga102_dev_falcon_second_pri as f2;
 use nvidia_rm570::regs::ga102_dev_falcon_v4 as fv4;
+use nvidia_rm570::regs::ga102_dev_fbif_v4 as fbif;
 use nvidia_rm570::regs::ga102_dev_gc6_island as gc6;
 use nvidia_rm570::regs::ga102_dev_gsp as gsp;
 use nvidia_rm570::regs::ga102_dev_riscv_pri as riscv;
@@ -40,6 +47,48 @@ pub enum SimUcode {
     BooterLoad,
 }
 
+/// SIM: what the "boot ROM" expects to find in a falcon before it accepts a
+/// program (synthetic bytes, never NVIDIA firmware).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SimHsImage {
+    /// `GSP_BASE` or `SEC2_BASE`.
+    pub falcon: u32,
+    pub ucode: SimUcode,
+    pub imem_pa: u32,
+    pub code: Vec<u8>,
+    pub dmem_pa: u32,
+    pub data: Vec<u8>,
+    pub sig_dmem_addr: u32,
+    pub ucode_id: u32,
+    pub engine_id_mask: u32,
+    pub bootvec: u32,
+}
+
+/// SIM sizes of IMEM and DMEM (64 KiB each; the real sizes are read from
+/// HWCFG by the driver, and the fake reports this one).
+pub const SIM_MEM: usize = 64 << 10;
+
+#[derive(Clone, Debug)]
+struct FalconMem {
+    imem: Vec<u8>,
+    /// Secure flag per 256-byte IMEM block.
+    imem_secure: Vec<bool>,
+    dmem: Vec<u8>,
+    /// DMATRFCMD reads left until IDLE.
+    busy: u32,
+}
+
+impl FalconMem {
+    fn new() -> Self {
+        FalconMem {
+            imem: alloc::vec![0; SIM_MEM],
+            imem_secure: alloc::vec![false; SIM_MEM / 256],
+            dmem: alloc::vec![0; SIM_MEM],
+            busy: 0,
+        }
+    }
+}
+
 /// What the fake should do wrong (one at a time).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SimFault {
@@ -55,6 +104,10 @@ pub enum SimFault {
     NeverHalts,
     /// Booter halts but the RISC-V core never becomes active.
     RiscvStaysOff,
+    /// The falcon DMA request queue stays full.
+    DmaQueueFull,
+    /// The falcon DMA engine never reports idle.
+    DmaNeverIdle,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -84,6 +137,15 @@ pub struct FakeGsp {
     pub doorbells: u32,
     /// The address booter received in SEC2 mailbox 0/1 (the WPR meta).
     pub booter_arg: Option<u64>,
+    /// SIM system memory the falcon DMA reads: (physical base, bytes).
+    pub sysmem: Option<(u64, Vec<u8>)>,
+    /// Programs the "boot ROM" accepts (see the module comment).
+    pub expected: Vec<SimHsImage>,
+    /// DMA commands refused by the model (bad setup, out of range).
+    pub dma_faults: u32,
+    /// DMA blocks copied.
+    pub dma_blocks: u32,
+    mem: [FalconMem; 2],
 }
 
 /// SIM: polls of HWCFG2 until scrubbing is done, polls of CPUCTL until halt.
@@ -117,7 +179,114 @@ impl FakeGsp {
             writes: Vec::new(),
             doorbells: 0,
             booter_arg: None,
+            sysmem: None,
+            expected: Vec::new(),
+            dma_faults: 0,
+            dma_blocks: 0,
+            mem: [FalconMem::new(), FalconMem::new()],
         }
+    }
+
+    /// Registers a program the "boot ROM" will accept (SIM).
+    pub fn sim_expect(&mut self, img: SimHsImage) {
+        self.expected.push(img);
+    }
+
+    /// IMEM / DMEM of a falcon, for tests.
+    pub fn imem(&self, base: u32) -> &[u8] {
+        &self.mem[Self::idx(base)].imem
+    }
+    pub fn dmem(&self, base: u32) -> &[u8] {
+        &self.mem[Self::idx(base)].dmem
+    }
+
+    fn idx(base: u32) -> usize {
+        usize::from(base != GSP_BASE)
+    }
+
+    fn f2base(base: u32) -> u32 {
+        if base == GSP_BASE {
+            f2::NV_FALCON2_GSP_BASE
+        } else {
+            f2::NV_FALCON2_SEC_BASE
+        }
+    }
+
+    /// One DMATRFCMD: copy 256 bytes from SIM system memory, if the driver
+    /// set the engine up the way RM does (otherwise nothing is copied).
+    fn dma_cmd(&mut self, base: u32, cmd: u32) {
+        let fb = base + 0x600;
+        let ctx = fv4::NV_PFALCON_FALCON_DMATRFCMD_CTXDMA.get(cmd);
+        let tc = self.raw(fb + fbif::NV_PFALCON_FBIF_TRANSCFG(ctx));
+        let setup_ok = fbif::NV_PFALCON_FBIF_CTL_ALLOW_PHYS_NO_CTX
+            .get(self.raw(fb + fbif::NV_PFALCON_FBIF_CTL))
+            == 1
+            && fv4::NV_PFALCON_FALCON_DMACTL_REQUIRE_CTX.get(self.dmactl(base)) == 0
+            && fbif::NV_PFALCON_FBIF_TRANSCFG_TARGET.get(tc) == 1
+            && fbif::NV_PFALCON_FBIF_TRANSCFG_MEM_TYPE.get(tc) == 1
+            && fv4::NV_PFALCON_FALCON_DMATRFCMD_SIZE.get(cmd) == 6
+            && fv4::NV_PFALCON_FALCON_DMATRFCMD_WRITE.get(cmd) == 0;
+        let addr = (u64::from(self.raw(base + fv4::NV_PFALCON_FALCON_DMATRFBASE))
+            | u64::from(self.raw(base + fv4::NV_PFALCON_FALCON_DMATRFBASE1) & 0x1ff) << 32)
+            << 8;
+        let src = addr + u64::from(self.raw(base + fv4::NV_PFALCON_FALCON_DMATRFFBOFFS));
+        let dst = fv4::NV_PFALCON_FALCON_DMATRFMOFFS_OFFS
+            .get(self.raw(base + fv4::NV_PFALCON_FALCON_DMATRFMOFFS)) as usize;
+        let imem = fv4::NV_PFALCON_FALCON_DMATRFCMD_IMEM.get(cmd) == 1;
+        let secure = fv4::NV_PFALCON_FALCON_DMATRFCMD_SEC.get(cmd) == 1;
+        let block = self.sysmem.as_ref().and_then(|(b, bytes)| {
+            let o = usize::try_from(src.checked_sub(*b)?).ok()?;
+            bytes.get(o..o.checked_add(256)?).map(Vec::from)
+        });
+        let m = &mut self.mem[Self::idx(base)];
+        m.busy = 2;
+        let fits = dst.is_multiple_of(256) && dst + 256 <= SIM_MEM;
+        match block {
+            Some(b) if setup_ok && fits => {
+                if imem {
+                    m.imem[dst..dst + 256].copy_from_slice(&b);
+                    m.imem_secure[dst / 256] = secure;
+                } else {
+                    m.dmem[dst..dst + 256].copy_from_slice(&b);
+                }
+                self.dma_blocks += 1;
+            }
+            _ => self.dma_faults += 1,
+        }
+    }
+
+    /// SIM reset value: REQUIRE_CTX set until the driver writes DMACTL.
+    fn dmactl(&self, base: u32) -> u32 {
+        *self
+            .regs
+            .get(&(base + fv4::NV_PFALCON_FALCON_DMACTL))
+            .unwrap_or(&1)
+    }
+
+    /// At STARTCPU: does the falcon hold one of the expected programs?
+    fn brom_check(&mut self, base: u32) -> Option<SimUcode> {
+        let r = Self::f2base(base);
+        let m = &self.mem[Self::idx(base)];
+        self.expected.iter().find_map(|x| {
+            let code = m
+                .imem
+                .get(x.imem_pa as usize..x.imem_pa as usize + x.code.len())?;
+            let data = m
+                .dmem
+                .get(x.dmem_pa as usize..x.dmem_pa as usize + x.data.len())?;
+            let first = x.imem_pa as usize / 256;
+            let blocks = x.code.len().div_ceil(256);
+            let ok = x.falcon == base
+                && code == x.code.as_slice()
+                && data == x.data.as_slice()
+                && m.imem_secure[first..first + blocks].iter().all(|&s| s)
+                && self.raw(r + f2::NV_PFALCON2_FALCON_BROM_PARAADDR(0)) == x.sig_dmem_addr
+                && self.raw(r + f2::NV_PFALCON2_FALCON_BROM_ENGIDMASK) == x.engine_id_mask
+                && self.raw(r + f2::NV_PFALCON2_FALCON_BROM_CURR_UCODE_ID) == x.ucode_id
+                && self.raw(r + f2::NV_PFALCON2_FALCON_MOD_SEL) == 1
+                && self.raw(base + fv4::NV_PFALCON_FALCON_BOOTVEC) == x.bootvec;
+            ok.then_some(x.ucode)
+        })
     }
 
     /// The test's stand-in for loading a signed program over DMA.
@@ -181,6 +350,18 @@ impl FakeGsp {
                 let halted = self.falcon_mut(base).halted;
                 fv4::NV_PFALCON_FALCON_CPUCTL_HALTED.set(0, u32::from(halted))
             }
+            fv4::NV_PFALCON_FALCON_HWCFG => {
+                fv4::NV_PFALCON_FALCON_HWCFG_IMEM_SIZE.set(0, (SIM_MEM / 256) as u32)
+            }
+            fv4::NV_PFALCON_FALCON_DMATRFCMD => {
+                let m = &mut self.mem[Self::idx(base)];
+                let idle = m.busy == 0 && fault != SimFault::DmaNeverIdle;
+                m.busy = m.busy.saturating_sub(1);
+                fv4::NV_PFALCON_FALCON_DMATRFCMD_FULL
+                    .set(0, u32::from(fault == SimFault::DmaQueueFull))
+                    | fv4::NV_PFALCON_FALCON_DMATRFCMD_IDLE.set(0, u32::from(idle))
+            }
+            fv4::NV_PFALCON_FALCON_DMACTL => self.dmactl(base),
             _ => self.raw(base + rel),
         }
     }
@@ -256,6 +437,12 @@ impl FakeGsp {
                         SCRUB_POLLS
                     };
                 }
+                if v & 1 == 1 {
+                    // Reset + scrubbing clears IMEM/DMEM; DMACTL back to
+                    // its reset value. SIM
+                    self.mem[Self::idx(base)] = FalconMem::new();
+                    self.regs.remove(&(base + fv4::NV_PFALCON_FALCON_DMACTL));
+                }
                 if base == GSP_BASE && v & 1 == 1 {
                     // GSP reset stops GSP-RM and clears the stage-3 hand-off.
                     self.riscv_active = false;
@@ -266,10 +453,23 @@ impl FakeGsp {
                 self.regs.insert(base + rel, v);
             }
             fv4::NV_PFALCON_FALCON_CPUCTL | fv4::NV_PFALCON_FALCON_CPUCTL_ALIAS => {
-                let f = self.falcon_mut(base);
-                if fv4::NV_PFALCON_FALCON_CPUCTL_STARTCPU.get(v) == 1 && !f.in_reset {
+                let start = fv4::NV_PFALCON_FALCON_CPUCTL_STARTCPU.get(v) == 1
+                    && !self.falcon_mut(base).in_reset;
+                if start {
+                    if self.falcon_mut(base).loaded.is_none() {
+                        let accepted = self.brom_check(base);
+                        self.falcon_mut(base).loaded = accepted;
+                    }
+                    let f = self.falcon_mut(base);
                     f.halted = false;
                     f.run_left = Some(RUN_POLLS);
+                }
+            }
+            fv4::NV_PFALCON_FALCON_DMATRFCMD => {
+                if self.fault != SimFault::DmaQueueFull {
+                    self.dma_cmd(base, v);
+                } else {
+                    self.dma_faults += 1;
                 }
             }
             _ => {

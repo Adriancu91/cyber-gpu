@@ -4,6 +4,8 @@
 //! What is here (each submodule states its sources and confidence):
 //! - [`falcon`]: I6–I7 on registers (falcon reset/start, FWSEC-FRTS result,
 //!   Booter on SEC2), behind a write policy; SIMULARE only;
+//! - [`hs_load`]: the I6/I7 loader — signed HS ucode into a falcon over DMA
+//!   + the boot-ROM registers; SIMULARE only;
 //! - [`sequencer`]: GSP-RM's CPU sequencer requests and the wait for
 //!   `GSP_INIT_DONE` (I8), through the same write policy; SIMULARE only;
 //! - [`elf`]: finding a named section in the GSP-RM ELF container (like any
@@ -31,12 +33,15 @@
 //! and [`sequencer`], through `falcon::GuardedBar0`: GSP/SEC2 windows only,
 //! journaled, and on a real BAR only with a [`HardwareWritePermit`], which
 //! exists only when the crate is built with the `hw-write` feature (off by
-//! default) and is meant for the workstation window with Adrian. Bus Master
-//! and DMA are not implemented.
+//! default) and is meant for the workstation window with Adrian. The falcon
+//! DMA loader ([`hs_load`]) programs only falcon registers; turning on PCI
+//! Bus Master and placing the image in system memory are not implemented
+//! here (the OS's part, in the window with Adrian).
 
 pub mod elf;
 pub mod falcon;
 pub mod golden;
+pub mod hs_load;
 pub mod libos;
 pub mod msgq;
 pub mod registry;

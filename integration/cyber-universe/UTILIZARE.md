@@ -43,6 +43,14 @@ gpu-compute  = { git = "https://github.com/Adriancu91/cyber-gpu", rev = "41e44ba
 - `gpu-compute`: `math::fma_f32`, `math::ftz`, `reference::add_ftz`, `reference::matmul_fma`, `reference::matmul_fma_ftz` (oracolele programelor NAK).
 - `gpu-sim`: `fake_gsp` (GSP fals pe registre), `cmdproc::matmul_naive_on_cpu` / `matmul_coalesced_on_cpu`.
 
+## Nou în sesiunea 12 (28 oct, dimineața) — doar adăugări, opțional pentru OS
+- `nvidia-ga104::gsp::hs_load` (`HsUcode`, `DmaImage`, `BooterMeta`, `dma_load`, `fwsec_image`, `booter_image`, `booter_signature_index`):
+  încărcătorul ucode-ului semnat în falcon prin DMA (I6/I7). `gsp::falcon::{fwsec_frts_dma, booter_load_dma}` îl folosesc.
+  **Scrie în placă** (doar registre falcon GSP/SEC2): pe o placă reală refuză fără `HardwareWritePermit` — OS-ul **nu** îl cheamă.
+  Partea OS-ului, pentru mai târziu (în fereastra cu Adrian): imaginea copiată în RAM fizic contiguu (adresa sub 2^49, aliniată la 256 B) + Bus Master.
+- `gpu-sim::fake_gsp`: motorul DMA simulat + „boot ROM”-ul simulat (`SimHsImage`, `sim_expect`, `sysmem`), `SimFault::{DmaQueueFull, DmaNeverIdle}`
+  (variante noi într-o enumerare a modelului de test). Nimic șters sau redenumit.
+
 ## Nou în sesiunea 11 (28 oct, noaptea) — doar adăugări, opțional pentru OS
 - `nvidia-rm570::regs`: modulele generate `tu102_dev_ram` (`NV_PRAMIN`), `gm107_dev_bus` (`NV_PBUS_BAR0_WINDOW`), `tu102_dev_vm` (invalidarea TLB).
 - `nvidia-ga104::vram_window` (`VramWindow`, `screen_vram_range`, `CONTROL_REGISTERS`): I9b, scrierea VRAM prin fereastra BAR0 + invalidarea TLB.

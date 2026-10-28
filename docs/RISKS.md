@@ -8,6 +8,10 @@
    (`0x840000–0x843fff`), fiecare scriere cu valoarea înainte/după în jurnal; pe o placă reală (orice `Mmio` care nu e model `gpu-sim`) cere
    `HardwareWritePermit`, care există doar cu opțiunea `hw-write`. Cererile secvențiatorului GSP în afara acestor ferestre sunt **refuzate**
    (pornirea se oprește cu eroare), nu executate.
+   **Sesiunea 12 (I6/I7 DMA):** `gsp::hs_load::dma_load` scrie tot prin `GuardedBar0` (doar ferestrele GSP/SEC2: FBIF, DMACTL, DMATRF*,
+   BROM, BOOTVEC); toate verificările se fac înaintea primei scrieri. Falcon-ul citește imaginea din RAM prin DMA → pe placă cere Bus Master
+   (I5g, nescris intenționat) și o zonă de RAM pusă deoparte de OS; un DMA greșit ar citi altă memorie a calculatorului, nu ar scrie în ea
+   (comanda are `WRITE=0`).
    **A doua excepție (sesiunea 11, I9b):** `vram_window::VramWindow` scrie **doar** 4 registre (`0x1700` fereastra VRAM, `0xb830a0`/`a4`/`b0`
    invalidarea TLB, fiecare în jurnal cu înainte/după) și VRAM prin fereastra `0x700000–0x7fffff`, niciodată în zonele protejate
    (ecranul, regiunile GSP-RM); fiecare cuvânt scris e recitit. Pe placa reală cere același `HardwareWritePermit` (`hw-write`). Fereastra

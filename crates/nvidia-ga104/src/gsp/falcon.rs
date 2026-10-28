@@ -18,9 +18,9 @@
 //! write journaled with the value before and after. On a real BAR it needs a
 //! [`HardwareWritePermit`] (build option `hw-write`, off by default).
 //!
-//! Not here: loading the signed ucode into the falcon (IMEM/DMEM DMA, I6/I7
-//! loader) — it needs I4c and DMA buffers. The callers pass a `load` step;
-//! the only real one today is [`load_not_written`].
+//! Loading the signed ucode (IMEM/DMEM over DMA) is in [`super::hs_load`]
+//! (session 12); [`fwsec_frts_dma`] / [`booter_load_dma`] use it. The older
+//! entry points with a `load` step stay for compatibility and for tests.
 
 use gpu_core::diag::{Event, Journal};
 use gpu_core::error::{GpuError, GpuResult};
@@ -312,7 +312,7 @@ pub fn check_frts<M: Mmio + ?Sized>(
     Ok(w)
 }
 
-/// The real loader of signed ucode does not exist yet (I4c + DMA).
+/// Kept for compatibility: the loader is now `hs_load::dma_load`.
 pub fn load_not_written<M: Mmio + ?Sized>(
     _bar: &mut GuardedBar0<'_, M>,
     _e: Engine,
@@ -329,6 +329,31 @@ pub fn fwsec_frts<M: Mmio + ?Sized, C: Clock + ?Sized>(
     load: impl FnOnce(&mut GuardedBar0<'_, M>, Engine) -> GpuResult<()>,
     frts: (u64, u64),
 ) -> GpuResult<Wpr2> {
+    fwsec_frts_with(bar, clock, |b, _, e| load(b, e), frts)
+}
+
+/// I6 with the real loader: FWSEC from `image` over DMA ([`super::hs_load`]).
+pub fn fwsec_frts_dma<M: Mmio + ?Sized, C: Clock + ?Sized>(
+    bar: &mut GuardedBar0<'_, M>,
+    clock: &mut C,
+    ucode: &super::hs_load::HsUcode,
+    image: &super::hs_load::DmaImage,
+    frts: (u64, u64),
+) -> GpuResult<Wpr2> {
+    fwsec_frts_with(
+        bar,
+        clock,
+        |b, c, e| super::hs_load::dma_load(b, c, e, ucode, image),
+        frts,
+    )
+}
+
+fn fwsec_frts_with<M: Mmio + ?Sized, C: Clock + ?Sized>(
+    bar: &mut GuardedBar0<'_, M>,
+    clock: &mut C,
+    load: impl FnOnce(&mut GuardedBar0<'_, M>, &mut C, Engine) -> GpuResult<()>,
+    frts: (u64, u64),
+) -> GpuResult<Wpr2> {
     if let Some(w) = read_wpr2(bar)? {
         // Already up: FWSEC must not run twice; the board needs a reset.
         bar.journal()
@@ -339,7 +364,7 @@ pub fn fwsec_frts<M: Mmio + ?Sized, C: Clock + ?Sized>(
     }
     reset(bar, clock, Engine::Gsp)?;
     select_falcon_core(bar, clock, Engine::Gsp)?;
-    load(bar, Engine::Gsp)?;
+    load(bar, clock, Engine::Gsp)?;
     run_to_halt(bar, clock, Engine::Gsp, (0, 0))?;
     let w = check_frts(bar, frts)?;
     bar.journal().push(Event::Step {
@@ -357,6 +382,31 @@ pub fn booter_load<M: Mmio + ?Sized, C: Clock + ?Sized>(
     load: impl FnOnce(&mut GuardedBar0<'_, M>, Engine) -> GpuResult<()>,
     wpr_meta_addr: u64,
 ) -> GpuResult<()> {
+    booter_load_with(bar, clock, |b, _, e| load(b, e), wpr_meta_addr)
+}
+
+/// I7 with the real loader: Booter from `image` over DMA ([`super::hs_load`]).
+pub fn booter_load_dma<M: Mmio + ?Sized, C: Clock + ?Sized>(
+    bar: &mut GuardedBar0<'_, M>,
+    clock: &mut C,
+    ucode: &super::hs_load::HsUcode,
+    image: &super::hs_load::DmaImage,
+    wpr_meta_addr: u64,
+) -> GpuResult<()> {
+    booter_load_with(
+        bar,
+        clock,
+        |b, c, e| super::hs_load::dma_load(b, c, e, ucode, image),
+        wpr_meta_addr,
+    )
+}
+
+fn booter_load_with<M: Mmio + ?Sized, C: Clock + ?Sized>(
+    bar: &mut GuardedBar0<'_, M>,
+    clock: &mut C,
+    load: impl FnOnce(&mut GuardedBar0<'_, M>, &mut C, Engine) -> GpuResult<()>,
+    wpr_meta_addr: u64,
+) -> GpuResult<()> {
     if read_wpr2(bar)?.is_none() {
         return Err(GpuError::InvalidArgument(
             "I7 inainte de I6: WPR2 nu e ridicat",
@@ -364,7 +414,7 @@ pub fn booter_load<M: Mmio + ?Sized, C: Clock + ?Sized>(
     }
     reset(bar, clock, Engine::Sec2)?;
     select_falcon_core(bar, clock, Engine::Sec2)?;
-    load(bar, Engine::Sec2)?;
+    load(bar, clock, Engine::Sec2)?;
     let (mb0, _) = run_to_halt(
         bar,
         clock,
