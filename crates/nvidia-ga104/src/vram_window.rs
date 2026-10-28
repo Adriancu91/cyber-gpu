@@ -311,7 +311,10 @@ mod tests {
         let r = screen_vram_range(0xe000_0000, fb_size, 0xe000_0000, 256 << 20);
         assert_eq!(r, Some((0, 0x87_0000)));
         // The same screen seen through a BAR1 that starts after it: not ours to guess.
-        assert_eq!(screen_vram_range(0xe000_0000, fb_size, 0xe010_0000, 256 << 20), None);
+        assert_eq!(
+            screen_vram_range(0xe000_0000, fb_size, 0xe010_0000, 256 << 20),
+            None
+        );
     }
     use crate::mmu::{GpuMemory, PageAttr};
     use gpu_sim::clock::SimClock;
