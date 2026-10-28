@@ -1,5 +1,25 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 14 — 28 octombrie 2026, ~19:30–19:50 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comenzi noi în hub: **C-33** (licența) și **C-34** (copia din hub). Codul driverului
+nu s-a schimbat (doar licență, metadate și documente).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Pornire | `tools/check.sh` verde înainte de orice schimbare (243 teste, rustc 1.99.1); hub-ul avea istoria rescrisă pe GitHub → clona locală mutată pe `origin/main` (nimic de-al nostru pierdut); clona cyber-gpu era „shallow” → completată | PASS |
+| **C-33** licența | `LICENSE` proprietar („toate drepturile rezervate”) cu nota: versiunile până la `8313973` inclusiv au fost MIT; fișierele generate din antetele NVIDIA rămân MIT NVIDIA (`crates/nvidia-rm570/LICENSE-NVIDIA`); firmware-ul NVIDIA nu e distribuit de noi. `Cargo.toml`: `license = "MIT"` → `license-file = "LICENSE"`. Actualizate: `README.md`, `PROVENANCE.md`, `RESEARCH_I4_I8.md` §5.1 (argumentul „OS cu licență OSI” nu mai ține → Adrian descarcă singur firmware-ul; varianta initrd exclusă), `nvidia-rm570/README.md`, `tools/nak/README.md`, `integration/cyber-universe/UTILIZARE.md`. Commit `f440f6f` | PASS (local: format, clippy, 243 teste, build no_std, `hw-write`) |
+| CI GitHub | rularea 57 (commit `f440f6f`): ambele joburi „failure” în 3 secunde, fără jurnal (404) = nu au pornit deloc. Cauza probabilă: repo-ul e **privat** din 28 oct 14:33 și GitHub Actions nu mai are minute gratuite (la fel la OS, C-32). Conform C-32, nu se repară prin plată; ne bazăm pe testele din sesiune | BLOCKED (nu e o eroare de cod) |
+| **C-34** copia din hub | `git bundle create` pe `g0-g2-fundatie`, `git bundle verify` OK, clonare de probă din bundle + `tools/check.sh` pe clonă: verde; fără firmware (doar cod/documente cu „firmware” în nume) | PASS |
+| Treapta 6 matmul | instalarea uneltelor pentru Mesa NAK (apt/pip/cargo + construirea Mesa) a fost **refuzată de sistemul de permisiuni** al sesiunii programate | NOT TESTED (amânat) |
+| Compatibilitate OS | `git diff 8313973 HEAD -- crates/*/src`: gol (nicio linie de cod schimbată) | PASS |
+
+**Următorul pas:** fereastra pe workstation cu Release-ul OS care conține C-31 (`gpu vbios` + `gpu vbios --detalii`): dacă I3 trece, I3b
+(`fwsec::locate`) și fișierele de pe stick (I4). Fără placă: treapta 6 matmul (cere construirea Mesa NAK, ~15 min, dacă permisiunile o lasă);
+`SET_PAGE_DIRECTORY`. **De la Adrian:** fereastra pe workstation; fișierele firmware pe stick; decizia lui pentru CI (repo privat = fără teste automate GitHub).
+
+---
+
 ## Sesiunea 13 — 28 octombrie 2026, ~13:35–13:50 (ora României), în cloud, FĂRĂ placă
 
 **Prima dată cu date de pe placa reală** (fereastra lui Adrian de azi, 10:00–10:35, os-195, hub `rezultate/2026-10-28-workstation-kronos-in-os/`):
