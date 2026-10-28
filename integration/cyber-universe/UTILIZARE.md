@@ -91,7 +91,8 @@ nu întoarce nimic (24 oct). O schimbare incompatibilă, dacă devine inevitabil
 | Crate / modul | Ce face | Scrie în placă? | Testat |
 |---|---|---|---|
 | `nvidia-ga104::gfw` | I2: așteaptă GFW_BOOT (2 registre pe lista permisă, limită 4 s) | nu | SIMULARE |
-| `nvidia-ga104::vbios` | I3: citește VBIOS prin fereastra PROM, lanț PCIR/NPDE, tabela BIT | nu | SIMULARE (imagini sintetice) |
+| `nvidia-ga104::vbios` | I3: citește VBIOS prin fereastra PROM, lanț PCIR/NPDE, tabela BIT; acceptă și imaginile „NV” (`0x4e56`, C-30) | nu | SIMULARE (imagini sintetice); pe placă: FAIL la 0x24600 cu versiunea veche |
+| `nvidia-ga104::vbios_diag` | I3 diagnostic: `diagnose(...)` + `VbiosDiag::lines()` — structura lanțului rând cu rând, 0 scrieri (pentru `gpu vbios --detalii`, C-31; vezi `C-31_gpu-vbios-detalii.md`) | nu | SIMULARE |
 | `nvidia-ga104::fwsec` | localizează descriptorul FWSEC în VBIOS (ucode-ul nu se citește) | nu | SIMULARE |
 | `nvidia-ga104::fb_layout`, `radix3` | aritmetică pentru zonele GSP din VRAM și lista de pagini | nu (calcul pur) | gazdă |
 | `nvidia-ga104::firmware` (I4), `sha256` | citește și verifică fișierele GSP 570.144 de pe stick (mărime + SHA-256) | nu | SIMULARE (sumele: din fișierele oficiale) |

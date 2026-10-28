@@ -50,6 +50,11 @@ doar valorile finale (o așteptare poate avea mii de citiri).
 - Fereastra: BAR0 + `0x300000` (nova-core, documentația oficială a kernelului „nova/core/vbios”; nouveau `shadowprom.c`); limita noastră: 1 MiB.
 - Opțional antet IFR „NVGI” (versiunile 1–2: începutul imaginilor la `FIXED_DATA_SIZE + 4`; versiunea 3: director „RFRD”) — după documentația nova.
 - Lanțul de imagini PCI: `0xAA55`, PCIR (Specificația PCI Firmware 3.0), extensia NVIDIA „NPDE” (mărime + „ultima imagine”) — DEDUS din nouveau `npde.c`.
+- **Pe placa reală (28 oct, C-30):** la `0x24600` imaginea începe cu „NV” (`0x4E56`), nu cu `0xAA55` → parserul vechi s-a oprit. nouveau `image.c`
+  (MIT) acceptă ca semnături de imagine `0xAA55`, `0xBB77`, `0x4E56`, iar `pcir.c` structurile „PCIR”, „RGIS”, „NPDS”; nova-core la fel (`AA55`/`4E56`,
+  „PCIR”/„NPDS”). Parserul le acceptă acum (sesiunea 13); orice altă semnătură e tot refuzată. De confirmat la următoarea fereastră.
+- **Diagnosticul I3** (`nvidia-ga104/src/vbios_diag.rs`, C-30): listează structura lanțului rând cu rând (offset, semnătură, PCIR, NPDE,
+  rupturi cu primii 16 octeți, căutare înainte la pas de 512 B), doar citire, fără să copieze imaginile; în OS: `gpu vbios --detalii` (C-31).
 - Tipuri: `0x00` PCI-AT, `0x03` EFI, `0x70` NBSI, `0xE0` FWSEC. Tabela BIT (`FF B8 'BIT'`) în imaginea PCI-AT; jetonul `0x70` = datele Falcon.
 - **Criteriul I3:** PCI-AT cu tabelă BIT care are jetonul 0x70 + cel puțin o imagine FWSEC.
 - Ce nu facem la I3: extragerea codului FWSEC (tabela PMU, aplicația 0x85) — vine la I6; interiorul firmware-ului rămâne blob opac.

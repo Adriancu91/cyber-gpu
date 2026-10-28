@@ -302,6 +302,17 @@ impl<M: Mmio + ?Sized> VramWrite for VramWindow<'_, M> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workstation_screen_at_bar1_start_is_protected() {
+        // Values read on the board on 28 Oct 2026 (os-195 `hw`/`raport`):
+        // framebuffer 0xe0000000, 1920x1080, pitch 8192; BAR1 0xe0000000, 256 MiB.
+        let fb_size = 8192 * 1080;
+        let r = screen_vram_range(0xe000_0000, fb_size, 0xe000_0000, 256 << 20);
+        assert_eq!(r, Some((0, 0x87_0000)));
+        // The same screen seen through a BAR1 that starts after it: not ours to guess.
+        assert_eq!(screen_vram_range(0xe000_0000, fb_size, 0xe010_0000, 256 << 20), None);
+    }
     use crate::mmu::{GpuMemory, PageAttr};
     use gpu_sim::clock::SimClock;
     use gpu_sim::pramin::{self as sim, SimBar0Vram};

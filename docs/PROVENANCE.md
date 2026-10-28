@@ -12,6 +12,8 @@ codul GPL nu se copiază niciodată.
 | PCI Local Bus Spec 3.0, PCI Express Base Spec | specificații | antet, BAR, capabilități, ReBAR (`gpu-pci`) |
 | NVIDIA open-gpu-doc (`manuals/ampere/ga100/dev_boot.ref.txt`, `classes/host/clc56f.h`, `classes/compute/clc7c0*.h`) | MIT | câmpuri de registre, clase, format pushbuffer/GPFIFO — interfață documentată |
 | NVIDIA open-gpu-kernel-modules (README, `clc361.h`) | MIT / dual MIT-GPLv2 | ID-uri, faptul că Ampere cere GSP, offset doorbell Volta |
+| nouveau `nvkm/subdev/bios/image.c`, `pcir.c`, `npde.c` | MIT | semnăturile acceptate de imagine (`AA55`/`BB77`/`4E56`) și de PCIR („PCIR”/„RGIS”/„NPDS”), poziția NPDE (C-30, `vbios`, `vbios_diag`) — citit, necopiat |
+| Linux nova-core `drivers/gpu/nova-core/vbios.rs` | GPL-2.0 | **doar citit ca specificație** (confirmarea semnăturilor `AA55`/`4E56` și „NPDS”); niciun rând copiat |
 | nouveau (`nvkm/...`) | MIT-style | ordinea pașilor GSP, calculul chipset-ului, adresa doorbell GA10x (dedusă) — citit, necopiat |
 | nova-core (Linux, Rust) | GPL-2.0 | doar ordinea pașilor și discrepanța BOOT_42; procedura GFW (`gfw.rs`: ordinea mască → progres, limita de 4 s); **niciun cod** |
 | Documentația oficială a kernelului Linux, „nova/core/vbios” (docs.kernel.org) | GPL-2.0 (documentație) | fereastra PROM 0x300000, antetul IFR/RFRD, tipurile de imagini, lanțul BIT → Falcon data → FWSEC — ca descriere de format (`vbios.rs`) |

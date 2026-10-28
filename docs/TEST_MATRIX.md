@@ -139,6 +139,8 @@ Condiții: Kronos oprit și salvat; Adrian prezent; stick cu Release-ul care con
 5b. **I3 — VBIOS (doar citire)**: `gpu vbios` → poză. PASS: primul cuvânt la BAR0+0x300000 = `…aa55` sau `0x4947564e` („NVGI”); lista de imagini
     conține PCI-AT, EFI și cel puțin o FWSEC (`0xe0`); tabela BIT are jetonul `0x70`; numărul de citiri < 300 000; `0 scrieri`; ecranul rămâne viu.
     Comparație: Windows raportează VBIOS 94.04.65.00.3e — dacă OS-ul poate afișa șirul de versiune din imagine, trebuie să coincidă.
+    **28 oct, os-195: I0–I2 PASS pe placa reală; I3 FAIL la `0x24600` (imagine „NV”, `0x4e56`) → reparat în SIMULARE (C-30).** La fereastra
+    următoare (Release cu C-31): `gpu vbios` + `gpu vbios --detalii` → poze cu toate rândurile (lista imaginilor și rezumatul cu „0 scrieri”).
     Dacă primul cuvânt nu e o semnătură: **BLOCKED** (umbrirea ROM ar cere o scriere) — se notează valoarea și se discută cu Adrian.
 5c. **I3b — FWSEC (doar citire, aceeași fereastră PROM)**, numai dacă 5b a trecut și OS-ul afișează rezultatul lui `fwsec::locate`:
     PASS: tabela PMU conține aplicația `0x85`; descriptorul are versiunea 3; numărul de semnături = biții din `signature_versions`;
