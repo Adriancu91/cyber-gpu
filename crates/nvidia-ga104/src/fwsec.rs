@@ -31,6 +31,8 @@
 //!   descriptor, inside the header — DEDUS (nova-core documentation places
 //!   the signatures between descriptor and ucode; the size is our reading).
 
+use alloc::format;
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use gpu_core::diag::{Event, Journal};
@@ -124,6 +126,63 @@ impl FwsecLocation {
     pub fn fits(&self) -> bool {
         (self.desc_rel as u64) + self.desc.header_size() as u64 + self.desc.stored_size as u64
             <= self.total() as u64
+    }
+
+    /// I3b as text lines for the OS screen (ASCII, Romanian without
+    /// diacritics; hub C-36). Only positions and sizes from the VBIOS
+    /// tables; the ucode bytes are never read or shown.
+    pub fn lines(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let secs: Vec<String> = self
+            .sections
+            .iter()
+            .map(|(o, l)| format!("{o:#x}+{l:#x}"))
+            .collect();
+        out.push(format!(
+            "FWSEC (I3b, doar citire): {} imagini FWSEC: {}",
+            self.sections.len(),
+            secs.join(", ")
+        ));
+        let apps: Vec<String> = self.pmu_apps.iter().map(|a| format!("{a:#04x}")).collect();
+        out.push(format!(
+            "  tabela PMU la {:#x}: aplicatii {} (0x85 = FWSEC_PROD: {})",
+            self.pmu_table,
+            apps.join(" "),
+            if self.pmu_apps.contains(&APP_ID_FWSEC_PROD) {
+                "da"
+            } else {
+                "nu"
+            }
+        ));
+        let d = &self.desc;
+        out.push(format!(
+            "  descriptor v{} la {:#x}: antet {:#x} octeti, ucode {:#x} octeti (IMEM {:#x}, DMEM {:#x})",
+            d.version(),
+            self.desc_prom,
+            d.header_size(),
+            d.stored_size,
+            d.imem_load_size,
+            d.dmem_load_size
+        ));
+        out.push(format!(
+            "  semnaturi: {} (masca versiunilor {:#06x}, {}), motoare {:#06x}, ucode_id {}",
+            d.signature_count,
+            d.signature_versions,
+            if d.signatures_consistent() {
+                "potrivita"
+            } else {
+                "NEPOTRIVITA"
+            },
+            d.engine_id_mask,
+            d.ucode_id
+        ));
+        out.push(format!(
+            "  criteriul I3b: {} (ucode-ul incape in imaginile FWSEC: {}; trece peste granita a doua imagini: {}); 0 scrieri",
+            if self.fits() && d.signatures_consistent() { "TRECE" } else { "NU TRECE" },
+            if self.fits() { "da" } else { "nu" },
+            if self.ucode_crosses_images() { "da" } else { "nu" }
+        ));
+        out
     }
 }
 
@@ -369,6 +428,16 @@ mod tests {
         assert_eq!(l.desc_prom, 0x24a00);
         assert!(l.fits());
         assert!(m.writes.is_empty());
+        // The screen lines (C-36): positions and sizes only.
+        let text = l.lines().join("\n");
+        assert!(
+            text.contains("2 imagini FWSEC: 0x24600+0x4000, 0x28600+0x4000"),
+            "{text}"
+        );
+        assert!(text.contains("aplicatii 0x05 0x85 (0x85 = FWSEC_PROD: da)"));
+        assert!(text.contains("descriptor v3 la 0x24a00"));
+        assert!(text.contains("criteriul I3b: TRECE"));
+        assert!(l.lines().len() == 5);
     }
 
     #[test]

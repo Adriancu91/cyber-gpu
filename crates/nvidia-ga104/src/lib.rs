@@ -39,6 +39,7 @@ pub mod backend;
 pub mod boot;
 pub mod fb_layout;
 pub mod firmware;
+pub mod fw_check;
 pub mod fw_hdr;
 pub mod fwsec;
 pub mod gfw;
