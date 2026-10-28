@@ -2,7 +2,8 @@
 
 Driverul de calcul GPU pentru **Cyber Universe OS** (Rust `no_std`, x86_64, UEFI/Limine).
 Țintă principală: **NVIDIA GeForce RTX 3070 Ti** (GA104, Ampere, SM 8.6, 8 GB).
-Licență MIT, cod propriu (vezi [docs/PROVENANCE.md](docs/PROVENANCE.md)).
+Licență **proprietară** („toate drepturile rezervate”, [LICENSE](LICENSE)) de la commit-ul de după `8313973`; versiunile până la `8313973`
+inclusiv au fost publicate sub MIT. Cod propriu (vezi [docs/PROVENANCE.md](docs/PROVENANCE.md)); fișierele generate din antetele NVIDIA rămân MIT (NVIDIA).
 
 > **Sesiunea 6 (26 oct seara, C-20):** crate nou `nvidia-rm570` cu valorile generate din antetele NVIDIA 570.144 (offset-urile vechi verificate:
 > toate egale); procesorul de comenzi simulat rulează `add64` cap-coadă (SIMULARE, programul rulat pe procesor); proba tinygrad pregătită, nerulată.

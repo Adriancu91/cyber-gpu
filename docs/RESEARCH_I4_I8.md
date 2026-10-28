@@ -77,6 +77,10 @@ Bus Master = **prima scriere în configurația plăcii** din tot proiectul → d
 | Îl folosim | **singura cale tehnică** spre calcul pe RTX 3070 Ti (Ampere refuză firmware nesemnat; firmware propriu = imposibil); licența §2.1.2 permite redistribuirea pentru OS-uri cu licență OSI, iar OS-ul e MIT | zeci de MB de cod NVIDIA opac rulează în placă; nu respectă „90% propriu” pentru partea GPU; interdicția de inginerie inversă (§2.1.3) ne leagă mâinile la depanare; o versiune fixă (570.144) trebuie urmărită |
 | Nu-l folosim | totul rămâne 100% propriu | **niciun calcul pe GPU-ul NVIDIA** din OS-ul nostru; GPU-ul rămâne doar pentru Windows/Kronos actual; K6-GPU se mută pe o placă documentată deschis (AMD, ex. iGPU-ul Renoir de pe laptop, unde firmware-ul e tot binar, dar protocolul e documentat) |
 Juridic: noi nu suntem juriști; textul licenței pare compatibil, dar Adrian decide (eventual cu un avocat).
+**Notă (C-33, 28 oct 2026):** argumentul cu „OS cu licență OSI” de mai sus nu mai e valabil: de la commit-ul de după `8313973` (cyber-gpu)
+și `0bf1303` (OS) codul e proprietar. De aceea **noi nu distribuim firmware-ul NVIDIA deloc** (nici în repo, nici în hub, nici în arhivele
+de stick sau Release-uri): Adrian îl descarcă singur din pachetul oficial `linux-firmware` și îl pune pe stick; driverul doar verifică
+mărimea și SHA-256. Varianta (b) de la §1 (firmware în initrd) e exclusă.
 
 ### 5.2 Compilatorul pentru programele GPU (SASS SM86)
 | | Mesa NAK | NVIDIA `ptxas` |

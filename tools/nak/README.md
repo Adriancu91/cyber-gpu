@@ -103,4 +103,4 @@ o greșeală plantată (două celule schimbate) e prinsă. Câștigul de viteză
 
 ## Licențe
 Mesa (NAK, NVK, drm-shim): MIT, folosit ca unealtă — nimic copiat în `crates/`. Binarul din `out/` e ieșirea compilatorului pentru
-programele noastre (`add64.comp`, `matmul_*.comp`, MIT); nu conține cod NVIDIA. `ptxas` nu se folosește (C-18).
+programele noastre (`add64.comp`, `matmul_*.comp`, cod propriu, `LICENSE`); nu conține cod NVIDIA. `ptxas` nu se folosește (C-18).

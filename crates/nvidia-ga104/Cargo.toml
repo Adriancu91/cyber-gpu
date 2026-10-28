@@ -3,7 +3,7 @@ name = "nvidia-ga104"
 description = "NVIDIA GA104 (Ampere, SM 8.6) backend: identification, read-only probe, init plan, firmware inventory, pushbuffer encoding"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 authors.workspace = true
 
 [dependencies]

@@ -1,6 +1,11 @@
 # Proveniență și licențe
 
-Tot codul din `crates/` și `integration/` e **original**, MIT, scris după documentația de mai jos. Niciun fișier sursă străin
+**Licența (C-33, 28 oct 2026):** codul nostru e **proprietar** („toate drepturile rezervate”, `LICENSE`) de la commit-ul de după `8313973`;
+versiunile până la `8313973` inclusiv au fost publicate sub MIT și rămân MIT pentru cine le-a primit. Componentele străine își păstrează
+licențele (fișierele generate din antetele NVIDIA: MIT NVIDIA, notificarea în `crates/nvidia-rm570/LICENSE-NVIDIA`). Firmware-ul NVIDIA
+nu îl distribuim niciodată (nici în repo, nici în hub, nici în arhivele de stick): Adrian îl descarcă singur din `linux-firmware`.
+
+Tot codul din `crates/` și `integration/` e **original**, scris de noi după documentația de mai jos (licența: vezi mai sus). Niciun fișier sursă străin
 nu a fost copiat. **Singura excepție (C-20 B, aprobată în hub):** `crates/nvidia-rm570/src/regs.rs` și `structs.rs` sunt **generate automat**
 din antetele MIT ale NVIDIA (570.144), cu notificarea lor în `crates/nvidia-rm570/LICENSE-NVIDIA`. Nicio dependență externă (doar `core`/`alloc`, și `std` în teste). Unelte doar pe gazdă (nu intră în OS): Mesa NAK (`tools/nak/`), bindgen-cli 0.71.1 (`tools/gen-rm570/`). Niciun firmware în repository.
 

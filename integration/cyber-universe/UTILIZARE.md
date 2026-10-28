@@ -3,6 +3,12 @@
 Actualizat: 26 octombrie 2026 (sesiunea 6). Nimic de aici nu e aplicat în `cyber-universe`; OS-ul decide singur.
 **Nimic nu e testat pe RTX 3070 Ti.**
 
+## Nou în sesiunea 14 (28 oct seara) — licența (C-33) și copia din hub (C-34)
+- De la commit-ul de după `8313973`, codul cyber-gpu e **proprietar** (`LICENSE`, „toate drepturile rezervate”), ca OS-ul (C-32);
+  versiunile până la `8313973` inclusiv rămân MIT. Fișierele generate din antetele NVIDIA rămân MIT NVIDIA (`crates/nvidia-rm570/LICENSE-NVIDIA`).
+- În `Cargo.toml`: `license = "MIT"` → `license-file = "LICENSE"` (doar metadate; codul și interfața publică neschimbate, nimic șters sau redenumit).
+- Repo-ul e privat: OS-ul ia codul din hub, `integrare/cyber-gpu/snapshot/cyber-gpu.bundle` (actualizat după fiecare sesiune, C-34).
+
 ## Starea de acum (C-16, făcut de sesiunea OS)
 OS-ul folosește crate-urile fixate pe commit-ul `41e44ba` (= tag-ul `stabil-2026-10-23`, care există doar local: urcarea tag-urilor
 din cloud e refuzată, 403). Așa cum e scris în `kernel/Cargo.toml` și `user/Cargo.toml` ale OS-ului:

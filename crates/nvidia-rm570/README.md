@@ -14,6 +14,9 @@ Valori luate **automat** din antetele publicate de NVIDIA (open-gpu-kernel-modul
   lărgește checkout-ul (tot MIT, același commit) și folosește opțiunile de compilare ale RM din `src/nvidia/Makefile`.
 - `src/lib.rs` (scris de noi) — tipurile `Field`/`Range` și testele.
 
+**Licențe:** fișierele generate (`regs.rs`, `structs.rs`, `sysinfo.rs`, `rmapi.rs`) rămân sub licența MIT a NVIDIA (notificarea în
+`LICENSE-NVIDIA`); `lib.rs` și generatorul sunt cod propriu (`LICENSE` din rădăcină, de la commit-ul de după `8313973`; până atunci MIT).
+
 **Doar date.** Nu citește și nu scrie nimic în placă; nu conține cod care rulează pe GPU. Fișierele generate nu se editează de mână.
 
 ## Regenerare (doar pe calculatorul gazdă)

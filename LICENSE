@@ -1,0 +1,23 @@
+Cyber-GPU — licență proprietară / Proprietary License
+
+Copyright (c) 2026 Adrian (Adriancu91). Toate drepturile rezervate.
+Nicio utilizare, copiere, modificare sau distribuire fără acordul scris al autorului.
+
+Copyright (c) 2026 Adrian (Adriancu91). All rights reserved.
+No use, copying, modification or distribution without the author's written consent.
+
+Notă istorică: Versiunile până la commit-ul 8313973 (inclusiv), pe ramura g0-g2-fundatie, au fost
+publicate sub licența MIT. Acele versiuni rămân disponibile sub licența MIT pentru cine le-a primit;
+licența de mai sus se aplică de la commit-ul următor.
+Historical note: versions up to and including commit 8313973 (branch g0-g2-fundatie) were published
+under the MIT License.
+
+Componentele străine își păstrează licențele lor: fișierele generate automat din antetele NVIDIA
+(crates/nvidia-rm570/src/regs.rs, structs.rs, sysinfo.rs, rmapi.rs) sunt sub licența MIT a NVIDIA,
+cu notificarea păstrată în crates/nvidia-rm570/LICENSE-NVIDIA.
+Third-party components keep their own licenses: the files generated from the NVIDIA headers are
+under NVIDIA's MIT License (notice kept in crates/nvidia-rm570/LICENSE-NVIDIA).
+
+Firmware-ul NVIDIA nu face parte din acest proiect și nu este distribuit de el; Adrian îl descarcă
+singur din pachetul oficial linux-firmware.
+NVIDIA firmware is not part of this project and is not distributed by it.
