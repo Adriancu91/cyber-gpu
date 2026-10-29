@@ -184,6 +184,101 @@ pub fn local_memory_setup(pb: &mut PushBuf<'_>, buf: &Mapping, lm: &LocalMemory)
     )
 }
 
+// ---- I10b: one launch and its completion semaphore (SIMULARE) ----
+
+/// `addr` must be inside our VA range with `len` bytes after it.
+fn in_our_va(addr: u64, len: u64) -> bool {
+    addr >= VA_BASE
+        && addr
+            .checked_add(len)
+            .is_some_and(|e| e <= VA_BASE + VA_SIZE)
+}
+
+/// `INVALIDATE_SHADER_CACHES_NO_WFI` with instruction, global data and
+/// constant caches — tinygrad's `memory_barrier` (~l. 154–157), so the GPU
+/// does not run a stale copy of a program, QMD or argument just written.
+pub fn invalidate_caches(pb: &mut PushBuf<'_>) -> GpuResult<()> {
+    let t = c::NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI_INSTRUCTION_TRUE;
+    let mut v = c::NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI_INSTRUCTION.set(0, t);
+    v = c::NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI_GLOBAL_DATA.set(v, t);
+    v = c::NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI_CONSTANT.set(v, t);
+    pb.inc(
+        COMPUTE_SUBCH,
+        c::NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI,
+        &[v],
+    )
+}
+
+/// One launch, as tinygrad's `exec` for the first QMD of a queue (~l.
+/// 179–181): `SEND_PCAS_A` = QMD address >> 8, then
+/// `SEND_SIGNALING_PCAS2_B` = `PREFETCH_SCHEDULE`. The QMD (256 B,
+/// 256-aligned) must be in our VA range.
+pub fn launch(pb: &mut PushBuf<'_>, qmd_va: u64) -> GpuResult<()> {
+    if !qmd_va.is_multiple_of(256) || !in_our_va(qmd_va, nvidia_rm570::QMD_SIZE as u64) {
+        return Err(bad("QMD: nealiniat la 256 sau in afara adreselor noastre"));
+    }
+    let shifted = qmd_va >> 8;
+    let f = c::NVC7C0_SEND_PCAS_A_QMD_ADDRESS_SHIFTED8;
+    if f.set(0, shifted as u32) >> f.lo != shifted as u32 || shifted >> 32 != 0 {
+        return Err(bad("QMD: adresa nu incape in SEND_PCAS_A"));
+    }
+    pb.inc(
+        COMPUTE_SUBCH,
+        c::NVC7C0_SEND_PCAS_A,
+        &[f.set(0, shifted as u32)],
+    )?;
+    let action = c::NVC7C0_SEND_SIGNALING_PCAS2_B_PCAS_ACTION.set(
+        0,
+        c::NVC7C0_SEND_SIGNALING_PCAS2_B_PCAS_ACTION_PREFETCH_SCHEDULE,
+    );
+    pb.inc(COMPUTE_SUBCH, c::NVC7C0_SEND_SIGNALING_PCAS2_B, &[action])
+}
+
+/// The host semaphore release tinygrad puts after work (`release`, ~l.
+/// 111–119): `SEM_ADDR_LO/HI`, `SEM_PAYLOAD_LO/HI`, `SEM_EXECUTE` =
+/// `RELEASE` + `RELEASE_WFI_EN` (wait for the launch to finish) + 64-bit
+/// payload, no timestamp, on subchannel 0. tinygrad then sends
+/// `NON_STALL_INTERRUPT`; we do not (we poll, and there is no interrupt
+/// handler) — noted in `COMPATIBILITATE_FIRMWARE.md`.
+pub fn release(pb: &mut PushBuf<'_>, sem_va: u64, value: u64) -> GpuResult<()> {
+    if !sem_va.is_multiple_of(8) || !in_our_va(sem_va, 8) {
+        return Err(bad(
+            "semafor: nealiniat la 8 sau in afara adreselor noastre",
+        ));
+    }
+    let mut exec = h::NVC56F_SEM_EXECUTE_OPERATION.set(0, h::NVC56F_SEM_EXECUTE_OPERATION_RELEASE);
+    exec = h::NVC56F_SEM_EXECUTE_RELEASE_WFI.set(exec, h::NVC56F_SEM_EXECUTE_RELEASE_WFI_EN);
+    exec = h::NVC56F_SEM_EXECUTE_PAYLOAD_SIZE.set(exec, h::NVC56F_SEM_EXECUTE_PAYLOAD_SIZE_64BIT);
+    pb.inc(
+        0,
+        h::NVC56F_SEM_ADDR_LO,
+        &[
+            sem_va as u32,
+            (sem_va >> 32) as u32,
+            value as u32,
+            (value >> 32) as u32,
+            exec,
+        ],
+    )
+}
+
+/// Reads a 64-bit semaphore at physical `pa` with 32-bit loads: high,
+/// low, high again; a high half that changed in between is re-read once
+/// (the GPU writes the payload in one go, we read it in two).
+pub fn read_semaphore<W: ChannelMemory + ?Sized>(w: &mut W, pa: u64) -> GpuResult<u64> {
+    if !pa.is_multiple_of(8) {
+        return Err(bad("semafor nealiniat la 8"));
+    }
+    for _ in 0..2 {
+        let hi = w.read_u32(pa + 4)?;
+        let lo = w.read_u32(pa)?;
+        if w.read_u32(pa + 4)? == hi {
+            return Ok(((hi as u64) << 32) | lo as u64);
+        }
+    }
+    Err(GpuError::Timeout { waited_us: 0 })
+}
+
 /// 32-bit stores into VRAM at physical addresses (ring, USERD, pushbuffer).
 /// SIMULARE: a model; on the board: the OS's mapping, in the window with
 /// Adrian. `GPPut` is a 32-bit field next to the read-only `GPGet`, so a
@@ -286,6 +381,27 @@ impl WorkQueue {
             bar0_offset: DOORBELL_INFERRED,
             value: self.token,
         })
+    }
+
+    /// I10b: one pushbuffer with [`invalidate_caches`], [`launch`] of the
+    /// QMD at `qmd_va` and [`release`] of `value` at `sem_va`, submitted as
+    /// one GPFIFO entry. The driver then reads the semaphore
+    /// ([`read_semaphore`]) to know the work is done. Nothing is written on
+    /// a refusal.
+    pub fn launch_and_signal<W: ChannelMemory + ?Sized>(
+        &mut self,
+        w: &mut W,
+        qmd_va: u64,
+        sem_va: u64,
+        value: u64,
+    ) -> GpuResult<Doorbell> {
+        let mut buf = [0u32; 16];
+        let mut pb = PushBuf::new(&mut buf);
+        invalidate_caches(&mut pb)?;
+        launch(&mut pb, qmd_va)?;
+        release(&mut pb, sem_va, value)?;
+        let n = pb.len();
+        self.submit(w, &buf[..n])
     }
 
     /// Reads `GPGet` from USERD; a value outside [get, put] is a fault.
@@ -400,5 +516,65 @@ mod tests {
             clc56f::NVC56F_GP_ENTRY1_LEVEL.get(e1),
             clc56f::NVC56F_GP_ENTRY1_LEVEL_SUBROUTINE
         );
+    }
+
+    /// I10b: the exact dwords tinygrad's `memory_barrier`, `exec` (first
+    /// QMD) and `release` give: `nvm(1, 0x1698, 0x1011)`, `nvm(1, 0x2b4,
+    /// qmd >> 8)`, `nvm(1, 0x2c0, 9)`, `nvm(0, 0x5c, lo, hi, lo, hi,
+    /// 0x0110_0001)`.
+    #[test]
+    fn launch_words_match_tinygrad() {
+        let qmd = VA_BASE + 0x12_3400;
+        let sem = VA_BASE + 0x8;
+        let w = words(|pb| {
+            invalidate_caches(pb)?;
+            launch(pb, qmd)?;
+            release(pb, sem, 0x1_0000_0007)
+        });
+        let nvm = |s: u32, m: u32, n: u32| (2 << 28) | (n << 16) | (s << 13) | (m >> 2);
+        assert_eq!(
+            w,
+            [
+                nvm(1, 0x1698, 1),
+                0x1011,
+                nvm(1, 0x2b4, 1),
+                (qmd >> 8) as u32,
+                nvm(1, 0x2c0, 1),
+                9,
+                nvm(0, 0x5c, 5),
+                sem as u32,
+                (sem >> 32) as u32,
+                7,
+                1,
+                0x0110_0001,
+            ]
+        );
+    }
+
+    /// A 64-bit semaphore read as two halves: a high half that moves
+    /// between the reads is re-read; one that never settles is an error.
+    #[test]
+    fn semaphore_reads_survive_a_carry() {
+        struct Moving(alloc::vec::Vec<u32>);
+        impl ChannelMemory for Moving {
+            fn write_u32(&mut self, _: u64, _: u32) -> GpuResult<()> {
+                unreachable!()
+            }
+            fn read_u32(&mut self, _: u64) -> GpuResult<u32> {
+                Ok(self.0.remove(0))
+            }
+        }
+        // hi, lo, hi: settled.
+        assert_eq!(
+            read_semaphore(&mut Moving([1, 5, 1].into()), 0x100),
+            Ok(0x1_0000_0005)
+        );
+        // The carry happens between the two reads: 0 then 1 → read again.
+        let mut m = Moving([0, 0, 1, 1, 0, 1].into());
+        assert_eq!(read_semaphore(&mut m, 0x100), Ok(0x1_0000_0000));
+        // Never settles.
+        let mut m = Moving([0, 0, 1, 1, 0, 2].into());
+        assert!(read_semaphore(&mut m, 0x100).is_err());
+        assert!(read_semaphore(&mut Moving([].into()), 0x104).is_err());
     }
 }

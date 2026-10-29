@@ -4,9 +4,11 @@
 //! methods the first compute launch needs:
 //! - channel class C56F: `SEM_ADDR_LO/HI`, `SEM_PAYLOAD_LO/HI`, `SEM_EXECUTE`
 //!   (release 32/64-bit, acquire ≥ — an acquire that is not yet satisfied is
-//!   an error here, since nothing else runs in parallel);
+//!   an error here, since nothing else runs in parallel; I10b: `RELEASE_WFI`
+//!   accepted, any other bit — e.g. a timestamp release — refused);
 //! - compute class C7C0: `SET_OBJECT`, `SEND_PCAS_A` (QMD address >> 8) and
-//!   `SEND_SIGNALING_PCAS2_B` (launch), reading a QMD V03_00;
+//!   `SEND_SIGNALING_PCAS2_B` (launch), reading a QMD V03_00; I10b:
+//!   `INVALIDATE_SHADER_CACHES_NO_WFI` (fields checked, counted);
 //! - I10a: the once-per-channel compute setup — the local and shared memory
 //!   windows, the local memory buffer and its per-TPC size — recorded in
 //!   [`ComputeState`] (the model does not use them for anything else);
@@ -196,6 +198,9 @@ pub struct CommandProcessor {
     upper: Option<(u32, u32)>,
     /// I10a: GPFIFO entries taken from rings by [`Self::run_channel`].
     pub entries_taken: u32,
+    /// I10b: `INVALIDATE_SHADER_CACHES_NO_WFI` seen (the model has no
+    /// caches; it only checks the fields).
+    pub cache_invalidations: u32,
 }
 
 impl Default for CommandProcessor {
@@ -221,6 +226,7 @@ impl CommandProcessor {
             compute: ComputeState::default(),
             upper: None,
             entries_taken: 0,
+            cache_invalidations: 0,
         }
     }
 
@@ -352,6 +358,18 @@ impl CommandProcessor {
                     .ok_or(bad("SIM: lansare fara SEND_PCAS_A"))?;
                 self.launch(qmd)
             }
+            c::NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI => {
+                let known = [
+                    c::NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI_INSTRUCTION,
+                    c::NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI_GLOBAL_DATA,
+                    c::NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI_CONSTANT,
+                ];
+                if known.iter().fold(d, |r, f| f.set(r, 0)) != 0 {
+                    return Err(bad("SIM: biti nemodelati in INVALIDATE_SHADER_CACHES"));
+                }
+                self.cache_invalidations += 1;
+                Ok(())
+            }
             m => self.setup_method(m, d),
         }
     }
@@ -430,8 +448,23 @@ impl CommandProcessor {
                 self.sem_payload = (self.sem_payload & 0xffff_ffff) | (d as u64) << 32
             }
             h::NVC56F_SEM_EXECUTE => {
+                // I10b: only the fields the model knows; a timestamp release
+                // (16-byte record) is not modelled. `RELEASE_WFI` needs
+                // nothing here: the model runs one method at a time.
+                let known = [
+                    h::NVC56F_SEM_EXECUTE_OPERATION,
+                    h::NVC56F_SEM_EXECUTE_ACQUIRE_SWITCH_TSG,
+                    h::NVC56F_SEM_EXECUTE_RELEASE_WFI,
+                    h::NVC56F_SEM_EXECUTE_PAYLOAD_SIZE,
+                ];
+                if known.iter().fold(d, |r, f| f.set(r, 0)) != 0 {
+                    return Err(bad("SIM: biti nemodelati in SEM_EXECUTE"));
+                }
                 let wide = h::NVC56F_SEM_EXECUTE_PAYLOAD_SIZE.get(d)
                     == h::NVC56F_SEM_EXECUTE_PAYLOAD_SIZE_64BIT;
+                if wide && !self.sem_addr.is_multiple_of(8) {
+                    return Err(bad("SIM: semafor pe 64 de biti nealiniat la 8"));
+                }
                 match h::NVC56F_SEM_EXECUTE_OPERATION.get(d) {
                     h::NVC56F_SEM_EXECUTE_OPERATION_RELEASE => {
                         let p = if wide {

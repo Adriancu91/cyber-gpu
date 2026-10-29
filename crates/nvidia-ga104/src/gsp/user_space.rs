@@ -1323,4 +1323,249 @@ mod tests {
         }
         let _ = w;
     }
+
+    // ---- I10b: the first launch on the working channel (SIMULARE) ----
+
+    use crate::gsp::work_queue::{invalidate_caches, launch, read_semaphore, release};
+    use crate::qmd::ComputeQmd;
+
+    const ADD64: &[u8] = include_bytes!("../../../../tools/nak/out/add64.sm86.sass");
+    const DONE: u64 = 0x1_0000_0007; // both halves of the 64-bit payload matter
+
+    /// Driver-side buffers for one `add64` launch, all mapped in our VA.
+    struct Add64 {
+        prog: Mapping,
+        cbuf: Mapping,
+        a: Mapping,
+        b: Mapping,
+        c: Mapping,
+        qmd: Mapping,
+        sem: Mapping,
+        want: Vec<u32>,
+    }
+
+    fn put_bytes(w: &mut Sim, pa: u64, bytes: &[u8]) {
+        for (i, ch) in bytes.chunks(4).enumerate() {
+            let mut b = [0u8; 4];
+            b[..ch.len()].copy_from_slice(ch);
+            w.write_u32(pa + 4 * i as u64, u32::from_le_bytes(b))
+                .unwrap();
+        }
+    }
+
+    /// The driver writes program, arguments, inputs, QMD and a zeroed
+    /// semaphore into VRAM by physical address (what the OS would do
+    /// through BAR1 in the window with Adrian).
+    fn add64_buffers(mem: &mut Mem) -> Add64 {
+        let mut m = || mem.alloc_mapped(0x1000, 0x1000).unwrap();
+        let (prog, cbuf, a, b, c, qmd, sem) = (m(), m(), m(), m(), m(), m(), m());
+        let x: Vec<f32> = (0..64).map(|i| i as f32 * 0.25 - 3.0).collect();
+        let y: Vec<f32> = (0..64).map(|i| (i * i) as f32 / 7.0).collect();
+        let mut want = alloc::vec![0.0f32; 64];
+        gpu_compute::reference::add_ftz(&x, &y, &mut want).unwrap();
+        let w = mem.writer_mut();
+        put_bytes(w, prog.pa, ADD64);
+        let mut cb = alloc::vec![0u8; 0x100];
+        for (off, va) in [(0x28, a.va), (0x30, b.va), (0x38, c.va)] {
+            cb[off..off + 8].copy_from_slice(&va.to_le_bytes());
+        }
+        put_bytes(w, cbuf.pa, &cb);
+        let f = |v: &[f32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+        put_bytes(w, a.pa, &f(&x));
+        put_bytes(w, b.pa, &f(&y));
+        put_bytes(w, c.pa, &f(&[f32::NAN; 64]));
+        let q = ComputeQmd {
+            program_va: prog.va,
+            registers: 19,
+            cbuf0_va: cbuf.va,
+            cbuf0_size: 0x100,
+            grid: [1, 1, 1],
+            block: [64, 1, 1],
+            release: None,
+        };
+        put_bytes(w, qmd.pa, &q.to_bytes().unwrap());
+        put_bytes(w, sem.pa, &[0; 8]);
+        Add64 {
+            prog,
+            cbuf,
+            a,
+            b,
+            c,
+            qmd,
+            sem,
+            want: want.iter().map(|v| v.to_bits()).collect(),
+        }
+    }
+
+    /// The GPU's side for a launch: everything it reads is fetched through
+    /// the page tables GSP-RM was given; what it writes (GPGet, C, the
+    /// semaphore) goes back the same way. Returns the model and its result.
+    fn gpu_launches(
+        mem: &mut Mem,
+        root: u64,
+        w: &WorkChannel,
+        push: &Mapping,
+        k: &Add64,
+    ) -> (CommandProcessor, GpuResult<u32>) {
+        let mut cp = CommandProcessor::new();
+        cp.register_program(ADD64, gpu_sim::cmdproc::add64_on_cpu);
+        let v = &mem.writer().0;
+        for m in [
+            &w.ring, push, &k.prog, &k.cbuf, &k.a, &k.b, &k.c, &k.qmd, &k.sem,
+        ] {
+            cp.mem.load_from_vram(v, root, m.va, m.size).unwrap();
+        }
+        let userd = w.ring.va + w.userd_offset;
+        let r = cp.run_channel(w.ring.va, w.entries, userd);
+        if r.is_ok() {
+            let v = &mut mem.writer_mut().0;
+            cp.mem
+                .store_to_vram(v, root, userd + USERD_GP_GET, 8)
+                .unwrap();
+            cp.mem.store_to_vram(v, root, k.c.va, k.c.size).unwrap();
+            cp.mem.store_to_vram(v, root, k.sem.va, 8).unwrap();
+        }
+        (cp, r)
+    }
+
+    fn read_c(mem: &mut Mem, k: &Add64) -> Vec<u32> {
+        (0..64)
+            .map(|i| mem.writer_mut().read_u32(k.c.pa + 4 * i).unwrap())
+            .collect()
+    }
+
+    /// SIMULARE end to end: golden image → I9c–I9e → I10a setup → I10b
+    /// launch of the NAK-compiled `add64` and the completion semaphore,
+    /// two GPFIFO entries, read by the model only through the page tables;
+    /// the driver sees the semaphore and the result in VRAM.
+    #[test]
+    fn first_launch_on_the_work_channel() {
+        let (mut d, mut mem, g, u, cg) = grouped();
+        let w = open_work_channel_cleared(&mut d, &mut mem, &u, &cg, &g).unwrap();
+        let root = d.0.page_directory(USER_CLIENT, u.vaspace).unwrap().0;
+        let k = add64_buffers(&mut mem);
+        let push = mem.alloc_mapped(0x1000, 0x1000).unwrap();
+        let mut q = WorkQueue::new(&w, push).unwrap();
+        q.submit(mem.writer_mut(), &setup_words()).unwrap();
+        let bell = q
+            .launch_and_signal(mem.writer_mut(), k.qmd.va, k.sem.va, DONE)
+            .unwrap();
+        assert_eq!(bell.value, w.doorbell_token);
+        assert_eq!(read_semaphore(mem.writer_mut(), k.sem.pa), Ok(0));
+        let (cp, r) = gpu_launches(&mut mem, root, &w, &push, &k);
+        assert_eq!(r, Ok(2));
+        assert_eq!(
+            cp.events,
+            [
+                Event::SetObject {
+                    subch: COMPUTE_SUBCH,
+                    class: class::COMPUTE
+                },
+                Event::Launch {
+                    qmd: k.qmd.va,
+                    program: 0
+                },
+                Event::Release {
+                    addr: k.sem.va,
+                    payload: DONE
+                },
+            ]
+        );
+        assert_eq!(cp.cache_invalidations, 1);
+        // The driver's view, by physical address.
+        assert_eq!(q.update_get(mem.writer_mut()), Ok(2));
+        assert_eq!(read_semaphore(mem.writer_mut(), k.sem.pa), Ok(DONE));
+        assert_eq!(read_c(&mut mem, &k), k.want, "bit cu bit, add_ftz");
+    }
+
+    /// What the driver refuses before writing anything.
+    #[test]
+    fn launch_driver_side_refusals() {
+        let (mut d, mut mem, g, u, cg) = grouped();
+        let w = open_work_channel_cleared(&mut d, &mut mem, &u, &cg, &g).unwrap();
+        let k = add64_buffers(&mut mem);
+        let push = mem.alloc_mapped(0x1000, 0x1000).unwrap();
+        let mut q = WorkQueue::new(&w, push).unwrap();
+        let put_pa = w.ring.pa + w.userd_offset + 0x88;
+        let before = mem.writer().0.read_u64(put_pa).unwrap();
+        for (qmd, sem) in [
+            (k.qmd.va + 0x80, k.sem.va),             // QMD not 256-aligned
+            (LOCAL_MEM_WINDOW, k.sem.va),            // QMD outside our VA
+            (k.qmd.va, k.sem.va + 4),                // semaphore not 8-aligned
+            (k.qmd.va, SHARED_MEM_WINDOW),           // semaphore outside our VA
+            (crate::mmu::VA_BASE - 0x100, k.sem.va), // QMD just below our VA
+        ] {
+            assert!(
+                q.launch_and_signal(mem.writer_mut(), qmd, sem, DONE)
+                    .is_err(),
+                "{qmd:#x} {sem:#x}"
+            );
+        }
+        assert_eq!(mem.writer().0.read_u64(put_pa).unwrap(), before);
+        assert_eq!(q.put(), 0);
+    }
+
+    /// Mistakes planted in the launch words are caught: by the model (it
+    /// reads only what the headers say) or by the driver's checks of the
+    /// semaphore and the result.
+    #[test]
+    fn planted_launch_mistakes_are_caught() {
+        let (mut d, mut mem, g, u, cg) = grouped();
+        let root = d.0.page_directory(USER_CLIENT, u.vaspace).unwrap().0;
+        let k = add64_buffers(&mut mem);
+        let good = {
+            let mut buf = [0u32; 16];
+            let mut pb = PushBuf::new(&mut buf);
+            invalidate_caches(&mut pb).unwrap();
+            launch(&mut pb, k.qmd.va).unwrap();
+            release(&mut pb, k.sem.va, DONE).unwrap();
+            pb.words().to_vec()
+        };
+        // [0..2) invalidate, [2..4) PCAS_A, [4..6) PCAS2_B, [6..12) semaphore.
+        assert_eq!(good.len(), 12);
+        let mut cases: Vec<(&str, Vec<u32>)> = Vec::new();
+        let mut m = good.clone();
+        m[1] |= 1 << 8; // a cache bit the model does not know
+        cases.push(("bit necunoscut la invalidare", m));
+        let mut m = good.clone();
+        m[3] += 1; // QMD address one 256-byte step off
+        cases.push(("adresa QMD", m));
+        let mut m = good.clone();
+        m[5] = 0; // PCAS action NOP: nothing launched
+        cases.push(("actiunea PCAS", m));
+        let mut m = good.clone();
+        m.drain(2..4); // no SEND_PCAS_A
+        cases.push(("fara SEND_PCAS_A", m));
+        let mut m = good.clone();
+        m.swap(9, 10); // payload halves swapped
+        cases.push(("jumatatile valorii", m));
+        let mut m = good.clone();
+        m[11] |= 1 << 25; // timestamp release (16-byte record)
+        cases.push(("timestamp", m));
+        let mut m = good.clone();
+        m[11] &= !(1 << 24); // 32-bit payload: the high half never written
+        cases.push(("semafor pe 32 de biti", m));
+        let mut m = good.clone();
+        m[7] += 4; // semaphore address off by 4
+        cases.push(("adresa semaforului", m));
+        for (i, (what, words)) in cases.into_iter().enumerate() {
+            // A fresh channel and clean output each time.
+            let cg2 = ComputeGroup {
+                next_handle: 0x600 + 0x10 * i as u32,
+                ..cg
+            };
+            let w2 = open_work_channel_cleared(&mut d, &mut mem, &u, &cg2, &g).unwrap();
+            put_bytes(mem.writer_mut(), k.sem.pa, &[0; 16]);
+            put_bytes(mem.writer_mut(), k.c.pa, &[0xff; 256]);
+            let push = mem.alloc_mapped(0x1000, 0x1000).unwrap();
+            let mut q = WorkQueue::new(&w2, push).unwrap();
+            q.submit(mem.writer_mut(), &setup_words()).unwrap();
+            q.submit(mem.writer_mut(), &words).unwrap();
+            let (_, r) = gpu_launches(&mut mem, root, &w2, &push, &k);
+            let caught = r.is_err()
+                || read_semaphore(mem.writer_mut(), k.sem.pa) != Ok(DONE)
+                || read_c(&mut mem, &k) != k.want;
+            assert!(caught, "greseala „{what}” neprinsa");
+        }
+    }
 }
