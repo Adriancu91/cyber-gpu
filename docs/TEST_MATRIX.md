@@ -1,5 +1,12 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 18 (29 oct 2026, cloud, fără placă) — C-39
+| Id | Test | Comandă | Așteptat | Obținut | Clasificare |
+|---|---|---|---|---|---|
+| T30 | Antetele `booter_load`/`booter_unload`/`bootloader` cu forma fișierelor oficiale 570.144 | `cargo test -p nvidia-ga104 fw_hdr hs_load fw_check` | antetele citite; `bin_size` ≠ mărimea fișierului acceptat; 2 semnături de 384 B; Booter-ul se încarcă (`from_booter`, `booter_image`) | conform; greșeli plantate: verificarea veche `bin_size` = mărime (4 teste pică), numărul de semnături citit direct (9 teste pică) | PASS (SIMULARE: valorile de antet ale fișierelor oficiale, restul octeților umplutură) |
+| T31 | OS-ul construit cu cyber-gpu local (`ef97110`) | copie de lucru a OS-ului (repo-ul OS neatins), dependențele `path` | build normal și `test-gpu-sim` | ambele trec | PASS (compilare); rulare în QEMU: NOT TESTED (QEMU lipsește în sesiune) |
+| T32 | `gpu firmware` pe stick-ul real | în OS, la fereastră | `criteriul I4: TRECE (fisiere oficiale 4/4, antete citite 4/4)` | — | NOT TESTED (cere Release OS cu fixarea ≥ `ef97110`) |
+
 ## Rezultate — sesiunea 15 (28 oct 2026, cloud, fără placă) — C-36
 | Id | Test | Comandă | Așteptat | Obținut | Clasificare |
 |---|---|---|---|---|---|

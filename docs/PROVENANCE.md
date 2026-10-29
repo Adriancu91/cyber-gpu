@@ -62,3 +62,11 @@ codul GPL nu se copiază niciodată.
 `fw_check.rs` (C-36) și `gpu-sim/src/fw_stick.rs` sunt scrise de noi; refolosesc citirile formatelor deja notate mai sus (`fw_hdr.rs`, `gsp/elf.rs`, `RM_RISCV_UCODE_DESC` generat). Fișierele din `fw_stick` sunt octeți inventați de noi, nu firmware NVIDIA.
 
 Componente binare externe de care va depinde calea GSP: firmware-urile NVIDIA semnate (`firmware.rs`) și VBIOS-ul plăcii.
+
+**C-39 (29 oct, sesiunea 18):** cuvintele de antet ale fișierelor oficiale `booter_load`, `booter_unload`, `bootloader` 570.144 (linux-firmware
+`050f0a1e3a76`, descărcate temporar în sesiune, SHA-256 = cele oficiale, șterse imediat după citire) au fost citite **doar** ca să aflăm forma
+containerului: antetul exterior (6 cuvinte), antetul „HS v2” (8 cuvinte) și cele 3 cuvinte la care arată, antetul de încărcare (7 cuvinte),
+descriptorul `RM_RISCV_UCODE_DESC` (21 de cuvinte). Nu am citit codul, datele, semnăturile sau `meta_data`. Valorile acestor cuvinte (offset-uri și
+mărimi) sunt în `gpu-sim/src/fw_stick.rs`, în jurul unor octeți de umplutură; nimic din firmware nu e în repo. Regula „pointer” pentru numărul de
+semnături: nouveau `nvkm_falcon_fw_ctor_hs_v2` (MIT, din cunoaștere generală), confirmată de antetele reale.
+
