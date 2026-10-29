@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 17 — 29 octombrie 2026, ~07:10–07:40 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comenzi noi în hub pentru noi: niciuna (C-36 gata; fereastra I3 → I4 așteaptă
+pe Adrian; în hub nu există încă rezultate de la ea). Am făcut următorul pas „fără placă”: I9d. Tot ce scrie „PASS” e pe gazdă: SIMULARE.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Pornire | CI rularea 61 (vârful `695e537`) verde; `tools/check.sh` verde înainte de orice schimbare (256 teste; rustc 1.97.0, ținta `x86_64-unknown-none` instalată); ultimele 3 sesiuni au terminat pași → fără oprire de siguranță | PASS |
+| Antete | generatorul `tools/gen-rm570` (bindgen-cli 0.71.1) produce și `NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS` (20 B), `NV_CTXSHARE_ALLOCATION_PARAMETERS` (12 B), clasele `KEPLER_CHANNEL_GROUP_A` (0xa06c), `FERMI_CONTEXT_SHARE_A` (0x9067), `NV2080_ENGINE_TYPE_GRAPHICS`, `NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_*`; `regs.rs`, `structs.rs`, `sysinfo.rs` au ieșit **identic**, `rmapi.rs` doar cu adăugări | PASS (dimensiuni fixate în `rm_api_layouts_570_144`) |
+| **I9d** grupul de calcul | `nvidia-ga104::gsp::user_space::open_compute_group`: după clientul de lucru (I9c), grupul de canale (TSG) pentru GR0 pe spațiul de adrese cu tabelele noastre, apoi un context share (subcontext `ASYNC`, ca tinygrad); subcontextul se ia **doar** din răspunsul lui GSP-RM și trebuie să fie < 64, iar restul parametrilor trebuie să vină înapoi neschimbați. Spre deosebire de tinygrad, TSG-ul numește explicit spațiul de adrese (altfel RM ar folosi spațiul implicit al dispozitivului, fără tabelele noastre). `rmapi::{channel_group_params, ctxshare_params, parse_ctxshare_reply, subcontext, MAX_SUBCONTEXTS}`; `Rm::alloc_reply` (intern). Regulile citite ca specificație în RM 570.144 (MIT): `kernel_channel_group_api.c`, `kernel_ctxshare.c`, `vaspace.c` | PASS (SIMULARE): 4 teste noi + testul cap-coadă extins (golden image → I9c → I9d prin cozile reale); `gpu-sim::fake_rm` știe acum TSG și context share (poziții scrise de mână; subcontextele `SYNC`/`ASYNC`/`PREFER_LOWER`/`SPECIFIED`); 9 refuzuri RM întorc codul RM; **4 greșeli plantate în codificator + 9 în octeți, toate prinse** |
+| Limită a modelului | `hVASpace = 0` (spațiul implicit al dispozitivului) nu e modelat: modelul îl refuză cu `NOT_SUPPORTED` (alegerea modelului, nu răspunsul RM); driverul nu-l trimite niciodată | notat în `fake_rm` |
+| Compatibilitate OS | `git diff 695e537` pe `gpu-core`, `gpu-pci`, `nvidia-ga104`, `gpu-compute`: nicio linie `pub` ștearsă; doar adăugări (`gsp::user_space::{ComputeGroup, open_compute_group}`, funcții noi în `rmapi`, `class::{CHANNEL_GROUP, CONTEXT_SHARE}`). În `gpu-sim::fake_rm`: `bound_vaspace`, `subcontexts`, `SUBCONTEXTS`, clase și mărimi noi | PASS |
+
+Verificări (`tools/check.sh`): format PASS, clippy `-D warnings` PASS, **260 de teste PASS** (1 ignorat: viteza), build no_std PASS;
+`nvidia-ga104 --features hw-write`: clippy + teste PASS. Nicio scriere în placă.
+
+**Următorul pas:** fereastra C-36 (cu Adrian): pașii 1 → 2 → (3) din `docs/FEREASTRA_C-36.md`. Fără placă: canalul GPFIFO al clientului de
+lucru în grupul de canale (părinte = TSG, cu context share-ul), promovarea contextului GR pentru obiectul compute, jetonul soneriei; treapta 6
+matmul (Mesa NAK pe gazdă).
+
+---
+
 ## Sesiunea 16 — 29 octombrie 2026, ~01:25–01:50 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comenzi noi în hub pentru noi: niciuna (C-36 gata; fereastra I3 → I4 așteaptă

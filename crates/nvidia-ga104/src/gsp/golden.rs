@@ -189,6 +189,17 @@ pub(crate) struct Rm<'a, T: RmTransport + ?Sized> {
 
 impl<T: RmTransport + ?Sized> Rm<'_, T> {
     pub(crate) fn alloc(&mut self, parent: u32, class: u32, params: &[u8]) -> GpuResult<u32> {
+        self.alloc_reply(parent, class, params).map(|(h, _)| h)
+    }
+
+    /// As [`Self::alloc`], also returning the parameters GSP-RM sent back
+    /// (some classes fill in outputs, e.g. the context share's subcontext).
+    pub(crate) fn alloc_reply(
+        &mut self,
+        parent: u32,
+        class: u32,
+        params: &[u8],
+    ) -> GpuResult<(u32, Vec<u8>)> {
         let h = self.next;
         self.next = self
             .next
@@ -196,8 +207,8 @@ impl<T: RmTransport + ?Sized> Rm<'_, T> {
             .ok_or(GpuError::InvalidArgument("RM: handle-urile s-au terminat"))?;
         let sent = rmapi::encode_alloc(self.client, parent, h, class, params);
         let reply = self.t.call(function::GSP_RM_ALLOC, &sent)?;
-        rmapi::check_alloc_reply(&sent, &reply)?;
-        Ok(h)
+        let got = rmapi::check_alloc_reply(&sent, &reply)?;
+        Ok((h, got))
     }
 
     pub(crate) fn control(

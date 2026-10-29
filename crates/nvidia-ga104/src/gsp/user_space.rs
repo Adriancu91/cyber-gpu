@@ -18,8 +18,18 @@
 //! `gvaspaceExternalRootDirCommit`, MIT) is what says why: the call is
 //! accepted only on an externally-owned (or shared-management) VA space, the
 //! entries must cover the VA space's limit, and an externally-owned VA space
-//! can get its root only once. The later channels of this client (channel
-//! group, context share, GPFIFO — the rest of I9) are not written yet.
+//! can get its root only once.
+//!
+//! I9d (also SIMULARE only): the working client's channel group (TSG, class
+//! `KEPLER_CHANNEL_GROUP_A`, engine GR0) and its context share
+//! (`FERMI_CONTEXT_SHARE_A`, a subcontext on the same VA space, `ASYNC` as
+//! tinygrad). Rules read in RM 570.144 `kernel_channel_group_api.c` and
+//! `kernel_ctxshare.c` (MIT): a TSG's parent is a device; with per-runlist
+//! channel RAM (Ampere) the engine must be valid, and without MIG only GR0
+//! among the GR engines; a context share's parent must be a TSG; `ASYNC`
+//! takes a subcontext from the top of the group downwards. The GPFIFO
+//! channel in the group, the GR context promotion for its compute object
+//! and the doorbell token (the rest of I9) are not written yet.
 
 use gpu_core::error::{GpuError, GpuResult};
 
@@ -90,6 +100,51 @@ pub fn open_user_space<T: RmTransport + ?Sized>(
     })
 }
 
+/// The working client's channel group and its context share (I9d).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ComputeGroup {
+    pub channel_group: u32,
+    pub ctxshare: u32,
+    /// The subcontext (VEID) GSP-RM gave the context share.
+    pub subctx_id: u32,
+    /// The first handle still free after the group.
+    pub next_handle: u32,
+}
+
+/// Creates the channel group (TSG) for GR0 on the working client's VA space
+/// and one context share in it. `u` must come from [`open_user_space`] (so
+/// GSP-RM already accepted our page tables for that VA space). Stops at the
+/// first refusal; the subcontext id is taken only from GSP-RM's answer.
+pub fn open_compute_group<T: RmTransport + ?Sized>(
+    t: &mut T,
+    u: &UserSpace,
+) -> GpuResult<ComputeGroup> {
+    rmapi::check_root(u.root)?;
+    let mut rm = Rm {
+        t,
+        client: u.client,
+        next: u.next_handle,
+    };
+    let channel_group = rm.alloc(
+        u.device,
+        class::CHANNEL_GROUP,
+        &rmapi::channel_group_params(u.vaspace)?,
+    )?;
+    let sent = rmapi::ctxshare_params(u.vaspace, rmapi::subcontext::ASYNC)?;
+    let (ctxshare, got) = rm.alloc_reply(channel_group, class::CONTEXT_SHARE, &sent)?;
+    let subctx_id = rmapi::parse_ctxshare_reply(&sent, &got)?;
+    let next_handle = rm.next;
+    if next_handle <= ctxshare {
+        return Err(GpuError::InvalidArgument("RM: handle-urile s-au terminat"));
+    }
+    Ok(ComputeGroup {
+        channel_group,
+        ctxshare,
+        subctx_id,
+        next_handle,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,6 +208,11 @@ mod tests {
             };
             let g = init_golden_image(&mut t, &mut mem).unwrap();
             let u = open_user_space(&mut t, g.next_handle(), mem.root()).unwrap();
+            let cg = open_compute_group(&mut t, &u).unwrap();
+            assert_eq!(
+                (cg.channel_group, cg.ctxshare, cg.subctx_id, cg.next_handle),
+                (0xcf00_000b, 0xcf00_000c, 63, 0xcf00_000d)
+            );
             (g, u)
         };
         assert_eq!(g.next_handle(), 0xcf00_0007);
@@ -168,11 +228,22 @@ mod tests {
             )
         );
         assert_eq!((u.root, u.root_entries), (mem.root(), 4));
-        // The model saw the golden image's 7 allocations, then these 4.
+        // The model saw the golden image's 7 allocations, then these 4 + the group's 2.
         assert_eq!(
             rm.log.allocs[7..],
-            [c::ROOT, c::DEVICE, c::SUBDEVICE, c::VASPACE].map(|x| (x, status::OK))
+            [
+                c::ROOT,
+                c::DEVICE,
+                c::SUBDEVICE,
+                c::VASPACE,
+                c::CHANNEL_GROUP,
+                c::CONTEXT_SHARE
+            ]
+            .map(|x| (x, status::OK))
         );
+        // Both are on the VA space that has our page tables.
+        assert_eq!(rm.bound_vaspace(USER_CLIENT, 0xcf00_000b), Some(u.vaspace));
+        assert_eq!(rm.bound_vaspace(USER_CLIENT, 0xcf00_000c), Some(u.vaspace));
         assert_eq!(rm.log.page_dirs, [(u.vaspace, status::OK)]);
         assert_eq!(
             rm.page_directory(USER_CLIENT, u.vaspace),
@@ -343,6 +414,178 @@ mod tests {
             assert!(
                 fresh().call(function::SET_PAGE_DIRECTORY, &bad).is_err(),
                 "greseala la {off} neprinsa"
+            );
+        }
+    }
+
+    // ---- I9d: channel group + context share (SIMULARE) ----
+
+    #[test]
+    fn compute_group_on_the_working_vaspace() {
+        let (mut d, u) = opened();
+        let cg = open_compute_group(&mut d, &u).unwrap();
+        assert_eq!(
+            (cg.channel_group, cg.ctxshare, cg.subctx_id, cg.next_handle),
+            (0x104, 0x105, 63, 0x106)
+        );
+        assert_eq!(d.0.bound_vaspace(USER_CLIENT, 0x104), Some(u.vaspace));
+        assert_eq!(d.0.bound_vaspace(USER_CLIENT, 0x105), Some(u.vaspace));
+        assert_eq!(d.0.subcontexts(0x104), [63]);
+        // A second group on the same client gets its own subcontext heap.
+        let u2 = UserSpace {
+            next_handle: cg.next_handle,
+            ..u
+        };
+        let cg2 = open_compute_group(&mut d, &u2).unwrap();
+        assert_eq!((cg2.channel_group, cg2.subctx_id), (0x106, 63));
+    }
+
+    /// Refused before anything is sent: no VA space, an unknown mode,
+    /// SPECIFIED (verification only); answers that cannot be trusted.
+    #[test]
+    fn driver_side_refusals() {
+        assert!(rmapi::channel_group_params(0).is_err());
+        assert!(rmapi::ctxshare_params(0, rmapi::subcontext::ASYNC).is_err());
+        assert!(rmapi::ctxshare_params(0x103, rmapi::subcontext::SPECIFIED).is_err());
+        assert!(rmapi::ctxshare_params(0x103, 4).is_err());
+        let sent = rmapi::ctxshare_params(0x103, rmapi::subcontext::ASYNC).unwrap();
+        let mut got = sent.clone();
+        got[8..12].copy_from_slice(&5u32.to_le_bytes());
+        assert_eq!(rmapi::parse_ctxshare_reply(&sent, &got), Ok(5));
+        // The "lower" success bit (31) is not part of the id.
+        got[8..12].copy_from_slice(&(0x8000_0000u32 | 7).to_le_bytes());
+        assert_eq!(rmapi::parse_ctxshare_reply(&sent, &got), Ok(7));
+        for (off, v) in [(8usize, 64u32), (8, 0x7fff_ffff), (4, 0), (0, 0x104)] {
+            let mut bad = sent.clone();
+            bad[off..off + 4].copy_from_slice(&v.to_le_bytes());
+            assert!(
+                rmapi::parse_ctxshare_reply(&sent, &bad).is_err(),
+                "{off}={v:#x}"
+            );
+        }
+        assert!(rmapi::parse_ctxshare_reply(&sent, &sent[..8]).is_err());
+        // A UserSpace with a bad root never reaches GSP-RM.
+        let (mut d, u) = opened();
+        let n = d.0.log.allocs.len();
+        let bad = UserSpace { root: 0x800, ..u };
+        assert!(open_compute_group(&mut d, &bad).is_err());
+        assert_eq!(d.0.log.allocs.len(), n);
+    }
+
+    fn rm_on(d: &mut Direct, next: u32) -> Rm<'_, Direct> {
+        Rm {
+            t: d,
+            client: USER_CLIENT,
+            next,
+        }
+    }
+
+    fn fault(code: u32) -> GpuResult<u32> {
+        Err(GpuError::HardwareFault { code })
+    }
+
+    /// The model's reading of RM's rules for TSG and context share: each
+    /// refusal comes back as RM's status code, never as success.
+    #[test]
+    fn rm_refusals_for_the_group() {
+        let (mut d, u) = opened();
+        let tsg_p = |vas: u32, eng: u32| {
+            let mut b = rmapi::channel_group_params(u.vaspace).unwrap();
+            b[8..12].copy_from_slice(&vas.to_le_bytes());
+            b[12..16].copy_from_slice(&eng.to_le_bytes());
+            b
+        };
+        let mut rm = rm_on(&mut d, 0x200);
+        for (parent, p, code) in [
+            (u.subdevice, tsg_p(u.vaspace, 1), status::INVALID_ARGUMENT), // not a device
+            (u.device, tsg_p(u.vaspace, 0), status::INVALID_ARGUMENT),    // NULL engine
+            (u.device, tsg_p(u.vaspace, 2), status::INVALID_ARGUMENT),    // GR1 without MIG
+            (u.device, tsg_p(u.device, 1), status::INVALID_OBJECT_HANDLE),
+            (u.device, tsg_p(0, 1), status::NOT_SUPPORTED), // device default: not modelled
+        ] {
+            assert_eq!(rm.alloc(parent, class::CHANNEL_GROUP, &p), fault(code));
+        }
+        let mut short = tsg_p(u.vaspace, 1);
+        short.pop();
+        assert_eq!(
+            rm.alloc(u.device, class::CHANNEL_GROUP, &short),
+            fault(status::INVALID_PARAM_STRUCT)
+        );
+        let tsg = rm
+            .alloc(u.device, class::CHANNEL_GROUP, &tsg_p(u.vaspace, 1))
+            .unwrap();
+        let cs = |flags: u32, want: u32| {
+            let mut b = alloc::vec![0u8; 12];
+            b[0..4].copy_from_slice(&u.vaspace.to_le_bytes());
+            b[4..8].copy_from_slice(&flags.to_le_bytes());
+            b[8..12].copy_from_slice(&want.to_le_bytes());
+            b
+        };
+        for (parent, p, code) in [
+            (u.device, cs(1, 0), status::INVALID_OBJECT_HANDLE), // parent not a TSG
+            (tsg, cs(4, 0), status::INVALID_ARGUMENT),           // no such mode
+            (tsg, cs(2, 64), status::INVALID_ARGUMENT),          // SPECIFIED outside
+        ] {
+            assert_eq!(rm.alloc(parent, class::CONTEXT_SHARE, &p), fault(code));
+        }
+        // ASYNC fills 63 down to 1, then 0; the 65th is refused.
+        let mut ids = Vec::new();
+        for _ in 0..64 {
+            let (_, got) = rm
+                .alloc_reply(tsg, class::CONTEXT_SHARE, &cs(1, 0))
+                .unwrap();
+            ids.push(rmapi::parse_ctxshare_reply(&cs(1, 0), &got).unwrap());
+        }
+        assert_eq!(ids[..2], [63, 62]);
+        assert_eq!(ids[62..], [1, 0]);
+        assert_eq!(
+            rm.alloc(tsg, class::CONTEXT_SHARE, &cs(1, 0)),
+            fault(status::INSUFFICIENT_RESOURCES)
+        );
+        // SYNC (0) and SPECIFIED on a taken id: no resources.
+        assert_eq!(
+            rm.alloc(tsg, class::CONTEXT_SHARE, &cs(0, 0)),
+            fault(status::INSUFFICIENT_RESOURCES)
+        );
+        assert_eq!(
+            rm.alloc(tsg, class::CONTEXT_SHARE, &cs(2, 5)),
+            fault(status::INSUFFICIENT_RESOURCES)
+        );
+    }
+
+    /// Planted mistakes in the bytes our encoders write are caught by the
+    /// model (its own hand-written offsets).
+    #[test]
+    fn planted_group_mistakes_are_caught() {
+        let (_, u) = opened();
+        let good = rmapi::channel_group_params(u.vaspace).unwrap();
+        for (off, v) in [(12usize, 2u32), (12, 0), (8, u.device), (8, 0), (0, 0)] {
+            let mut bad = good.clone();
+            bad[off..off + 4].copy_from_slice(&v.to_le_bytes());
+            let (mut d, _) = opened();
+            let r = rm_on(&mut d, 0x200).alloc(u.device, class::CHANNEL_GROUP, &bad);
+            // (0, 0) leaves the params unchanged: it must still pass.
+            assert_eq!(r.is_ok(), off == 0, "greseala TSG la {off} = {v:#x}");
+        }
+        let good = rmapi::ctxshare_params(u.vaspace, rmapi::subcontext::ASYNC).unwrap();
+        for (off, v) in [(0usize, u.device), (0, 0), (4, 9), (4, 2)] {
+            let mut bad = good.clone();
+            bad[off..off + 4].copy_from_slice(&v.to_le_bytes());
+            let (mut d, _) = opened();
+            let mut rm = rm_on(&mut d, 0x200);
+            let tsg = rm
+                .alloc(
+                    u.device,
+                    class::CHANNEL_GROUP,
+                    &rmapi::channel_group_params(u.vaspace).unwrap(),
+                )
+                .unwrap();
+            let r = rm.alloc(tsg, class::CONTEXT_SHARE, &bad);
+            // (4, 2) = SPECIFIED with id 0: RM accepts it; our encoder never sends it.
+            assert_eq!(
+                r.is_ok(),
+                (off, v) == (4, 2),
+                "greseala ctxshare la {off} = {v:#x}"
             );
         }
     }

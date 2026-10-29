@@ -38,6 +38,9 @@ pub mod class {
     pub const CHANNEL_GPFIFO: u32 = r::AMPERE_CHANNEL_GPFIFO_A;
     pub const COMPUTE: u32 = r::AMPERE_COMPUTE_B;
     pub const DMA_COPY: u32 = r::AMPERE_DMA_COPY_B;
+    /// I9d: channel group (TSG) and context share (subcontext).
+    pub const CHANNEL_GROUP: u32 = r::KEPLER_CHANNEL_GROUP_A;
+    pub const CONTEXT_SHARE: u32 = r::FERMI_CONTEXT_SHARE_A;
 }
 
 /// Control commands (generated).
@@ -454,6 +457,85 @@ pub fn set_page_directory_rpc(
     put_u32(&mut b, p + offset_of!(P, subDeviceId), 1);
     put_u32(&mut b, p + offset_of!(P, pasid), NO_PASID);
     Ok(b)
+}
+
+/// I9d: `NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS` for the working client's
+/// channel group (TSG): the graphics engine (GR0, the only one without MIG,
+/// RM 570.144 `kernel_channel_group_api.c`), and — unlike tinygrad, which
+/// leaves it 0 — the VA space named explicitly, so RM does not fall back to
+/// a device default VA space that does not use our page tables.
+/// No error notifiers (as tinygrad).
+pub fn channel_group_params(vaspace: u32) -> GpuResult<Vec<u8>> {
+    type P = r::NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS;
+    if vaspace == 0 {
+        return Err(GpuError::InvalidArgument(
+            "grupul de canale: fara spatiu de adrese",
+        ));
+    }
+    let mut b = alloc::vec![0u8; size_of::<P>()];
+    put_u32(&mut b, offset_of!(P, hVASpace), vaspace);
+    put_u32(
+        &mut b,
+        offset_of!(P, engineType),
+        r::NV2080_ENGINE_TYPE_GRAPHICS,
+    );
+    Ok(b)
+}
+
+/// `NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_*` (generated).
+pub mod subcontext {
+    use super::r;
+    pub const SYNC: u32 = r::NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_SYNC;
+    pub const ASYNC: u32 = r::NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_ASYNC;
+    pub const SPECIFIED: u32 = r::NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_SPECIFIED;
+    pub const ASYNC_PREFER_LOWER: u32 =
+        r::NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_ASYNC_PREFER_LOWER;
+}
+
+/// Subcontexts (VEIDs) per channel group we accept from GSP-RM: 64 on
+/// Volta and later. DEDUS (RM queries it: `MAX_SUBCONTEXT_PER_GROUP`).
+pub const MAX_SUBCONTEXTS: u32 = 64;
+
+/// `NV_CTXSHARE_ALLOCATION_PARAMETERS`: the context share's VA space and
+/// how its subcontext is chosen (tinygrad: the working VA space, `ASYNC`).
+pub fn ctxshare_params(vaspace: u32, flags: u32) -> GpuResult<Vec<u8>> {
+    type P = r::NV_CTXSHARE_ALLOCATION_PARAMETERS;
+    if vaspace == 0 || flags > subcontext::ASYNC_PREFER_LOWER || flags == subcontext::SPECIFIED {
+        // SPECIFIED is for NVIDIA's verification only (nvos.h).
+        return Err(GpuError::InvalidArgument(
+            "context share: spatiu de adrese lipsa sau mod necunoscut",
+        ));
+    }
+    let mut b = alloc::vec![0u8; size_of::<P>()];
+    put_u32(&mut b, offset_of!(P, hVASpace), vaspace);
+    put_u32(&mut b, offset_of!(P, flags), flags);
+    Ok(b)
+}
+
+/// The subcontext id GSP-RM chose (`subctxId` in the returned parameters,
+/// bits 30:0). The other fields must come back as sent; an id outside the
+/// group is an error, never used.
+pub fn parse_ctxshare_reply(sent: &[u8], got: &[u8]) -> GpuResult<u32> {
+    type P = r::NV_CTXSHARE_ALLOCATION_PARAMETERS;
+    if got.len() != size_of::<P>() || sent.len() != got.len() {
+        return Err(GpuError::InvalidArgument(
+            "context share: raspuns de alta lungime",
+        ));
+    }
+    for o in [offset_of!(P, hVASpace), offset_of!(P, flags)] {
+        if get_u32(got, o) != get_u32(sent, o) {
+            return Err(GpuError::InvalidArgument(
+                "context share: raspunsul are alti parametri",
+            ));
+        }
+    }
+    let id = get_u32(got, offset_of!(P, subctxId)) & 0x7fff_ffff;
+    if id >= MAX_SUBCONTEXTS {
+        return Err(GpuError::InvalidArgument(
+            "context share: subcontext in afara grupului",
+        ));
+    }
+    Ok(id)
 }
 
 /// `NV2080_CTRL_INTERNAL_STATIC_KGR_GET_CONTEXT_BUFFERS_INFO_PARAMS` request.

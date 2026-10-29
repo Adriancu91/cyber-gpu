@@ -411,5 +411,19 @@ mod rmapi_tests {
         );
         assert_eq!(NV0080_CTRL_CMD_DMA_SET_PAGE_DIRECTORY, 0x80_1813);
         assert_eq!(NV_DEVICE_ALLOCATION_VAMODE_OPTIONAL_MULTIPLE_VASPACES, 0);
+        // I9d: channel group (TSG) and context share.
+        assert_eq!(size_of::<NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS>(), 20);
+        assert_eq!(
+            offset_of!(NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS, engineType),
+            12
+        );
+        assert_eq!(size_of::<NV_CTXSHARE_ALLOCATION_PARAMETERS>(), 12);
+        assert_eq!(offset_of!(NV_CTXSHARE_ALLOCATION_PARAMETERS, subctxId), 8);
+        assert_eq!(
+            (KEPLER_CHANNEL_GROUP_A, FERMI_CONTEXT_SHARE_A),
+            (0xa06c, 0x9067)
+        );
+        assert_eq!(NV2080_ENGINE_TYPE_GRAPHICS, NV2080_ENGINE_TYPE_GR0);
+        assert_eq!(NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_ASYNC, 1);
     }
 }

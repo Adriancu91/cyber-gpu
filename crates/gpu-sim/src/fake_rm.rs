@@ -18,6 +18,18 @@
 //! only after its GR context buffers were promoted. Real GSP-RM checks far
 //! more (and some of these differently). Sizes it reports for the GR context
 //! buffers are **SIM** values, not the board's.
+//!
+//! I9d adds the channel group (TSG, `cla06c.h`) and the context share
+//! (`cl9067.h`), with our reading of RM 570.144 `kernel_channel_group_api.c`,
+//! `kernel_ctxshare.c` and `vaspace.c` (MIT): TSG under a device, engine GR0
+//! (an invalid engine or another GR engine = `INVALID_ARGUMENT`), a named VA
+//! space must be one of the client's (`INVALID_OBJECT_HANDLE`); a context
+//! share's parent must be a TSG (`INVALID_OBJECT_HANDLE`); subcontexts:
+//! `SYNC` = 0, `ASYNC` = highest free of 1..63 (then 0), `ASYNC_PREFER_LOWER`
+//! = lowest free of 1..63, `SPECIFIED` = the one asked for; none free =
+//! `INSUFFICIENT_RESOURCES`. **Not modelled** (refused with `NOT_SUPPORTED`,
+//! a choice of this model, not RM's answer): `hVASpace = 0`, where RM would
+//! fall back to the device's default VA space.
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -31,6 +43,7 @@ pub const FN_GSP_RM_ALLOC: u32 = 103;
 pub mod status {
     pub const OK: u32 = 0x00;
     pub const INSERT_DUPLICATE_NAME: u32 = 0x19;
+    pub const INSUFFICIENT_RESOURCES: u32 = 0x1a;
     pub const INVALID_ARGUMENT: u32 = 0x1f;
     pub const INVALID_CLASS: u32 = 0x22;
     pub const INVALID_CLIENT: u32 = 0x23;
@@ -52,7 +65,12 @@ pub mod class {
     pub const CHANNEL_GPFIFO: u32 = 0xc56f;
     pub const COMPUTE: u32 = 0xc7c0;
     pub const DMA_COPY: u32 = 0xc7b5;
+    pub const CHANNEL_GROUP: u32 = 0xa06c;
+    pub const CONTEXT_SHARE: u32 = 0x9067;
 }
+
+/// Subcontexts (VEIDs) in one channel group in this model (Volta+: 64).
+pub const SUBCONTEXTS: u32 = 64;
 
 /// Control commands (the `finn`-evaluated values in the ctrl headers).
 pub mod cmd {
@@ -75,6 +93,10 @@ pub mod size {
     pub const RESERVED_PDES: usize = 184;
     /// `rpc_set_page_directory_v1E_05` (the whole RPC payload).
     pub const SET_PAGE_DIRECTORY: usize = 48;
+    /// `NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS`: 4 handles/u32 + NvBool, padded.
+    pub const CHANNEL_GROUP: usize = 20;
+    /// `NV_CTXSHARE_ALLOCATION_PARAMETERS`: hVASpace, flags, subctxId.
+    pub const CONTEXT_SHARE: usize = 12;
 }
 
 /// GR context buffers (`NV0080_CTRL_FIFO_GET_ENGINE_CONTEXT_PROPERTIES_ENGINE_ID_*`):
@@ -109,6 +131,7 @@ struct Obj {
     class: u32,
     parent: u32,
     /// VA spaces: `NV_VASPACE_ALLOCATION_PARAMETERS.flags` and the last VA.
+    /// Channel groups and context shares: the VA space handle they use.
     va_flags: u32,
     va_limit: u64,
 }
@@ -144,6 +167,8 @@ pub struct FakeRm {
     page_dirs: BTreeMap<(u32, u32), (u64, u32)>,
     /// channel handle → promoted buffer ids
     promoted: BTreeMap<u32, Vec<u16>>,
+    /// channel group handle → subcontext ids in use
+    subctx: BTreeMap<u32, Vec<u32>>,
     reserved_pdes_copied: bool,
     pub log: RmLog,
 }
@@ -172,6 +197,22 @@ impl FakeRm {
             FN_SET_PAGE_DIRECTORY => Some(self.set_page_directory(payload)),
             _ => None,
         }
+    }
+
+    /// The VA space a channel group or context share was created on
+    /// (`None` for other objects).
+    pub fn bound_vaspace(&self, client: u32, h: u32) -> Option<u32> {
+        self.objects
+            .get(&h)
+            .filter(|o| {
+                o.client == client && matches!(o.class, class::CHANNEL_GROUP | class::CONTEXT_SHARE)
+            })
+            .map(|o| o.va_flags)
+    }
+
+    /// The subcontext ids in use in a channel group.
+    pub fn subcontexts(&self, tsg: u32) -> Vec<u32> {
+        self.subctx.get(&tsg).cloned().unwrap_or_default()
     }
 
     /// The root table a VA space was given, if SET_PAGE_DIRECTORY was accepted.
@@ -210,6 +251,13 @@ impl FakeRm {
         } else {
             self.check_alloc(client, parent, object, class, &p[32..])
         };
+        if st == status::OK && class == class::CONTEXT_SHARE {
+            // NV_CTXSHARE_ALLOCATION_PARAMETERS: hVASpace 0, flags 4, subctxId 8.
+            if let Ok(id) = self.pick_subctx(parent, rd32(p, 32 + 4), rd32(p, 32 + 8)) {
+                self.subctx.entry(parent).or_default().push(id);
+                wr32(&mut reply, 32 + 8, id);
+            }
+        }
         if st == status::OK {
             if class == class::ROOT {
                 self.clients.push(client);
@@ -224,6 +272,10 @@ impl FakeRm {
                         base.saturating_add(size - 1)
                     };
                     (flags, limit)
+                } else if class == class::CHANNEL_GROUP {
+                    (rd32(p, 32 + 8), 0) // hVASpace
+                } else if class == class::CONTEXT_SHARE {
+                    (rd32(p, 32), 0) // hVASpace
                 } else {
                     (0, 0)
                 };
@@ -270,10 +322,18 @@ impl FakeRm {
             class::VASPACE => (class::DEVICE, size::VASPACE),
             class::CHANNEL_GPFIFO => (class::DEVICE, size::CHANNEL),
             class::COMPUTE | class::DMA_COPY => (class::CHANNEL_GPFIFO, 0),
+            class::CHANNEL_GROUP => (class::DEVICE, size::CHANNEL_GROUP),
+            class::CONTEXT_SHARE => (class::CHANNEL_GROUP, size::CONTEXT_SHARE),
             _ => return status::INVALID_CLASS,
         };
         if parent_class != Some(want_parent) {
-            return status::INVALID_OBJECT_PARENT;
+            // kctxshareapiConstruct: "a TSG must exist" -> INVALID_OBJECT_HANDLE;
+            // kchangrpapiConstruct: "Invalid parent/device handle" -> INVALID_ARGUMENT.
+            return match class {
+                class::CONTEXT_SHARE => status::INVALID_OBJECT_HANDLE,
+                class::CHANNEL_GROUP => status::INVALID_ARGUMENT,
+                _ => status::INVALID_OBJECT_PARENT,
+            };
         }
         if params.len() != want_size {
             return status::INVALID_PARAM_STRUCT;
@@ -282,6 +342,26 @@ impl FakeRm {
             // NV0080_ALLOC_PARAMETERS.hClientShare (offset 4) must name our client.
             class::DEVICE if rd32(params, 4) != client => status::INVALID_ARGUMENT,
             class::CHANNEL_GPFIFO => self.check_channel(client, params),
+            // NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS: hObjectError 0,
+            // hObjectEccError 4, hVASpace 8, engineType 12, bIsCalling... 16.
+            class::CHANNEL_GROUP => {
+                // NV2080_ENGINE_TYPE_GR0 = 1; NULL (0) and GR1..GR7 refused.
+                if rd32(params, 12) != 1 {
+                    return status::INVALID_ARGUMENT;
+                }
+                self.check_named_vaspace(client, parent, rd32(params, 8))
+            }
+            class::CONTEXT_SHARE => {
+                let dev = self.objects.get(&parent).map(|o| o.parent).unwrap_or(0);
+                let st = self.check_named_vaspace(client, dev, rd32(params, 0));
+                if st != status::OK {
+                    return st;
+                }
+                match self.pick_subctx(parent, rd32(params, 4), rd32(params, 8)) {
+                    Ok(_) => status::OK,
+                    Err(e) => e,
+                }
+            }
             class::COMPUTE => {
                 let got = self.promoted.get(&parent).cloned().unwrap_or_default();
                 if REQUIRED_PROMOTED.iter().all(|b| got.contains(b)) {
@@ -292,6 +372,35 @@ impl FakeRm {
             }
             _ => status::OK,
         }
+    }
+
+    /// A VA space named in an allocation: one of the client's, under the
+    /// same device. 0 (the device default) is not modelled.
+    fn check_named_vaspace(&self, client: u32, device: u32, vas: u32) -> u32 {
+        if vas == 0 {
+            return status::NOT_SUPPORTED;
+        }
+        match self.objects.get(&vas) {
+            Some(o) if o.client == client && o.class == class::VASPACE && o.parent == device => {
+                status::OK
+            }
+            _ => status::INVALID_OBJECT_HANDLE,
+        }
+    }
+
+    /// The subcontext a context share in `tsg` would get (`kctxshareInit`).
+    fn pick_subctx(&self, tsg: u32, flags: u32, want: u32) -> Result<u32, u32> {
+        let used = self.subctx.get(&tsg).map(Vec::as_slice).unwrap_or(&[]);
+        let free = |i: &u32| !used.contains(i);
+        let got = match flags {
+            0 => Some(0).filter(free),
+            1 => (1..SUBCONTEXTS).rev().find(free).or(Some(0).filter(free)),
+            3 => (1..SUBCONTEXTS).find(free),
+            2 if want < SUBCONTEXTS => Some(want).filter(free),
+            2 => return Err(status::INVALID_ARGUMENT),
+            _ => return Err(status::INVALID_ARGUMENT),
+        };
+        got.ok_or(status::INSUFFICIENT_RESOURCES)
     }
 
     // NV_CHANNEL_ALLOC_PARAMS: gpFifoOffset 8, gpFifoEntries 16, flags 20,
