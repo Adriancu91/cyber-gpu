@@ -322,8 +322,13 @@ mod tests {
         assert_eq!(src.reads, 5, "4 fisiere + licenta, fiecare o data");
         let text = r.lines().join("\n");
         assert!(text.contains("criteriul I4: TRECE (fisiere oficiale 4/4, antete citite 4/4)"));
-        assert!(text.contains("HS v2: 3 semnaturi de 384 octeti, 1 aplicatii"));
-        assert!(text.contains("HS v2: 2 semnaturi"));
+        // Both Booter stand-ins have the header shape of the official files
+        // (C-39): 2 signatures of 384 bytes, one application.
+        assert_eq!(
+            text.matches("HS v2: 2 semnaturi de 384 octeti, 1 aplicatii")
+                .count(),
+            2
+        );
         assert!(text.contains(".fwimage = 8192 octeti, .fwsignature_ga10x = 384 octeti"));
         assert!(text.contains("0 accese la placa"));
         assert!(r.lines().len() < 20);
@@ -354,7 +359,7 @@ mod tests {
             [
                 FileVerdict::Missing,
                 FileVerdict::WrongDigest,
-                FileVerdict::WrongSize { got: 0x1fff },
+                FileVerdict::WrongSize { got: 24_683 },
                 FileVerdict::Official
             ]
         );
@@ -370,7 +375,7 @@ mod tests {
         let text = r.lines().join("\n");
         assert!(text.contains("LIPSESTE"));
         assert!(text.contains("ALT CONTINUT"));
-        assert!(text.contains("ALT FISIER: 8191 octeti, asteptat 8192"));
+        assert!(text.contains("ALT FISIER: 24683 octeti, asteptat 24684"));
         assert!(text.contains("criteriul I4: NU TRECE (fisiere oficiale 1/4, antete citite 1/4)"));
     }
 

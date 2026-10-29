@@ -693,8 +693,8 @@ mod tests {
             put(&mut f, 4 * i, *v);
         }
         let h = 0x40;
-        // sig_off, sig_size, loc_ptr, sig_ptr, meta_off, meta_size, num_sig, lh_off
-        for (i, v) in [0x200, 3 * 384, 0x100, 0x104, 0x110, 12, 3, 0x120]
+        // sig_off, sig_size, loc_ptr, sig_ptr, meta_off, meta_size, num_sig_ptr, lh_off
+        for (i, v) in [0x200, 3 * 384, 0x100, 0x104, 0x110, 12, 0x108, 0x120]
             .iter()
             .enumerate()
         {
@@ -702,6 +702,7 @@ mod tests {
         }
         put(&mut f, 0x100, 0x500); // patch_loc
         put(&mut f, 0x104, 0); // patch_sig
+        put(&mut f, 0x108, 3); // num_sig (word 6 of the HS header points here)
         put(&mut f, 0x110, 0); // fuse_ver
         put(&mut f, 0x114, 0x4); // engine_id
         put(&mut f, 0x118, 2); // ucode_id
@@ -1134,5 +1135,28 @@ mod tests {
             ..HsV2::parse(&f).unwrap()
         };
         assert!(booter_image(&h, &f, 0).is_err());
+    }
+
+    #[test]
+    fn booter_with_the_shape_of_the_official_570_144_files_loads() {
+        // C-39: header words as in the official files; meta and every byte
+        // outside the headers are SIMULARE filler (gpu-sim::fw_stick).
+        use gpu_sim::fw_stick::booter_570_144;
+        for (load, imem, dmem) in [
+            (true, 0x8900, (0x8a00, 0x6200)),
+            (false, 0x4f00, (0x5000, 0x4d00)),
+        ] {
+            let f = booter_570_144(load);
+            let h = HsV2::parse(&f).unwrap();
+            let u = HsUcode::from_booter(&h, &f).unwrap();
+            assert_eq!((u.code_offset, u.imem_size), (0x100, imem));
+            assert_eq!((u.data_offset, u.dmem_size), dmem);
+            assert_eq!(u.sig_dmem_addr, 0x10);
+            // fuse 0 -> the last of the 2 signatures, copied at patch_loc.
+            let img = booter_image(&h, &f, 0).unwrap();
+            let at = h.patch_loc as usize;
+            assert_eq!(&img[at..at + 384], &f[0x3c + 384..0x3c + 768]);
+            assert!(img.len().is_multiple_of(256) && img.len() >= h.hdr.data_size as usize);
+        }
     }
 }

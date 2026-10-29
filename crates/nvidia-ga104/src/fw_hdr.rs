@@ -2,7 +2,11 @@
 //! `bootloader-570.144.bin` and `booter_load-570.144.bin` — *where* the
 //! pieces are, the way any loader reads them. The pieces themselves (code,
 //! data, signatures) stay opaque bytes: nothing here looks inside them.
-//! **Tested only on synthetic images (SIMULARE)**; never run on the real files.
+//! **Tested only on synthetic images (SIMULARE)**. C-39 (29 oct): on the
+//! real files the first version refused 3 of 4 (`bin_size` taken for the
+//! file length, the signature count read as a value instead of through its
+//! pointer); the header words of the official files were then read and the
+//! stand-ins `gpu-sim::fw_stick::*_570_144` reproduce them exactly.
 //!
 //! Sources (read as specification, re-written, docs/PROVENANCE.md):
 //! - `RM_RISCV_UCODE_DESC` (84 B): NVIDIA `rmRiscvUcode.h`, 570.144, MIT —
@@ -10,7 +14,8 @@
 //! - the outer header and the "HS v2" headers of Booter: nouveau
 //!   `include/nvfw/fw.h` and `include/nvfw/hs.h` (MIT; `nvfw_bin_hdr`,
 //!   `nvfw_hs_header_v2`, `nvfw_hs_load_header_v2`). Not NVIDIA documents:
-//!   DEDUS until the file on the stick is read at the workstation window;
+//!   DEDUS, then checked against the header words of the official 570.144
+//!   files (C-39);
 //! - which descriptor fields feed `GspFwWprMeta`: nouveau `r535.c`.
 
 use alloc::vec::Vec;
@@ -76,9 +81,15 @@ impl BinHdr {
             data_offset: u32_at(f, 16)?,
             data_size: u32_at(f, 20)?,
         };
-        if h.bin_size as usize != f.len() {
+        // `bin_size` is NOT the file length: on the real 570.144 files
+        // (C-39, workstation 29 oct) it is larger than the file
+        // (booter_load: 0xf000 for 61 304 B). Loaders (nouveau, nova-core)
+        // never use it; neither do we. It is kept only for the report.
+        // What must hold: the outer header and the data blob are inside
+        // the file, and the blob starts after the outer header.
+        if (h.data_offset as usize) < BIN_HDR_SIZE || (h.header_offset as usize) < BIN_HDR_SIZE {
             return Err(GpuError::InvalidArgument(
-                "firmware: bin_size diferit de marimea fisierului",
+                "firmware: antetul interior sau datele suprapuse peste antetul exterior",
             ));
         }
         range(f, h.data_offset, h.data_size)?;
@@ -186,7 +197,11 @@ impl HsV2 {
         let h = hdr.header_offset as usize;
         let w = |i: usize| u32_at(f, h + 4 * i);
         let (sig_off, sig_size, loc_ptr, sig_ptr) = (w(0)?, w(1)?, w(2)?, w(3)?);
-        let (meta_off, meta_size, num_sig, lh_off) = (w(4)?, w(5)?, w(6)?, w(7)?);
+        // Word 6 is a *pointer* to the signature count, like patch_loc and
+        // patch_sig (nouveau `nvkm_falcon_fw_ctor_hs_v2`; confirmed on the
+        // real 570.144 headers, C-39), not the count itself.
+        let (meta_off, meta_size, num_sig_ptr, lh_off) = (w(4)?, w(5)?, w(6)?, w(7)?);
+        let num_sig = u32_at(f, num_sig_ptr as usize)?;
         if num_sig == 0 || sig_size == 0 || !sig_size.is_multiple_of(num_sig) {
             return Err(GpuError::InvalidArgument(
                 "booter: numar sau marime de semnaturi imposibile",
@@ -305,7 +320,10 @@ mod tests {
         f[0] = 0; // magic
         assert!(BinHdr::parse(&f).is_err());
         let mut f = bootloader();
-        f.push(0); // size differs from bin_size
+        f.truncate(0x1fff); // data blob cut short
+        assert!(BinHdr::parse(&f).is_err());
+        let mut f = bootloader();
+        put(&mut f, 16, 0x10); // data blob over the outer header
         assert!(BinHdr::parse(&f).is_err());
         let mut f = bootloader();
         put(&mut f, 0x100 + 52, 0x1001); // monitorCodeSize past the blob
@@ -319,6 +337,48 @@ mod tests {
         assert!(RiscvBootloader::parse(&f[..10]).is_err());
     }
 
+    #[test]
+    fn files_with_the_shape_of_the_official_570_144_ones_are_read() {
+        // C-39: the three files our first parser refused on the workstation.
+        use gpu_sim::fw_stick::{booter_570_144, bootloader_570_144};
+        let f = bootloader_570_144();
+        let b = RiscvBootloader::parse(&f).unwrap();
+        assert_eq!(b.hdr.bin_size, 0x6100);
+        assert_ne!(b.hdr.bin_size as usize, f.len());
+        assert_eq!(b.hdr.data(), 0x6c..24_684);
+        assert_eq!(b.version, 5);
+        assert_eq!(
+            (
+                b.code_offset,
+                b.data_offset,
+                b.manifest_offset,
+                b.manifest_size
+            ),
+            (0x1800, 0x800, 0, 0x800)
+        );
+        for (load, len, data, loc, app) in [
+            (true, 61_304, 0xec00, 0x8a10, (0x100, 0x8900)),
+            (false, 41_080, 0x9d00, 0x5010, (0x100, 0x4f00)),
+        ] {
+            let f = booter_570_144(load);
+            assert_eq!(f.len(), len);
+            let h = HsV2::parse(&f).unwrap();
+            assert_eq!(h.hdr.data(), 0x378..len);
+            assert_eq!(h.hdr.data_size, data);
+            assert_eq!((h.num_sig, h.sig_size()), (2, 384));
+            assert_eq!(h.sig_prod, 0x3c..0x33c);
+            assert_eq!((h.patch_loc, h.patch_sig), (loc, 0));
+            assert_eq!(h.meta_data, 0x344..0x350);
+            assert_eq!(
+                h.apps,
+                [HsApp {
+                    offset: app.0,
+                    size: app.1
+                }]
+            );
+        }
+    }
+
     /// SIMULARE: a synthetic Booter file with 3 signatures of 384 bytes.
     fn booter() -> Vec<u8> {
         let mut f = alloc::vec![0u8; 0x3000];
@@ -329,7 +389,7 @@ mod tests {
             put(&mut f, 4 * i, *v);
         }
         // hs header v2 at 0x40
-        for (i, v) in [0x400, 3 * 384, 0x200, 0x204, 0x900, 0x40, 3, 0x100, 0x30]
+        for (i, v) in [0x400, 3 * 384, 0x200, 0x204, 0x900, 0x40, 0x208, 0x100]
             .iter()
             .enumerate()
         {
@@ -337,6 +397,7 @@ mod tests {
         }
         put(&mut f, 0x200, 0x800); // patch location inside the image
         put(&mut f, 0x204, 2); // signature index
+        put(&mut f, 0x208, 3); // signature count (word 6 points here)
         // load header v2 at 0x100: os code, os data, 1 app
         for (i, v) in [0, 0x600, 0x600, 0x200, 1, 0x800, 0x400].iter().enumerate() {
             put(&mut f, 0x100 + 4 * i, *v);
@@ -372,7 +433,10 @@ mod tests {
         put(&mut f, 0x200, 0xf00); // signature would not fit in the image
         assert!(HsV2::parse(&f).is_err());
         let mut f = booter();
-        put(&mut f, 0x40 + 24, 0); // num_sig 0
+        put(&mut f, 0x208, 0); // num_sig 0
+        assert!(HsV2::parse(&f).is_err());
+        let mut f = booter();
+        put(&mut f, 0x40 + 24, 0xffff_fff0); // num_sig pointer outside the file
         assert!(HsV2::parse(&f).is_err());
         let mut f = booter();
         put(&mut f, 0x100 + 16, 1000); // num_apps absurd

@@ -5,8 +5,12 @@
 //! the way our reading of the public container formats says the real files
 //! are laid out (outer `0x10de` header, `RM_RISCV_UCODE_DESC`, "HS v2"
 //! headers, an ELF-64 with `.fwimage` and `.fwsignature_ga10x`). That reading
-//! is DEDUS (docs/COMPATIBILITATE_FIRMWARE.md rows I4b/I4c) until the real
-//! files are checked on the stick at the workstation window.
+//! was DEDUS until C-39: on 29 oct the four official files were on the
+//! stick (SHA-256 = official) and our parser refused three of them. The
+//! container headers of the official files were then read (only the
+//! header words: offsets, sizes, counts — no code, data or signatures,
+//! docs/PROVENANCE.md) and the `*_570_144` stand-ins below reproduce those
+//! header values exactly, around filler bytes.
 //!
 //! Written independently of the parsers in `nvidia-ga104` (`fw_hdr`,
 //! `gsp::elf`), so a test that passes is two readings agreeing, not one
@@ -43,9 +47,15 @@ fn put64(f: &mut [u8], o: usize, v: u64) {
 }
 
 /// Outer header: magic, version, size, header offset, data offset, data size.
+/// `bin_size` is not the file length on the real files (C-39); the small
+/// stand-ins write `len + 0x100` so no parser can lean on it.
 fn outer(f: &mut [u8], hdr_off: u32, data_off: u32, data_size: u32) {
-    let len = f.len() as u32;
-    for (i, v) in [MAGIC, 1, len, hdr_off, data_off, data_size]
+    let bin_size = f.len() as u32 + 0x100;
+    outer_with(f, bin_size, hdr_off, data_off, data_size);
+}
+
+fn outer_with(f: &mut [u8], bin_size: u32, hdr_off: u32, data_off: u32, data_size: u32) {
+    for (i, v) in [MAGIC, 1, bin_size, hdr_off, data_off, data_size]
         .iter()
         .enumerate()
     {
@@ -79,7 +89,7 @@ pub fn booter(num_sig: u32, fill: u8) -> Vec<u8> {
     let mut f = vec![fill; 0x3000];
     outer(&mut f, 0x40, 0x2000, 0x1000);
     // HS header v2 at 0x40: sig offset/size, patch_loc ptr, patch_sig ptr,
-    // meta offset/size, num_sig, load header offset, header size.
+    // meta offset/size, num_sig ptr, load header offset.
     for (i, v) in [
         0x400,
         num_sig * 384,
@@ -87,9 +97,8 @@ pub fn booter(num_sig: u32, fill: u8) -> Vec<u8> {
         0x204,
         0x900,
         0x40,
-        num_sig,
+        0x208,
         0x100,
-        0x30,
     ]
     .iter()
     .enumerate()
@@ -98,9 +107,78 @@ pub fn booter(num_sig: u32, fill: u8) -> Vec<u8> {
     }
     put(&mut f, 0x200, 0x800); // where the signature goes in the image
     put(&mut f, 0x204, 0); // which signature
+    put(&mut f, 0x208, num_sig); // how many signatures
     // Load header v2 at 0x100: os code, os data, 1 app.
     for (i, v) in [0, 0x600, 0x600, 0x200, 1, 0x800, 0x400].iter().enumerate() {
         put(&mut f, 0x100 + 4 * i, *v);
+    }
+    f
+}
+
+/// The header words of `booter_load-570.144.bin` / `booter_unload-570.144.bin`
+/// as read from the official files (C-39): (file length, outer header,
+/// patch_loc, load header). Shared by both: the HS v2 header, 2 signatures
+/// of 384 B, patch_sig 0, one application.
+const BOOTER_LOAD: (usize, [u32; 6], u32, [u32; 7]) = (
+    61_304,
+    [MAGIC, 1, 0xf000, 0x18, 0x378, 0xec00],
+    0x8a10,
+    [0, 0x100, 0x8a00, 0x6200, 1, 0x100, 0x8900],
+);
+const BOOTER_UNLOAD: (usize, [u32; 6], u32, [u32; 7]) = (
+    41_080,
+    [MAGIC, 1, 0xa100, 0x18, 0x378, 0x9d00],
+    0x5010,
+    [0, 0x100, 0x5000, 0x4d00, 1, 0x100, 0x4f00],
+);
+/// HS v2 header of both Booter files (at 0x18): sig offset/size, patch_loc
+/// ptr, patch_sig ptr, meta offset/size, num_sig ptr, load header offset.
+const BOOTER_HS_V2: [u32; 8] = [0x3c, 0x300, 0x33c, 0x340, 0x344, 0xc, 0x350, 0x354];
+
+/// Stand-in with the exact header shape of the official Booter file
+/// (`load = true`: booter_load, else booter_unload). Signatures, meta data,
+/// code and data are filler / SIMULARE values (meta: fuse 0, engine 0x4,
+/// ucode 2 — NOT read from the real file).
+pub fn booter_570_144(load: bool) -> Vec<u8> {
+    let (len, out, patch_loc, lh) = if load { BOOTER_LOAD } else { BOOTER_UNLOAD };
+    let mut f = vec![if load { 0x11 } else { 0x22 }; len];
+    outer_with(&mut f, out[2], out[3], out[4], out[5]);
+    for (i, v) in BOOTER_HS_V2.iter().enumerate() {
+        put(&mut f, 0x18 + 4 * i, *v);
+    }
+    for k in 0..2 {
+        f[0x3c + k * 384..0x3c + (k + 1) * 384].fill(0xc0 + k as u8);
+    }
+    put(&mut f, 0x33c, patch_loc);
+    put(&mut f, 0x340, 0); // patch_sig
+    for (i, v) in [0, 0x4, 2].iter().enumerate() {
+        put(&mut f, 0x344 + 4 * i, *v); // meta: SIMULARE values
+    }
+    put(&mut f, 0x350, 2); // num_sig
+    for (i, v) in lh.iter().enumerate() {
+        put(&mut f, 0x354 + 4 * i, *v);
+    }
+    f
+}
+
+/// `RM_RISCV_UCODE_DESC` words of `bootloader-570.144.bin` (C-39), in field
+/// order (version, bootloader off/size, param off/size, ELF off/size,
+/// appVersion, manifest off/size, monitor data off/size, monitor code
+/// off/size, monitor enabled, swbrom code off/size, swbrom data off/size,
+/// fbReservedSize, signed as code).
+const BOOTLOADER_DESC: [u32; 21] = [
+    5, 0x5000, 0x880, 0x5880, 0x10, 0, 0, 0, 0, 0x800, 0x800, 0x1000, 0x1800, 0x2900, 1, 0, 0, 0,
+    0, 0x6000, 0,
+];
+
+/// Stand-in with the exact header shape of the official
+/// `bootloader-570.144.bin`: 24 684 B, descriptor at 0x18, data blob
+/// 0x6c..end. The blob is filler.
+pub fn bootloader_570_144() -> Vec<u8> {
+    let mut f = vec![0x5au8; 24_684];
+    outer_with(&mut f, 0x6100, 0x18, 0x6c, 0x6000);
+    for (i, v) in BOOTLOADER_DESC.iter().enumerate() {
+        put(&mut f, 0x18 + 4 * i, *v);
     }
     f
 }
@@ -163,7 +241,12 @@ pub fn gsp() -> Vec<u8> {
 
 /// The four stand-ins, in [`SIM_PATHS`] order.
 pub fn files() -> [Vec<u8>; 4] {
-    [booter(3, 0x11), booter(2, 0x22), bootloader(), gsp()]
+    [
+        booter_570_144(true),
+        booter_570_144(false),
+        bootloader_570_144(),
+        gsp(),
+    ]
 }
 
 /// The licence stand-in text.
@@ -178,12 +261,17 @@ mod tests {
     #[test]
     fn stand_ins_have_the_outer_header_and_differ() {
         let f = files();
-        for b in &f[..3] {
-            assert_eq!(u32::from_le_bytes([b[0], b[1], b[2], b[3]]), MAGIC);
-            assert_eq!(
-                u32::from_le_bytes([b[8], b[9], b[10], b[11]]) as usize,
-                b.len()
-            );
+        let w = |b: &[u8], o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+        for (b, len) in f[..3].iter().zip([61_304, 41_080, 24_684]) {
+            assert_eq!(w(b, 0), MAGIC);
+            assert_eq!(b.len(), len, "mărimile fișierelor oficiale");
+            // As on the real files: bin_size is not the length, the data
+            // blob ends exactly at the end of the file.
+            assert_ne!(w(b, 8) as usize, b.len());
+            assert_eq!((w(b, 16) + w(b, 20)) as usize, b.len());
+        }
+        for b in [booter(3, 1), bootloader()] {
+            assert_ne!(w(&b, 8) as usize, b.len());
         }
         assert!(f[3].starts_with(b"\x7fELF"));
         assert_ne!(f[0], f[1]);
