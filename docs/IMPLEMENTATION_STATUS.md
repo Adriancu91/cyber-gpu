@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 18 — 29 octombrie 2026, ~12:45–13:20 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comandă nouă în hub: **C-39** (la fereastra din 29 oct, `gpu firmware`: 4/4
+fișiere oficiale, dar antetele a 3 fișiere refuzate de parserul nostru). Tot ce scrie „PASS” e pe gazdă: SIMULARE.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Pornire | `tools/check.sh` verde înainte de orice schimbare (260 teste; rustc 1.97.0, ținta `x86_64-unknown-none` instalată); ultimele 3 sesiuni au terminat pași → fără oprire de siguranță; C-39 preluat în hub | PASS |
+| Cauza | am citit **doar cuvintele de antet** ale celor 3 fișiere oficiale (descărcate temporar, SHA-256 = oficial, șterse imediat; codul, datele și semnăturile necitite): `bin_size` e mai mare decât fișierul (`booter_load`: 0xf000 față de 61 304 B; `booter_unload`: 0xa100 / 41 080; `bootloader`: 0x6100 / 24 684); datele se termină exact la capătul fișierului. A doua greșeală, ascunsă de prima: cuvântul 6 din antetul „HS v2” e **adresa** numărului de semnături (0x350 → 2), nu numărul (nouveau face la fel) | găsit |
+| **C-39** reparația | `fw_hdr::BinHdr::parse`: `bin_size` păstrat doar pentru raport, nu mai e comparat; în schimb datele trebuie să stea în fișier și după antetul exterior. `HsV2::parse`: numărul de semnături citit prin adresă. `gpu-sim::fw_stick::{booter_570_144, bootloader_570_144}`: fișiere de probă cu **exact** valorile de antet ale celor oficiale (restul umplutură); `files()` le folosește. Teste noi: antetele cu forma oficială (`fw_hdr`), Booter-ul cu forma oficială încărcat cap-coadă (`hs_load::from_booter` + `booter_image`) | PASS (SIMULARE): 262 teste; 2 greșeli plantate prinse (vechea verificare: 4 teste pică; numărul citit direct: 9 teste pică) |
+| OS | nota `integration/cyber-universe/C-39_gpu-firmware-antete.md` (doar mutarea fixării pe `ef97110`+); copie de lucru a OS-ului cu cyber-gpu local: build normal și `test-gpu-sim` PASS | PASS (compilare); QEMU: NOT TESTED |
+| Pasul următor pe placă | `docs/FEREASTRA_C-39.md`: 1 `gpu firmware` (doar citire) → 2 proba tinygrad (**scrie în placă**, ca la C-36 §3) → I5+ cu driverul nostru **nu** în fereastra următoare (I6 = prima scriere a noastră, doar după jurnalul tinygrad) | propunere |
+| Compatibilitate OS | `git diff 2c9c90c` pe `gpu-core`, `gpu-pci`, `nvidia-ga104`, `gpu-compute`: nicio linie `pub` ștearsă; doar adăugări. Comportament schimbat (intenționat): `BinHdr::parse` acceptă `bin_size` ≠ mărime; `HsV2::parse` citește numărul de semnături prin adresă (fișierele sintetice vechi cu numărul direct în antet nu mai trec — erau greșite) | PASS |
+
+Verificări (`tools/check.sh`): format PASS, clippy `-D warnings` PASS, **262 de teste PASS** (1 ignorat: viteza), build no_std PASS;
+`nvidia-ga104 --features hw-write`: clippy + teste PASS. Nicio scriere în placă.
+
+**Următorul pas:** sesiunea OS mută fixarea pe `ef97110`+ și face Release; la fereastra următoare `gpu firmware` → `criteriul I4: TRECE`, apoi
+(opțional, cu Adrian) proba tinygrad. Fără placă: canalul GPFIFO în grupul de canale, promovarea contextului GR, jetonul soneriei; treapta 6 matmul.
+
+---
+
 ## Sesiunea 17 — 29 octombrie 2026, ~07:10–07:40 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comenzi noi în hub pentru noi: niciuna (C-36 gata; fereastra I3 → I4 așteaptă
