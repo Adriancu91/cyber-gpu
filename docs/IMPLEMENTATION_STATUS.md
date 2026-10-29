@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 19 — 29 octombrie 2026, ~13:30–13:55 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comenzi noi în hub pentru noi: niciuna (C-39 gata; fereastra următoare
+așteaptă Release-ul OS cu fixarea nouă). Am făcut următorul pas „fără placă”: I9e. Tot ce scrie „PASS” e pe gazdă: SIMULARE.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Pornire | CI rularea 63 (vârful `aee06c4`) verde; `tools/check.sh` verde înainte de orice schimbare (262 teste; rustc 1.97.0, ținta `x86_64-unknown-none` instalată); ultimele 3 sesiuni au terminat pași → fără oprire de siguranță | PASS |
+| Antete | generatorul `tools/gen-rm570` (bindgen-cli 0.71.1 instalat în sesiune) a reprodus întâi **identic** fișierele; apoi produce și `NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS` (4 B), `NVA06F_CTRL_GPFIFO_SCHEDULE_PARAMS` (2 B), comenzile `0xc36f0108` și `0xa06c0101`; `rmapi.rs` doar cu adăugări | PASS (dimensiuni fixate în `rm_api_layouts_570_144`) |
+| **I9e** canalul de lucru | `nvidia-ga104::gsp::user_space::open_work_channel`: inel GPFIFO (1024 intrări) + USERD (0x400, imediat după inel) într-un buffer mapat; canalul `AMPERE_CHANNEL_GPFIFO_A` cu **părinte = TSG** și context share-ul din I9d (fără VA space, `engineType` 0 = motorul grupului); obiectul compute; `PROMOTE_CTX` pentru MAIN/PM/PATCH pe buffere noi ale canalului, întâi jumătatea fizică, apoi cea virtuală (ca tinygrad); jetonul soneriei = canalul din răspunsul GSP-RM (doar biții 11:0) + runlist-ul lui GR0 `<< 16` (`dev_ctrl.h`); programarea grupului (`GPFIFO_SCHEDULE`). `rmapi::{WorkChannelSetup, work_channel_params, work_submit_token_request, parse_work_submit_token, doorbell_token, schedule_params}`. Regulile citite ca specificație în RM 570.144 (MIT): `kernel_channel.c`, `kernel_fifo_ga100.c`, `kernel_channel_group_api.c` | PASS (SIMULARE): 6 teste noi + testul cap-coadă extins (golden image → I9c → I9d → I9e prin cozile reale; inelul, USERD și bufferele de context găsite prin rădăcina primită de model); `gpu-sim::fake_rm` știe canale în TSG, jetonul și programarea (poziții scrise de mână); 7 refuzuri RM întorc codul RM; **4 greșeli plantate în codificator + 4 în secvență, toate prinse** |
+| Alegeri notate | handle-urile `hObjectError`/`hObjectBuffer`/`hUserdMemory` = cei 32 de biți de jos ai adreselor fizice, ca tinygrad (RM spune că pe GSP nu sunt căutate); `flags`/`cid`/`internalFlags` = 0; soneria **nu** e sunată (ar fi o scriere în registru) | notat în `COMPATIBILITATE_FIRMWARE.md` („De verificat”) |
+| Compatibilitate OS | `git diff aee06c4` pe `gpu-core`, `gpu-pci`, `nvidia-ga104`, `gpu-compute`: nicio linie `pub` ștearsă; doar adăugări (`gsp::user_space::{WorkChannel, open_work_channel, WORK_CTX_BUFFERS}`, funcții și constante noi în `rmapi`, `cmd::{WORK_SUBMIT_TOKEN, TSG_SCHEDULE}`). În `gpu-sim::fake_rm`: `chid`, `promoted`, `is_scheduled`, `parent_of`, `status::OBJECT_NOT_FOUND`, comenzi și mărimi noi | PASS |
+
+Verificări (`tools/check.sh`): format PASS, clippy `-D warnings` PASS, **268 de teste PASS** (1 ignorat: viteza), build no_std PASS;
+`nvidia-ga104 --features hw-write`: clippy + teste PASS. Nicio scriere în placă. OS-ul nu a fost reconstruit (nicio schimbare de interfață pentru el): NOT TESTED.
+
+**Următorul pas:** la fereastra următoare (după Release-ul OS cu fixarea ≥ `ef97110`): `gpu firmware` → `criteriul I4: TRECE`, apoi
+(opțional, cu Adrian) proba tinygrad. Fără placă: primul pushbuffer pe canalul de lucru (`SET_OBJECT` compute + ferestrele de memorie, ca
+tinygrad) scris în inel și verificat în modelul de comenzi din `gpu-sim`; treapta 6 matmul (Mesa NAK pe gazdă).
+
+---
+
 ## Sesiunea 18 — 29 octombrie 2026, ~12:45–13:20 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comandă nouă în hub: **C-39** (la fereastra din 29 oct, `gpu firmware`: 4/4
