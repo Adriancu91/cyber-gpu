@@ -27,14 +27,26 @@
 //! `kernel_ctxshare.c` (MIT): a TSG's parent is a device; with per-runlist
 //! channel RAM (Ampere) the engine must be valid, and without MIG only GR0
 //! among the GR engines; a context share's parent must be a TSG; `ASYNC`
-//! takes a subcontext from the top of the group downwards. The GPFIFO
-//! channel in the group, the GR context promotion for its compute object
-//! and the doorbell token (the rest of I9) are not written yet.
+//! takes a subcontext from the top of the group downwards.
+//!
+//! I9e (also SIMULARE only): the working GPFIFO channel in that group, its
+//! compute object, the GR context promotion for it, the doorbell token and
+//! the group's schedule — tinygrad `ops_nv.py` (`NVDevice.fifos`,
+//! `_new_gpu_fifo`) and `ip.py` (`rpc_rm_alloc`, `promote_ctx`), MIT,
+//! commit 9cf7829a6, read as the specification and re-written; the rules in
+//! RM 570.144 `kernel_channel.c` (`kchannelConstruct`,
+//! `kchannelCtrlCmdGpfifoGetWorkSubmitToken`) and `kernel_fifo_ga100.c`
+//! (MIT). Order: channel (parent = TSG, with the context share) → compute
+//! object → PROMOTE_CTX for MAIN/PM/PATCH, first the physical half, then the
+//! virtual half, on new per-channel buffers → work submit token (+ runlist)
+//! → schedule the TSG. Ringing the doorbell is a register write: not here.
 
 use gpu_core::error::{GpuError, GpuResult};
 
-use super::golden::{Rm, RmTransport};
-use super::rmapi::{self, class};
+use alloc::vec::Vec;
+
+use super::golden::{GoldenImage, GoldenMemory, Mapping, PROMOTE_PHYS_ATTR, Rm, RmTransport};
+use super::rmapi::{self, PromoteEntry, WorkChannelSetup, class, cmd};
 use super::rpc::function;
 use crate::mmu::LEVELS;
 
@@ -145,6 +157,156 @@ pub fn open_compute_group<T: RmTransport + ?Sized>(
     })
 }
 
+/// GR context buffers promoted per working channel (tinygrad: `k in [0, 1, 2]`
+/// = MAIN, PM, PATCH). DEDUS: proven only by tinygrad running them.
+pub const WORK_CTX_BUFFERS: [u16; 3] = [0, 1, 2];
+
+/// The working compute channel (I9e).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkChannel {
+    pub channel: u32,
+    pub compute: u32,
+    /// Ring + USERD buffer (ring at its start, USERD at `userd_offset`).
+    pub ring: Mapping,
+    pub entries: u32,
+    pub userd_offset: u64,
+    pub inst_pa: u64,
+    pub mthd_pa: u64,
+    pub notifier_pa: u64,
+    /// The per-channel GR buffers promoted (id, mapping).
+    pub ctx_bufs: Vec<(u16, Mapping)>,
+    /// Channel id from GSP-RM and the value the doorbell would get.
+    pub chid: u32,
+    pub doorbell_token: u32,
+    /// The first handle still free after the channel.
+    pub next_handle: u32,
+}
+
+/// Creates the working compute channel in the group `cg` of the working
+/// client `u`, using the GR buffer sizes and the runlists the golden image
+/// `g` learned. Stops at the first refusal; the doorbell token is built
+/// only from GSP-RM's answer and the runlist GSP-RM reported for GR0.
+/// Nothing is written to the board (the doorbell is not rung).
+pub fn open_work_channel<T: RmTransport + ?Sized, M: GoldenMemory + ?Sized>(
+    t: &mut T,
+    mem: &mut M,
+    u: &UserSpace,
+    cg: &ComputeGroup,
+    g: &GoldenImage,
+) -> GpuResult<WorkChannel> {
+    rmapi::check_root(u.root)?;
+    let runlist = g
+        .runlists
+        .iter()
+        .find(|&&(e, _)| e == rmapi::ENGINE_GR0)
+        .map(|&(_, r)| r)
+        .ok_or(GpuError::InvalidArgument(
+            "GSP-RM nu a raportat runlist-ul lui GR0",
+        ))?;
+    let plan: Vec<_> = WORK_CTX_BUFFERS
+        .iter()
+        .map(|id| {
+            g.gr_bufs
+                .iter()
+                .find(|(b, _)| b.id == *id)
+                .map(|(b, _)| *b)
+                .ok_or(GpuError::InvalidArgument(
+                    "imaginea golden nu are bufferul de context cerut",
+                ))
+        })
+        .collect::<GpuResult<_>>()?;
+    let entries = rmapi::work_channel::ENTRIES;
+    let ring = mem.alloc_mapped(WorkChannelSetup::buffer_size(entries), 0x1000)?;
+    let inst_pa = mem.alloc_phys(rmapi::golden_channel::INSTANCE_SIZE, 0x1000)?;
+    let mthd_pa = mem.alloc_phys(rmapi::golden_channel::METHOD_BUFFER_SIZE, 0x1000)?;
+    let notifier_pa = mem.alloc_phys(0x1000, 0x1000)?;
+    let setup = WorkChannelSetup {
+        ring_va: ring.va,
+        ring_pa: ring.pa,
+        entries,
+        ctxshare: cg.ctxshare,
+        inst_pa,
+        mthd_pa,
+        notifier_pa,
+    };
+    // Built before the first message, so a bad setup sends nothing.
+    let params = rmapi::work_channel_params(&setup)?;
+    let mut rm = Rm {
+        t,
+        client: u.client,
+        next: cg.next_handle,
+    };
+    let channel = rm.alloc(cg.channel_group, class::CHANNEL_GPFIFO, &params)?;
+    let compute = rm.alloc(channel, class::COMPUTE, &[])?;
+
+    // The GR context of this channel: physical half, then virtual half.
+    let mut ctx_bufs = Vec::with_capacity(plan.len());
+    for b in &plan {
+        ctx_bufs.push((b.id, mem.alloc_mapped(b.size, b.align)?));
+    }
+    let phys: Vec<_> = plan
+        .iter()
+        .zip(&ctx_bufs)
+        .map(|(b, (_, m))| PromoteEntry {
+            buffer_id: b.id,
+            gpu_va: 0,
+            gpu_pa: m.pa,
+            size: b.size,
+            phys_attr: PROMOTE_PHYS_ATTR,
+            initialize: true,
+            nonmapped: true,
+        })
+        .collect();
+    let virt: Vec<_> = plan
+        .iter()
+        .zip(&ctx_bufs)
+        .map(|(b, (_, m))| PromoteEntry {
+            buffer_id: b.id,
+            gpu_va: m.va,
+            gpu_pa: 0,
+            size: 0,
+            phys_attr: 0,
+            initialize: false,
+            nonmapped: false,
+        })
+        .collect();
+    for half in [&phys, &virt] {
+        rm.control(
+            u.subdevice,
+            cmd::PROMOTE_CTX,
+            &rmapi::promote_params(rmapi::ENGINE_GR0, u.client, channel, half)?,
+        )?;
+    }
+
+    let got = rm.control(
+        channel,
+        cmd::WORK_SUBMIT_TOKEN,
+        &rmapi::work_submit_token_request(),
+    )?;
+    let chid = rmapi::parse_work_submit_token(&got)?;
+    let doorbell_token = rmapi::doorbell_token(chid, runlist)?;
+    rm.control(
+        cg.channel_group,
+        cmd::TSG_SCHEDULE,
+        &rmapi::schedule_params(true),
+    )?;
+    let next_handle = rm.next;
+    Ok(WorkChannel {
+        channel,
+        compute,
+        ring,
+        entries,
+        userd_offset: setup.userd_offset(),
+        inst_pa,
+        mthd_pa,
+        notifier_pa,
+        ctx_bufs,
+        chid,
+        doorbell_token,
+        next_handle,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,7 +316,7 @@ mod tests {
     use crate::mmu::{GpuMemory, VramWrite};
     use alloc::vec::Vec;
     use gpu_sim::clock::SimClock;
-    use gpu_sim::fake_rm::{FakeRm, class as c, status};
+    use gpu_sim::fake_rm::{FakeRm, class as c, cmd as c_cmd, status};
     use gpu_sim::vram::{SimVram, translate};
 
     struct Sim(SimVram);
@@ -195,7 +357,7 @@ mod tests {
         let vram = 8u64 << 30;
         let mut mem =
             GpuMemory::new(64 << 20, vram - (256 << 20), Sim(SimVram::new(vram))).unwrap();
-        let (g, u) = {
+        let (g, u, w) = {
             let mut t = QueueTransport {
                 q: &mut q,
                 mem: &mut shm,
@@ -213,8 +375,31 @@ mod tests {
                 (cg.channel_group, cg.ctxshare, cg.subctx_id, cg.next_handle),
                 (0xcf00_000b, 0xcf00_000c, 63, 0xcf00_000d)
             );
-            (g, u)
+            // I9e: the working channel in the group, through the same queues.
+            let w = open_work_channel(&mut t, &mut mem, &u, &cg, &g).unwrap();
+            assert_eq!(
+                (w.channel, w.compute, w.next_handle),
+                (0xcf00_000d, 0xcf00_000e, 0xcf00_000f)
+            );
+            // The golden channel got id 0, this one 1; GR0 is on runlist 0 (SIM).
+            assert_eq!((w.chid, w.doorbell_token), (1, 1));
+            (g, u, w)
         };
+        assert_eq!(rm.parent_of(w.channel), Some(0xcf00_000b));
+        assert_eq!(rm.promoted(w.channel), [0, 1, 2, 0, 1, 2]);
+        assert!(rm.is_scheduled(0xcf00_000b));
+        // Ring, USERD and the per-channel GR buffers resolve through the root
+        // GSP-RM was given (the independent walker).
+        let root = rm.page_directory(USER_CLIENT, u.vaspace).unwrap().0;
+        for (va, pa) in [
+            (w.ring.va, w.ring.pa),
+            (w.ring.va + w.userd_offset, w.ring.pa + w.userd_offset),
+        ]
+        .into_iter()
+        .chain(w.ctx_bufs.iter().map(|(_, m)| (m.va, m.pa)))
+        {
+            assert_eq!(translate(&mem.writer().0, root, va).unwrap().pa, pa);
+        }
         assert_eq!(g.next_handle(), 0xcf00_0007);
         // The root allocation takes a handle too (0xcf00_0007), as in the golden image.
         assert_eq!(
@@ -228,7 +413,8 @@ mod tests {
             )
         );
         assert_eq!((u.root, u.root_entries), (mem.root(), 4));
-        // The model saw the golden image's 7 allocations, then these 4 + the group's 2.
+        // The model saw the golden image's 7 allocations, then these 4 + the
+        // group's 2 + the working channel and its compute object.
         assert_eq!(
             rm.log.allocs[7..],
             [
@@ -237,7 +423,9 @@ mod tests {
                 c::SUBDEVICE,
                 c::VASPACE,
                 c::CHANNEL_GROUP,
-                c::CONTEXT_SHARE
+                c::CONTEXT_SHARE,
+                c::CHANNEL_GPFIFO,
+                c::COMPUTE
             ]
             .map(|x| (x, status::OK))
         );
@@ -586,6 +774,288 @@ mod tests {
                 r.is_ok(),
                 (off, v) == (4, 2),
                 "greseala ctxshare la {off} = {v:#x}"
+            );
+        }
+    }
+
+    // ---- I9e: the working channel (SIMULARE) ----
+
+    type Mem = GpuMemory<Sim>;
+
+    /// Golden image + working client + group over the direct transport, on
+    /// real page tables in a simulated VRAM.
+    fn grouped() -> (Direct, Mem, GoldenImage, UserSpace, ComputeGroup) {
+        let mut d = Direct(FakeRm::new());
+        let vram = 8u64 << 30;
+        let mut mem =
+            GpuMemory::new(64 << 20, vram - (256 << 20), Sim(SimVram::new(vram))).unwrap();
+        let g = init_golden_image(&mut d, &mut mem).unwrap();
+        let u = open_user_space(&mut d, g.next_handle(), mem.root()).unwrap();
+        let cg = open_compute_group(&mut d, &u).unwrap();
+        (d, mem, g, u, cg)
+    }
+
+    #[test]
+    fn work_channel_in_the_group() {
+        let (mut d, mut mem, g, u, cg) = grouped();
+        let w = open_work_channel(&mut d, &mut mem, &u, &cg, &g).unwrap();
+        assert_eq!(d.0.parent_of(w.channel), Some(cg.channel_group));
+        assert_eq!(d.0.parent_of(w.compute), Some(w.channel));
+        assert_eq!(d.0.chid(w.channel), Some(w.chid));
+        assert_eq!(w.doorbell_token, w.chid); // runlist 0 in the model
+        assert_eq!(
+            w.ctx_bufs.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            WORK_CTX_BUFFERS
+        );
+        // New buffers, not the golden ones.
+        for (_, m) in &w.ctx_bufs {
+            assert!(g.gr_bufs.iter().all(|(_, gm)| gm.pa != m.pa));
+        }
+        assert_eq!(w.userd_offset, 0x2000);
+        assert!(d.0.is_scheduled(cg.channel_group));
+        // The order GSP-RM saw: channel, compute, 2 promotes, token, schedule.
+        let n = d.0.log.controls.len();
+        assert_eq!(
+            d.0.log.controls[n - 4..],
+            [
+                (c_cmd::PROMOTE_CTX, status::OK),
+                (c_cmd::PROMOTE_CTX, status::OK),
+                (c_cmd::WORK_SUBMIT_TOKEN, status::OK),
+                (c_cmd::TSG_SCHEDULE, status::OK)
+            ]
+        );
+        // A second channel in the same group gets the next id.
+        let cg2 = ComputeGroup {
+            next_handle: w.next_handle,
+            ..cg
+        };
+        let w2 = open_work_channel(&mut d, &mut mem, &u, &cg2, &g).unwrap();
+        assert_eq!(w2.chid, w.chid + 1);
+    }
+
+    #[test]
+    fn doorbell_token_rules() {
+        assert_eq!(rmapi::doorbell_token(5, 0), Ok(5));
+        assert_eq!(rmapi::doorbell_token(0x7ff, 3), Ok(0x3_07ff));
+        assert_eq!(rmapi::doorbell_token(0, 0x7f), Ok(0x7f_0000));
+        // Not a channel id (the request's -1 back, or high bits): refused.
+        for t in [u32::MAX, 0x1000, 0x1_0005] {
+            assert!(rmapi::doorbell_token(t, 0).is_err(), "{t:#x}");
+        }
+        assert!(rmapi::doorbell_token(1, 0x80).is_err());
+        assert!(rmapi::parse_work_submit_token(&[0; 3]).is_err());
+        assert_eq!(rmapi::work_submit_token_request(), [0xff; 4]);
+        assert_eq!(rmapi::schedule_params(true), [1, 0]);
+    }
+
+    fn setup_of(w: &WorkChannel, ctxshare: u32) -> WorkChannelSetup {
+        WorkChannelSetup {
+            ring_va: w.ring.va,
+            ring_pa: w.ring.pa,
+            entries: w.entries,
+            ctxshare,
+            inst_pa: w.inst_pa,
+            mthd_pa: w.mthd_pa,
+            notifier_pa: w.notifier_pa,
+        }
+    }
+
+    /// Refused by the driver before anything is sent.
+    #[test]
+    fn work_channel_driver_side_refusals() {
+        let (_, _, g, u, cg) = grouped();
+        let ok = WorkChannelSetup {
+            ring_va: 0x10_0000,
+            ring_pa: 0x0400_0000,
+            entries: 0x400,
+            ctxshare: cg.ctxshare,
+            inst_pa: 0x0401_0000,
+            mthd_pa: 0x0402_0000,
+            notifier_pa: 0x0403_0000,
+        };
+        assert!(rmapi::work_channel_params(&ok).is_ok());
+        for bad in [
+            WorkChannelSetup {
+                entries: 0x300,
+                ..ok
+            },
+            WorkChannelSetup { entries: 1, ..ok },
+            WorkChannelSetup { ring_va: 0, ..ok },
+            WorkChannelSetup {
+                ring_va: 0x10_0800,
+                ..ok
+            },
+            WorkChannelSetup { ctxshare: 0, ..ok },
+            WorkChannelSetup {
+                inst_pa: 0x0401_0100,
+                ..ok
+            },
+            WorkChannelSetup { mthd_pa: 0, ..ok },
+            // A PA whose low 32 bits are zero cannot be a non-zero handle.
+            WorkChannelSetup {
+                ring_pa: 1 << 32,
+                ..ok
+            },
+            WorkChannelSetup {
+                notifier_pa: 2 << 32,
+                ..ok
+            },
+        ] {
+            assert!(rmapi::work_channel_params(&bad).is_err(), "{bad:?}");
+        }
+        // No GR0 runlist or a golden image without the buffers: nothing sent.
+        let mut d = Direct(FakeRm::new());
+        let mut mem = GpuMemory::new(64 << 20, 1 << 30, Sim(SimVram::new(2 << 30))).unwrap();
+        for g2 in [
+            GoldenImage {
+                runlists: alloc::vec![(9, 1)],
+                ..g.clone()
+            },
+            GoldenImage {
+                gr_bufs: g.gr_bufs[3..].to_vec(),
+                ..g.clone()
+            },
+        ] {
+            assert!(open_work_channel(&mut d, &mut mem, &u, &cg, &g2).is_err());
+        }
+        assert!(d.0.log.allocs.is_empty() && d.0.log.controls.is_empty());
+    }
+
+    /// The model's reading of RM's rules for a TSG channel, the token and
+    /// the schedule: each refusal comes back as RM's status code.
+    #[test]
+    fn rm_refusals_for_the_work_channel() {
+        let (mut d, mut mem, g, u, cg) = grouped();
+        let w = open_work_channel(&mut d, &mut mem, &u, &cg, &g).unwrap();
+        let good = rmapi::work_channel_params(&setup_of(&w, cg.ctxshare)).unwrap();
+        let with = |off: usize, v: u32| {
+            let mut b = good.clone();
+            b[off..off + 4].copy_from_slice(&v.to_le_bytes());
+            b
+        };
+        // A second group with its own context share, to name the wrong one.
+        let mut rm = rm_on(&mut d, 0x300);
+        let tsg2 = rm
+            .alloc(
+                u.device,
+                class::CHANNEL_GROUP,
+                &rmapi::channel_group_params(u.vaspace).unwrap(),
+            )
+            .unwrap();
+        let cs2 = rm
+            .alloc(
+                tsg2,
+                class::CONTEXT_SHARE,
+                &rmapi::ctxshare_params(u.vaspace, rmapi::subcontext::ASYNC).unwrap(),
+            )
+            .unwrap();
+        for (parent, p, code) in [
+            (
+                cg.channel_group,
+                with(28, u.vaspace),
+                status::INVALID_ARGUMENT,
+            ), // VA space too
+            (cg.channel_group, with(24, 0), status::NOT_SUPPORTED), // legacy mode
+            (
+                cg.channel_group,
+                with(24, u.vaspace),
+                status::OBJECT_NOT_FOUND,
+            ), // not a ctxshare
+            (
+                cg.channel_group,
+                with(24, cs2),
+                status::INVALID_OBJECT_PARENT,
+            ), // other TSG's
+            (cg.channel_group, with(128, 2), status::INVALID_ARGUMENT), // GR1
+            (cg.channel_group, with(20, 1), status::NOT_SUPPORTED), // not physical
+            (u.device, good.clone(), status::INVALID_ARGUMENT), // device channel with a ctxshare
+        ] {
+            assert_eq!(rm.alloc(parent, class::CHANNEL_GPFIFO, &p), fault(code));
+        }
+        // A channel with no object bound: the group cannot be scheduled.
+        let lone = rm
+            .alloc(tsg2, class::CHANNEL_GPFIFO, &with(24, cs2))
+            .unwrap();
+        assert_eq!(
+            rm.control(tsg2, cmd::TSG_SCHEDULE, &rmapi::schedule_params(true)),
+            Err(GpuError::HardwareFault {
+                code: status::INVALID_STATE
+            })
+        );
+        // The token is a channel command; on the group it is refused.
+        assert_eq!(
+            rm.control(
+                tsg2,
+                cmd::WORK_SUBMIT_TOKEN,
+                &rmapi::work_submit_token_request()
+            ),
+            Err(GpuError::HardwareFault {
+                code: status::INVALID_OBJECT_HANDLE
+            })
+        );
+        rm.alloc(lone, class::COMPUTE, &[]).unwrap();
+        rm.control(tsg2, cmd::TSG_SCHEDULE, &rmapi::schedule_params(true))
+            .unwrap();
+    }
+
+    /// Without a golden context, no compute object on a TSG channel.
+    #[test]
+    fn no_golden_no_compute() {
+        let mut d = Direct(FakeRm::new());
+        let u = open_user_space(&mut d, 0x100, 0x7_0000_0000).unwrap();
+        let cg = open_compute_group(&mut d, &u).unwrap();
+        let setup = WorkChannelSetup {
+            ring_va: 0x10_0000,
+            ring_pa: 0x0400_0000,
+            entries: 0x400,
+            ctxshare: cg.ctxshare,
+            inst_pa: 0x0401_0000,
+            mthd_pa: 0x0402_0000,
+            notifier_pa: 0x0403_0000,
+        };
+        let mut rm = rm_on(&mut d, cg.next_handle);
+        let ch = rm
+            .alloc(
+                cg.channel_group,
+                class::CHANNEL_GPFIFO,
+                &rmapi::work_channel_params(&setup).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            rm.alloc(ch, class::COMPUTE, &[]),
+            fault(status::INVALID_STATE)
+        );
+    }
+
+    /// Planted mistakes in the bytes `work_channel_params` writes are caught
+    /// by the model (its own hand-written offsets).
+    #[test]
+    fn planted_work_channel_mistakes_are_caught() {
+        let (mut d, mut mem, g, u, cg) = grouped();
+        let w = open_work_channel(&mut d, &mut mem, &u, &cg, &g).unwrap();
+        let good = rmapi::work_channel_params(&setup_of(&w, cg.ctxshare)).unwrap();
+        let mut rm = rm_on(&mut d, 0x400);
+        assert!(
+            rm.alloc(cg.channel_group, class::CHANNEL_GPFIFO, &good)
+                .is_ok()
+        );
+        for (off, v) in [
+            (24usize, u.vaspace), // context share = the VA space
+            (28, u.vaspace),      // VA space set as well
+            (16, 0x300),          // entries not a power of 2
+            (8, 0x800),           // ring VA not aligned
+            (64, 0x100),          // USERD inside the ring
+            (144 + 16, 1),        // instance not in VRAM
+            (168 + 8, 0x100),     // USERD too small
+            (216 + 8, 0x1000),    // method buffer too small
+            (192, 0x10),          // RAMFC base not aligned (low half)
+        ] {
+            let mut bad = good.clone();
+            bad[off..off + 4].copy_from_slice(&v.to_le_bytes());
+            assert!(
+                rm.alloc(cg.channel_group, class::CHANNEL_GPFIFO, &bad)
+                    .is_err(),
+                "greseala la {off} = {v:#x} neprinsa"
             );
         }
     }

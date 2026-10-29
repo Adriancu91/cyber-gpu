@@ -2,7 +2,7 @@
 // Source: NVIDIA open-gpu-kernel-modules tag 570.144 (8ec351aeb96a93a4bb69ccc12a542bf8a8df2b6f): nvos.h, class/cl0000.h, cl0080.h,
 // cl2080.h, cl90f1.h, clc56f.h, clc7c0.h, clc7b5.h, cla06c.h, cl9067.h, cl2080_notification.h,
 // alloc/alloc_channel.h, ctrl0080fifo.h,
-// ctrl0080dma.h, ctrl2080fifo.h, ctrl2080gpu.h, ctrl2080internal.h, ctrl90f1.h, g_rpc-structures.h,
+// ctrl0080dma.h, ctrl2080fifo.h, ctrl2080gpu.h, ctrl2080internal.h, ctrl90f1.h, ctrla06c.h, ctrla06fgpfifo.h, ctrlc36f.h, g_rpc-structures.h,
 // g_sdk-structures.h.
 // MIT, Copyright NVIDIA CORPORATION & AFFILIATES; full notice in crates/nvidia-rm570/LICENSE-NVIDIA.
 // Layout only; no code.
@@ -43,6 +43,7 @@ pub const GMMU_FMT_MAX_LEVELS: u32 = 6;
 pub const NV90F1_CTRL_CMD_VASPACE_COPY_SERVER_RESERVED_PDES: u32 = 2431713542;
 pub const NV90F1_CTRL_VASPACE_COPY_SERVER_RESERVED_PDES_PARAMS_MESSAGE_ID: u32 = 6;
 pub const NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_CONTEXT_BUFFERS_INFO: u32 = 545262130;
+pub const NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN: u32 = 3278831880;
 pub const NV_MAX_SUBDEVICES: u32 = 8;
 pub const NV0080_CTRL_CMD_DMA_SET_PAGE_DIRECTORY: u32 = 8394771;
 pub const NV0080_CTRL_DMA_SET_PAGE_DIRECTORY_FLAGS_APERTURE_VIDMEM: u32 = 0;
@@ -104,6 +105,7 @@ pub const AMPERE_COMPUTE_B: u32 = 51136;
 pub const AMPERE_DMA_COPY_B: u32 = 51125;
 pub const KEPLER_CHANNEL_GROUP_A: u32 = 41068;
 pub const FERMI_CONTEXT_SHARE_A: u32 = 36967;
+pub const NVA06C_CTRL_CMD_GPFIFO_SCHEDULE: u32 = 2691432705;
 pub type NvU8 = ::core::ffi::c_uchar;
 pub type NvU16 = ::core::ffi::c_ushort;
 pub type NvV32 = ::core::ffi::c_uint;
@@ -386,6 +388,40 @@ const _: () = {
 };
 pub type NV2080_CTRL_INTERNAL_STATIC_KGR_GET_CONTEXT_BUFFERS_INFO_PARAMS =
     NV2080_CTRL_INTERNAL_STATIC_GR_GET_CONTEXT_BUFFERS_INFO_PARAMS;
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct NVA06F_CTRL_GPFIFO_SCHEDULE_PARAMS {
+    pub bEnable: NvBool,
+    pub bSkipSubmit: NvBool,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of NVA06F_CTRL_GPFIFO_SCHEDULE_PARAMS"]
+        [::core::mem::size_of::<NVA06F_CTRL_GPFIFO_SCHEDULE_PARAMS>() - 2usize];
+    ["Alignment of NVA06F_CTRL_GPFIFO_SCHEDULE_PARAMS"]
+        [::core::mem::align_of::<NVA06F_CTRL_GPFIFO_SCHEDULE_PARAMS>() - 1usize];
+    ["Offset of field: NVA06F_CTRL_GPFIFO_SCHEDULE_PARAMS::bEnable"]
+        [::core::mem::offset_of!(NVA06F_CTRL_GPFIFO_SCHEDULE_PARAMS, bEnable) - 0usize];
+    ["Offset of field: NVA06F_CTRL_GPFIFO_SCHEDULE_PARAMS::bSkipSubmit"]
+        [::core::mem::offset_of!(NVA06F_CTRL_GPFIFO_SCHEDULE_PARAMS, bSkipSubmit) - 1usize];
+};
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS {
+    pub workSubmitToken: NvU32,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS"]
+        [::core::mem::size_of::<NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS>() - 4usize];
+    ["Alignment of NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS"]
+        [::core::mem::align_of::<NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS>() - 4usize];
+    ["Offset of field: NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS::workSubmitToken"][::core::mem::offset_of!(
+        NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS,
+        workSubmitToken
+    )
+        - 0usize];
+};
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct NV2080_ALLOC_PARAMETERS {

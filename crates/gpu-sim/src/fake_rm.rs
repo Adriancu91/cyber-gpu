@@ -30,6 +30,26 @@
 //! `INSUFFICIENT_RESOURCES`. **Not modelled** (refused with `NOT_SUPPORTED`,
 //! a choice of this model, not RM's answer): `hVASpace = 0`, where RM would
 //! fall back to the device's default VA space.
+//!
+//! I9e adds the working channel *inside* a TSG, its compute object, the
+//! work submit token (`ctrlc36f.h`) and the TSG schedule (`ctrla06c.h`),
+//! with our reading of RM 570.144 `kernel_channel.c` (`kchannelConstruct`,
+//! `kchannelCtrlCmdGpfifoGetWorkSubmitToken`), `kernel_fifo_ga100.c` and
+//! `kernel_channel_group_api.c` (`kchangrpapiCtrlCmdGpFifoSchedule`), MIT:
+//! a channel under a TSG must name a context share **of that TSG**
+//! (another object = `OBJECT_NOT_FOUND`, another TSG's =
+//! `INVALID_OBJECT_PARENT`) and no VA space (`INVALID_ARGUMENT`); a channel
+//! under a device must not name a context share (`INVALID_ARGUMENT`); the
+//! channel type in `flags` bits 1:0 must be physical (else `NOT_SUPPORTED`);
+//! `engineType` 0 = the TSG's engine, another engine than the TSG's =
+//! `INVALID_ARGUMENT`. A compute object on a TSG channel needs a golden
+//! context to exist (some channel with the buffers of [`REQUIRED_PROMOTED`]);
+//! its own MAIN/PM/PATCH are promoted afterwards (tinygrad's order). The
+//! token on GSP is the channel id only (bits 11:0), ids handed out in
+//! order from 0; the schedule refuses a TSG with a channel that has no
+//! object bound (`INVALID_STATE`; our reading of `kchannelIsSchedulable`).
+//! **Not modelled** (`NOT_SUPPORTED`): a TSG channel without a context share
+//! (RM's "legacy mode").
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -53,6 +73,7 @@ pub mod status {
     pub const INVALID_PARAM_STRUCT: u32 = 0x3a;
     pub const INVALID_STATE: u32 = 0x40;
     pub const NOT_SUPPORTED: u32 = 0x56;
+    pub const OBJECT_NOT_FOUND: u32 = 0x57;
 }
 
 /// Class numbers (`cl0000.h`, `cl0080.h`, `cl2080.h`, `cl90f1.h`,
@@ -78,6 +99,9 @@ pub mod cmd {
     pub const KGR_GET_CONTEXT_BUFFERS_INFO: u32 = 0x2080_0a32;
     pub const PROMOTE_CTX: u32 = 0x2080_012b;
     pub const COPY_SERVER_RESERVED_PDES: u32 = 0x90f1_0106;
+    /// I9e (`ctrlc36f.h`, `ctrla06c.h`).
+    pub const WORK_SUBMIT_TOKEN: u32 = 0xc36f_0108;
+    pub const TSG_SCHEDULE: u32 = 0xa06c_0101;
 }
 
 /// Parameter sizes in 570.144 (x86-64 C layout).
@@ -97,6 +121,9 @@ pub mod size {
     pub const CHANNEL_GROUP: usize = 20;
     /// `NV_CTXSHARE_ALLOCATION_PARAMETERS`: hVASpace, flags, subctxId.
     pub const CONTEXT_SHARE: usize = 12;
+    /// I9e: `NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS`, `NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS`.
+    pub const WORK_SUBMIT_TOKEN: usize = 4;
+    pub const TSG_SCHEDULE: usize = 2;
 }
 
 /// GR context buffers (`NV0080_CTRL_FIFO_GET_ENGINE_CONTEXT_PROPERTIES_ENGINE_ID_*`):
@@ -169,6 +196,12 @@ pub struct FakeRm {
     promoted: BTreeMap<u32, Vec<u16>>,
     /// channel group handle → subcontext ids in use
     subctx: BTreeMap<u32, Vec<u32>>,
+    /// channel handle → channel id (handed out in order from 0)
+    chids: BTreeMap<u32, u32>,
+    /// channels with an object (compute/copy) on them
+    bound: Vec<u32>,
+    /// channel groups that were scheduled
+    scheduled: Vec<u32>,
     reserved_pdes_copied: bool,
     pub log: RmLog,
 }
@@ -213,6 +246,26 @@ impl FakeRm {
     /// The subcontext ids in use in a channel group.
     pub fn subcontexts(&self, tsg: u32) -> Vec<u32> {
         self.subctx.get(&tsg).cloned().unwrap_or_default()
+    }
+
+    /// The channel id the model gave a channel.
+    pub fn chid(&self, channel: u32) -> Option<u32> {
+        self.chids.get(&channel).copied()
+    }
+
+    /// The GR buffers promoted on a channel, in order.
+    pub fn promoted(&self, channel: u32) -> Vec<u16> {
+        self.promoted.get(&channel).cloned().unwrap_or_default()
+    }
+
+    /// Whether a channel group was scheduled.
+    pub fn is_scheduled(&self, tsg: u32) -> bool {
+        self.scheduled.contains(&tsg)
+    }
+
+    /// The parent of an object (`None` if unknown).
+    pub fn parent_of(&self, h: u32) -> Option<u32> {
+        self.objects.get(&h).map(|o| o.parent)
     }
 
     /// The root table a VA space was given, if SET_PAGE_DIRECTORY was accepted.
@@ -262,6 +315,13 @@ impl FakeRm {
             if class == class::ROOT {
                 self.clients.push(client);
             } else {
+                if class == class::CHANNEL_GPFIFO {
+                    let id = self.chids.len() as u32;
+                    self.chids.insert(object, id);
+                }
+                if matches!(class, class::COMPUTE | class::DMA_COPY) {
+                    self.bound.push(parent);
+                }
                 // NV_VASPACE_ALLOCATION_PARAMETERS: flags 4, vaSize 8, vaBase 40.
                 let (va_flags, va_limit) = if class == class::VASPACE {
                     let (flags, size, base) = (rd32(p, 32 + 4), rd64(p, 32 + 8), rd64(p, 32 + 40));
@@ -320,6 +380,9 @@ impl FakeRm {
             class::DEVICE => (class::ROOT, size::DEVICE),
             class::SUBDEVICE => (class::DEVICE, size::SUBDEVICE),
             class::VASPACE => (class::DEVICE, size::VASPACE),
+            class::CHANNEL_GPFIFO if parent_class == Some(class::CHANNEL_GROUP) => {
+                (class::CHANNEL_GROUP, size::CHANNEL)
+            }
             class::CHANNEL_GPFIFO => (class::DEVICE, size::CHANNEL),
             class::COMPUTE | class::DMA_COPY => (class::CHANNEL_GPFIFO, 0),
             class::CHANNEL_GROUP => (class::DEVICE, size::CHANNEL_GROUP),
@@ -341,6 +404,9 @@ impl FakeRm {
         match class {
             // NV0080_ALLOC_PARAMETERS.hClientShare (offset 4) must name our client.
             class::DEVICE if rd32(params, 4) != client => status::INVALID_ARGUMENT,
+            class::CHANNEL_GPFIFO if parent_class == Some(class::CHANNEL_GROUP) => {
+                self.check_tsg_channel(client, parent, params)
+            }
             class::CHANNEL_GPFIFO => self.check_channel(client, params),
             // NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS: hObjectError 0,
             // hObjectEccError 4, hVASpace 8, engineType 12, bIsCalling... 16.
@@ -363,8 +429,14 @@ impl FakeRm {
                 }
             }
             class::COMPUTE => {
+                let in_tsg = self
+                    .objects
+                    .get(&parent)
+                    .and_then(|o| self.objects.get(&o.parent))
+                    .is_some_and(|o| o.class == class::CHANNEL_GROUP);
+                let golden = |got: &Vec<u16>| REQUIRED_PROMOTED.iter().all(|b| got.contains(b));
                 let got = self.promoted.get(&parent).cloned().unwrap_or_default();
-                if REQUIRED_PROMOTED.iter().all(|b| got.contains(b)) {
+                if golden(&got) || (in_tsg && self.promoted.values().any(golden)) {
                     status::OK
                 } else {
                     status::INVALID_STATE // no golden context for this channel
@@ -409,6 +481,9 @@ impl FakeRm {
     // (NV_MEMORY_DESC_PARAMS: base 0, size 8, addressSpace 16, cacheAttrib 20).
     fn check_channel(&self, client: u32, c: &[u8]) -> u32 {
         let entries = rd32(c, 16);
+        if rd32(c, 24) != 0 {
+            return status::INVALID_ARGUMENT; // non-TSG channels can't use a context share
+        }
         if self.class_in(client, rd32(c, 28)) != Some(class::VASPACE) {
             return status::INVALID_OBJECT_HANDLE;
         }
@@ -426,6 +501,56 @@ impl FakeRm {
         for (o, min) in [(144, 0x1000u64), (168, 0x20), (192, 0x200), (216, 0x5000)] {
             let (base, sz, aperture) = (rd64(c, o), rd64(c, o + 8), rd32(c, o + 16));
             if aperture != 2 || sz < min || base == 0 || !base.is_multiple_of(0x20) {
+                return status::INVALID_ARGUMENT; // 2 = video memory
+            }
+        }
+        status::OK
+    }
+
+    // NV_CHANNEL_ALLOC_PARAMS for a channel under a TSG: hObjectError 0,
+    // hObjectBuffer 4, flags 20, hContextShare 24, hVASpace 28,
+    // hUserdMemory[0] 32, userdOffset[0] 64, engineType 128, memory
+    // descriptors as in `check_channel`.
+    fn check_tsg_channel(&self, client: u32, tsg: u32, c: &[u8]) -> u32 {
+        let (flags, cs, vas, eng) = (rd32(c, 20), rd32(c, 24), rd32(c, 28), rd32(c, 128));
+        if flags & 3 != 0 {
+            return status::NOT_SUPPORTED; // NVOS04_FLAGS_CHANNEL_TYPE: physical only
+        }
+        if cs != 0 && vas != 0 {
+            return status::INVALID_ARGUMENT; // both a context share and a VA space
+        }
+        if vas != 0 {
+            return status::INVALID_ARGUMENT; // TSG channels can't use an explicit VA space
+        }
+        if cs == 0 {
+            return status::NOT_SUPPORTED; // legacy mode: not modelled
+        }
+        match self.objects.get(&cs) {
+            Some(o) if o.client == client && o.class == class::CONTEXT_SHARE => {
+                if o.parent != tsg {
+                    return status::INVALID_OBJECT_PARENT;
+                }
+            }
+            _ => return status::OBJECT_NOT_FOUND,
+        }
+        if eng != 0 && eng != 1 {
+            return status::INVALID_ARGUMENT; // not the TSG's engine (GR0)
+        }
+        let entries = rd32(c, 16);
+        if entries < 2
+            || !entries.is_power_of_two()
+            || !rd64(c, 8).is_multiple_of(0x1000)
+            || rd64(c, 8) == 0
+        {
+            return status::INVALID_ARGUMENT;
+        }
+        // The ring must hold `entries` before USERD (USERD after the ring).
+        if rd64(c, 64) < entries as u64 * 8 {
+            return status::INVALID_ARGUMENT;
+        }
+        for (o, min) in [(144, 0x1000u64), (168, 0x200), (192, 0x200), (216, 0x5000)] {
+            let (base, sz, aperture) = (rd64(c, o), rd64(c, o + 8), rd32(c, o + 16));
+            if aperture != 2 || sz < min || base == 0 || !base.is_multiple_of(0x200) {
                 return status::INVALID_ARGUMENT; // 2 = video memory
             }
         }
@@ -461,11 +586,41 @@ impl FakeRm {
                     st
                 }
                 (cmd::PROMOTE_CTX, Some(class::SUBDEVICE)) => self.promote(client, params),
+                (cmd::WORK_SUBMIT_TOKEN, Some(class::CHANNEL_GPFIFO)) => {
+                    if params.len() != size::WORK_SUBMIT_TOKEN {
+                        status::INVALID_PARAM_STRUCT
+                    } else {
+                        let id = self.chids.get(&object).copied().unwrap_or(0);
+                        wr32(params, 0, id & 0xfff);
+                        status::OK
+                    }
+                }
+                (cmd::TSG_SCHEDULE, Some(class::CHANNEL_GROUP)) => {
+                    if params.len() != size::TSG_SCHEDULE {
+                        status::INVALID_PARAM_STRUCT
+                    } else {
+                        let unbound = self.objects.iter().any(|(h, o)| {
+                            o.class == class::CHANNEL_GPFIFO
+                                && o.parent == object
+                                && !self.bound.contains(h)
+                        });
+                        if unbound {
+                            status::INVALID_STATE
+                        } else {
+                            if params[0] != 0 && !self.scheduled.contains(&object) {
+                                self.scheduled.push(object);
+                            }
+                            status::OK
+                        }
+                    }
+                }
                 (
                     cmd::GET_DEVICE_INFO_TABLE
                     | cmd::KGR_GET_CONTEXT_BUFFERS_INFO
                     | cmd::COPY_SERVER_RESERVED_PDES
-                    | cmd::PROMOTE_CTX,
+                    | cmd::PROMOTE_CTX
+                    | cmd::WORK_SUBMIT_TOKEN
+                    | cmd::TSG_SCHEDULE,
                     Some(_),
                 ) => status::INVALID_OBJECT_HANDLE,
                 (_, None) => status::INVALID_OBJECT_HANDLE,

@@ -1,5 +1,12 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 19 (29 oct 2026, cloud, fără placă) — I9e
+| Id | Test | Comandă | Așteptat | Obținut | Clasificare |
+|---|---|---|---|---|---|
+| T33 | Canalul de lucru în grupul de canale (I9e): canal → compute → PROMOTE_CTX (fizic, apoi virtual) → jeton → programarea grupului | `cargo test -p nvidia-ga104 user_space` | prin cozile reale către `gpu-sim::fake_rm`: canalul sub TSG cu context share-ul, MAIN/PM/PATCH promovate pe buffere noi, jetonul = canal \| runlist << 16, grupul programat; inelul, USERD și bufferele găsite prin rădăcina primită de model | conform (6 teste noi + testul cap-coadă extins); 7 refuzuri RM întorc codul RM; greșeli plantate: 4 în codificator + 4 în secvență, toate prinse | PASS (SIMULARE) |
+| T34 | Structurile noi generate din antetele 570.144 | `tools/gen-rm570/generate.sh` + `cargo test -p nvidia-rm570` | `regs.rs`, `structs.rs`, `sysinfo.rs` identice; `rmapi.rs` doar cu adăugări | conform | PASS |
+| T35 | Soneria (scrierea jetonului în registru) | — | — | — | NOT TESTED (nescrisă; vine cu I10, doar cu `hw-write` și Adrian de față) |
+
 ## Rezultate — sesiunea 18 (29 oct 2026, cloud, fără placă) — C-39
 | Id | Test | Comandă | Așteptat | Obținut | Clasificare |
 |---|---|---|---|---|---|

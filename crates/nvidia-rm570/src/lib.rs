@@ -425,5 +425,16 @@ mod rmapi_tests {
         );
         assert_eq!(NV2080_ENGINE_TYPE_GRAPHICS, NV2080_ENGINE_TYPE_GR0);
         assert_eq!(NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_ASYNC, 1);
+        // I9e: the work submit token and the TSG schedule controls.
+        assert_eq!(
+            size_of::<NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS>(),
+            4
+        );
+        assert_eq!(size_of::<NVA06F_CTRL_GPFIFO_SCHEDULE_PARAMS>(), 2);
+        assert_eq!(NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN, 0xc36f_0108);
+        assert_eq!(NVA06C_CTRL_CMD_GPFIFO_SCHEDULE, 0xa06c_0101);
+        assert_eq!(offset_of!(NV_CHANNEL_ALLOC_PARAMS, hContextShare), 24);
+        assert_eq!(offset_of!(NV_CHANNEL_ALLOC_PARAMS, hUserdMemory), 32);
+        assert_eq!(offset_of!(NV_CHANNEL_ALLOC_PARAMS, errorNotifierMem), 248);
     }
 }

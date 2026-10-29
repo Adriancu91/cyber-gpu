@@ -51,6 +51,9 @@ pub mod cmd {
         r::NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_CONTEXT_BUFFERS_INFO;
     pub const PROMOTE_CTX: u32 = r::NV2080_CTRL_CMD_GPU_PROMOTE_CTX;
     pub const COPY_SERVER_RESERVED_PDES: u32 = r::NV90F1_CTRL_CMD_VASPACE_COPY_SERVER_RESERVED_PDES;
+    /// I9e: on a channel; on a channel group.
+    pub const WORK_SUBMIT_TOKEN: u32 = r::NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN;
+    pub const TSG_SCHEDULE: u32 = r::NVA06C_CTRL_CMD_GPFIFO_SCHEDULE;
 }
 
 /// `NV2080_ENGINE_TYPE_GR0` (the graphics/compute engine).
@@ -302,6 +305,190 @@ pub fn channel_params(c: &ChannelSetup) -> GpuResult<Vec<u8>> {
     put_memdesc(&mut b, offset_of!(C, mthdbufMem), &c.mthdbuf);
     put_u32(&mut b, offset_of!(C, internalFlags), c.internal_flags);
     Ok(b)
+}
+
+/// I9e: what the driver supplies for a working channel inside a channel
+/// group (TSG). The ring and its USERD share one contiguous, mapped buffer
+/// (ring first, USERD right after it, as tinygrad's `_new_gpu_fifo`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WorkChannelSetup {
+    /// GPU VA / PA of the buffer holding the ring and then USERD.
+    pub ring_va: u64,
+    pub ring_pa: u64,
+    pub entries: u32,
+    /// The context share the channel runs in (I9d).
+    pub ctxshare: u32,
+    /// Instance block (RAMFC = its start) and method buffer, VRAM.
+    pub inst_pa: u64,
+    pub mthd_pa: u64,
+    /// The error notifier's PA (only its low 32 bits travel, see below).
+    pub notifier_pa: u64,
+}
+
+/// Values tinygrad uses for a working channel (`ops_nv.py`
+/// `_new_gpu_fifo`, `ip.py` `rpc_rm_alloc`, MIT, commit 9cf7829a6). DEDUS.
+pub mod work_channel {
+    /// tinygrad: `userdMem.size = 0x400` for a working channel.
+    pub const USERD_SIZE: u64 = 0x400;
+    /// tinygrad: `errorNotifierMem = {base 0, size 0xecc, addressSpace 0}`.
+    pub const ERROR_NOTIFIER_SIZE: u64 = 0xecc;
+    /// Our choice (tinygrad uses 0x10000): 8 KiB of ring, USERD page-aligned after it.
+    pub const ENTRIES: u32 = 0x400;
+}
+
+impl WorkChannelSetup {
+    /// Where USERD starts inside the buffer: right after the ring.
+    pub fn userd_offset(&self) -> u64 {
+        self.entries as u64 * 8
+    }
+    /// Bytes the ring + USERD buffer must have.
+    pub fn buffer_size(entries: u32) -> u64 {
+        (entries as u64 * 8 + work_channel::USERD_SIZE).next_multiple_of(0x1000)
+    }
+}
+
+/// The low 32 bits of a PA, as tinygrad puts them in the handle fields.
+/// GSP-RM does not resolve these handles on its side (RM 570.144
+/// `kernel_channel.c`: with `RMCFG_FEATURE_PLATFORM_GSP` and a channel not
+/// owned by GSP, the error context is not looked up and USERD is described
+/// from `userdMem`); only "non-zero" matters. Zero is refused.
+fn handle_marker(pa: u64) -> GpuResult<u32> {
+    match pa as u32 {
+        0 => Err(GpuError::InvalidArgument(
+            "canal: adresa nu poate sta intr-un handle (32 de biti zero)",
+        )),
+        h => Ok(h),
+    }
+}
+
+/// I9e: `NV_CHANNEL_ALLOC_PARAMS` for a working channel whose parent is a
+/// channel group. RM 570.144 `kchannelConstruct` (MIT, read as the
+/// specification): a TSG channel names a context share and no VA space
+/// (both = `INVALID_ARGUMENT`), the channel type must be physical
+/// (`flags` = 0 here), `engineType` 0 means "the TSG's engine". The memory
+/// descriptors are what GSP-RM uses instead of allocating (tinygrad's
+/// values: instance 4 KiB, RAMFC 0x200 at its start, method buffer 0x5000,
+/// USERD 0x400 after the ring, error notifier {0, 0xecc, 0}).
+pub fn work_channel_params(c: &WorkChannelSetup) -> GpuResult<Vec<u8>> {
+    use golden_channel as g;
+    if c.entries < 2 || !c.entries.is_power_of_two() {
+        return Err(GpuError::InvalidArgument(
+            "canal: numarul de intrari GPFIFO nu e putere a lui 2",
+        ));
+    }
+    if c.ring_va == 0 || !c.ring_va.is_multiple_of(0x1000) || !c.ring_pa.is_multiple_of(0x1000) {
+        return Err(GpuError::InvalidArgument(
+            "canal: adresa GPFIFO lipsa sau nealiniata",
+        ));
+    }
+    if c.ctxshare == 0 {
+        return Err(GpuError::InvalidArgument(
+            "canal: fara context share (grupul cere unul)",
+        ));
+    }
+    for pa in [c.inst_pa, c.mthd_pa] {
+        if pa == 0 || !pa.is_multiple_of(0x1000) {
+            return Err(GpuError::InvalidArgument(
+                "canal: instanta sau bufferul de metode nealiniat",
+            ));
+        }
+    }
+    type C = r::NV_CHANNEL_ALLOC_PARAMS;
+    let buffer = handle_marker(c.ring_pa)?;
+    let error = handle_marker(c.notifier_pa)?;
+    let mut b = alloc::vec![0u8; size_of::<C>()];
+    put_u32(&mut b, offset_of!(C, hObjectError), error);
+    put_u32(&mut b, offset_of!(C, hObjectBuffer), buffer);
+    put_u64(&mut b, offset_of!(C, gpFifoOffset), c.ring_va);
+    put_u32(&mut b, offset_of!(C, gpFifoEntries), c.entries);
+    put_u32(&mut b, offset_of!(C, hContextShare), c.ctxshare);
+    put_u32(&mut b, offset_of!(C, hUserdMemory), buffer); // [0]
+    put_u64(&mut b, offset_of!(C, userdOffset), c.userd_offset()); // [0]
+    put_memdesc(
+        &mut b,
+        offset_of!(C, instanceMem),
+        &MemDesc::vidmem(c.inst_pa, g::INSTANCE_SIZE),
+    );
+    put_memdesc(
+        &mut b,
+        offset_of!(C, userdMem),
+        &MemDesc::vidmem(c.ring_pa + c.userd_offset(), work_channel::USERD_SIZE),
+    );
+    put_memdesc(
+        &mut b,
+        offset_of!(C, ramfcMem),
+        &MemDesc::vidmem(c.inst_pa, g::RAMFC_SIZE),
+    );
+    put_memdesc(
+        &mut b,
+        offset_of!(C, mthdbufMem),
+        &MemDesc::vidmem(c.mthd_pa, g::METHOD_BUFFER_SIZE),
+    );
+    put_memdesc(
+        &mut b,
+        offset_of!(C, errorNotifierMem),
+        &MemDesc {
+            base: 0,
+            size: work_channel::ERROR_NOTIFIER_SIZE,
+            address_space: 0,
+            cache_attrib: 0,
+        },
+    );
+    Ok(b)
+}
+
+/// `NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS` request
+/// (tinygrad sends `workSubmitToken = -1`).
+pub fn work_submit_token_request() -> Vec<u8> {
+    type P = r::NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS;
+    let mut b = alloc::vec![0u8; size_of::<P>()];
+    put_u32(&mut b, offset_of!(P, workSubmitToken), u32::MAX);
+    b
+}
+
+/// `NV_CTRL_VF_DOORBELL` (RM 570.144 `swref/published/ampere/ga100/dev_ctrl.h`,
+/// MIT): `VECTOR` = bits 11:0 (the channel id), `RUNLIST_ID` = bits 22:16.
+pub const DOORBELL_VECTOR_MASK: u32 = 0xfff;
+pub const DOORBELL_RUNLIST_SHIFT: u32 = 16;
+pub const DOORBELL_RUNLIST_MASK: u32 = 0x7f;
+
+/// The doorbell value for a channel. On GSP, RM's token is the channel id
+/// only (`kfifoGenerateWorkSubmitTokenHal_GA100`: under
+/// `RMCFG_FEATURE_PLATFORM_GSP` it returns the internal token); CPU-RM adds
+/// the runlist (`_CTRL_VF_DOORBELL_RUNLIST_ID`), and so does tinygrad
+/// (`| runlist << 16`). A reply with bits outside `VECTOR`, or a runlist
+/// that does not fit, is an error — never rung.
+pub fn doorbell_token(gsp_token: u32, runlist: u32) -> GpuResult<u32> {
+    if gsp_token & !DOORBELL_VECTOR_MASK != 0 || gsp_token == u32::MAX {
+        return Err(GpuError::InvalidArgument(
+            "jetonul soneriei: GSP-RM a raspuns cu altceva decat un canal",
+        ));
+    }
+    if runlist > DOORBELL_RUNLIST_MASK {
+        return Err(GpuError::InvalidArgument(
+            "jetonul soneriei: runlist prea mare",
+        ));
+    }
+    Ok(gsp_token | runlist << DOORBELL_RUNLIST_SHIFT)
+}
+
+/// The channel id in GSP-RM's reply to the token request.
+pub fn parse_work_submit_token(p: &[u8]) -> GpuResult<u32> {
+    type P = r::NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS;
+    if p.len() != size_of::<P>() {
+        return Err(GpuError::InvalidArgument(
+            "jetonul soneriei: lungime gresita",
+        ));
+    }
+    Ok(get_u32(p, offset_of!(P, workSubmitToken)))
+}
+
+/// `NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS` (= the `A06F` one): enable, submit.
+pub fn schedule_params(enable: bool) -> Vec<u8> {
+    type P = r::NVA06F_CTRL_GPFIFO_SCHEDULE_PARAMS;
+    let mut b = alloc::vec![0u8; size_of::<P>()];
+    b[offset_of!(P, bEnable)] = enable as u8;
+    b
 }
 
 /// `NV2080_CTRL_FIFO_GET_DEVICE_INFO_TABLE_PARAMS` request (first page).
@@ -696,6 +883,18 @@ mod tests {
         let ch = channel_params(&ChannelSetup::golden(0x1000, 0x2000, 7, 0x3000, 0x4000)).unwrap();
         assert_eq!(ch.len(), fs::CHANNEL);
         assert_eq!(device_info_request().len(), fs::DEVICE_INFO);
+        // I9e: the token and schedule controls.
+        assert_eq!(
+            [cmd::WORK_SUBMIT_TOKEN, cmd::TSG_SCHEDULE],
+            [fcmd::WORK_SUBMIT_TOKEN, fcmd::TSG_SCHEDULE]
+        );
+        assert_eq!(
+            [
+                work_submit_token_request().len(),
+                schedule_params(true).len()
+            ],
+            [fs::WORK_SUBMIT_TOKEN, fs::TSG_SCHEDULE]
+        );
         assert_eq!(ctx_buffers_info_request().len(), fs::KGR_INFO);
         assert_eq!(
             reserved_pdes_params(
