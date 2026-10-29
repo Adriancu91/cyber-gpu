@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 21 — 30 octombrie 2026, ~01:25–02:05 (ora României), în cloud, FĂRĂ placă
+## Sesiunea 21 — 30 octombrie 2026, ~01:25–01:45 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comenzi noi în hub pentru noi: niciuna. Sesiunea OS a făcut C-42 (fixarea
 pe `aee06c4`, Release `os-209`); în hub nu sunt rezultate noi de pe placă. Am făcut următorul pas „fără placă”: **I10b**, prima lansare pe
@@ -328,7 +328,7 @@ apoi, cu Adrian: proba P (tinygrad), care dă jurnalul de comparat cu GSP-ul fal
 
 ---
 
-## Sesiunea 7 — 27 octombrie 2026, ~01:25–02:05 (ora României), în cloud, FĂRĂ placă
+## Sesiunea 7 — 27 octombrie 2026, ~01:25–01:45 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Tot ce scrie „PASS” e pe calculatorul gazdă: SIMULARE (modele software),
 aritmetică sau compilare. Comanda lucrată: **C-20**, pașii rămași din sesiunea 6: D partea 2, I4c, E.
