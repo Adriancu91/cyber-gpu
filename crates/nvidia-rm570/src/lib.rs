@@ -436,5 +436,9 @@ mod rmapi_tests {
         assert_eq!(offset_of!(NV_CHANNEL_ALLOC_PARAMS, hContextShare), 24);
         assert_eq!(offset_of!(NV_CHANNEL_ALLOC_PARAMS, hUserdMemory), 32);
         assert_eq!(offset_of!(NV_CHANNEL_ALLOC_PARAMS, errorNotifierMem), 248);
+        // I10a: USERD (clc56f.h `AmpereAControlGPFifo`) — GPGet read-only, GPPut ours.
+        assert_eq!(size_of::<AmpereAControlGPFifo>(), 512);
+        assert_eq!(offset_of!(AmpereAControlGPFifo, GPGet), 0x88);
+        assert_eq!(offset_of!(AmpereAControlGPFifo, GPPut), 0x8c);
     }
 }

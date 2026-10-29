@@ -48,6 +48,7 @@ use alloc::vec::Vec;
 use super::golden::{GoldenImage, GoldenMemory, Mapping, PROMOTE_PHYS_ATTR, Rm, RmTransport};
 use super::rmapi::{self, PromoteEntry, WorkChannelSetup, class, cmd};
 use super::rpc::function;
+use super::work_queue::ChannelMemory;
 use crate::mmu::LEVELS;
 
 /// The client handle tinygrad uses for its work (`PCIIface.root`). DEDUS.
@@ -194,6 +195,45 @@ pub fn open_work_channel<T: RmTransport + ?Sized, M: GoldenMemory + ?Sized>(
     cg: &ComputeGroup,
     g: &GoldenImage,
 ) -> GpuResult<WorkChannel> {
+    open_channel(t, mem, u, cg, g, |_, _| Ok(()))
+}
+
+/// I10a: like [`open_work_channel`], but USERD is zeroed **before** the
+/// channel is allocated, so `GPGet = GPPut = 0` when GSP-RM schedules it.
+/// RM 570.144 clears a client's USERD itself only on vGPU
+/// (`kernel_channel.c`, `kfifoSetupUserD`); on bare metal it is the
+/// driver's job. Use this one for a channel that will get work
+/// ([`super::work_queue::WorkQueue`]).
+pub fn open_work_channel_cleared<
+    T: RmTransport + ?Sized,
+    M: GoldenMemory + ChannelMemory + ?Sized,
+>(
+    t: &mut T,
+    mem: &mut M,
+    u: &UserSpace,
+    cg: &ComputeGroup,
+    g: &GoldenImage,
+) -> GpuResult<WorkChannel> {
+    open_channel(t, mem, u, cg, g, |m, userd_pa| {
+        for off in (0..USERD_SIZE).step_by(4) {
+            m.write_u32(userd_pa + off, 0)?;
+        }
+        Ok(())
+    })
+}
+
+/// Bytes of USERD (`AmpereAControlGPFifo`, generated).
+pub const USERD_SIZE: u64 =
+    core::mem::size_of::<nvidia_rm570::rmapi::AmpereAControlGPFifo>() as u64;
+
+fn open_channel<T: RmTransport + ?Sized, M: GoldenMemory + ?Sized>(
+    t: &mut T,
+    mem: &mut M,
+    u: &UserSpace,
+    cg: &ComputeGroup,
+    g: &GoldenImage,
+    clear_userd: impl FnOnce(&mut M, u64) -> GpuResult<()>,
+) -> GpuResult<WorkChannel> {
     rmapi::check_root(u.root)?;
     let runlist = g
         .runlists
@@ -231,6 +271,7 @@ pub fn open_work_channel<T: RmTransport + ?Sized, M: GoldenMemory + ?Sized>(
     };
     // Built before the first message, so a bad setup sends nothing.
     let params = rmapi::work_channel_params(&setup)?;
+    clear_userd(mem, ring.pa + setup.userd_offset())?;
     let mut rm = Rm {
         t,
         client: u.client,
@@ -1058,5 +1099,228 @@ mod tests {
                 "greseala la {off} = {v:#x} neprinsa"
             );
         }
+    }
+
+    // ---- I10a: the first pushbuffer on the working channel (SIMULARE) ----
+
+    use crate::gsp::work_queue::{
+        COMPUTE_SUBCH, ChannelMemory, Doorbell, LOCAL_MEM_WINDOW, SHARED_MEM_WINDOW, WorkQueue,
+        compute_setup,
+    };
+    use crate::push::{DOORBELL_INFERRED, PushBuf};
+    use gpu_sim::cmdproc::{CommandProcessor, Event, USERD_GP_GET};
+
+    /// 32-bit stores on the 64-bit simulated VRAM (read-modify-write; SIM).
+    impl ChannelMemory for Sim {
+        fn write_u32(&mut self, pa: u64, v: u32) -> GpuResult<()> {
+            let (a, sh) = (pa & !7, (pa & 4) * 8);
+            let old = self.0.read_u64(a).map_err(GpuError::InvalidArgument)?;
+            let new = (old & !(0xffff_ffff << sh)) | ((v as u64) << sh);
+            self.0.write_u64(a, new).map_err(GpuError::InvalidArgument)
+        }
+        fn read_u32(&mut self, pa: u64) -> GpuResult<u32> {
+            let v = self
+                .0
+                .read_u64(pa & !7)
+                .map_err(GpuError::InvalidArgument)?;
+            Ok((v >> ((pa & 4) * 8)) as u32)
+        }
+    }
+
+    fn setup_words() -> Vec<u32> {
+        let mut buf = [0u32; 16];
+        let mut pb = PushBuf::new(&mut buf);
+        compute_setup(&mut pb, LOCAL_MEM_WINDOW, SHARED_MEM_WINDOW).unwrap();
+        pb.words().to_vec()
+    }
+
+    /// The GPU's side: from the root GSP-RM was given, the model fetches
+    /// ring, USERD and pushbuffer, runs the ring and writes GPGet back.
+    fn gpu_runs(mem: &mut Mem, root: u64, w: &WorkChannel, push: &Mapping) -> CommandProcessor {
+        let mut cp = CommandProcessor::new();
+        let v = &mem.writer().0;
+        cp.mem
+            .load_from_vram(v, root, w.ring.va, w.ring.size)
+            .unwrap();
+        cp.mem.load_from_vram(v, root, push.va, push.size).unwrap();
+        let userd = w.ring.va + w.userd_offset;
+        cp.run_channel(w.ring.va, w.entries, userd).unwrap();
+        cp.mem
+            .store_to_vram(&mut mem.writer_mut().0, root, userd + USERD_GP_GET, 8)
+            .unwrap();
+        cp
+    }
+
+    /// SIMULARE end to end: golden image → working client → group → working
+    /// channel (I9c–I9e), then the compute setup written by the driver into
+    /// a pushbuffer, the GPFIFO entry into the ring and GPPut into USERD;
+    /// the model reads them only through the page tables GSP-RM was given.
+    #[test]
+    fn first_pushbuffer_on_the_work_channel() {
+        let (mut d, mut mem, g, u, cg) = grouped();
+        let w = open_work_channel_cleared(&mut d, &mut mem, &u, &cg, &g).unwrap();
+        let root = d.0.page_directory(USER_CLIENT, u.vaspace).unwrap().0;
+        // USERD was zeroed before the channel existed.
+        let userd_pa = w.ring.pa + w.userd_offset;
+        assert_eq!(mem.writer().0.read_u64(userd_pa + USERD_GP_GET), Ok(0));
+        let push = mem.alloc_mapped(0x1000, 0x1000).unwrap();
+        let mut q = WorkQueue::new(&w, push).unwrap();
+        let words = setup_words();
+        let bell = q.submit(mem.writer_mut(), &words).unwrap();
+        // The doorbell is only described: tinygrad's offset, the token.
+        assert_eq!(
+            bell,
+            Doorbell {
+                bar0_offset: DOORBELL_INFERRED,
+                value: w.doorbell_token
+            }
+        );
+        assert_eq!((q.put(), q.get()), (1, 0));
+        let cp = gpu_runs(&mut mem, root, &w, &push);
+        assert_eq!(
+            cp.events,
+            [Event::SetObject {
+                subch: COMPUTE_SUBCH,
+                class: class::COMPUTE
+            }]
+        );
+        assert_eq!(cp.compute.local_window, Some(LOCAL_MEM_WINDOW));
+        assert_eq!(cp.compute.shared_window, Some(SHARED_MEM_WINDOW));
+        assert_eq!(cp.compute.local_memory, None);
+        assert_eq!(cp.entries_taken, 1);
+        // The driver reads GPGet back and accepts it.
+        assert_eq!(q.update_get(mem.writer_mut()), Ok(1));
+        assert_eq!(q.get(), 1);
+
+        // Wrap-around: 1023 one-dword NOPs fill the ring up to the slot
+        // before GET; one more is refused without writing anything.
+        let nop = PushBuf::new(&mut [0u32; 2]).words().len(); // 0
+        assert_eq!(nop, 0);
+        let mut nb = [0u32; 2];
+        let mut pb = PushBuf::new(&mut nb);
+        pb.inc(
+            COMPUTE_SUBCH,
+            nvidia_rm570::regs::clc7c0::NVC7C0_SET_OBJECT,
+            &[class::COMPUTE],
+        )
+        .unwrap();
+        let one = pb.words().to_vec();
+        let big = mem.alloc_mapped(0x4000, 0x1000).unwrap();
+        let mut q2 = WorkQueue::new(&w, big).unwrap();
+        // Bring q2 to the channel's current state (GET = PUT = 1).
+        q2.submit(mem.writer_mut(), &one).unwrap();
+        mem.writer_mut()
+            .write_u32(w.ring.pa + w.userd_offset + USERD_GP_GET, 1)
+            .unwrap();
+        assert_eq!(q2.update_get(mem.writer_mut()), Ok(1));
+        for _ in 0..w.entries - 1 {
+            q2.submit(mem.writer_mut(), &one).unwrap();
+        }
+        let before = mem
+            .writer()
+            .0
+            .read_u64(w.ring.pa + w.userd_offset + 0x88)
+            .unwrap();
+        assert!(q2.submit(mem.writer_mut(), &one).is_err(), "inelul plin");
+        assert_eq!(
+            mem.writer()
+                .0
+                .read_u64(w.ring.pa + w.userd_offset + 0x88)
+                .unwrap(),
+            before
+        );
+        assert_eq!(q2.put(), 0, "PUT a trecut peste capat");
+        let cp = gpu_runs(&mut mem, root, &w, &big);
+        assert_eq!(cp.entries_taken, w.entries - 1);
+        assert_eq!(cp.events.len(), (w.entries - 1) as usize);
+        assert_eq!(q2.update_get(mem.writer_mut()), Ok(w.entries - 1));
+    }
+
+    /// Without the clearing, USERD holds whatever VRAM had (the model's
+    /// poison): the GPU would read a junk GPGet/GPPut — the model refuses.
+    #[test]
+    fn uncleared_userd_is_junk() {
+        let (mut d, mut mem, g, u, cg) = grouped();
+        let w = open_work_channel(&mut d, &mut mem, &u, &cg, &g).unwrap();
+        let root = d.0.page_directory(USER_CLIENT, u.vaspace).unwrap().0;
+        let mut cp = CommandProcessor::new();
+        cp.mem
+            .load_from_vram(&mem.writer().0, root, w.ring.va, w.ring.size)
+            .unwrap();
+        assert!(
+            cp.run_channel(w.ring.va, w.entries, w.ring.va + w.userd_offset)
+                .is_err()
+        );
+    }
+
+    /// A GPGet the GPU could not have written is refused; a pushbuffer area
+    /// that overlaps the ring is refused.
+    #[test]
+    fn work_queue_refusals() {
+        let (mut d, mut mem, g, u, cg) = grouped();
+        let w = open_work_channel_cleared(&mut d, &mut mem, &u, &cg, &g).unwrap();
+        assert!(WorkQueue::new(&w, w.ring).is_err());
+        let push = mem.alloc_mapped(0x1000, 0x1000).unwrap();
+        let mut q = WorkQueue::new(&w, push).unwrap();
+        q.submit(mem.writer_mut(), &setup_words()).unwrap();
+        let get_pa = w.ring.pa + w.userd_offset + USERD_GP_GET;
+        for bad in [2, w.entries, u32::MAX] {
+            mem.writer_mut().write_u32(get_pa, bad).unwrap();
+            assert!(q.update_get(mem.writer_mut()).is_err(), "GPGet {bad}");
+        }
+        assert_eq!(q.get(), 0);
+        // Too big for the area: refused, nothing written.
+        let tiny = Mapping { size: 8, ..push };
+        let mut q = WorkQueue::new(&w, tiny).unwrap();
+        let put_pa = w.ring.pa + w.userd_offset + 0x88;
+        let before = mem.writer().0.read_u64(put_pa).unwrap();
+        assert!(q.submit(mem.writer_mut(), &setup_words()).is_err());
+        assert_eq!(mem.writer().0.read_u64(put_pa).unwrap(), before);
+    }
+
+    /// Mistakes planted in what the driver writes are caught by the model
+    /// (it reads only what the headers say).
+    #[test]
+    fn planted_submit_mistakes_are_caught() {
+        let (mut d, mut mem, g, u, cg) = grouped();
+        let w = open_work_channel_cleared(&mut d, &mut mem, &u, &cg, &g).unwrap();
+        let root = d.0.page_directory(USER_CLIENT, u.vaspace).unwrap().0;
+        let good = setup_words();
+        let mut cases: Vec<(&str, Vec<u32>)> = Vec::new();
+        let mut m = good.clone();
+        m.swap(3, 4); // window halves swapped (upper=0, lower=0x7293)
+        cases.push(("jumatati inversate", m));
+        let mut m = good.clone();
+        m[2] &= !(1 << 13); // window methods on subchannel 0 (no compute object)
+        cases.push(("subcanal gresit", m));
+        let mut m = good.clone();
+        m[0] = (m[0] & !0x0fff) | (0x7b4 >> 2); // SET_OBJECT header points at WINDOW_B
+        cases.push(("metoda gresita", m));
+        let mut m = good.clone();
+        m.truncate(7); // last dword lost
+        cases.push(("trunchiat", m));
+        for (what, words) in cases {
+            let push = mem.alloc_mapped(0x1000, 0x1000).unwrap();
+            // A fresh channel each time, so GET = PUT = 0.
+            let cg2 = ComputeGroup {
+                next_handle: 0x500 + 0x10 * what.len() as u32,
+                ..cg
+            };
+            let w2 = open_work_channel_cleared(&mut d, &mut mem, &u, &cg2, &g).unwrap();
+            let mut q = WorkQueue::new(&w2, push).unwrap();
+            q.submit(mem.writer_mut(), &words).unwrap();
+            let mut cp = CommandProcessor::new();
+            let v = &mem.writer().0;
+            cp.mem
+                .load_from_vram(v, root, w2.ring.va, w2.ring.size)
+                .unwrap();
+            cp.mem.load_from_vram(v, root, push.va, push.size).unwrap();
+            let r = cp.run_channel(w2.ring.va, w2.entries, w2.ring.va + w2.userd_offset);
+            let wrong = r.is_err()
+                || cp.compute.local_window != Some(LOCAL_MEM_WINDOW)
+                || cp.compute.shared_window != Some(SHARED_MEM_WINDOW);
+            assert!(wrong, "greseala „{what}” neprinsa");
+        }
+        let _ = w;
     }
 }

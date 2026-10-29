@@ -327,6 +327,19 @@ impl<W: VramWrite> GpuMemory<W> {
     }
 }
 
+/// I10a: 32-bit stores go to the writer (the page tables are not involved:
+/// these are physical addresses of buffers the driver allocated).
+impl<W: VramWrite + crate::gsp::work_queue::ChannelMemory> crate::gsp::work_queue::ChannelMemory
+    for GpuMemory<W>
+{
+    fn write_u32(&mut self, pa: u64, v: u32) -> GpuResult<()> {
+        self.writer_mut().write_u32(pa, v)
+    }
+    fn read_u32(&mut self, pa: u64) -> GpuResult<u32> {
+        self.writer_mut().read_u32(pa)
+    }
+}
+
 impl<W: VramWrite> GoldenMemory for GpuMemory<W> {
     fn alloc_mapped(&mut self, size: u64, align: u64) -> GpuResult<Mapping> {
         let pa = self.alloc_phys(size, align)?;

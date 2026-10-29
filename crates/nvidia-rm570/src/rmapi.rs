@@ -758,6 +758,61 @@ const _: () = {
     ["Offset of field: NV0080_ALLOC_PARAMETERS::vaMode"]
         [::core::mem::offset_of!(NV0080_ALLOC_PARAMETERS, vaMode) - 48usize];
 };
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct Nvc56fControl_struct {
+    pub Ignored00: [NvU32; 16usize],
+    pub Put: NvU32,
+    pub Get: NvU32,
+    pub Reference: NvU32,
+    pub PutHi: NvU32,
+    pub Ignored01: [NvU32; 2usize],
+    pub TopLevelGet: NvU32,
+    pub TopLevelGetHi: NvU32,
+    pub GetHi: NvU32,
+    pub Ignored02: [NvU32; 7usize],
+    pub Ignored03: NvU32,
+    pub Ignored04: [NvU32; 1usize],
+    pub GPGet: NvU32,
+    pub GPPut: NvU32,
+    pub Ignored05: [NvU32; 92usize],
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of Nvc56fControl_struct"][::core::mem::size_of::<Nvc56fControl_struct>() - 512usize];
+    ["Alignment of Nvc56fControl_struct"][::core::mem::align_of::<Nvc56fControl_struct>() - 4usize];
+    ["Offset of field: Nvc56fControl_struct::Ignored00"]
+        [::core::mem::offset_of!(Nvc56fControl_struct, Ignored00) - 0usize];
+    ["Offset of field: Nvc56fControl_struct::Put"]
+        [::core::mem::offset_of!(Nvc56fControl_struct, Put) - 64usize];
+    ["Offset of field: Nvc56fControl_struct::Get"]
+        [::core::mem::offset_of!(Nvc56fControl_struct, Get) - 68usize];
+    ["Offset of field: Nvc56fControl_struct::Reference"]
+        [::core::mem::offset_of!(Nvc56fControl_struct, Reference) - 72usize];
+    ["Offset of field: Nvc56fControl_struct::PutHi"]
+        [::core::mem::offset_of!(Nvc56fControl_struct, PutHi) - 76usize];
+    ["Offset of field: Nvc56fControl_struct::Ignored01"]
+        [::core::mem::offset_of!(Nvc56fControl_struct, Ignored01) - 80usize];
+    ["Offset of field: Nvc56fControl_struct::TopLevelGet"]
+        [::core::mem::offset_of!(Nvc56fControl_struct, TopLevelGet) - 88usize];
+    ["Offset of field: Nvc56fControl_struct::TopLevelGetHi"]
+        [::core::mem::offset_of!(Nvc56fControl_struct, TopLevelGetHi) - 92usize];
+    ["Offset of field: Nvc56fControl_struct::GetHi"]
+        [::core::mem::offset_of!(Nvc56fControl_struct, GetHi) - 96usize];
+    ["Offset of field: Nvc56fControl_struct::Ignored02"]
+        [::core::mem::offset_of!(Nvc56fControl_struct, Ignored02) - 100usize];
+    ["Offset of field: Nvc56fControl_struct::Ignored03"]
+        [::core::mem::offset_of!(Nvc56fControl_struct, Ignored03) - 128usize];
+    ["Offset of field: Nvc56fControl_struct::Ignored04"]
+        [::core::mem::offset_of!(Nvc56fControl_struct, Ignored04) - 132usize];
+    ["Offset of field: Nvc56fControl_struct::GPGet"]
+        [::core::mem::offset_of!(Nvc56fControl_struct, GPGet) - 136usize];
+    ["Offset of field: Nvc56fControl_struct::GPPut"]
+        [::core::mem::offset_of!(Nvc56fControl_struct, GPPut) - 140usize];
+    ["Offset of field: Nvc56fControl_struct::Ignored05"]
+        [::core::mem::offset_of!(Nvc56fControl_struct, Ignored05) - 144usize];
+};
+pub type AmpereAControlGPFifo = Nvc56fControl_struct;
 pub const RPC_GSP_RM_ALLOC_HCLIENT: _bindgen_ty_4 = 0;
 pub const RPC_GSP_RM_ALLOC_HPARENT: _bindgen_ty_4 = 4;
 pub const RPC_GSP_RM_ALLOC_HOBJECT: _bindgen_ty_4 = 8;

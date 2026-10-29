@@ -1,5 +1,14 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 20 (29 oct 2026, cloud, fără placă) — I10a
+| Id | Test | Comandă | Așteptat | Obținut | Clasificare |
+|---|---|---|---|---|---|
+| T36 | Primul pushbuffer pe canalul de lucru (I10a): `SET_OBJECT` compute + ferestrele de memorie locală/partajată pe subcanalul 1 (ca tinygrad), intrarea GPFIFO în inel, `GPPut` în USERD | `cargo test -p nvidia-ga104 user_space work_queue` | după I9c–I9e, modelul `gpu-sim::cmdproc` citește inelul, USERD și pushbuffer-ul **doar** prin rădăcina primită de RM-ul fals, execută metodele, scrie `GPGet` înapoi; driverul îl citește și îl acceptă; inelul trece peste capăt (1023 de intrări), al 1024-lea refuzat fără nicio scriere | conform; cuvintele = exact ce dă `nvm(1, ...)` din tinygrad; **5 greșeli plantate în driver** (ferestre inversate, `GPPut` scris la `GPGet`, slot greșit, USERD neșters, adresa intrării) + **3 în octeți** (jumătăți inversate, subcanal greșit, metodă greșită, cuvânt lipsă), toate prinse | PASS (SIMULARE) |
+| T37 | USERD șters înainte de alocarea canalului (`open_work_channel_cleared`) | idem | `GPGet = GPPut = 0` când GSP-RM programează canalul; fără ștergere modelul găsește „gunoi” și refuză | conform | PASS (SIMULARE) |
+| T38 | Metodele de configurare în model (perechi `_A`/`_B`, biți în afara câmpului, `_B` fără `_A`, fără `SET_OBJECT`) + inelul cu trecere peste capăt | `cargo test -p gpu-sim cmdproc` | refuzate / înregistrate exact | conform (3 teste) | PASS (SIMULARE) |
+| T39 | `AmpereAControlGPFifo` (USERD) generat din `clc56f.h` 570.144 | `tools/gen-rm570/generate.sh` + `cargo test -p nvidia-rm570` | 512 B, `GPGet` 0x88, `GPPut` 0x8c; restul fișierelor generate identice | conform | PASS |
+| T40 | Soneria (scrierea jetonului la BAR0 + 0xbb0090) | — | — | — | NOT TESTED (doar descrisă: `work_queue::Doorbell`; nescrisă) |
+
 ## Rezultate — sesiunea 19 (29 oct 2026, cloud, fără placă) — I9e
 | Id | Test | Comandă | Așteptat | Obținut | Clasificare |
 |---|---|---|---|---|---|

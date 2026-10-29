@@ -1,5 +1,30 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 20 — 29 octombrie 2026, ~19:20–19:50 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comenzi noi în hub pentru noi: niciuna (C-39 gata; fereastra următoare
+așteaptă Release-ul OS cu fixarea nouă; în hub nu sunt rezultate noi de pe placă). Am făcut următorul pas „fără placă”: **I10a**, primul
+pushbuffer pe canalul de lucru. Tot ce scrie „PASS” e pe gazdă: SIMULARE.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Pornire | CI rularea 64 (vârful `9d671fd`) verde; `tools/check.sh` verde înainte de orice schimbare (268 teste; rustc 1.97.0, ținta `x86_64-unknown-none` instalată); ultimele 3 sesiuni au terminat pași → fără oprire de siguranță | PASS |
+| Antete | generatorul `tools/gen-rm570` (bindgen-cli 0.71.1 instalat în sesiune) a reprodus întâi **identic** fișierele; apoi produce și USERD (`AmpereAControlGPFifo` din `clc56f.h`: 512 B, `GPGet` 0x88, `GPPut` 0x8c); `rmapi.rs` doar cu adăugări | PASS (dimensiuni fixate în `rm_api_layouts_570_144`) |
+| **I10a** configurarea calculului | `nvidia-ga104::gsp::work_queue`: `compute_setup` = `SET_OBJECT` (AMPERE_COMPUTE_B) + `SET_SHADER_LOCAL_MEMORY_WINDOW` + `SET_SHADER_SHARED_MEMORY_WINDOW` pe subcanalul 1, cu adresele tinygrad (`0x7293…`/`0x7294…`, verificate în afara VA-ului nostru); `local_memory_size` + `local_memory_setup` (aritmetica tinygrad; forma GR intră ca parametru, nu e presupusă) | PASS (SIMULARE): cuvintele = exact ce dă `nvm(1, …)` din tinygrad |
+| **I10a** trimiterea | `WorkQueue::submit`: cuvintele în bufferul de comenzi, intrarea GPFIFO în slotul următor (ca tinygrad: `LEVEL = SUBROUTINE`), apoi `GPPut` în USERD — în ordinea asta; întoarce **descrierea** soneriei (BAR0 + 0xbb0090 = jetonul), **fără s-o scrie**; `update_get` citește `GPGet` și refuză orice valoare în afara [get, put]. Testul a găsit o problemă reală: USERD-ul neșters conține „gunoi” → `open_work_channel_cleared` șterge USERD-ul **înainte** de a cere canalul (RM 570.144 o face singur doar pe vGPU) | PASS (SIMULARE): cap-coadă golden image → I9c → I9d → I9e → I10a; modelul `gpu-sim::cmdproc` citește inelul, USERD și pushbuffer-ul **doar** prin rădăcina primită de RM-ul fals, execută, scrie `GPGet`; inelul trece peste capăt (1023 de intrări, a 1024-a refuzată fără nicio scriere); **5 greșeli plantate în driver + 3 în octeți, toate prinse** |
+| Modelul | `gpu-sim::cmdproc`: metodele de configurare (perechi `_A`/`_B`, biți în afara câmpului refuzați) în `ComputeState`; `run_channel` (inelul văzut prin USERD); `GpuMem::{load_from_vram, store_to_vram}` prin cititorul independent de tabele | PASS: 3 teste noi |
+| Alegeri notate | ferestrele, `LEVEL`, ștergerea USERD, memoria locală | `COMPATIBILITATE_FIRMWARE.md` („De verificat”) |
+| Compatibilitate OS | `git diff 9d671fd` pe `gpu-core`, `gpu-pci`, `nvidia-ga104`, `gpu-compute` și `gpu-sim`: nicio linie `pub` ștearsă; doar adăugări (`gsp::work_queue`, `user_space::{open_work_channel_cleared, USERD_SIZE}`, `ChannelMemory` pentru `mmu::GpuMemory`; în `gpu-sim::cmdproc`: `ComputeState`, `run_channel`, câmpuri noi, `USERD_GP_GET/PUT`) | PASS |
+
+Verificări (`tools/check.sh`): format PASS, clippy `-D warnings` PASS, **280 de teste PASS** (1 ignorat: viteza), build no_std PASS;
+`nvidia-ga104 --features hw-write`: clippy + teste PASS. Nicio scriere în placă. OS-ul nu a fost reconstruit (nicio schimbare de interfață pentru el): NOT TESTED.
+
+**Următorul pas:** la fereastra următoare (după Release-ul OS cu fixarea ≥ `ef97110`): `gpu firmware` → `criteriul I4: TRECE`, apoi
+(opțional, cu Adrian) proba tinygrad. Fără placă: cererea `GR_GET_INFO` (forma GR pentru memoria locală) și prima lansare pe canalul de lucru
+(QMD + `SEND_PCAS` + semaforul de terminare, prin `WorkQueue`, în model); treapta 6 matmul (Mesa NAK pe gazdă).
+
+---
+
 ## Sesiunea 19 — 29 octombrie 2026, ~13:30–13:55 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comenzi noi în hub pentru noi: niciuna (C-39 gata; fereastra următoare

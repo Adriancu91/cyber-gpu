@@ -6,7 +6,13 @@
 //!   (release 32/64-bit, acquire ≥ — an acquire that is not yet satisfied is
 //!   an error here, since nothing else runs in parallel);
 //! - compute class C7C0: `SET_OBJECT`, `SEND_PCAS_A` (QMD address >> 8) and
-//!   `SEND_SIGNALING_PCAS2_B` (launch), reading a QMD V03_00.
+//!   `SEND_SIGNALING_PCAS2_B` (launch), reading a QMD V03_00;
+//! - I10a: the once-per-channel compute setup — the local and shared memory
+//!   windows, the local memory buffer and its per-TPC size — recorded in
+//!   [`ComputeState`] (the model does not use them for anything else);
+//! - I10a: a channel's ring as the GPU sees it ([`CommandProcessor::run_channel`]):
+//!   `GPGet`/`GPPut` from USERD (`AmpereAControlGPFifo`), the entries between
+//!   them, then `GPGet` written back.
 //!
 //! A launched program is *recognised by its exact bytes* (registered with
 //! [`CommandProcessor::register_program`]) and "run" by a Rust function on
@@ -26,7 +32,10 @@ use alloc::vec::Vec;
 
 use gpu_core::error::{GpuError, GpuResult};
 use nvidia_rm570::regs::{clc7c0 as c, clc56f as h, qmd_v03_00 as q};
-use nvidia_rm570::{QMD_SIZE, QmdField};
+use nvidia_rm570::rmapi::AmpereAControlGPFifo;
+use nvidia_rm570::{Field, QMD_SIZE, QmdField};
+
+use crate::vram::{SimVram, translate};
 
 const PAGE: u64 = 4096;
 
@@ -89,7 +98,61 @@ impl GpuMem {
             self.write_u32(va + 4 * i as u64, x.to_bits());
         }
     }
+
+    /// I10a: copies `len` bytes at GPU VA `va` (8-byte aligned) out of a
+    /// simulated VRAM, through the page tables at `root`, read by the
+    /// independent walker [`translate`] — what the GPU would fetch.
+    pub fn load_from_vram(
+        &mut self,
+        vram: &SimVram,
+        root: u64,
+        va: u64,
+        len: u64,
+    ) -> GpuResult<()> {
+        if !va.is_multiple_of(8) || !len.is_multiple_of(8) {
+            return Err(bad("SIM: copiere din VRAM nealiniata"));
+        }
+        for off in (0..len).step_by(8) {
+            let pa = translate(vram, root, va + off)
+                .map_err(|_| bad("SIM: adresa GPU fara traducere"))?
+                .pa;
+            let v = vram.read_u64(pa).map_err(bad)?;
+            self.write(va + off, &v.to_le_bytes());
+        }
+        Ok(())
+    }
+
+    /// I10a: the reverse — what the GPU wrote (e.g. `GPGet`) back into the
+    /// simulated VRAM, through the same page tables.
+    pub fn store_to_vram(&self, vram: &mut SimVram, root: u64, va: u64, len: u64) -> GpuResult<()> {
+        if !va.is_multiple_of(8) || !len.is_multiple_of(8) {
+            return Err(bad("SIM: copiere in VRAM nealiniata"));
+        }
+        for off in (0..len).step_by(8) {
+            let pa = translate(vram, root, va + off)
+                .map_err(|_| bad("SIM: adresa GPU fara traducere"))?
+                .pa;
+            vram.write_u64(pa, self.read_u64(va + off)?).map_err(bad)?;
+        }
+        Ok(())
+    }
 }
+
+/// I10a: what the compute setup methods left in the model (`None` = never
+/// set). Addresses are whole 64-bit values: `_A` (upper) then `_B` (lower).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ComputeState {
+    pub local_window: Option<u64>,
+    pub shared_window: Option<u64>,
+    pub local_memory: Option<u64>,
+    /// `SET_SHADER_LOCAL_MEMORY_NON_THROTTLED_A/B` and `_C` (max SM count).
+    pub local_per_tpc: Option<u64>,
+    pub local_max_sm: Option<u32>,
+}
+
+/// `USERD` offsets, from the generated `AmpereAControlGPFifo`.
+pub const USERD_GP_GET: u64 = core::mem::offset_of!(AmpereAControlGPFifo, GPGet) as u64;
+pub const USERD_GP_PUT: u64 = core::mem::offset_of!(AmpereAControlGPFifo, GPPut) as u64;
 
 /// What a recognised program sees when "launched".
 pub struct Launch<'a> {
@@ -127,6 +190,12 @@ pub struct CommandProcessor {
     sem_payload: u64,
     pcas_qmd: Option<u64>,
     pub events: Vec<Event>,
+    /// I10a: the compute setup seen so far.
+    pub compute: ComputeState,
+    /// I10a: an `_A` (upper half) waiting for its `_B`, by method.
+    upper: Option<(u32, u32)>,
+    /// I10a: GPFIFO entries taken from rings by [`Self::run_channel`].
+    pub entries_taken: u32,
 }
 
 impl Default for CommandProcessor {
@@ -149,6 +218,9 @@ impl CommandProcessor {
             sem_payload: 0,
             pcas_qmd: None,
             events: Vec::new(),
+            compute: ComputeState::default(),
+            upper: None,
+            entries_taken: 0,
         }
     }
 
@@ -168,6 +240,33 @@ impl CommandProcessor {
     ) -> usize {
         self.programs.push((code.to_vec(), run, needs));
         self.programs.len() - 1
+    }
+
+    /// I10a: a channel as the GPU sees it after the doorbell: reads `GPGet`
+    /// and `GPPut` from USERD at `userd_va`, runs the ring entries from GET
+    /// up to PUT (wrapping), then writes `GPGet = GPPut` back. A PUT outside
+    /// the ring is an error (the host broke the protocol). Returns the
+    /// number of entries taken.
+    pub fn run_channel(&mut self, ring_va: u64, entries: u32, userd_va: u64) -> GpuResult<u32> {
+        if entries < 2 || !entries.is_power_of_two() {
+            return Err(bad("SIM: inel GPFIFO cu numar de intrari invalid"));
+        }
+        let get = self.mem.read_u32(userd_va + USERD_GP_GET)?;
+        let put = self.mem.read_u32(userd_va + USERD_GP_PUT)?;
+        if get >= entries || put >= entries {
+            return Err(bad("SIM: GPGet/GPPut in afara inelului"));
+        }
+        let mut list = Vec::new();
+        let mut i = get;
+        while i != put {
+            let a = ring_va + 8 * i as u64;
+            list.push((self.mem.read_u32(a)?, self.mem.read_u32(a + 4)?));
+            i = (i + 1) & (entries - 1);
+        }
+        self.run_gpfifo(&list)?;
+        self.mem.write_u32(userd_va + USERD_GP_GET, put);
+        self.entries_taken += list.len() as u32;
+        Ok(list.len() as u32)
     }
 
     /// Processes GPFIFO entries (pairs of u32 as in clc56f `GP_ENTRY0/1`).
@@ -253,8 +352,67 @@ impl CommandProcessor {
                     .ok_or(bad("SIM: lansare fara SEND_PCAS_A"))?;
                 self.launch(qmd)
             }
-            _ => Err(bad("SIM: metoda de calcul nemodelata")),
+            m => self.setup_method(m, d),
         }
+    }
+
+    /// I10a: the `_A`/`_B` address pairs of the compute setup. An `_A` is
+    /// kept until its `_B`; bits outside a field are refused (the hardware
+    /// would drop them and the address would be wrong).
+    fn setup_method(&mut self, m: u32, d: u32) -> GpuResult<()> {
+        let pairs: [(u32, Field, u32); 4] = [
+            (
+                c::NVC7C0_SET_SHADER_LOCAL_MEMORY_WINDOW_A,
+                c::NVC7C0_SET_SHADER_LOCAL_MEMORY_WINDOW_A_BASE_ADDRESS_UPPER,
+                c::NVC7C0_SET_SHADER_LOCAL_MEMORY_WINDOW_B,
+            ),
+            (
+                c::NVC7C0_SET_SHADER_SHARED_MEMORY_WINDOW_A,
+                c::NVC7C0_SET_SHADER_SHARED_MEMORY_WINDOW_A_BASE_ADDRESS_UPPER,
+                c::NVC7C0_SET_SHADER_SHARED_MEMORY_WINDOW_B,
+            ),
+            (
+                c::NVC7C0_SET_SHADER_LOCAL_MEMORY_A,
+                c::NVC7C0_SET_SHADER_LOCAL_MEMORY_A_ADDRESS_UPPER,
+                c::NVC7C0_SET_SHADER_LOCAL_MEMORY_B,
+            ),
+            (
+                c::NVC7C0_SET_SHADER_LOCAL_MEMORY_NON_THROTTLED_A,
+                c::NVC7C0_SET_SHADER_LOCAL_MEMORY_NON_THROTTLED_A_SIZE_UPPER,
+                c::NVC7C0_SET_SHADER_LOCAL_MEMORY_NON_THROTTLED_B,
+            ),
+        ];
+        if let Some(&(a, f, _)) = pairs.iter().find(|p| p.0 == m) {
+            if f.get(d) << f.lo != d {
+                return Err(bad("SIM: biti in afara campului _A"));
+            }
+            self.upper = Some((a, f.get(d)));
+            return Ok(());
+        }
+        if let Some(&(a, _, _)) = pairs.iter().find(|p| p.2 == m) {
+            let hi = match self.upper.take() {
+                Some((pa, hi)) if pa == a => hi,
+                _ => return Err(bad("SIM: _B fara _A-ul lui")),
+            };
+            let v = Some(((hi as u64) << 32) | d as u64);
+            let st = &mut self.compute;
+            match a {
+                c::NVC7C0_SET_SHADER_LOCAL_MEMORY_WINDOW_A => st.local_window = v,
+                c::NVC7C0_SET_SHADER_SHARED_MEMORY_WINDOW_A => st.shared_window = v,
+                c::NVC7C0_SET_SHADER_LOCAL_MEMORY_A => st.local_memory = v,
+                _ => st.local_per_tpc = v,
+            }
+            return Ok(());
+        }
+        if m == c::NVC7C0_SET_SHADER_LOCAL_MEMORY_NON_THROTTLED_C {
+            let f = c::NVC7C0_SET_SHADER_LOCAL_MEMORY_NON_THROTTLED_C_MAX_SM_COUNT;
+            if f.get(d) << f.lo != d {
+                return Err(bad("SIM: biti in afara campului MAX_SM_COUNT"));
+            }
+            self.compute.local_max_sm = Some(f.get(d));
+            return Ok(());
+        }
+        Err(bad("SIM: metoda de calcul nemodelata"))
     }
 
     fn host_method(&mut self, m: u32, d: u32) -> GpuResult<()> {
@@ -713,4 +871,93 @@ pub fn matmul_2d_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Headers written by hand here (INC = 1 << 29, count 16, subch 13),
+    // independent of nvidia-ga104::push.
+    fn inc(subch: u32, m: u32, n: u32) -> u32 {
+        (1 << 29) | (n << 16) | (subch << 13) | (m >> 2)
+    }
+
+    fn run(words: &[u32]) -> (CommandProcessor, GpuResult<()>) {
+        let mut cp = CommandProcessor::new();
+        for (i, &w) in words.iter().enumerate() {
+            cp.mem.write_u32(0x1000 + 4 * i as u64, w);
+        }
+        let e0 = 0x1000;
+        let e1 = (words.len() as u32) << 10;
+        let r = cp.run_gpfifo(&[(e0, e1)]);
+        (cp, r)
+    }
+
+    #[test]
+    fn setup_methods_are_recorded() {
+        let (cp, r) = run(&[
+            inc(1, 0, 1),
+            c::AMPERE_COMPUTE_B,
+            inc(1, 0x7b0, 2),
+            0x7293,
+            0x10,
+            inc(1, 0x790, 2),
+            0x10,
+            0x2000,
+            inc(1, 0x2e4, 3),
+            0,
+            0x18000,
+            0xff,
+        ]);
+        r.unwrap();
+        assert_eq!(cp.compute.local_window, Some(0x7293_0000_0010));
+        assert_eq!(cp.compute.local_memory, Some(0x10_0000_2000));
+        assert_eq!(cp.compute.local_per_tpc, Some(0x18000));
+        assert_eq!(cp.compute.local_max_sm, Some(0xff));
+        assert_eq!(cp.compute.shared_window, None);
+    }
+
+    #[test]
+    fn setup_mistakes_are_refused() {
+        let obj = [inc(1, 0, 1), c::AMPERE_COMPUTE_B];
+        for (what, tail) in [
+            ("B fara A", &[inc(1, 0x7b4, 1), 0][..]),
+            ("A peste camp", &[inc(1, 0x7b0, 2), 1 << 17, 0][..]),
+            (
+                "B al altei perechi",
+                &[inc(1, 0x7b0, 1), 1, inc(1, 0x2a4, 1), 0][..],
+            ),
+            ("MAX_SM peste camp", &[inc(1, 0x2ec, 1), 0x200][..]),
+        ] {
+            let w: Vec<u32> = obj.iter().chain(tail).copied().collect();
+            assert!(run(&w).1.is_err(), "{what}");
+        }
+        // Without SET_OBJECT first: refused too.
+        assert!(run(&[inc(1, 0x7b0, 2), 1, 0]).1.is_err());
+    }
+
+    #[test]
+    fn channel_ring_wraps_and_writes_gpget() {
+        let mut cp = CommandProcessor::new();
+        let (ring, userd) = (0x10_0000u64, 0x20_0000u64);
+        cp.mem.write_u32(0x1000, inc(1, 0, 1));
+        cp.mem.write_u32(0x1004, c::AMPERE_COMPUTE_B);
+        // Slots 3 and 0 (wrap in a 4-entry ring), GET = 3, PUT = 1.
+        for slot in [3u64, 0] {
+            cp.mem.write_u32(ring + 8 * slot, 0x1000);
+            cp.mem.write_u32(ring + 8 * slot + 4, 2 << 10);
+        }
+        cp.mem.write_u32(userd + USERD_GP_GET, 3);
+        cp.mem.write_u32(userd + USERD_GP_PUT, 1);
+        assert_eq!(cp.run_channel(ring, 4, userd), Ok(2));
+        assert_eq!(cp.mem.read_u32(userd + USERD_GP_GET), Ok(1));
+        assert_eq!(cp.events.len(), 2);
+        // Nothing new: nothing taken.
+        assert_eq!(cp.run_channel(ring, 4, userd), Ok(0));
+        // PUT outside the ring.
+        cp.mem.write_u32(userd + USERD_GP_PUT, 4);
+        assert!(cp.run_channel(ring, 4, userd).is_err());
+        assert!(cp.run_channel(ring, 3, userd).is_err());
+    }
 }

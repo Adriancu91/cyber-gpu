@@ -22,7 +22,10 @@
 //! - [`golden`]: the "golden image" sequence after `GSP_INIT_DONE` (client,
 //!   device, VA space, channel, GR context promotion, compute object), I8e;
 //! - [`user_space`]: the working client whose VA space runs on the driver's
-//!   page tables (`SET_PAGE_DIRECTORY`), I9c.
+//!   page tables (`SET_PAGE_DIRECTORY`), I9c; its channel group and working
+//!   channel, I9d–I9e;
+//! - [`work_queue`]: the first pushbuffer on that channel (compute setup,
+//!   memory windows), its GPFIFO entry and `GPPut` in USERD, I10a.
 //!
 //! The layouts follow NVIDIA's MIT headers from open-gpu-kernel-modules at tag
 //! `570.144` (`gsp_fw_wpr_meta.h`, `msgq_priv.h`, `message_queue_priv.h`,
@@ -54,6 +57,7 @@ pub mod sequencer;
 pub(crate) mod sim_peer;
 pub mod sysinfo;
 pub mod user_space;
+pub mod work_queue;
 pub mod wpr_meta;
 
 use gpu_core::error::{GpuError, GpuResult};
