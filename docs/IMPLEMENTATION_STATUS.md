@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 21 — 30 octombrie 2026, ~01:25–02:05 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comenzi noi în hub pentru noi: niciuna. Sesiunea OS a făcut C-42 (fixarea
+pe `aee06c4`, Release `os-209`); în hub nu sunt rezultate noi de pe placă. Am făcut următorul pas „fără placă”: **I10b**, prima lansare pe
+canalul de lucru. Tot ce scrie „PASS” e pe gazdă: SIMULARE.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Pornire | CI rularea 65 (vârful `5366ed3`) verde; `tools/check.sh` verde înainte de orice schimbare (280 teste; rustc 1.97.0, ținta `x86_64-unknown-none` instalată); ultimele 3 sesiuni au terminat pași → fără oprire de siguranță | PASS |
+| **I10b** lansarea | `nvidia-ga104::gsp::work_queue`: `invalidate_caches` (`INVALIDATE_SHADER_CACHES_NO_WFI`: instrucțiuni + date globale + constante), `launch` (`SEND_PCAS_A` = QMD >> 8, `SEND_SIGNALING_PCAS2_B` = `PREFETCH_SCHEDULE`; QMD aliniat la 256 și în VA-ul nostru), `release` (semaforul de terminare: `RELEASE` + `RELEASE_WFI_EN` + 64 de biți, fără timestamp, fără întrerupere), `read_semaphore` (două citiri pe 32 de biți, recitire dacă partea de sus se schimbă), `WorkQueue::launch_and_signal`. Ordinea și valorile după tinygrad `ops_nv.py` (MIT, `f5b17be`), câmpurile din antetele generate | PASS (SIMULARE): cuvintele = exact cele din tinygrad |
+| **I10b** cap-coadă | golden image → I9c → I9d → I9e → configurarea I10a → lansarea `add64` (codul real compilat cu Mesa NAK, 240 B): driverul scrie programul, argumentele, intrările, QMD-ul și semaforul în VRAM după adresa fizică; modelul `gpu-sim::cmdproc` le citește **doar** prin tabelele de pagini, „rulează” programul pe procesor, scrie rezultatul, semaforul și `GPGet` înapoi; driverul vede `GPGet = 2`, semaforul `0x1_0000_0007` și rezultatul **identic bit cu bit** cu `reference::add_ftz` | PASS (SIMULARE); **8 greșeli plantate, toate prinse**; 5 refuzuri în driver fără nicio scriere |
+| Modelul | `gpu-sim::cmdproc`: `INVALIDATE_SHADER_CACHES_NO_WFI` (câmpuri verificate, numărate în `cache_invalidations`); `SEM_EXECUTE` refuză acum biții nemodelați (de ex. timestamp) și semaforul pe 64 de biți nealiniat; `RELEASE_WFI` acceptat | PASS (testele vechi `add64`/matmul neschimbate și verzi) |
+| Alegeri notate | `PREFETCH_SCHEDULE` (tinygrad) vs `INVALIDATE_COPY_SCHEDULE` (NAK); fără `NON_STALL_INTERRUPT`; invalidarea la fiecare lansare | `COMPATIBILITATE_FIRMWARE.md` („De verificat”) |
+| Compatibilitate OS | `git diff 5366ed3` pe `gpu-core`, `gpu-pci`, `nvidia-ga104`, `gpu-compute`, `gpu-sim`: nicio linie `pub` ștearsă; doar adăugări (`work_queue::{invalidate_caches, launch, release, read_semaphore}`, `WorkQueue::launch_and_signal`, `CommandProcessor::cache_invalidations`). Comportament schimbat doar în modelul de test (`SEM_EXECUTE` mai strict) | PASS |
+
+Verificări (`tools/check.sh`): format PASS, clippy `-D warnings` PASS, **285 de teste PASS** (1 ignorat: viteza), build no_std PASS;
+`nvidia-ga104 --features hw-write`: clippy + teste PASS. Nicio scriere în placă. OS-ul nu a fost reconstruit (nicio schimbare de interfață pentru el): NOT TESTED.
+
+**Următorul pas:** la fereastra următoare (cu `os-209`): `gpu firmware` → `criteriul I4: TRECE`, apoi (opțional, cu Adrian) proba tinygrad.
+Fără placă: cererea `GR_GET_INFO` (forma GR pentru memoria locală); refolosirea bufferului de comenzi (acum liniar) după semafor; treapta 6 matmul.
+
+---
+
 ## Sesiunea 20 — 29 octombrie 2026, ~19:20–19:50 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comenzi noi în hub pentru noi: niciuna (C-39 gata; fereastra următoare

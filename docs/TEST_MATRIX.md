@@ -1,5 +1,15 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 21 (30 oct 2026, cloud, fără placă) — I10b
+| Id | Test | Comandă | Așteptat | Obținut | Clasificare |
+|---|---|---|---|---|---|
+| T41 | Prima lansare pe canalul de lucru (I10b): după configurarea I10a, invalidarea cache-urilor + `SEND_PCAS_A`/`PCAS2_B` + semaforul de terminare (64 de biți, `RELEASE_WFI`), programul `add64` compilat cu NAK | `cargo test -p nvidia-ga104 first_launch_on_the_work_channel` | 2 intrări GPFIFO preluate; modelul citește programul, QMD-ul, argumentele **doar** prin tabelele de pagini; driverul vede `GPGet = 2`, semaforul `0x1_0000_0007` și rezultatul identic bit cu bit cu `reference::add_ftz` | conform | PASS (SIMULARE) — programul „rulează” pe procesor |
+| T42 | Cuvintele lansării = cele din tinygrad | `cargo test -p nvidia-ga104 launch_words_match_tinygrad` | `0x1011`, `qmd >> 8`, `9`, `0x0110_0001` | conform | PASS (SIMULARE) |
+| T43 | Refuzuri în driver (QMD nealiniat / în afara VA-ului nostru, semafor nealiniat / în afara VA-ului) | `cargo test -p nvidia-ga104 launch_driver_side_refusals` | eroare, nimic scris (`GPPut` neschimbat) | conform (5 cazuri) | PASS |
+| T44 | 8 greșeli plantate în cuvintele lansării (bit necunoscut, adresa QMD, acțiunea PCAS, fără `SEND_PCAS_A`, jumătățile valorii, timestamp, semafor pe 32 de biți, adresa semaforului) | `cargo test -p nvidia-ga104 planted_launch_mistakes_are_caught` | fiecare prinsă de model sau de verificarea semaforului / rezultatului | 8/8 prinse | PASS (SIMULARE) |
+| T45 | Citirea semaforului pe 64 de biți în două jumătăți (transport între citiri) | `cargo test -p nvidia-ga104 semaphore_reads_survive_a_carry` | recitire o dată, apoi eroare | conform | PASS |
+| T46 | Lansarea pe placa reală | — | — | — | NOT TESTED (soneria nesunată; doar în fereastra cu Adrian) |
+
 ## Rezultate — sesiunea 20 (29 oct 2026, cloud, fără placă) — I10a
 | Id | Test | Comandă | Așteptat | Obținut | Clasificare |
 |---|---|---|---|---|---|
