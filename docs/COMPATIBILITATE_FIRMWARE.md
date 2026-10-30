@@ -101,6 +101,8 @@ nu sunt în repo): `booter_load` 61 304 B, `bin_size` 0xf000, date 0x378 + 0xec0
 date 0x378 + 0x9d00; `bootloader` 24 684 B, `bin_size` 0x6100, date 0x6c + 0x6000; Booter: 2 semnături de 384 B, numărul lor la adresa 0x350
 (nu în antet). Două greșeli ale noastre, ambele reparate (`fw_hdr`), cu 2 greșeli plantate prinse (4 și 9 teste pică). SIMULARE.
 
+**Sesiunea 24 (30 oct):** matmul treapta 6 (`tools/nak/matmul_vec4.comp`, accese de 128 de biți) compilată cu NAK; nimic nou de la GSP-RM sau din antete. De verificat la prima rulare pe placă: că lansatorul verifică K, N multipli de 4 și alinierea la 16 înainte de lansare (programul nu le verifică). SIMULARE; nimic nu a rulat pe placă.
+
 **Sesiunea 23 (30 oct):** I10d are cod (`gsp::work_queue::WorkQueue::{retire, push_in_flight}`; zona de comenzi folosită ca cerc): nimic nou de la GSP-RM sau din antete; SIMULARE pe `gpu-sim::cmdproc`. Nimic nu a rulat pe placă.
 
 **Sesiunea 22 (30 oct):** I10c are cod (`gsp::user_space::query_gr_info`, `gsp::rmapi::{gr_info_request, parse_gr_info, GrInfo, SM_VERSION_SM86}`; structura generată din `ctrl2080internal.h` 570.144): forma GR0 și versiunea SM cerute de la GSP-RM în SIMULARE (`gpu-sim::fake_rm`, valori SIM). Nimic nu a rulat pe placă.

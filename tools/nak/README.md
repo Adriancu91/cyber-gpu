@@ -95,6 +95,26 @@ Test (SIMULARE, `sim_matmul.rs`, 3 teste noi): modelul `matmul_2d_on_cpu` urmeaz
 (inclusiv grile 2×3 și 3×2, plăci parțiale); cazul −0,0; lansările cu bloc 512, cu 2 KiB sau fără barieră sunt refuzate, 0 scrieri în C;
 o greșeală plantată (două celule schimbate) e prinsă. Câștigul de viteză (siboehm: ~×2 față de treapta 4) se poate vedea **doar pe placă**.
 
+## Treapta 6 matmul: „vectorize”, citiri și scrieri de 128 de biți (30 oct 2026, sesiunea 24, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh matmul_vec4` (Mesa 25.0.7 reconstruit în cloud; `add64` și `matmul_2d` au ieșit **identice**, aceleași sume; a doua compilare a
+treptei 6 a dat aceeași sumă).
+
+| Ce | Valoare |
+|---|---|
+| Program | `matmul_vec4.comp`: împărțirea treptei 5 (64 de fire, bloc 64×64, 8×8 rezultate pe fir, plăci K = 8), dar fiecare fir aduce **2 vec4 din A și 2 din B** pe placă; placa lui A stă **transpusă** în memoria partajată, ca cele 8 valori de care are nevoie un fir pentru un p să fie una lângă alta (2 citiri vec4 în loc de 8); C se scrie pe câte 4 |
+| Ieșire | **821 instrucțiuni** (treapta 5: 1 953), **13 136 octeți**, **90 registre**, memorie locală **0**; memorie partajată **4 KiB** (`as_` transpus la 0, `bs_` la 0x800), o barieră |
+| Accese de 128 de biți | 4 `ld.global` b128, 4 `ld.shared` b128, 16 `st.global` b128, 2 `st.shared` b128 (A transpus se scrie cu 8 scrieri de 32 de biți) |
+| SHA-256 `matmul_vec4.sm86.sass` | `18efe1da2f168eb01dc85ed89f90f7cae8b2e2f4a3f95a27eb6246ca99d355f7` |
+| Aritmetica | tot 64 de `ffma.ftz` pe pas p; bucla se oprește exact la K → același șir de FMA, în aceeași ordine: oracolul rămâne `matmul_fma_ftz`, bit cu bit (și identic cu treapta 5) |
+| Condiții (programul **nu** le verifică) | **K și N multipli de 4**, adresele a/b/c **aliniate la 16 octeți** (M e liber). Pe placă, un acces de 128 de biți nealiniat dă eroare. Lansatorul trebuie să le verifice; modelul le refuză fără nicio scriere |
+| Lansare | bloc 64×1×1, grilă x = coloane/64, y = rânduri/64; QMD cu 4 KiB partajată + 1 barieră, 90 registre |
+
+Test (SIMULARE, `sim_matmul.rs`, 4 teste noi): modelul `matmul_vec4_on_cpu` urmează algoritmul (cum încarcă firele vectorii, transpunerea lui A, cele 64
+de sume, scrierile pe câte 4), identic bit cu bit cu oracolul pentru 6 forme (inclusiv grile 2×3 și 3×2, plăci parțiale, M = 1) și cu treapta 5; cazul
+−0,0; K = 10, N = 66 și C nealiniat refuzate, 0 scrieri; blocul 512, 2 KiB sau fără barieră refuzate. **8 greșeli plantate, toate prinse** (6 în model:
+A netranspus, vec4 din B inversat, zerouri adunate, verificarea K/N slăbită, verificarea alinierii slăbită, jumătate din C nescrisă; 2 în test).
+Câștigul de viteză (siboehm: ~×1,1 față de treapta 5 pe A6000) se poate vedea **doar pe placă**.
+
 ## Ce trebuie să respecte lansatorul nostru (I10), din dump — DEDUS, de confirmat pe placă
 1. Bufferul constant 0 legat în QMD, cu adresele a, b, c la 0x28, 0x30, 0x38 (restul tabelei rădăcină NVK nu e citit de program).
 2. Numărul de registre în QMD ≥ 19 (rotunjirea cerută de hardware: necunoscută încă).

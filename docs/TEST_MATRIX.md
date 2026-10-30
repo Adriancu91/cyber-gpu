@@ -1,5 +1,15 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 24 (30 oct 2026, cloud, fără placă) — treapta 6 matmul
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T51 | Treapta 6 (`matmul_vec4`, NAK, 821 instr., 90 registre) lansată în modelul de comenzi | `cargo test -p nvidia-ga104 --test sim_matmul vec4_step_matches` | 6 forme identice bit cu bit cu `matmul_fma_ftz`; nimic scris după C; semaforul 1 | conform | PASS (SIMULARE) — programul „rulează” pe procesor |
+| T52 | Treapta 6 = treapta 5, aceiași biți (70×28×68) | `cargo test -p nvidia-ga104 --test sim_matmul vec4_step_gives_the_same_bits` | identic | conform | PASS (SIMULARE) |
+| T53 | −0,0 păstrat; K/N nemultipli de 4, C nealiniat, bloc/partajată/barieră greșite refuzate | `cargo test -p nvidia-ga104 --test sim_matmul vec4_step_keeps` | eroare, 0 scrieri în C | conform | PASS (SIMULARE) |
+| T54 | 8 greșeli plantate (6 în model, 2 în test) | `cargo test -p nvidia-ga104 --test sim_matmul vec4` (cu modelul modificat) | fiecare pică cel puțin un test | 8/8 prinse | PASS (SIMULARE) |
+| T55 | Treapta 6 pe placa reală (viteză + rezultat) | — | — | — | NOT TESTED (doar în fereastra cu Adrian, după I10 pe placă) |
+
 ## Rezultate — sesiunea 23 (30 oct 2026, cloud, fără placă) — I10d
 | Id | Test | Comandă | Așteptat | Obținut | Clasificare |
 |---|---|---|---|---|---|

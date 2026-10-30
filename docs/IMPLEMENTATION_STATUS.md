@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 24 — 30 octombrie 2026, ~19:25–19:45 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comenzi noi în hub pentru noi: niciuna (C-18, C-20, C-39 gata; în hub nu sunt
+rezultate noi de pe placă; sesiunea OS e oprită, coada ei e goală; `os-209` e gata pentru fereastra următoare). Am făcut ultimul pas mic rămas
+„fără placă”: **treapta 6 matmul** (Mesa NAK pe gazdă). Tot ce scrie „PASS” e pe gazdă: SIMULARE.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Pornire | CI rularea 69 (vârful `3222669`) verde; `tools/check.sh` verde înainte de orice schimbare (290 teste; ținta `x86_64-unknown-none` instalată în sesiune); ultimele 3 sesiuni au terminat pași → fără oprire de siguranță. Copiile locale ale hub-ului și `cyber-universe` erau desincronizate de GitHub (istorie diferită): aliniate la `origin/main`, copia veche păstrată pe ramura locală `vechi-local` (nimic de-al nostru pierdut) | PASS |
+| Unealta NAK | Mesa 25.0.7 reconstruit în cloud (~10 min; sursa verificată cu SHA-256); `add64` și `matmul_2d` au ieșit **identice** (aceleași sume) | PASS |
+| **Treapta 6** matmul | `tools/nak/matmul_vec4.comp` (ideea siboehm kernel 6 „vectorize”, MIT, scris de noi): treapta 5 cu citiri/scrieri de 128 de biți și placa lui A transpusă în memoria partajată. NAK: **821 instrucțiuni** (treapta 5: 1 953), 13 136 B, 90 registre, memorie locală 0, 4 KiB partajată, 1 barieră, 64 `ffma.ftz`; SHA-256 `18efe1da…55f7`, identic la a doua compilare. **Condiții pe care programul nu le verifică:** K și N multipli de 4, a/b/c aliniate la 16 | PASS (SIMULARE): `gpu-sim::cmdproc::matmul_vec4_on_cpu` urmează algoritmul; 6 forme identice bit cu bit cu `matmul_fma_ftz` și cu treapta 5; −0,0; K/N nemultipli de 4 și C nealiniat refuzate fără nicio scriere; **8 greșeli plantate, toate prinse** |
+| Compatibilitate OS | `git diff 3222669` pe crate-uri: nicio linie `pub` ștearsă; doar adăugări (`gpu_sim::cmdproc::{matmul_vec4_on_cpu, MATMUL_VEC4_NEEDS}`). OS-ul nu folosește nimic din ele | PASS |
+
+Verificări (`tools/check.sh`): format PASS, clippy `-D warnings` PASS, **294 de teste PASS** (1 ignorat: viteza), build no_std PASS;
+`nvidia-ga104 --features hw-write`: clippy + teste PASS. Nicio scriere în placă. OS-ul nu a fost reconstruit (nicio schimbare de interfață pentru el): NOT TESTED.
+
+**Următorul pas:** la fereastra următoare (cu `os-209`): `gpu firmware` → `criteriul I4: TRECE`, apoi (opțional, cu Adrian) proba tinygrad.
+**Fără placă nu mai e niciun pas mic de făcut:** tot ce urmează (I5+ pe placă: FWSEC, Booter, GSP, soneria, lansările reale, viteza treptelor matmul)
+cere fereastra pe workstation cu Adrian. Sesiunile următoare fără rezultate noi de pe placă nu au ce începe (nu inventăm lucru).
+
+---
+
 ## Sesiunea 23 — 30 octombrie 2026, ~13:20–13:50 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comenzi noi în hub pentru noi: niciuna (C-18, C-20, C-39 gata; în hub nu sunt
