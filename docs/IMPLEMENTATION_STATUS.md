@@ -1,5 +1,16 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 25 — 31 octombrie 2026, ~01:20–01:30 (ora României), în cloud, FĂRĂ placă — fără lucru nou
+
+Verificat la pornire: CI rularea 70 (vârful `647398c`) verde; în hub nicio comandă nouă pentru `cyber-gpu` (C-18, C-20, C-39 gata), niciun
+rezultat nou de pe placă (ultimul: `2026-10-29-workstation-kronos-gpu`, deja citit), sesiunea OS oprită cu coada goală. Cum scrie la sesiunea 24,
+**fără placă nu mai e niciun pas mic de făcut** → nu am început lucru nou (nu inventăm lucru). Cod neschimbat; teste nerulate (nimic de testat): NOT TESTED.
+
+**Următorul pas:** neschimbat — fereastra pe workstation cu Adrian (cu `os-209`): `gpu firmware` → `criteriul I4: TRECE`.
+Notă pentru oprirea de siguranță: aceasta e prima sesiune fără pas terminat (motiv: lipsa plăcii, nu un blocaj).
+
+---
+
 ## Sesiunea 24 — 30 octombrie 2026, ~19:25–19:45 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comenzi noi în hub pentru noi: niciuna (C-18, C-20, C-39 gata; în hub nu sunt
