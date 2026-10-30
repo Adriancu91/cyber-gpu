@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 23 — 30 octombrie 2026, ~13:20–13:50 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comenzi noi în hub pentru noi: niciuna (C-18, C-20, C-39 gata; în hub nu sunt
+rezultate noi de pe placă; sesiunea OS e oprită, coada ei e goală; `os-209` e gata pentru fereastra următoare). Am făcut unul din cei doi pași
+mici rămași „fără placă”: **I10d**, refolosirea bufferului de comenzi după semafor. Tot ce scrie „PASS” e pe gazdă: SIMULARE.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Pornire | CI rularea 68 (vârful `01bc248`) verde; `tools/check.sh` verde înainte de orice schimbare (288 teste; rustc 1.97.0, ținta `x86_64-unknown-none` instalată în sesiune); ultimele 3 sesiuni au terminat pași → fără oprire de siguranță | PASS |
+| **I10d** zona de comenzi ca cerc | `nvidia-ga104::gsp::work_queue::WorkQueue`: zona nu mai e liniară. Fiecare trimitere ține minte porțiunea ei; o porțiune fără semafor propriu (de ex. configurarea) e legată de semaforul următoarei lansări (intrările rulează în ordine). O porțiune nouă se pune după cea mai nouă porțiune în lucru sau, dacă nu încape la capăt, de la începutul zonei — **niciodată peste o porțiune în lucru**; altfel refuz, fără nicio scriere. `WorkQueue::retire(sem_va, valoare)` eliberează, de la cea mai veche, porțiunile al căror semafor a ajuns la valoarea citită; o valoare mai mare decât ultima cerută = defect, nimic eliberat. `launch_and_signal` cere acum ca valoarea să crească pe același semafor. `push_in_flight()` spune câți octeți sunt încă la placă | PASS (SIMULARE): 12 lansări `add64` într-o zonă de 128 B (încap doar configurarea + 2 lansări), cu trecere peste capăt; rezultat identic bit cu bit la fiecare; **7 greșeli plantate, toate prinse** |
+| Alegeri notate | eliberarea doar după semafor, nu după `GPGet` (mai prudent) | `COMPATIBILITATE_FIRMWARE.md` („De verificat”) |
+| Compatibilitate OS | `git diff 01bc248` pe crate-uri: nicio linie `pub` ștearsă; doar adăugări (`WorkQueue::{retire, push_in_flight}`). Comportament schimbat (intenționat): `submit` poate refolosi zona după `retire`; `launch_and_signal` refuză o valoare de semafor care nu crește (pe același semafor). OS-ul nu folosește `WorkQueue` | PASS |
+
+Verificări (`tools/check.sh`): format PASS, clippy `-D warnings` PASS, **290 de teste PASS** (1 ignorat: viteza), build no_std PASS;
+`nvidia-ga104 --features hw-write`: clippy + teste PASS. Nicio scriere în placă. OS-ul nu a fost reconstruit (nicio schimbare de interfață pentru el): NOT TESTED.
+
+**Următorul pas:** la fereastra următoare (cu `os-209`): `gpu firmware` → `criteriul I4: TRECE`, apoi (opțional, cu Adrian) proba tinygrad.
+Fără placă mai rămâne un singur pas mic: treapta 6 matmul (Mesa NAK pe gazdă). După el, tot ce urmează (I5+ pe placă) cere fereastra cu Adrian.
+
+---
+
 ## Sesiunea 22 — 30 octombrie 2026, ~07:05–07:40 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comenzi noi în hub pentru noi: niciuna (C-18, C-20, C-39 gata; în hub nu sunt

@@ -1,5 +1,12 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 23 (30 oct 2026, cloud, fără placă) — I10d
+| Id | Test | Comandă | Așteptat | Obținut | Clasificare |
+|---|---|---|---|---|---|
+| T50 | Zona de comenzi refolosită după semafor (I10d), cap-coadă prin tabelele de pagini | `cargo test -p nvidia-ga104 pushbuffer_area_is_reused_after_the_semaphore` | 12 lansări `add64` într-o zonă de 128 B (configurare + 2 lansări); a 3-a lansare refuzată cât zona e plină, fără nicio scriere; după semaforul 1, lansarea 3 la începutul zonei, lansarea 2 neatinsă; rezultat identic bit cu bit la fiecare lansare | conform; `PUT` = 13 | PASS (SIMULARE) |
+| T51 | Aritmetica cercului (unde încape o porțiune) | `cargo test -p nvidia-ga104 placement_never_reaches_a_stretch_in_flight` | 10 cazuri: gol, la capăt, de la început, între capete după trecerea peste capăt, plin | conform | PASS |
+| T52 | 7 greșeli plantate în `WorkQueue` (trecere peste capăt fără verificare, ramura „trecut peste capăt” fără limită, eliberare înainte de semafor, porțiunea de configurare neeliberată, aceeași valoare de semafor acceptată, semafor prea mare acceptat, capătul zonei cu 4 octeți prea lung) | testele `nvidia-ga104` rulate cu fiecare greșeală | fiecare greșeală prinsă de cel puțin un test | 7/7 prinse | PASS |
+
 ## Rezultate — sesiunea 22 (30 oct 2026, cloud, fără placă) — I10c
 | Id | Test | Comandă | Așteptat | Obținut | Clasificare |
 |---|---|---|---|---|---|

@@ -90,6 +90,7 @@ Verificarea pe Windows, înainte de copiere (PowerShell): `Get-FileHash .\gsp-57
 | Lansarea (I10b): acțiunea PCAS | `PREFETCH_SCHEDULE` (9), ca tinygrad (`work_queue::launch`) | NAK `hw_runner.rs` folosește `INVALIDATE_COPY_SCHEDULE` (3); ambele acceptate de model | de văzut care merge pe placă; la nevoie trecem pe varianta NAK |
 | Semaforul de terminare (I10b) | metoda de canal: `RELEASE` + `RELEASE_WFI_EN` + 64 de biți, fără timestamp; **fără** `NON_STALL_INTERRUPT` după el (tinygrad îl trimite; noi citim semaforul, nu avem întreruperi) | tinygrad `release` (~l. 111–119); tinygrad pune semnalul și în `release` din QMD când se poate | de văzut la prima lansare reală dacă lipsa întreruperii contează (GSP-RM nu ar trebui să o aștepte) |
 | Invalidarea cache-urilor înainte de lansare (I10b) | `INVALIDATE_SHADER_CACHES_NO_WFI` cu instrucțiuni + date globale + constante, la fiecare lansare | tinygrad `memory_barrier` (aceleași 3 câmpuri) | modelul doar verifică câmpurile; efectul real se vede doar pe placă |
+| Refolosirea bufferului de comenzi (I10d) | o porțiune a zonei de comenzi se rescrie doar după ce semaforul de terminare al ei (sau al unei lansări de după ea) a ajuns la valoare; `GPGet` din USERD **nu** e folosit pentru asta | intrările GPFIFO rulează în ordine pe același canal (`clc56f.h`); un semafor scris cu `RELEASE_WFI` vine după ce intrările dinainte au fost citite | de văzut pe placă: dacă un semafor poate apărea înainte ca cititorul de comenzi să fi terminat cuvintele (nu ar trebui, cu WFI) |
 | Mărimea VRAM | `fb_size_from_scratch42` | registrul `0x1183a4` (`NV_USABLE_FB_SIZE_IN_MB`, antet NVIDIA MIT) | citire nouă, doar-citire, de adăugat pe lista permisă la C-20 |
 
 **Sesiunea 6:** toate offset-urile scrise de mână în sesiunea 5 (`GspFwWprMeta`, cozile msgq, `GSP_ARGUMENTS_CACHED`, GFW_BOOT, codificarea pushbuffer/GPFIFO) au fost comparate automat cu valorile generate din antete: **toate egale** (`crates/nvidia-ga104/tests/rm570_crosscheck.rs`).
@@ -99,6 +100,8 @@ doar cuvintele de antet ale fișierelor oficiale (offset-uri, mărimi, numărul 
 nu sunt în repo): `booter_load` 61 304 B, `bin_size` 0xf000, date 0x378 + 0xec00 (până la capăt); `booter_unload` 41 080 B, `bin_size` 0xa100,
 date 0x378 + 0x9d00; `bootloader` 24 684 B, `bin_size` 0x6100, date 0x6c + 0x6000; Booter: 2 semnături de 384 B, numărul lor la adresa 0x350
 (nu în antet). Două greșeli ale noastre, ambele reparate (`fw_hdr`), cu 2 greșeli plantate prinse (4 și 9 teste pică). SIMULARE.
+
+**Sesiunea 23 (30 oct):** I10d are cod (`gsp::work_queue::WorkQueue::{retire, push_in_flight}`; zona de comenzi folosită ca cerc): nimic nou de la GSP-RM sau din antete; SIMULARE pe `gpu-sim::cmdproc`. Nimic nu a rulat pe placă.
 
 **Sesiunea 22 (30 oct):** I10c are cod (`gsp::user_space::query_gr_info`, `gsp::rmapi::{gr_info_request, parse_gr_info, GrInfo, SM_VERSION_SM86}`; structura generată din `ctrl2080internal.h` 570.144): forma GR0 și versiunea SM cerute de la GSP-RM în SIMULARE (`gpu-sim::fake_rm`, valori SIM). Nimic nu a rulat pe placă.
 
