@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 22 — 30 octombrie 2026, ~07:05–07:40 (ora României), în cloud, FĂRĂ placă
+
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comenzi noi în hub pentru noi: niciuna (C-18, C-20, C-39 gata; în hub nu sunt
+rezultate noi de pe placă; sesiunea OS e oprită, coada ei e goală; `os-209` e gata pentru fereastra următoare). Am făcut următorul pas
+„fără placă”: **I10c**, forma GR cerută de la GSP-RM. Tot ce scrie „PASS” e pe gazdă: SIMULARE.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Pornire | CI rularea pe vârful `ab5a918` verde; `tools/check.sh` verde înainte de orice schimbare (285 teste; rustc 1.97.0, ținta `x86_64-unknown-none` instalată în sesiune); ultimele 3 sesiuni au terminat pași → fără oprire de siguranță | PASS |
+| Antete | generatorul `tools/gen-rm570` (bindgen-cli 0.71.1 instalat în sesiune) produce în plus `NV2080_CTRL_INTERNAL_STATIC_GR_GET_INFO_PARAMS` (3712 B = 8 motoare × 58 perechi), comanda `0x20800a2a` și indicii `NV0080_CTRL_GR_INFO_INDEX_*` (12, 13, 20, 23, 32); `rmapi.rs` doar cu adăugări | PASS (fixate în `rm_api_layouts_570_144`) |
+| **I10c** forma GR | `nvidia-ga104::gsp::user_space::query_gr_info`: o comandă pe subdispozitivul clientului de lucru, ca tinygrad pe calea GSP (`_query_gpu_info`, ramura `is_nvd()`: comanda internă, fiindcă `GR_GET_INFO` public poartă un pointer). `rmapi::parse_gr_info` citește GR0 după poziție: GPC-uri, TPC/GPC, SM/TPC, warp-uri/SM, versiunea SM; orice valoare 0, lungime greșită sau `index` care nu-și numește poziția = refuz. `GrInfo::check_sm86`: o placă care nu e `sm_86` e refuzată (programele noastre NAK sunt pentru GA104). Testul cap-coadă al lansării `add64` o cere acum înainte de lansare | PASS (SIMULARE): 3 teste noi + T41 extins; **8 greșeli plantate în răspuns + 4 în cod, toate prinse** |
+| Modelul | `gpu-sim::fake_rm`: comanda `KGR_GET_INFO` pe subdispozitiv (mărime exactă), GR0 cu `SIM_GR_INFO` (forma unui GA104 complet: 6 × 4 × 2 = 48 SM, 48 warp-uri/SM, `sm_86`) — **valori SIM**, alese de noi, nu ale plăcii | PASS |
+| Alegeri notate | citirea după poziție; `index` = 0 acceptat (nu știm dacă GSP-RM îl completează); valorile „litter” = maximele cipului | `COMPATIBILITATE_FIRMWARE.md` („De verificat”) |
+| Compatibilitate OS | `git diff ab5a918` pe `gpu-core`, `gpu-pci`, `nvidia-ga104`, `gpu-compute`, `gpu-sim`: nicio linie `pub` ștearsă; doar adăugări (`user_space::query_gr_info`, `rmapi::{gr_info_request, parse_gr_info, GrInfo, SM_VERSION_SM86}`, `cmd::KGR_GET_INFO`; în `gpu-sim::fake_rm`: `cmd::KGR_GET_INFO`, `size::GR_INFO`, `SIM_GR_INFO`) | PASS |
+
+Verificări (`tools/check.sh`): format PASS, clippy `-D warnings` PASS, **288 de teste PASS** (1 ignorat: viteza), build no_std PASS;
+`nvidia-ga104 --features hw-write`: clippy + teste PASS. Nicio scriere în placă. OS-ul nu a fost reconstruit (nicio schimbare de interfață pentru el): NOT TESTED.
+
+**Următorul pas:** la fereastra următoare (cu `os-209`): `gpu firmware` → `criteriul I4: TRECE`, apoi (opțional, cu Adrian) proba tinygrad.
+Fără placă mai rămân: refolosirea bufferului de comenzi (acum liniar) după semafor; treapta 6 matmul. Restul drumului (I5+ pe placă) cere fereastra cu Adrian.
+
+---
+
 ## Sesiunea 21 — 30 octombrie 2026, ~01:25–01:45 (ora României), în cloud, FĂRĂ placă
 
 **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.** Comenzi noi în hub pentru noi: niciuna. Sesiunea OS a făcut C-42 (fixarea

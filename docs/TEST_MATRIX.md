@@ -1,5 +1,15 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 22 (30 oct 2026, cloud, fără placă) — I10c
+| Id | Test | Comandă | Așteptat | Obținut | Clasificare |
+|---|---|---|---|---|---|
+| T47 | Forma GR0 cerută de la GSP-RM (I10c) pe subdispozitivul clientului de lucru | `cargo test -p nvidia-ga104 gr_info_from_gsp_rm` | o comandă `0x20800a2a` acceptată; 6 GPC × 4 TPC × 2 SM, 48 warp-uri/SM, `sm_86` (valori SIM); memoria locală pentru 1 B/fir: 0x18000 pe TPC, 0x240000 în total | conform | PASS (SIMULARE) |
+| T48 | Refuzurile GSP-RM (alt obiect decât subdispozitivul, altă mărime) | `cargo test -p nvidia-ga104 rm_refusals_for_gr_info` | codul RM (`INVALID_OBJECT_HANDLE`, `INVALID_PARAM_STRUCT`), nicio formă | conform | PASS (SIMULARE) |
+| T49 | 8 greșeli plantate în răspuns (fiecare din cele 5 valori = 0, index greșit, lungime −8 / +1) + placă non-`sm_86` | `cargo test -p nvidia-ga104 planted_gr_info_mistakes_are_caught` | toate refuzate; datele lui GR1 ignorate; `index` = 0 acceptat | 8/8 prinse; `sm_87` refuzat la `check_sm86` | PASS (SIMULARE) |
+| T50 | Lansarea `add64` (T41) cere întâi forma GR și verifică `sm_86` | `cargo test -p nvidia-ga104 first_launch_on_the_work_channel` | ca T41 | conform | PASS (SIMULARE) |
+| T51 | Mărimea și indicii generați din antete (3712 B; 12, 13, 20, 23, 32; 58) | `cargo test -p nvidia-rm570 rm_api_layouts_570_144` | egale | conform | PASS |
+| T52 | Răspunsul real al GSP-RM 570.144 pe RTX 3070 Ti | — | — | — | NOT TESTED (doar în fereastra cu Adrian, după I5–I8 pe placă) |
+
 ## Rezultate — sesiunea 21 (30 oct 2026, cloud, fără placă) — I10b
 | Id | Test | Comandă | Așteptat | Obținut | Clasificare |
 |---|---|---|---|---|---|
