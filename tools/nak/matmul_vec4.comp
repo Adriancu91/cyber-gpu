@@ -1,0 +1,102 @@
+// Matmul step 6 (siboehm SGEMM_CUDA kernel 6 "vectorize", MIT, idea only): C[M,N] = A[M,K] * B[K,N],
+// row-major f32. Same blocking as step 5 (64 threads, a 64x64 block of C per workgroup, 8x8 results per
+// thread in registers, K-tiles of BK = 8), with 128-bit memory accesses:
+//   - global loads of A and B as vec4 (each thread loads 2 vec4 of A and 2 vec4 of B per K-tile);
+//   - the A tile is stored TRANSPOSED in shared memory (as_[p][row]), so that the 8 values of A a thread needs
+//     for one p are contiguous: 2 vec4 shared loads instead of 8 scalar ones; the B tile likewise gives 2 vec4;
+//   - the 8x8 results are stored as vec4.
+// Requirements (the kernel does not check them; our launcher must): K and N multiples of 4, a/b/c aligned to
+// 16 bytes. M is free. With K % 4 == 0 and N % 4 == 0 every vec4 is either fully inside A/B/C or fully outside.
+// The inner loop stops at K exactly (no zero padding is accumulated) and each element of C is still the same
+// chain of fused multiply-adds in the order p = 0..K-1 as steps 1-5: the oracle stays
+// gpu-compute::reference::matmul_fma_ftz, bit for bit.
+// Fixed-size loops are unrolled ([[unroll]]) so the 64 accumulators stay in registers (see step 5).
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_control_flow_attributes : require
+
+#define BM 64u
+#define BN 64u
+#define BK 8u
+#define TM 8u
+#define TN 8u
+#define THREADS 64u
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer In4 { vec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) writeonly buffer Out4 { vec4 v[]; };
+
+layout(push_constant) uniform Args {
+    In4 a;
+    In4 b;
+    Out4 c;
+    uint m;
+    uint n;
+    uint k;
+} args;
+
+shared vec4 as_[BK * BM / 4];   // transposed: element (p, row) at p * BM + row
+shared vec4 bs_[BK * BN / 4];   // element (p, col) at p * BN + col
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint thread_row = tid / (BN / TN);   // 0..7
+    uint thread_col = tid % (BN / TN);   // 0..7
+    uint row0 = gl_WorkGroupID.y * BM;
+    uint col0 = gl_WorkGroupID.x * BN;
+    uint k4 = args.k / 4u, n4 = args.n / 4u;
+    float acc[TM * TN];
+    [[unroll]] for (uint i = 0; i < TM * TN; i++) acc[i] = 0.0;
+    float reg_m[TM];
+    float reg_n[TN];
+    for (uint t = 0; t < args.k; t += BK) {
+        // A tile 64x8 = 128 vec4: vector q -> row q / 2, columns (q % 2) * 4 ..+4; stored transposed.
+        [[unroll]] for (uint s = 0; s < 2u; s++) {
+            uint q = tid + s * THREADS;
+            uint r = q / (BK / 4u), kq = q % (BK / 4u);
+            uint ar = row0 + r, ak = t + kq * 4u;
+            vec4 v = (ar < args.m && ak < args.k) ? args.a.v[ar * k4 + ak / 4u] : vec4(0.0);
+            [[unroll]] for (uint e = 0; e < 4u; e++) {
+                uint idx = (kq * 4u + e) * BM + r;
+                as_[idx / 4u][idx % 4u] = v[e];
+            }
+        }
+        // B tile 8x64 = 128 vec4: vector q -> row q / 16, columns (q % 16) * 4 ..+4.
+        [[unroll]] for (uint s = 0; s < 2u; s++) {
+            uint q = tid + s * THREADS;
+            uint r = q / (BN / 4u), cq = q % (BN / 4u);
+            uint bk = t + r, bc = col0 + cq * 4u;
+            bs_[r * (BN / 4u) + cq] = (bk < args.k && bc < args.n) ? args.b.v[bk * n4 + bc / 4u] : vec4(0.0);
+        }
+        barrier();
+        uint len = min(BK, args.k - t);
+        for (uint p = 0; p < len; p++) {
+            vec4 m0 = as_[(p * BM + thread_row * TM) / 4u];
+            vec4 m1 = as_[(p * BM + thread_row * TM) / 4u + 1u];
+            vec4 n0 = bs_[(p * BN + thread_col * TN) / 4u];
+            vec4 n1 = bs_[(p * BN + thread_col * TN) / 4u + 1u];
+            reg_m[0] = m0.x; reg_m[1] = m0.y; reg_m[2] = m0.z; reg_m[3] = m0.w;
+            reg_m[4] = m1.x; reg_m[5] = m1.y; reg_m[6] = m1.z; reg_m[7] = m1.w;
+            reg_n[0] = n0.x; reg_n[1] = n0.y; reg_n[2] = n0.z; reg_n[3] = n0.w;
+            reg_n[4] = n1.x; reg_n[5] = n1.y; reg_n[6] = n1.z; reg_n[7] = n1.w;
+            [[unroll]] for (uint i = 0; i < TM; i++) {
+                [[unroll]] for (uint j = 0; j < TN; j++) {
+                    acc[i * TN + j] += reg_m[i] * reg_n[j];
+                }
+            }
+        }
+        barrier();
+    }
+    [[unroll]] for (uint i = 0; i < TM; i++) {
+        uint row = row0 + thread_row * TM + i;
+        [[unroll]] for (uint j = 0; j < TN; j += 4u) {
+            uint col = col0 + thread_col * TN + j;
+            if (row < args.m && col < args.n) {
+                args.c.v[row * n4 + col / 4u] =
+                    vec4(acc[i * TN + j], acc[i * TN + j + 1u], acc[i * TN + j + 2u], acc[i * TN + j + 3u]);
+            }
+        }
+    }
+}

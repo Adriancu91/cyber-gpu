@@ -9,6 +9,7 @@
 #   sh tools/nak/build.sh matmul_smem    # step 3: shared-memory tiles (session 8)
 #   sh tools/nak/build.sh matmul_1d      # step 4: 1D blocktiling, 8 results per thread (session 9)
 #   sh tools/nak/build.sh matmul_2d      # step 5: 2D blocktiling, 8x8 results per thread (session 10)
+#   sh tools/nak/build.sh matmul_vec4    # step 6: step 5 with 128-bit loads/stores, A transposed in shared (session 24)
 #   sh tools/nak/build.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): apt install glslang-tools spirv-tools libvulkan-dev libdrm-dev
@@ -55,6 +56,9 @@ matmul_1d)
 matmul_2d)
     exec sh "$0" kernel matmul_2d 40
     ;;
+matmul_vec4)
+    exec sh "$0" kernel matmul_vec4 40
+    ;;
 kernel)
     NAME=${2:?nume}; PUSH=${3:?octeti push constants}
     OUT=$HERE/out; TMP=$(mktemp -d); mkdir -p "$OUT"
@@ -79,6 +83,6 @@ kernel)
     rm -rf "$TMP"
     ;;
 *)
-    echo "usage: $0 mesa|add64|matmul_naive|matmul_coalesced|matmul_smem|matmul_1d|matmul_2d|kernel <nume> <octeti>" >&2; exit 2
+    echo "usage: $0 mesa|add64|matmul_naive|matmul_coalesced|matmul_smem|matmul_1d|matmul_2d|matmul_vec4|kernel <nume> <octeti>" >&2; exit 2
     ;;
 esac

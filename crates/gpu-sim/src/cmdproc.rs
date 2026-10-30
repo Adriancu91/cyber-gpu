@@ -906,6 +906,124 @@ pub fn matmul_2d_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// What `tools/nak/out/matmul_vec4.sm86.sass` (step 6) needs: the same 4 KiB
+/// of shared memory as step 5 (A transposed + B) and one barrier.
+pub const MATMUL_VEC4_NEEDS: Needs = Needs {
+    shared_bytes: (64 * 8 + 8 * 64) * 4,
+    barriers: 1,
+};
+
+/// The CPU stand-in for step 6 (`matmul_vec4.sm86.sass`, siboehm
+/// "vectorize"): step 5's blocking (64 threads, a 64×64 block of C, 8×8
+/// cells per thread, K-tiles of 8) with 128-bit accesses. It follows the
+/// kernel: per K-tile, vector `q = tid + 64s` (s = 0, 1) of A is row `q / 2`,
+/// columns `(q % 2) * 4 ..+4`, stored **transposed** (`as_[p * 64 + row]`);
+/// vector `q` of B is row `q / 16`, columns `(q % 16) * 4 ..+4`; vectors
+/// outside A/B are zeros; then for each p ≤ min(8, K − t) the thread reads
+/// 8 values of A and 8 of B (two vec4 each) and accumulates the 64 products;
+/// C is written as vec4. The kernel itself does not check its requirements,
+/// so the model refuses (no write) what it cannot run correctly: K or N not
+/// a multiple of 4, or a/b/c not aligned to 16 bytes (on the card a
+/// misaligned 128-bit access faults). Oracle: `reference::matmul_fma_ftz`.
+pub fn matmul_vec4_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    const BM: usize = 64;
+    const BN: usize = 64;
+    const BK: usize = 8;
+    const TM: usize = 8;
+    const TN: usize = 8;
+    const THREADS: usize = (BM / TM) * (BN / TN);
+    if l.block != [THREADS as u32, 1, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: matmul_vec4 cere blocuri de 64x1x1"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let a = l.mem.read_u64(l.cbuf0 + 0x28)?;
+    let b = l.mem.read_u64(l.cbuf0 + 0x30)?;
+    let c = l.mem.read_u64(l.cbuf0 + 0x38)?;
+    let m = l.mem.read_u32(l.cbuf0 + 0x40)? as usize;
+    let n = l.mem.read_u32(l.cbuf0 + 0x44)? as usize;
+    let k = l.mem.read_u32(l.cbuf0 + 0x48)? as usize;
+    if !k.is_multiple_of(4) || !n.is_multiple_of(4) {
+        return Err(bad("SIM: matmul_vec4 cere K si N multipli de 4"));
+    }
+    if !(a | b | c).is_multiple_of(16) {
+        return Err(bad("SIM: matmul_vec4 cere a/b/c aliniate la 16 octeti"));
+    }
+    let x = l.mem.read_f32s(a, m * k)?;
+    let y = l.mem.read_f32s(b, k * n)?;
+    let fma_f32_ftz = gpu_compute::math::fma_f32_ftz;
+    for gy in 0..l.grid[1] as usize {
+        for gx in 0..l.grid[0] as usize {
+            let (row0, col0) = (gy * BM, gx * BN);
+            let mut acc = alloc::vec![[0.0f32; TM * TN]; THREADS];
+            let mut t = 0;
+            while t < k {
+                let mut as_ = [0.0f32; BK * BM]; // transposed
+                let mut bs_ = [0.0f32; BK * BN];
+                for tid in 0..THREADS {
+                    for s in 0..2 {
+                        let q = tid + s * THREADS;
+                        let (r, kq) = (q / (BK / 4), q % (BK / 4));
+                        let (ar, ak) = (row0 + r, t + kq * 4);
+                        if ar < m && ak < k {
+                            for e in 0..4 {
+                                as_[(kq * 4 + e) * BM + r] = x[ar * k + ak + e];
+                            }
+                        }
+                        let (r, cq) = (q / (BN / 4), q % (BN / 4));
+                        let (bk, bc) = (t + r, col0 + cq * 4);
+                        if bk < k && bc < n {
+                            for e in 0..4 {
+                                bs_[r * BN + cq * 4 + e] = y[bk * n + bc + e];
+                            }
+                        }
+                    }
+                }
+                // barrier()
+                let len = BK.min(k - t);
+                for (tid, acc_t) in acc.iter_mut().enumerate() {
+                    let (trow, tcol) = (tid / (BN / TN), tid % (BN / TN));
+                    for p in 0..len {
+                        let reg_m: [f32; TM] =
+                            core::array::from_fn(|i| as_[p * BM + trow * TM + i]);
+                        let reg_n: [f32; TN] =
+                            core::array::from_fn(|j| bs_[p * BN + tcol * TN + j]);
+                        for i in 0..TM {
+                            for j in 0..TN {
+                                acc_t[i * TN + j] =
+                                    fma_f32_ftz(reg_m[i], reg_n[j], acc_t[i * TN + j]);
+                            }
+                        }
+                    }
+                }
+                // barrier()
+                t += BK;
+            }
+            for (tid, acc_t) in acc.iter().enumerate() {
+                let (trow, tcol) = (tid / (BN / TN), tid % (BN / TN));
+                for i in 0..TM {
+                    let row = row0 + trow * TM + i;
+                    for j in (0..TN).step_by(4) {
+                        let col = col0 + tcol * TN + j;
+                        if row < m && col < n {
+                            for e in 0..4 {
+                                l.mem.write_u32(
+                                    c + 4 * (row * n + col + e) as u64,
+                                    acc_t[i * TN + j + e].to_bits(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

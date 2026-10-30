@@ -5,8 +5,9 @@
 //! oracle `reference::matmul_fma_ftz`); nothing here runs on the RTX 3070 Ti.
 
 use gpu_sim::cmdproc::{
-    CommandProcessor, Event, MATMUL_1D_NEEDS, MATMUL_2D_NEEDS, MATMUL_SMEM_NEEDS, matmul_1d_on_cpu,
-    matmul_2d_on_cpu, matmul_coalesced_on_cpu, matmul_naive_on_cpu, matmul_smem_on_cpu,
+    CommandProcessor, Event, MATMUL_1D_NEEDS, MATMUL_2D_NEEDS, MATMUL_SMEM_NEEDS,
+    MATMUL_VEC4_NEEDS, matmul_1d_on_cpu, matmul_2d_on_cpu, matmul_coalesced_on_cpu,
+    matmul_naive_on_cpu, matmul_smem_on_cpu, matmul_vec4_on_cpu,
 };
 use nvidia_ga104::push::{self, PushBuf};
 use nvidia_ga104::qmd::{ComputeQmd, MAX_SHARED_BYTES, SharedMemory};
@@ -17,6 +18,7 @@ const COALESCED: &[u8] = include_bytes!("../../../tools/nak/out/matmul_coalesced
 const SMEM: &[u8] = include_bytes!("../../../tools/nak/out/matmul_smem.sm86.sass");
 const ONE_D: &[u8] = include_bytes!("../../../tools/nak/out/matmul_1d.sm86.sass");
 const TWO_D: &[u8] = include_bytes!("../../../tools/nak/out/matmul_2d.sm86.sass");
+const VEC4: &[u8] = include_bytes!("../../../tools/nak/out/matmul_vec4.sm86.sass");
 const PROG: u64 = 0x10_0000;
 const CBUF: u64 = 0x20_0000;
 const SEM: u64 = 0x30_0000;
@@ -415,4 +417,131 @@ fn two_d_wrong_cell_layout_is_caught() {
     let mut want = vec![0.0; m * n];
     gpu_compute::reference::matmul_fma_ftz(&a, &b, &mut want, m, k, n).unwrap();
     assert_ne!(bits(&got), bits(&want));
+}
+
+/// Step 6 (session 24): step 5 with 128-bit loads/stores and the A tile
+/// transposed in shared memory. NAK: 821 instructions, 13136 B, 90 registers,
+/// 4 KiB shared, 1 barrier, 64 `ffma.ftz`, 4 + 4 128-bit loads, 16 128-bit stores.
+const VEC4_REGS: u32 = 90;
+fn vec4_cp(m: usize, k: usize, n: usize) -> (CommandProcessor, Vec<f32>, Vec<f32>) {
+    let (mut cp, a, b) = setup(m as u32, k as u32, n as u32);
+    cp.register_program_with_needs(VEC4, matmul_vec4_on_cpu, MATMUL_VEC4_NEEDS);
+    cp.mem.write(PROG, VEC4);
+    (cp, a, b)
+}
+
+fn want(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
+    let mut w = vec![0.0; m * n];
+    gpu_compute::reference::matmul_fma_ftz(a, b, &mut w, m, k, n).unwrap();
+    w
+}
+
+#[test]
+fn vec4_step_matches_the_ffma_ftz_oracle_including_partial_blocks() {
+    for (m, k, n) in [
+        (37usize, 36usize, 20usize),
+        (64, 8, 64),
+        (5, 4, 4),
+        (130, 20, 72),
+        (71, 64, 132),
+        (1, 12, 68),
+    ] {
+        let (mut cp, a, b) = vec4_cp(m, k, n);
+        let grid = [n.div_ceil(64) as u32, m.div_ceil(64) as u32, 1];
+        launch_with(&mut cp, grid, [64, 1, 1], VEC4_REGS, Some(ONE_D_QMD)).unwrap();
+        assert!(matches!(cp.events[1], Event::Launch { program: 1, .. }));
+        let got = cp.mem.read_f32s(C, m * n + 16).unwrap();
+        assert_eq!(
+            bits(&got[..m * n]),
+            bits(&want(&a, &b, m, k, n)),
+            "{m}x{k}x{n}"
+        );
+        assert!(got[m * n..].iter().all(|&x| x == SENTINEL), "wrote after C");
+        assert_eq!(cp.mem.read_u32(SEM).unwrap(), 1);
+    }
+}
+
+#[test]
+fn vec4_step_gives_the_same_bits_as_step_5() {
+    let (m, k, n) = (70usize, 28usize, 68usize);
+    let grid = [n.div_ceil(64) as u32, m.div_ceil(64) as u32, 1];
+    let (mut cp6, ..) = vec4_cp(m, k, n);
+    launch_with(&mut cp6, grid, [64, 1, 1], VEC4_REGS, Some(ONE_D_QMD)).unwrap();
+    let (mut cp5, ..) = two_d_cp(m, k, n);
+    launch_with(&mut cp5, grid, [64, 1, 1], 94, Some(ONE_D_QMD)).unwrap();
+    assert_eq!(
+        bits(&cp6.mem.read_f32s(C, m * n).unwrap()),
+        bits(&cp5.mem.read_f32s(C, m * n).unwrap())
+    );
+}
+
+#[test]
+fn vec4_step_keeps_negative_zero_and_refuses_what_it_cannot_run() {
+    let (m, k, n) = (9usize, 12usize, 4usize);
+    let (mut cp, ..) = vec4_cp(m, k, n);
+    let tiny = f32::from_bits(0x1c80_0000);
+    cp.mem.write_f32s(A, &vec![-tiny; m * k]);
+    cp.mem.write_f32s(B, &vec![tiny; k * n]);
+    launch_with(&mut cp, [1, 1, 1], [64, 1, 1], VEC4_REGS, Some(ONE_D_QMD)).unwrap();
+    let got = cp.mem.read_f32s(C, m * n).unwrap();
+    assert!(got.iter().all(|x| x.to_bits() == 0x8000_0000));
+    // K or N not a multiple of 4: refused, nothing written.
+    for (k, n) in [(10usize, 64usize), (8, 66)] {
+        let (mut cp, ..) = vec4_cp(64, k, n);
+        assert!(launch_with(&mut cp, [2, 1, 1], [64, 1, 1], VEC4_REGS, Some(ONE_D_QMD)).is_err());
+        assert!(
+            cp.mem
+                .read_f32s(C, 64 * n)
+                .unwrap()
+                .iter()
+                .all(|&x| x == SENTINEL)
+        );
+    }
+    // C not aligned to 16 bytes: refused.
+    let (mut cp, ..) = vec4_cp(64, 8, 64);
+    cp.mem.write(CBUF + 0x38, &(C + 4).to_le_bytes());
+    assert!(launch_with(&mut cp, [1, 1, 1], [64, 1, 1], VEC4_REGS, Some(ONE_D_QMD)).is_err());
+    // Step 4's block shape, step 3's shared memory, no barrier: refused.
+    let (mut cp, ..) = vec4_cp(64, 8, 64);
+    assert!(launch_with(&mut cp, [1, 1, 1], [512, 1, 1], VEC4_REGS, Some(ONE_D_QMD)).is_err());
+    assert!(launch_with(&mut cp, [1, 1, 1], [64, 1, 1], VEC4_REGS, Some(SMEM_QMD)).is_err());
+    let no_bar = SharedMemory {
+        barriers: 0,
+        ..ONE_D_QMD
+    };
+    assert!(launch_with(&mut cp, [1, 1, 1], [64, 1, 1], VEC4_REGS, Some(no_bar)).is_err());
+    let got = cp.mem.read_f32s(C, 64 * 64 + 16).unwrap();
+    assert!(
+        got.iter().all(|&x| x == SENTINEL),
+        "refused launches wrote nothing"
+    );
+    assert_ne!(VEC4, TWO_D);
+}
+
+/// Planted mistakes in the step 6 model (a vec4 of C written one vector to
+/// the right; the last vector of a row of B dropped) must be caught.
+#[test]
+fn vec4_planted_mistakes_are_caught() {
+    fn shifted(l: &mut gpu_sim::cmdproc::Launch<'_>) -> Result<(), gpu_core::error::GpuError> {
+        matmul_vec4_on_cpu(l)?;
+        let c = l.mem.read_u64(l.cbuf0 + 0x38)?;
+        let v = l.mem.read_f32s(c, 4)?;
+        l.mem.write_f32s(c + 16, &v);
+        Ok(())
+    }
+    fn dropped(l: &mut gpu_sim::cmdproc::Launch<'_>) -> Result<(), gpu_core::error::GpuError> {
+        let b = l.mem.read_u64(l.cbuf0 + 0x30)?;
+        let n = l.mem.read_u32(l.cbuf0 + 0x44)? as u64;
+        l.mem.write_f32s(b + 4 * (n - 4), &[0.0; 4]);
+        matmul_vec4_on_cpu(l)
+    }
+    for f in [shifted as gpu_sim::cmdproc::ProgramFn, dropped] {
+        let (m, k, n) = (16usize, 12usize, 16usize);
+        let (mut cp, a, b) = setup(m as u32, k as u32, n as u32);
+        cp.register_program_with_needs(VEC4, f, MATMUL_VEC4_NEEDS);
+        cp.mem.write(PROG, VEC4);
+        launch_with(&mut cp, [1, 1, 1], [64, 1, 1], VEC4_REGS, Some(ONE_D_QMD)).unwrap();
+        let got = cp.mem.read_f32s(C, m * n).unwrap();
+        assert_ne!(bits(&got), bits(&want(&a, &b, m, k, n)));
+    }
 }
