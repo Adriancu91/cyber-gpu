@@ -1499,6 +1499,174 @@ mod tests {
         assert_eq!(read_c(&mut mem, &k), k.want, "bit cu bit, add_ftz");
     }
 
+    /// One more pass of the GPU over the channel, with the same model (it
+    /// keeps the compute object bound by the first pass); everything is
+    /// fetched again through the page tables and written back the same way.
+    fn gpu_runs_again(
+        cp: &mut CommandProcessor,
+        mem: &mut Mem,
+        root: u64,
+        w: &WorkChannel,
+        push: &Mapping,
+        k: &Add64,
+    ) -> GpuResult<u32> {
+        let v = &mem.writer().0;
+        for m in [
+            &w.ring, push, &k.prog, &k.cbuf, &k.a, &k.b, &k.c, &k.qmd, &k.sem,
+        ] {
+            cp.mem.load_from_vram(v, root, m.va, m.size).unwrap();
+        }
+        let userd = w.ring.va + w.userd_offset;
+        let r = cp.run_channel(w.ring.va, w.entries, userd)?;
+        let v = &mut mem.writer_mut().0;
+        cp.mem
+            .store_to_vram(v, root, userd + USERD_GP_GET, 8)
+            .unwrap();
+        cp.mem.store_to_vram(v, root, k.c.va, k.c.size).unwrap();
+        cp.mem.store_to_vram(v, root, k.sem.va, 8).unwrap();
+        Ok(r)
+    }
+
+    fn push_words(mem: &mut Mem, push: &Mapping) -> Vec<u32> {
+        (0..push.size / 4)
+            .map(|i| mem.writer_mut().read_u32(push.pa + 4 * i).unwrap())
+            .collect()
+    }
+
+    /// SIMULARE: the pushbuffer area is a circle. A small area (setup + two
+    /// launches) carries 12 launches: a stretch is written again only after
+    /// the completion semaphore of a later (or its own) launch says the GPU
+    /// read it; while something is in flight, the words the GPU has not read
+    /// are never overwritten, and a launch that does not fit is refused with
+    /// nothing written. Each launch recomputes `add64` bit for bit.
+    #[test]
+    fn pushbuffer_area_is_reused_after_the_semaphore() {
+        let (mut d, mut mem, g, u, cg) = grouped();
+        let w = open_work_channel_cleared(&mut d, &mut mem, &u, &cg, &g).unwrap();
+        let root = d.0.page_directory(USER_CLIENT, u.vaspace).unwrap().0;
+        let k = add64_buffers(&mut mem);
+        let setup = 4 * setup_words().len() as u64;
+        let one = 48; // invalidate + launch + release: 12 words
+        assert!(setup < one);
+        let area = mem.alloc_mapped(0x1000, 0x1000).unwrap();
+        let push = Mapping {
+            size: setup + 2 * one,
+            ..area
+        };
+        let mut q = WorkQueue::new(&w, push).unwrap();
+        let put_pa = w.ring.pa + w.userd_offset + crate::gsp::work_queue::USERD_GP_PUT;
+        let nan = alloc::vec![0x7fc0_0000u32; 64];
+        let reset_c = |mem: &mut Mem| {
+            for (i, &b) in nan.iter().enumerate() {
+                mem.writer_mut()
+                    .write_u32(k.c.pa + 4 * i as u64, b)
+                    .unwrap();
+            }
+        };
+
+        // Fill the area: setup + launches 1 and 2. Launch 3 does not fit.
+        q.submit(mem.writer_mut(), &setup_words()).unwrap();
+        q.launch_and_signal(mem.writer_mut(), k.qmd.va, k.sem.va, 1)
+            .unwrap();
+        q.launch_and_signal(mem.writer_mut(), k.qmd.va, k.sem.va, 2)
+            .unwrap();
+        assert_eq!(q.push_in_flight(), push.size);
+        let words = push_words(&mut mem, &push);
+        let put = mem.writer_mut().read_u32(put_pa).unwrap();
+        assert!(
+            q.launch_and_signal(mem.writer_mut(), k.qmd.va, k.sem.va, 3)
+                .is_err()
+        );
+        assert_eq!(push_words(&mut mem, &push), words, "nimic suprascris");
+        assert_eq!(mem.writer_mut().read_u32(put_pa).unwrap(), put);
+
+        // Nothing is freed before the GPU has run (semaphore still 0).
+        assert_eq!(read_semaphore(mem.writer_mut(), k.sem.pa), Ok(0));
+        assert_eq!(q.retire(k.sem.va, 0), Ok(0));
+        // A value the GPU was never asked to write is a fault.
+        assert!(q.retire(k.sem.va, 3).is_err());
+        assert_eq!(q.push_in_flight(), push.size);
+
+        let mut cp = CommandProcessor::new();
+        cp.register_program(ADD64, gpu_sim::cmdproc::add64_on_cpu);
+        reset_c(&mut mem);
+        assert_eq!(
+            gpu_runs_again(&mut cp, &mut mem, root, &w, &push, &k),
+            Ok(3)
+        );
+        assert_eq!(read_semaphore(mem.writer_mut(), k.sem.pa), Ok(2));
+        assert_eq!(read_c(&mut mem, &k), k.want);
+        assert_eq!(q.update_get(mem.writer_mut()), Ok(3));
+
+        // The driver frees only up to launch 1 (setup + launch 1): launch 3
+        // goes to the start of the area, before launch 2 (wrap-around);
+        // launch 4 would reach launch 2 and is refused.
+        assert_eq!(q.retire(k.sem.va, 1), Ok(2));
+        assert_eq!(q.push_in_flight(), one);
+        q.launch_and_signal(mem.writer_mut(), k.qmd.va, k.sem.va, 3)
+            .unwrap();
+        let slot = w.ring.pa + 8 * 3;
+        assert_eq!(
+            mem.writer_mut().read_u32(slot).unwrap(),
+            push.va as u32,
+            "lansarea 3 la inceputul zonei"
+        );
+        let words = push_words(&mut mem, &push);
+        assert!(
+            q.launch_and_signal(mem.writer_mut(), k.qmd.va, k.sem.va, 4)
+                .is_err()
+        );
+        assert_eq!(push_words(&mut mem, &push), words, "lansarea 2 neatinsa");
+        // The value must grow on the same semaphore.
+        assert!(
+            q.launch_and_signal(mem.writer_mut(), k.qmd.va, k.sem.va, 3)
+                .is_err()
+        );
+        reset_c(&mut mem);
+        assert_eq!(
+            gpu_runs_again(&mut cp, &mut mem, root, &w, &push, &k),
+            Ok(1)
+        );
+        assert_eq!(read_c(&mut mem, &k), k.want);
+        let done = read_semaphore(mem.writer_mut(), k.sem.pa).unwrap();
+        assert_eq!(done, 3);
+        assert_eq!(q.retire(k.sem.va, done), Ok(2));
+        assert_eq!(q.push_in_flight(), 0);
+
+        // Steady state: 9 more rounds of launch → GPU → semaphore → retire
+        // in the same 128-byte area (12 launches in all, the ring keeps going).
+        for v in 4..=12u64 {
+            q.launch_and_signal(mem.writer_mut(), k.qmd.va, k.sem.va, v)
+                .unwrap();
+            reset_c(&mut mem);
+            assert_eq!(
+                gpu_runs_again(&mut cp, &mut mem, root, &w, &push, &k),
+                Ok(1)
+            );
+            assert_eq!(read_c(&mut mem, &k), k.want, "lansarea {v}");
+            let done = read_semaphore(mem.writer_mut(), k.sem.pa).unwrap();
+            assert_eq!(done, v);
+            assert_eq!(q.retire(k.sem.va, done), Ok(1));
+            q.update_get(mem.writer_mut()).unwrap();
+        }
+        assert_eq!(q.get(), q.put());
+        assert_eq!(q.put(), 13);
+        // Room again, but the same value on the same semaphore is refused.
+        let put = mem.writer_mut().read_u32(put_pa).unwrap();
+        assert!(
+            q.launch_and_signal(mem.writer_mut(), k.qmd.va, k.sem.va, 12)
+                .is_err()
+        );
+        assert_eq!(mem.writer_mut().read_u32(put_pa).unwrap(), put);
+        assert_eq!(
+            cp.events
+                .iter()
+                .filter(|e| matches!(e, Event::Launch { .. }))
+                .count(),
+            12
+        );
+    }
+
     /// What the driver refuses before writing anything.
     #[test]
     fn launch_driver_side_refusals() {

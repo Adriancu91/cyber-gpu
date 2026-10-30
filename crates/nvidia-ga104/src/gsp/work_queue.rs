@@ -24,6 +24,7 @@
 //! the doorbell) — the memory path for that is the OS's part (BAR1 or system
 //! memory) and is not here.
 
+use alloc::collections::VecDeque;
 use gpu_command::ring::Ring;
 use gpu_core::error::{GpuError, GpuResult};
 use nvidia_rm570::regs::{clc7c0 as c, clc56f as h};
@@ -306,15 +307,30 @@ pub fn tinygrad_entry(va: u64, dwords: u32) -> GpuResult<(u32, u32)> {
     ))
 }
 
+/// One stretch of the pushbuffer area still owned by the GPU: `[start, end)`
+/// (offsets in the area) and the completion semaphore that frees it
+/// (`(semaphore VA, value)`), known once a later [`WorkQueue::launch_and_signal`]
+/// releases one. The channel runs its GPFIFO entries in order, so a
+/// semaphore released by a later entry means the earlier words were read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct InFlight {
+    start: u64,
+    end: u64,
+    fence: Option<(u64, u64)>,
+}
+
 /// The host side of the working channel: the ring indices, where ring and
-/// USERD live, and a linear pushbuffer area (not recycled yet).
+/// USERD live, and the pushbuffer area, used as a circle: words are written
+/// only where no submission still in flight lives, and a stretch is given
+/// back only by [`WorkQueue::retire`], after its completion semaphore.
 #[derive(Debug)]
 pub struct WorkQueue {
     ring: Ring,
     ring_pa: u64,
     userd_pa: u64,
     push: Mapping,
-    push_used: u64,
+    in_flight: VecDeque<InFlight>,
+    last_fence: Option<(u64, u64)>,
     token: u32,
 }
 
@@ -337,7 +353,8 @@ impl WorkQueue {
             ring_pa: ch.ring.pa,
             userd_pa: ch.ring.pa + ch.userd_offset,
             push,
-            push_used: 0,
+            in_flight: VecDeque::new(),
+            last_fence: None,
             token: ch.doorbell_token,
         })
     }
@@ -359,15 +376,48 @@ impl WorkQueue {
         w: &mut W,
         words: &[u32],
     ) -> GpuResult<Doorbell> {
-        let bytes = 4 * words.len() as u64;
-        if self.push.size - self.push_used < bytes {
-            return Err(GpuError::OutOfMemory { requested: bytes });
+        self.submit_inner(w, words, None)
+    }
+
+    /// Where `bytes` fit in the area without touching a stretch in flight:
+    /// after the newest one, or from the start of the area when the end is
+    /// too short and the oldest one starts far enough. `None` = no room
+    /// until something is retired.
+    fn place(&self, bytes: u64) -> Option<u64> {
+        let size = self.push.size;
+        let (Some(old), Some(new)) = (self.in_flight.front(), self.in_flight.back()) else {
+            return (bytes <= size).then_some(0);
+        };
+        if new.start >= old.start {
+            // Not wrapped: free = [new.end, size) and [0, old.start).
+            if size - new.end >= bytes {
+                Some(new.end)
+            } else if old.start >= bytes {
+                Some(0)
+            } else {
+                None
+            }
+        } else {
+            // Wrapped: free = [new.end, old.start).
+            (old.start - new.end >= bytes).then_some(new.end)
         }
-        let va = self.push.va + self.push_used;
+    }
+
+    fn submit_inner<W: ChannelMemory + ?Sized>(
+        &mut self,
+        w: &mut W,
+        words: &[u32],
+        fence: Option<(u64, u64)>,
+    ) -> GpuResult<Doorbell> {
+        let bytes = 4 * words.len() as u64;
+        let off = self
+            .place(bytes)
+            .ok_or(GpuError::OutOfMemory { requested: bytes })?;
+        let va = self.push.va + off;
         let entry = tinygrad_entry(va, words.len() as u32)?;
         let mut ring = self.ring;
         let slot = ring.reserve(1)?;
-        let pa = self.push.pa + self.push_used;
+        let pa = self.push.pa + off;
         for (i, &d) in words.iter().enumerate() {
             w.write_u32(pa + 4 * i as u64, d)?;
         }
@@ -376,7 +426,22 @@ impl WorkQueue {
         w.write_u32(slot_pa + 4, entry.1)?;
         w.write_u32(self.userd_pa + USERD_GP_PUT, ring.put())?;
         self.ring = ring;
-        self.push_used += bytes;
+        if let Some(f) = fence {
+            // Earlier stretches without a semaphore of their own are freed
+            // by this one (the entries run in order).
+            for r in self.in_flight.iter_mut().rev() {
+                if r.fence.is_some() {
+                    break;
+                }
+                r.fence = Some(f);
+            }
+            self.last_fence = Some(f);
+        }
+        self.in_flight.push_back(InFlight {
+            start: off,
+            end: off + bytes,
+            fence,
+        });
         Ok(Doorbell {
             bar0_offset: DOORBELL_INFERRED,
             value: self.token,
@@ -400,8 +465,45 @@ impl WorkQueue {
         invalidate_caches(&mut pb)?;
         launch(&mut pb, qmd_va)?;
         release(&mut pb, sem_va, value)?;
+        if let Some((va, last)) = self.last_fence
+            && va == sem_va
+            && value <= last
+        {
+            return Err(bad("valoarea semaforului nu creste"));
+        }
         let n = pb.len();
-        self.submit(w, &buf[..n])
+        self.submit_inner(w, &buf[..n], Some((sem_va, value)))
+    }
+
+    /// Gives back the pushbuffer stretches whose completion semaphore at
+    /// `sem_va` has reached `completed` (the value the driver read with
+    /// [`read_semaphore`]), oldest first; stops at the first one not yet
+    /// done. A value above the last one we asked the GPU to write is a
+    /// fault (nothing is freed). Returns how many stretches were freed.
+    pub fn retire(&mut self, sem_va: u64, completed: u64) -> GpuResult<u32> {
+        match self.last_fence {
+            Some((va, last)) if va == sem_va && completed > last => {
+                return Err(bad("semafor peste ultima valoare trimisa"));
+            }
+            None => return Err(bad("niciun semafor trimis")),
+            _ => {}
+        }
+        let mut freed = 0;
+        while let Some(r) = self.in_flight.front() {
+            match r.fence {
+                Some((va, v)) if va == sem_va && v <= completed => {
+                    self.in_flight.pop_front();
+                    freed += 1;
+                }
+                _ => break,
+            }
+        }
+        Ok(freed)
+    }
+
+    /// Bytes of the pushbuffer area still owned by the GPU (in flight).
+    pub fn push_in_flight(&self) -> u64 {
+        self.in_flight.iter().map(|r| r.end - r.start).sum()
     }
 
     /// Reads `GPGet` from USERD; a value outside [get, put] is a fault.
@@ -417,6 +519,50 @@ mod tests {
     use super::*;
     use alloc::vec::Vec;
     use nvidia_rm570::regs::clc56f;
+
+    /// The circle's arithmetic alone: where a stretch of `bytes` may go,
+    /// given what is in flight (offsets in a 128-byte area).
+    #[test]
+    fn placement_never_reaches_a_stretch_in_flight() {
+        let push = Mapping {
+            va: VA_BASE,
+            pa: 0x10_0000,
+            size: 128,
+        };
+        let q = |live: &[(u64, u64)]| WorkQueue {
+            ring: Ring::new(8).unwrap(),
+            ring_pa: 0,
+            userd_pa: 0x40,
+            push,
+            in_flight: live
+                .iter()
+                .map(|&(start, end)| InFlight {
+                    start,
+                    end,
+                    fence: None,
+                })
+                .collect(),
+            last_fence: None,
+            token: 0,
+        };
+        // (in flight, bytes, expected place)
+        type Case = (&'static [(u64, u64)], u64, Option<u64>);
+        let cases: &[Case] = &[
+            (&[], 128, Some(0)),
+            (&[], 132, None),
+            (&[(0, 48)], 80, Some(48)),
+            (&[(0, 48)], 84, None),
+            (&[(40, 100)], 28, Some(100)),
+            (&[(40, 100)], 32, Some(0)), // end too short, start long enough
+            (&[(40, 100)], 44, None),    // would reach the stretch at 40
+            (&[(40, 100), (0, 16)], 24, Some(16)), // wrapped: [16, 40) free
+            (&[(40, 100), (0, 16)], 28, None),
+            (&[(40, 100), (100, 128), (0, 40)], 4, None), // full
+        ];
+        for &(live, bytes, want) in cases {
+            assert_eq!(q(live).place(bytes), want, "{live:?} {bytes}");
+        }
+    }
 
     fn words(f: impl FnOnce(&mut PushBuf<'_>) -> GpuResult<()>) -> Vec<u32> {
         let mut mem = [0u32; 32];
