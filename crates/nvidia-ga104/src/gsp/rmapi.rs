@@ -54,6 +54,8 @@ pub mod cmd {
     /// I9e: on a channel; on a channel group.
     pub const WORK_SUBMIT_TOKEN: u32 = r::NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN;
     pub const TSG_SCHEDULE: u32 = r::NVA06C_CTRL_CMD_GPFIFO_SCHEDULE;
+    /// I10c: the static GR info (on a subdevice).
+    pub const KGR_GET_INFO: u32 = r::NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_INFO;
 }
 
 /// `NV2080_ENGINE_TYPE_GR0` (the graphics/compute engine).
@@ -754,6 +756,81 @@ pub fn parse_ctx_buffers_info(p: &[u8]) -> GpuResult<[(u32, u32); CTX_ENGINE_IDS
     Ok(out)
 }
 
+// ---- I10c: GR0's shape from GSP-RM (SIMULARE) ----
+
+/// `NV2080_CTRL_INTERNAL_STATIC_GR_GET_INFO_PARAMS` request (all zero; the
+/// answer fills it). tinygrad asks this, not `NV2080_CTRL_CMD_GR_GET_INFO`,
+/// when it talks to GSP-RM directly (`ops_nv.py` `_query_gpu_info`, the
+/// `is_nvd()` branch, MIT, commit f5b17be): the public control carries a
+/// pointer to a list, which a message to GSP cannot.
+pub fn gr_info_request() -> Vec<u8> {
+    alloc::vec![0u8; size_of::<r::NV2080_CTRL_INTERNAL_STATIC_GR_GET_INFO_PARAMS>()]
+}
+
+/// `sm_86` as GSP-RM writes it (`NV0080_CTRL_GR_INFO_INDEX_SM_VERSION`:
+/// major in bits 15:8, minor in 7:0; tinygrad's `arch` arithmetic). What our
+/// programs are compiled for (`tools/nak/build.sh`: Mesa NAK for chipset
+/// 0x174 = GA104, SM 8.6).
+pub const SM_VERSION_SM86: u32 = 0x806;
+
+/// What GSP-RM says about GR0: the shape the local memory size depends on,
+/// and the SM version.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GrInfo {
+    pub shape: super::work_queue::GrShape,
+    pub sm_version: u32,
+}
+
+impl GrInfo {
+    /// Refuses a board whose SMs are not `sm_86`: our programs would be
+    /// the wrong machine code for it.
+    pub fn check_sm86(&self) -> GpuResult<()> {
+        if self.sm_version != SM_VERSION_SM86 {
+            return Err(GpuError::InvalidArgument(
+                "GR: placa nu e sm_86 (programele noastre sunt compilate pentru sm_86)",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Reads GR0 (`engineInfo[0]`) by position, as tinygrad and RM's own
+/// `kgraphics` code do (`infoList[INDEX].data`). An entry whose `index`
+/// is set must name its own position (0 is accepted: whether GSP-RM fills
+/// `index` is not known — `COMPATIBILITATE_FIRMWARE.md`, "De verificat").
+/// Any of the five values 0 = refused (a shape cannot have a zero).
+pub fn parse_gr_info(p: &[u8]) -> GpuResult<GrInfo> {
+    type E = r::NV2080_CTRL_INTERNAL_GR_INFO;
+    if p.len() != size_of::<r::NV2080_CTRL_INTERNAL_STATIC_GR_GET_INFO_PARAMS>() {
+        return Err(GpuError::InvalidArgument("GR info: lungime gresita"));
+    }
+    let read = |index: u32| -> GpuResult<u32> {
+        let at = index as usize * size_of::<E>();
+        let (i, data) = (
+            get_u32(p, at + offset_of!(E, index)),
+            get_u32(p, at + offset_of!(E, data)),
+        );
+        if i != 0 && i != index {
+            return Err(GpuError::InvalidArgument(
+                "GR info: intrare cu alt index decat pozitia ei",
+            ));
+        }
+        if data == 0 {
+            return Err(GpuError::InvalidArgument("GR info: valoare 0 in raspuns"));
+        }
+        Ok(data)
+    };
+    Ok(GrInfo {
+        shape: super::work_queue::GrShape {
+            gpcs: read(r::NV0080_CTRL_GR_INFO_INDEX_LITTER_NUM_GPCS)?,
+            tpc_per_gpc: read(r::NV0080_CTRL_GR_INFO_INDEX_LITTER_NUM_TPC_PER_GPC)?,
+            sm_per_tpc: read(r::NV0080_CTRL_GR_INFO_INDEX_LITTER_NUM_SM_PER_TPC)?,
+            max_warps_per_sm: read(r::NV0080_CTRL_GR_INFO_INDEX_MAX_WARPS_PER_SM)?,
+        },
+        sm_version: read(r::NV0080_CTRL_GR_INFO_INDEX_SM_VERSION)?,
+    })
+}
+
 /// One `NV2080_CTRL_GPU_PROMOTE_CTX_BUFFER_ENTRY`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PromoteEntry {
@@ -896,6 +973,9 @@ mod tests {
             [fs::WORK_SUBMIT_TOKEN, fs::TSG_SCHEDULE]
         );
         assert_eq!(ctx_buffers_info_request().len(), fs::KGR_INFO);
+        // I10c.
+        assert_eq!(cmd::KGR_GET_INFO, fcmd::KGR_GET_INFO);
+        assert_eq!(gr_info_request().len(), fs::GR_INFO);
         assert_eq!(
             reserved_pdes_params(
                 0,

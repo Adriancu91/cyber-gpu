@@ -109,8 +109,8 @@ pub fn compute_setup(pb: &mut PushBuf<'_>, local: u64, shared: u64) -> GpuResult
 }
 
 /// What the local memory size depends on. All four come from GSP-RM
-/// (`NV2080_CTRL_CMD_GR_GET_INFO`, not implemented yet); they are inputs
-/// here, never assumed.
+/// (`user_space::query_gr_info`, I10c: `NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_INFO`);
+/// they are inputs here, never assumed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GrShape {
     pub gpcs: u32,

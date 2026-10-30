@@ -50,6 +50,10 @@
 //! object bound (`INVALID_STATE`; our reading of `kchannelIsSchedulable`).
 //! **Not modelled** (`NOT_SUPPORTED`): a TSG channel without a context share
 //! (RM's "legacy mode").
+//!
+//! I10c adds the static GR info (`NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_INFO`,
+//! `ctrl2080internal.h`): on a subdevice of any client, exact size, GR0's
+//! entries filled with [`SIM_GR_INFO`] (SIM values, not the board's).
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -102,6 +106,8 @@ pub mod cmd {
     /// I9e (`ctrlc36f.h`, `ctrla06c.h`).
     pub const WORK_SUBMIT_TOKEN: u32 = 0xc36f_0108;
     pub const TSG_SCHEDULE: u32 = 0xa06c_0101;
+    /// I10c (`ctrl2080internal.h`): `NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_INFO`.
+    pub const KGR_GET_INFO: u32 = 0x2080_0a2a;
 }
 
 /// Parameter sizes in 570.144 (x86-64 C layout).
@@ -124,7 +130,23 @@ pub mod size {
     /// I9e: `NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS`, `NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS`.
     pub const WORK_SUBMIT_TOKEN: usize = 4;
     pub const TSG_SCHEDULE: usize = 2;
+    /// I10c: `NV2080_CTRL_INTERNAL_STATIC_GR_GET_INFO_PARAMS` = 8 engines ×
+    /// 58 (`NV0080_CTRL_GR_INFO_MAX_SIZE`) pairs {index u32, data u32}.
+    pub const GR_INFO: usize = 8 * 58 * 8;
 }
+
+/// I10c: GR0's static info, `NV0080_CTRL_GR_INFO_INDEX_*` (`ctrl0080gr.h`)
+/// → value. **SIM values**: the shape of a full GA104 (6 GPC × 4 TPC × 2 SM
+/// = 48 SM, as an RTX 3070 Ti) and `sm_86`; 48 warps per SM is what CUDA
+/// documents for compute capability 8.6. The board reports its own (and
+/// GSP-RM's "litter" values are the chip's design maximums, which may differ).
+pub const SIM_GR_INFO: [(u32, u32); 5] = [
+    (12, 0x806), // SM_VERSION
+    (13, 48),    // MAX_WARPS_PER_SM
+    (20, 6),     // LITTER_NUM_GPCS
+    (23, 4),     // LITTER_NUM_TPC_PER_GPC
+    (32, 2),     // LITTER_NUM_SM_PER_TPC
+];
 
 /// GR context buffers (`NV0080_CTRL_FIFO_GET_ENGINE_CONTEXT_PROPERTIES_ENGINE_ID_*`):
 /// index → (size, alignment). SIM values in the order of magnitude of a GA10x
@@ -578,6 +600,7 @@ impl FakeRm {
                 (cmd::KGR_GET_CONTEXT_BUFFERS_INFO, Some(class::SUBDEVICE)) => {
                     Self::kgr_info(params)
                 }
+                (cmd::KGR_GET_INFO, Some(class::SUBDEVICE)) => Self::gr_info(params),
                 (cmd::COPY_SERVER_RESERVED_PDES, Some(class::VASPACE)) => {
                     let st = Self::check_pdes(params);
                     if st == status::OK {
@@ -617,6 +640,7 @@ impl FakeRm {
                 (
                     cmd::GET_DEVICE_INFO_TABLE
                     | cmd::KGR_GET_CONTEXT_BUFFERS_INFO
+                    | cmd::KGR_GET_INFO
                     | cmd::COPY_SERVER_RESERVED_PDES
                     | cmd::PROMOTE_CTX
                     | cmd::WORK_SUBMIT_TOKEN
@@ -728,6 +752,23 @@ impl FakeRm {
         for (i, (sz, al)) in SIM_CTX_INFO.iter().enumerate() {
             wr32(b, i * 8, *sz);
             wr32(b, i * 8 + 4, *al);
+        }
+        status::OK
+    }
+
+    // engineInfo[8] of infoList[58] {index 0, data 4}; [0] = GR0. This
+    // model writes `index` = the position for every entry of GR0 (whether
+    // GSP-RM does is not known) and leaves the other engines zero (one GR).
+    fn gr_info(b: &mut [u8]) -> u32 {
+        if b.len() != size::GR_INFO {
+            return status::INVALID_PARAM_STRUCT;
+        }
+        b.fill(0);
+        for i in 0..58 {
+            wr32(b, i * 8, i as u32);
+        }
+        for (i, v) in SIM_GR_INFO {
+            wr32(b, i as usize * 8 + 4, v);
         }
         status::OK
     }

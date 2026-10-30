@@ -382,6 +382,23 @@ mod rmapi_tests {
             1664
         );
         assert_eq!(size_of::<NV2080_CTRL_GPU_PROMOTE_CTX_PARAMS>(), 560);
+        // I10c: the static GR info (8 engines x 58 {index, data} pairs).
+        assert_eq!(
+            size_of::<NV2080_CTRL_INTERNAL_STATIC_GR_GET_INFO_PARAMS>(),
+            3712
+        );
+        assert_eq!(NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_INFO, 0x2080_0a2a);
+        assert_eq!(
+            [
+                NV0080_CTRL_GR_INFO_INDEX_SM_VERSION,
+                NV0080_CTRL_GR_INFO_INDEX_MAX_WARPS_PER_SM,
+                NV0080_CTRL_GR_INFO_INDEX_LITTER_NUM_GPCS,
+                NV0080_CTRL_GR_INFO_INDEX_LITTER_NUM_TPC_PER_GPC,
+                NV0080_CTRL_GR_INFO_INDEX_LITTER_NUM_SM_PER_TPC,
+                NV0080_CTRL_GR_INFO_MAX_SIZE
+            ],
+            [12, 13, 20, 23, 32, 58]
+        );
         assert_eq!(offset_of!(NV_CHANNEL_ALLOC_PARAMS, hVASpace), 28);
         assert_eq!(offset_of!(NV_CHANNEL_ALLOC_PARAMS, engineType), 128);
         assert_eq!(offset_of!(NV_CHANNEL_ALLOC_PARAMS, internalFlags), 244);

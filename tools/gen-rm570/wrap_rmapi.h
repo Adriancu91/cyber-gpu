@@ -1,7 +1,7 @@
 /* Input for bindgen (I8e, "golden image"): the RM API objects and controls the
  * first client creates after GSP_INIT_DONE, and the two RPC wrappers that carry
  * them (GSP_RM_ALLOC, GSP_RM_CONTROL); I9c: the SET_PAGE_DIRECTORY RPC; I9d: the channel group
- * (TSG) and context share classes; I9e: the work submit token and TSG schedule controls. Needs the RM kernel include paths and
+ * (TSG) and context share classes; I9e: the work submit token and TSG schedule controls; I10c: the static GR info (GPC/TPC/SM shape). Needs the RM kernel include paths and
  * flags (generate.sh). Only MIT headers from open-gpu-kernel-modules 570.144. */
 #include "nvtypes.h"
 #include "vgpu/rpc_headers.h"

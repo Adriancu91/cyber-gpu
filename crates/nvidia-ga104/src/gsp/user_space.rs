@@ -40,13 +40,20 @@
 //! object → PROMOTE_CTX for MAIN/PM/PATCH, first the physical half, then the
 //! virtual half, on new per-channel buffers → work submit token (+ runlist)
 //! → schedule the TSG. Ringing the doorbell is a register write: not here.
+//!
+//! I10c (also SIMULARE only): GR0's shape (GPCs, TPCs per GPC, SMs per TPC,
+//! warps per SM) and SM version, asked from GSP-RM on the working client's
+//! subdevice with `NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_INFO`, as tinygrad
+//! does on its GSP path (`ops_nv.py` `_query_gpu_info`, MIT, commit
+//! f5b17be). The local memory size (`work_queue::local_memory_size`) takes
+//! this shape; a board that is not `sm_86` is refused before any launch.
 
 use gpu_core::error::{GpuError, GpuResult};
 
 use alloc::vec::Vec;
 
 use super::golden::{GoldenImage, GoldenMemory, Mapping, PROMOTE_PHYS_ATTR, Rm, RmTransport};
-use super::rmapi::{self, PromoteEntry, WorkChannelSetup, class, cmd};
+use super::rmapi::{self, GrInfo, PromoteEntry, WorkChannelSetup, class, cmd};
 use super::rpc::function;
 use super::work_queue::ChannelMemory;
 use crate::mmu::LEVELS;
@@ -111,6 +118,18 @@ pub fn open_user_space<T: RmTransport + ?Sized>(
         root_entries: entries,
         next_handle,
     })
+}
+
+/// I10c: GR0's shape and SM version, from GSP-RM only (never assumed).
+/// One control on `u.subdevice`; GSP-RM's refusal comes back as its status.
+pub fn query_gr_info<T: RmTransport + ?Sized>(t: &mut T, u: &UserSpace) -> GpuResult<GrInfo> {
+    let mut rm = Rm {
+        t,
+        client: u.client,
+        next: u.next_handle,
+    };
+    let got = rm.control(u.subdevice, cmd::KGR_GET_INFO, &rmapi::gr_info_request())?;
+    rmapi::parse_gr_info(&got)
 }
 
 /// The working client's channel group and its context share (I9d).
@@ -1442,6 +1461,8 @@ mod tests {
     fn first_launch_on_the_work_channel() {
         let (mut d, mut mem, g, u, cg) = grouped();
         let w = open_work_channel_cleared(&mut d, &mut mem, &u, &cg, &g).unwrap();
+        // I10c: the board must be sm_86 before our program is launched.
+        query_gr_info(&mut d, &u).unwrap().check_sm86().unwrap();
         let root = d.0.page_directory(USER_CLIENT, u.vaspace).unwrap().0;
         let k = add64_buffers(&mut mem);
         let push = mem.alloc_mapped(0x1000, 0x1000).unwrap();
@@ -1567,5 +1588,108 @@ mod tests {
                 || read_c(&mut mem, &k) != k.want;
             assert!(caught, "greseala „{what}” neprinsa");
         }
+    }
+
+    // ---- I10c: GR0's shape (SIMULARE) ----
+
+    use crate::gsp::work_queue::{GrShape, local_memory_size};
+
+    /// The shape and SM version come back from the model's answer
+    /// (`SIM_GR_INFO`), and feed the local memory size.
+    #[test]
+    fn gr_info_from_gsp_rm() {
+        let (mut d, u) = opened();
+        let n = d.0.log.controls.len();
+        let info = query_gr_info(&mut d, &u).unwrap();
+        assert_eq!(d.0.log.controls[n..], [(c_cmd::KGR_GET_INFO, status::OK)]);
+        assert_eq!(
+            info,
+            GrInfo {
+                shape: GrShape {
+                    gpcs: 6,
+                    tpc_per_gpc: 4,
+                    sm_per_tpc: 2,
+                    max_warps_per_sm: 48
+                },
+                sm_version: rmapi::SM_VERSION_SM86
+            }
+        );
+        assert_eq!(info.check_sm86(), Ok(()));
+        // 1 B per thread → 32 B → 0x400 per warp → 48 × 2 warps = 0x18000
+        // per TPC (rounded to 0x8000) → × 24 TPC = 0x240000 (to 0x20000).
+        let lm = local_memory_size(1, info.shape).unwrap().unwrap();
+        assert_eq!((lm.per_tpc, lm.total), (0x1_8000, 0x24_0000));
+    }
+
+    /// GSP-RM's refusals come back as its status, never as a shape.
+    #[test]
+    fn rm_refusals_for_gr_info() {
+        let (mut d, u) = opened();
+        // On the VA space instead of the subdevice.
+        let wrong = UserSpace {
+            subdevice: u.vaspace,
+            ..u
+        };
+        assert_eq!(
+            query_gr_info(&mut d, &wrong),
+            Err(GpuError::HardwareFault {
+                code: status::INVALID_OBJECT_HANDLE
+            })
+        );
+        // A size other than 570.144's.
+        let mut rm = rm_on(&mut d, u.next_handle);
+        assert_eq!(
+            rm.control(u.subdevice, cmd::KGR_GET_INFO, &[0u8; 464])
+                .map(|_| ()),
+            Err(GpuError::HardwareFault {
+                code: status::INVALID_PARAM_STRUCT
+            })
+        );
+    }
+
+    /// Planted mistakes in GSP-RM's answer: each one is refused.
+    #[test]
+    fn planted_gr_info_mistakes_are_caught() {
+        let (mut d, u) = opened();
+        let mut rm = rm_on(&mut d, u.next_handle);
+        let good = rm
+            .control(u.subdevice, cmd::KGR_GET_INFO, &rmapi::gr_info_request())
+            .unwrap();
+        assert!(rmapi::parse_gr_info(&good).is_ok());
+        let put =
+            |b: &mut Vec<u8>, at: usize, v: u32| b[at..at + 4].copy_from_slice(&v.to_le_bytes());
+        let mut planted: Vec<Vec<u8>> = Vec::new();
+        // 1. Each of the five values zero.
+        for i in [12usize, 13, 20, 23, 32] {
+            let mut b = good.clone();
+            put(&mut b, i * 8 + 4, 0);
+            planted.push(b);
+        }
+        // 2. An entry that names another index than its position.
+        let mut b = good.clone();
+        put(&mut b, 20 * 8, 23);
+        planted.push(b);
+        // 3. One entry short, one byte long.
+        planted.push(good[..good.len() - 8].to_vec());
+        let mut b = good.clone();
+        b.push(0);
+        planted.push(b);
+        for (n, b) in planted.iter().enumerate() {
+            assert!(rmapi::parse_gr_info(b).is_err(), "greseala {n} neprinsa");
+        }
+        // 4. GR1's entries (engine 1) are not read: a shape there changes nothing.
+        let mut b = good.clone();
+        put(&mut b, 58 * 8 + 20 * 8 + 4, 99);
+        assert_eq!(rmapi::parse_gr_info(&b), rmapi::parse_gr_info(&good));
+        // 5. Another SM version is read as is, and refused for our programs.
+        let mut b = good.clone();
+        put(&mut b, 12 * 8 + 4, 0x807);
+        let other = rmapi::parse_gr_info(&b).unwrap();
+        assert_eq!(other.sm_version, 0x807);
+        assert!(other.check_sm86().is_err());
+        // 6. index = 0 (if GSP-RM does not fill it) is accepted.
+        let mut b = good.clone();
+        put(&mut b, 20 * 8, 0);
+        assert_eq!(rmapi::parse_gr_info(&b), rmapi::parse_gr_info(&good));
     }
 }
