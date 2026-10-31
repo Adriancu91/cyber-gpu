@@ -1,5 +1,19 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 28 — 31 octombrie 2026, ~19:20–19:35 (ora României), în cloud, FĂRĂ placă — OPRIT
+
+**OPRIT: necesită analiza lui Adrian.**
+
+Motiv: oprirea de siguranță — sesiunile 25, 26 și 27 n-au terminat niciun pas, iar de atunci n-a apărut nimic nou pentru noi.
+Verificat la pornire: CI rularea 73 (vârful `e40e98e`) verde; în hub nicio comandă nouă pentru `cyber-gpu` (ultimele: C-44, C-45 pentru Kronos,
+C-46 pentru OS), nicio decizie nouă, niciun rezultat nou de pe placă (ultimul: `2026-10-29-workstation-kronos-gpu`). `os-210` (C-46) păstrează
+fixarea `aee06c4`, deci e bun și el pentru fereastra următoare. Nu am început lucru nou. Cod neschimbat: NOT TESTED (nimic de testat).
+
+**Ce deblochează:** (1) fereastra pe workstation cu Adrian (`docs/FEREASTRA_C-39.md`: `gpu firmware` → `criteriul I4: TRECE`) și rezultatul ei
+în hub, sau (2) o comandă nouă pentru `cyber-gpu` în `COMENZI.md`, sau (3) decizia lui Adrian să rărească/oprească sesiunea programată până la fereastră.
+Sesiunile următoare: dacă nu există nimic din (1)–(3), nu încep lucru nou.
+
+---
 ## Sesiunea 27 — 31 octombrie 2026, ~13:20–13:35 (ora României), în cloud, FĂRĂ placă — fără lucru nou
 
 Verificat la pornire: CI rularea 72 (vârful `11d48ac`) verde; în hub nicio comandă nouă pentru `cyber-gpu` (C-18, C-20, C-39 gata), nicio
