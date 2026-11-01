@@ -130,6 +130,16 @@ impl SimConfig {
         self.regs[0] = ((device as u32) << 16) | (self.regs[0] & 0xffff);
     }
 
+    /// C-54: raw dword access for building observed layouts (no write
+    /// accounting, no BAR masking — this is the model, not the driver).
+    pub fn read_raw(&self, offset: u16) -> u32 {
+        self.regs[offset as usize / 4]
+    }
+
+    pub fn write_raw(&mut self, offset: u16, v: u32) {
+        self.regs[offset as usize / 4] = v;
+    }
+
     pub fn set_power_state(&mut self, d: u8) {
         self.regs[0x64 / 4] = d as u32 & 3;
     }

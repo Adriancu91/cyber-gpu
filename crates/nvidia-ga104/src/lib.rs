@@ -32,6 +32,8 @@
 //!   window + the MMU TLB invalidate; four registers, journaled, behind
 //!   `hw-write` on a real BAR — SIMULARE only;
 //! - [`radix3`]: the page list GSP reads to find its image in RAM (pure data);
+//! - [`read_tour`]: C-54 — the read-only tour for the automatic loop (facts
+//!   `cheie = valoare`, 0 writes, refused if a write is journaled);
 //! - [`backend`]: the I1 contract for GA104.
 //!
 //! Sources and licences: docs/GA104_INITIALIZATION.md, docs/PROVENANCE.md.
@@ -60,6 +62,7 @@ pub mod probe;
 pub mod push;
 pub mod qmd;
 pub mod radix3;
+pub mod read_tour;
 pub mod regs;
 pub mod sha256;
 pub mod vbios;
