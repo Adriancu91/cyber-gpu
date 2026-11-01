@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 30 — 1 noiembrie 2026, ~11:55–12:15 (ora României), în cloud, FĂRĂ placă — OPRIT ridicat (comandă nouă: C-49)
+
+**Oprirea de siguranță s-a ridicat** pe condiția scrisă la sesiunea 28: în hub au apărut **rezultatul ferestrei din 1 nov**
+(`rezultate/2026-11-01-workstation-477-i4/`: `gpu firmware` → **criteriul I4: TRECE**, 4/4 oficiale, antete 4/4, 0 accese la placă) și
+**comanda C-49** pentru noi (planul ferestrei următoare). **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Pornire | `tools/check.sh` verde înainte de orice schimbare (294 teste; ținta `x86_64-unknown-none` instalată în sesiune). C-49 → `preluat` în hub | PASS |
+| **I3c** siguranța „ucode version” (`fuse.rs`, nou) | registrul era NECUNOSCUT pe GA10x, deci semnătura FWSEC/Booter nu se putea alege pentru placa reală. Din RM 570.144 (MIT): GSP `0x8241C0`, SEC2 `0x824140`, + 4·(id−1); versiune = bitul cel mai înalt + 1. Pe placa noastră FWSEC are `ucode_id` 9 → `0x8241E0`; cere BAR0 întreg (16 MiB). O citire jurnalizată, 0 scrieri; biții 31:16, `0xbadf…`, `0xffffffff` refuzate | PASS (SIMULARE): 6 teste, 6 greșeli plantate prinse |
+| **Verificarea I6 doar citire** (`i6_check.rs`, nou) | siguranța + semnătura aleasă, mărimea VRAM (`0x1183A4`), WPR2 (`0x1FA828`; `LO` doar dacă e ridicat), regiunea FRTS; WPR2 ridicat = „nu trece” (trebuie pornire rece) | PASS (SIMULARE): 3 teste, 4 greșeli plantate prinse (a 5-a era o verificare dublă, scoasă) |
+| Lista exactă a scrierilor I6 | testul `gsp::hs_load::tests::i6_writes_exactly_the_listed_gsp_registers` fixează cele **18 registre GSP** (`0x1103C0` … `0x110100`) pe care le scrie FWSEC-FRTS; pe imaginea reală (234 de blocuri) ~720 de scrieri | PASS (SIMULARE) |
+| **C-49: planul ferestrei** | `docs/FEREASTRA_C-49.md`: recomandare **întâi (a) proba tinygrad** (jurnalul de aur, nu depinde de codul nostru), **apoi (b)** I5g Bus Master (o scriere PCI, `0x04` bitul 2) + I6 FWSEC-FRTS (18 registre, doar fereastra GSP); ce nu se poate strica (VBIOS-ul nu are cale de scriere, siguranțele doar se citesc, cod nesemnat refuzat de boot ROM, totul volatil); revenirea = oprire completă cu cablul scos 30 s. Propunere OS: `integration/cyber-universe/C-49_gpu-pregatire-i6.md` (+ în hub `idei/`) | gata |
+| Compatibilitate OS | doar adăugări în interfața publică (`nvidia_ga104::{fuse, i6_check}`); nicio linie `pub` ștearsă; OS-ul nu trebuie schimbat | PASS |
+
+Verificări (`tools/check.sh`): format PASS, clippy `-D warnings` PASS, **304 teste PASS** (1 ignorat: viteza), build no_std PASS;
+`nvidia-ga104 --features hw-write`: clippy + teste PASS. Nicio scriere în placă.
+
+**Următorul pas:** fereastra următoare cu Adrian: (dacă OS-ul o adaugă) `gpu pregatire-i6` (doar citire), apoi **proba tinygrad**.
+Fără placă: sesiunile următoare nu încep lucru nou dacă nu apare un rezultat sau o comandă nouă (contorul opririi pornește de la 0 după sesiunea 30).
+
+---
 ## Sesiunea 29 — 1 noiembrie 2026, ~07:30 (ora României), în cloud, FĂRĂ placă — OPRIT (continuă)
 
 **OPRIT: necesită analiza lui Adrian** (rămâne valabil din sesiunea 28). Verificat la pornire: CI verde (rularea pe `2916cb5`); în hub nicio comandă nouă

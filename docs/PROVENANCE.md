@@ -76,3 +76,9 @@ descriptorul `RM_RISCV_UCODE_DESC` (21 de cuvinte). Nu am citit codul, datele, s
 mărimi) sunt în `gpu-sim/src/fw_stick.rs`, în jurul unor octeți de umplutură; nimic din firmware nu e în repo. Regula „pointer” pentru numărul de
 semnături: nouveau `nvkm_falcon_fw_ctor_hs_v2` (MIT, din cunoaștere generală), confirmată de antetele reale.
 
+
+**C-49 (1 nov, sesiunea 30):** `fuse.rs` și `i6_check.rs` sunt scrise de noi. Specificația citită (MIT, open-gpu-kernel-modules tag 570.144,
+commit `8ec351ae`, clonă temporară în sesiune, nimic copiat în repo): `src/common/inc/swref/published/ampere/ga100/dev_fuse.h` (adresele
+`NV_FUSE_OPT_FPF_{GSP,SEC2}_UCODE1_VERSION`), `kernel_gsp_ga100.c` / `kernel_sec2_ga100.c` (indexarea și „bitul cel mai înalt + 1”),
+`g_kernel_gsp_nvoc.c` / `g_kernel_sec2_nvoc.c` (ce cipuri folosesc varianta GA100), `kernel_gsp_frts_tu102.c` și `kernel_gsp_booter.c`
+(cum se folosește versiunea la alegerea semnăturii). Registrul mărimii VRAM (`0x1183A4`) era deja notat la `fb_layout.rs`.

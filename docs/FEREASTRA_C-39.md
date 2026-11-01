@@ -1,5 +1,7 @@
 # Fereastra următoare pe workstation (după C-39) — propunere
 
+> **1 nov 2026:** pasul 1 (I4) a TRECUT pe placă. Planul nou: [FEREASTRA_C-49.md](FEREASTRA_C-49.md).
+
 *29 oct 2026, sesiunea Cyber-GPU 18. Propunere, nu sarcină: o face Adrian, cu el de față. Nimic de aici nu a rulat pe placă.*
 
 **Înainte:** un Release OS cu cyber-gpu fixat pe `ef97110` sau mai nou (nota `integration/cyber-universe/C-39_gpu-firmware-antete.md`).
