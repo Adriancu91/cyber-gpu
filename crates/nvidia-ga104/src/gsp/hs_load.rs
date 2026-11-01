@@ -847,6 +847,86 @@ mod tests {
         (0x110100, "NV_PFALCON_FALCON_CPUCTL (STARTCPU)"),
     ];
 
+    /// The I6 journal as the OS would print it, read back and checked
+    /// (C-51). SIMULARE: the journal comes from the simulated board.
+    fn i6_journal_lines() -> Vec<std::string::String> {
+        let (mut g, u, image, _) = fwsec_board();
+        let mut j = Journal::new(4096);
+        let mut c = SimClock::default();
+        let fr = frts(&g);
+        {
+            let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+            fwsec_frts_dma(&mut b, &mut c, &u, &image, fr).unwrap();
+        }
+        j.events()
+            .map(|e| std::format!("[ 600.000] INFO  gpu: {e}"))
+            .collect()
+    }
+
+    fn parse_all(lines: &[std::string::String]) -> Vec<gpu_core::diag::Event> {
+        lines
+            .iter()
+            .filter_map(|l| crate::i6_log::parse_line(l))
+            .collect()
+    }
+
+    #[test]
+    fn i6_journal_from_the_stick_passes_the_order_check() {
+        let lines = i6_journal_lines();
+        let s = crate::i6_log::check_i6(&parse_all(&lines)).unwrap();
+        assert_eq!(s.sections, [(true, 16), (false, 4)]);
+        assert_eq!(s.writes, 78);
+    }
+
+    #[test]
+    fn i6_journal_check_catches_planted_mistakes() {
+        use crate::i6_log::check_i6;
+        let w = |l: &std::string::String| l.contains(" w 0x");
+        let lines = i6_journal_lines();
+        let idx: Vec<usize> = (0..lines.len()).filter(|&k| w(&lines[k])).collect();
+        let nth = |n: usize| idx[n];
+        let why = |l: &[std::string::String]| check_i6(&parse_all(l)).unwrap_err().what;
+        // 1. a whole IMEM block missing (MOFFS/FBOFFS/CMD of block 3)
+        let mut l = lines.clone();
+        l.drain(nth(6 + 3 * 3 + 2)..=nth(6 + 3 * 3 + 4));
+        assert_eq!(why(&l), "bloc sarit sau in alta ordine");
+        // 2. two blocks swapped
+        let mut l = lines.clone();
+        for k in 0..3 {
+            l.swap(nth(8 + k), nth(11 + k));
+        }
+        assert_eq!(why(&l), "bloc sarit sau in alta ordine");
+        // 3. a write outside the GSP window
+        let mut l = lines.clone();
+        l.insert(nth(5), "bar0 w 0x001700: 0x0 <- 0x1 => 0x1".into());
+        assert_eq!(why(&l), "scriere in afara ferestrei GSP");
+        // 4. reset without ENGINE=0
+        let mut l = lines.clone();
+        l.remove(nth(1));
+        assert_eq!(why(&l), "lipseste ENGINE=0");
+        // 5. a write after the start
+        let mut l = lines.clone();
+        l.push("bar0 w 0x110040: 0x0 <- 0x0 => 0x0".into());
+        assert_eq!(why(&l), "scrieri dupa pornirea FWSEC");
+        // 6. truncated journal (hang before the start)
+        assert_eq!(
+            why(&lines[..nth(70)]),
+            "jurnalul se termina inainte de sfarsitul I6"
+        );
+        // 7. Bus Master written in the middle of I6
+        let mut l = lines.clone();
+        l.insert(
+            nth(10),
+            "cfg  w 0x004: 0x00100002 <- 0x00100006 => 0x00100006".into(),
+        );
+        assert_eq!(why(&l), "scriere in configuratie in mijlocul I6");
+        // 8. start without STARTCPU
+        let mut l = lines.clone();
+        let last = nth(77);
+        l[last] = "bar0 w 0x110100: 0x0 <- 0x0 => 0x0".into();
+        assert_eq!(why(&l), "CPUCTL fara STARTCPU");
+    }
+
     #[test]
     fn i6_writes_exactly_the_listed_gsp_registers() {
         let (mut g, u, image, _) = fwsec_board();

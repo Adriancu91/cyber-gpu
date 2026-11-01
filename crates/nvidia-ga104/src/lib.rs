@@ -17,6 +17,8 @@
 //!   signature the boot ROM accepts;
 //! - [`i6_check`]: what I6 (FWSEC-FRTS) needs, read without writing (fuse,
 //!   VRAM size, WPR2 down, FRTS region) — plan docs/FEREASTRA_C-49.md;
+//! - [`i6_log`]: reads the I6 journal back from the stick and checks the
+//!   write order (C-51: our journal replaces the cancelled tinygrad run);
 //! - [`firmware`]: inventory of the NVIDIA-signed firmware files the sequence
 //!   needs; I4: the pinned 570.144 GSP set (size + SHA-256) read from the stick;
 //! - [`gsp`]: I5–I8 data structures for GSP-RM 570.144 (WPR meta, LibOS
@@ -50,6 +52,7 @@ pub mod fwsec;
 pub mod gfw;
 pub mod gsp;
 pub mod i6_check;
+pub mod i6_log;
 pub mod ids;
 pub mod init;
 pub mod mmu;

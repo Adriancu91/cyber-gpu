@@ -79,6 +79,7 @@ pub struct Journal {
     events: VecDeque<Event>,
     cap: usize,
     dropped: u64,
+    sink: Option<fn(&Event)>,
 }
 
 impl Journal {
@@ -87,9 +88,22 @@ impl Journal {
             events: VecDeque::new(),
             cap: cap.max(1),
             dropped: 0,
+            sink: None,
         }
     }
+    /// Same journal, and every event is also handed to `sink` the moment it
+    /// is pushed (C-51: the OS writes each register access with its own
+    /// timestamp as it happens, so a hang in the middle of a step still
+    /// leaves the accesses before it on the stick).
+    pub fn with_sink(cap: usize, sink: fn(&Event)) -> Self {
+        let mut j = Self::new(cap);
+        j.sink = Some(sink);
+        j
+    }
     pub fn push(&mut self, e: Event) {
+        if let Some(s) = self.sink {
+            s(&e);
+        }
         if self.events.len() == self.cap {
             self.events.pop_front();
             self.dropped += 1;
@@ -121,6 +135,21 @@ impl Journal {
 mod tests {
     use super::*;
     use alloc::string::ToString;
+
+    #[test]
+    fn sink_sees_every_event_even_dropped_ones() {
+        use core::sync::atomic::{AtomicUsize, Ordering};
+        static SEEN: AtomicUsize = AtomicUsize::new(0);
+        fn count(_: &Event) {
+            SEEN.fetch_add(1, Ordering::Relaxed);
+        }
+        let mut j = Journal::with_sink(1, count);
+        j.push(Event::Note("a"));
+        j.push(Event::Note("b"));
+        j.push(Event::Note("c"));
+        assert_eq!(SEEN.load(Ordering::Relaxed), 3);
+        assert_eq!((j.len(), j.dropped()), (1, 2));
+    }
 
     #[test]
     fn bounded_and_counted() {
