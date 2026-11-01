@@ -1,5 +1,12 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 29 — 1 noiembrie 2026, ~07:30 (ora României), în cloud, FĂRĂ placă — OPRIT (continuă)
+
+**OPRIT: necesită analiza lui Adrian** (rămâne valabil din sesiunea 28). Verificat la pornire: CI verde (rularea pe `2916cb5`); în hub nicio comandă nouă
+pentru `cyber-gpu`, nicio decizie nouă, niciun rezultat nou de pe placă (ultimul: `2026-10-29-workstation-kronos-gpu`). Nu am început lucru nou.
+Cod neschimbat: NOT TESTED (nimic de testat). Deblocare: la fel ca la sesiunea 28 (fereastra pe workstation, o comandă nouă sau decizia de a rări sesiunile).
+
+---
 ## Sesiunea 28 — 31 octombrie 2026, ~19:20–19:35 (ora României), în cloud, FĂRĂ placă — OPRIT
 
 **OPRIT: necesită analiza lui Adrian.**
