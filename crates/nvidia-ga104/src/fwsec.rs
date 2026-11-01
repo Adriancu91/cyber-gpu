@@ -216,8 +216,9 @@ fn map_ranges(sections: &[PromRange], rel: u32, len: u32) -> GpuResult<Vec<PromR
 /// Index of the signature to use for a board whose fuse holds
 /// `fuse_version`: bit `fuse_version` of `signature_versions` must be set,
 /// and the index is the number of set bits below it. DEDUS from nouveau
-/// (`nvkm/falcon/fw.c`, MIT) and nova-core (procedure only); the fuse
-/// register itself is NECUNOSCUT on GA10x, so nothing calls this on a board.
+/// (`nvkm/falcon/fw.c`, MIT) and nova-core (procedure only); confirmed by RM
+/// 570.144 `kernel_gsp_frts_tu102.c` (MIT). The fuse is read by
+/// [`crate::fuse::fwsec_signature_choice`] (session 30).
 pub fn signature_index(signature_versions: u16, fuse_version: u8) -> GpuResult<usize> {
     if fuse_version >= 16 {
         return Err(GpuError::InvalidArgument(

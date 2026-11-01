@@ -236,7 +236,7 @@ impl BooterMeta {
 
 /// Index of the Booter signature for a board whose SEC2 fuse holds
 /// `fuse_version` (RM `s_patchBooterUcodeSignature`: counted from the end).
-/// The fuse register is not read anywhere yet: the caller supplies it.
+/// The fuse is read by [`crate::fuse::booter_fuse_version`] (SEC2, `meta.ucode_id`).
 pub fn booter_signature_index(num_sig: u32, fuse_version: u32) -> GpuResult<u32> {
     if num_sig == 0 {
         return Err(GpuError::InvalidArgument("booter: nicio semnatura"));

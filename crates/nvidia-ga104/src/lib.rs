@@ -13,6 +13,8 @@
 //!   line (offsets, signatures, PCIR/NPDE fields, breaks), read-only (C-30);
 //! - [`fwsec`]: I3, second half — where FWSEC_PROD sits in the VBIOS (read-only,
 //!   the ucode bytes are never read);
+//! - [`fuse`]: the ucode fuse versions (read-only) that pick the FWSEC/Booter
+//!   signature the boot ROM accepts;
 //! - [`firmware`]: inventory of the NVIDIA-signed firmware files the sequence
 //!   needs; I4: the pinned 570.144 GSP set (size + SHA-256) read from the stick;
 //! - [`gsp`]: I5–I8 data structures for GSP-RM 570.144 (WPR meta, LibOS
@@ -39,6 +41,7 @@ pub mod backend;
 pub mod boot;
 pub mod fb_layout;
 pub mod firmware;
+pub mod fuse;
 pub mod fw_check;
 pub mod fw_hdr;
 pub mod fwsec;
