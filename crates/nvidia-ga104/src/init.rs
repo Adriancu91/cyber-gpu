@@ -72,7 +72,7 @@ pub const GA104_PLAN: &[Step] = &[
         id: "I6",
         what: "FWSEC-FRTS pe falcon-ul GSP (creeaza WPR2), verificare SCRATCH_E",
         status: StepStatus::Blocked(
-            "interfata falcon GA10x neimplementata; incarcarea FWSEC e DMA (necesita I5); pe GA102+ fara bootloader FWSEC",
+            "scrie in falcon-ul GSP: doar in fereastra pe workstation, cu Adrian de fata (HardwareWritePermit); secventa (gsp::falcon, i6_check, i6_log) e scrisa si testata doar in SIMULARE; necesita I5 (Bus Master)",
         ),
         writes_hardware: true,
     },

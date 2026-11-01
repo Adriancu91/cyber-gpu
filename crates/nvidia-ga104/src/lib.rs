@@ -36,6 +36,8 @@
 //!   `cheie = valoare`, 0 writes, refused if a write is journaled);
 //! - [`board_compare`]: C-54 — facts from a board report vs the same tour on
 //!   the `gpu-sim` model (pure text);
+//! - [`chain`]: C-54 — the window steps in a chain (stop at the first failure,
+//!   cleanup always, no writing step without permission, blocked steps never tried);
 //! - [`backend`]: the I1 contract for GA104.
 //!
 //! Sources and licences: docs/GA104_INITIALIZATION.md, docs/PROVENANCE.md.
@@ -48,6 +50,7 @@ extern crate alloc;
 pub mod backend;
 pub mod board_compare;
 pub mod boot;
+pub mod chain;
 pub mod fb_layout;
 pub mod firmware;
 pub mod fuse;
