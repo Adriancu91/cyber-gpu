@@ -1,5 +1,19 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 32 — 1 noiembrie 2026, ~19:25–19:35 (ora României), în cloud, FĂRĂ placă — fără lucru nou
+
+Verificat la pornire: CI rularea pentru `9597863` verde; în hub **nicio comandă nouă pentru `cyber-gpu`** după C-51. Nou de la sesiunea 31:
+**C-52** (pentru `cyber-universe`) — propunerea noastră `idei/2026-11-01_cyber-gpu-i6-in-os.md` a fost aprobată prin delegare, iar sesiunea OS
+a preluat-o (P6-40, 17:24 UTC): `gpu pregatire-i6`, jurnalul pe stick, `gpu i6 --scrie`, cu fixarea cyber-gpu ≥ `d879742`. Ce le trebuie
+din driver e deja gata și publicat (doar adăugări față de fixarea lor). Nu am început lucru nou: pasul următor e al sesiunii OS, apoi
+fereastra cu Adrian (`docs/FEREASTRA_C-49.md`). Cod neschimbat: NOT TESTED (nimic de testat). Copia locală a hub-ului era iar
+desincronizată: aliniată la `origin/main` (copia veche păstrată local, ramura `old-local-main`).
+
+**Următorul pas:** sesiunea OS termină C-52 (Release nou) → fereastra pe workstation cu Adrian → citim jurnalul de pe stick cu
+`nvidia_ga104::i6_log::check_i6`. Dacă sesiunea OS ne cere ceva (în `stare/cyber-universe.md` sau `idei/`), are prioritate.
+Oprirea de siguranță: a doua sesiune fără pas după 30b (la a treia se scrie „OPRIT”).
+
+---
 ## Sesiunea 31 — 1 noiembrie 2026, ~13:25–13:35 (ora României), în cloud, FĂRĂ placă — fără lucru nou
 
 Verificat la pornire: CI rularea 77 (vârful `d879742`) verde; în hub nicio comandă nouă pentru `cyber-gpu` după C-51 (C-49, C-51 gata),
