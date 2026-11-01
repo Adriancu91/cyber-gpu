@@ -34,6 +34,8 @@
 //! - [`radix3`]: the page list GSP reads to find its image in RAM (pure data);
 //! - [`read_tour`]: C-54 — the read-only tour for the automatic loop (facts
 //!   `cheie = valoare`, 0 writes, refused if a write is journaled);
+//! - [`board_compare`]: C-54 — facts from a board report vs the same tour on
+//!   the `gpu-sim` model (pure text);
 //! - [`backend`]: the I1 contract for GA104.
 //!
 //! Sources and licences: docs/GA104_INITIALIZATION.md, docs/PROVENANCE.md.
@@ -44,6 +46,7 @@
 extern crate alloc;
 
 pub mod backend;
+pub mod board_compare;
 pub mod boot;
 pub mod fb_layout;
 pub mod firmware;
