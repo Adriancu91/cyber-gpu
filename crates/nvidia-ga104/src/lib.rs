@@ -15,6 +15,8 @@
 //!   the ucode bytes are never read);
 //! - [`fuse`]: the ucode fuse versions (read-only) that pick the FWSEC/Booter
 //!   signature the boot ROM accepts;
+//! - [`i6_check`]: what I6 (FWSEC-FRTS) needs, read without writing (fuse,
+//!   VRAM size, WPR2 down, FRTS region) — plan docs/FEREASTRA_C-49.md;
 //! - [`firmware`]: inventory of the NVIDIA-signed firmware files the sequence
 //!   needs; I4: the pinned 570.144 GSP set (size + SHA-256) read from the stick;
 //! - [`gsp`]: I5–I8 data structures for GSP-RM 570.144 (WPR meta, LibOS
@@ -47,6 +49,7 @@ pub mod fw_hdr;
 pub mod fwsec;
 pub mod gfw;
 pub mod gsp;
+pub mod i6_check;
 pub mod ids;
 pub mod init;
 pub mod mmu;

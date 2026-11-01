@@ -820,6 +820,63 @@ mod tests {
         assert_eq!(&g.imem(GSP_BASE)[..0x1000], &img[..0x1000]);
     }
 
+    /// The exact set of registers I6 (FWSEC-FRTS) writes, in first-write
+    /// order — the list in docs/FEREASTRA_C-49.md. A new register here must
+    /// be a conscious change of that list (and of the window plan).
+    pub(crate) const I6_WRITE_SET: [(u32, &str); 18] = [
+        (0x1103c0, "NV_PGSP_FALCON_ENGINE (reset 1, apoi 0)"),
+        (0x111668, "NV_PRISCV_RISCV_BCR_CTRL (nucleul falcon)"),
+        (0x110624, "NV_PFALCON_FBIF_CTL (ALLOW_PHYS_NO_CTX)"),
+        (0x11010c, "NV_PFALCON_FALCON_DMACTL = 0"),
+        (
+            0x110600,
+            "NV_PFALCON_FBIF_TRANSCFG(0) (memorie sistem, fizic)",
+        ),
+        (0x110110, "NV_PFALCON_FALCON_DMATRFBASE"),
+        (0x110128, "NV_PFALCON_FALCON_DMATRFBASE1"),
+        (0x110114, "NV_PFALCON_FALCON_DMATRFMOFFS"),
+        (0x11011c, "NV_PFALCON_FALCON_DMATRFFBOFFS"),
+        (0x110118, "NV_PFALCON_FALCON_DMATRFCMD"),
+        (0x111210, "NV_PFALCON2_FALCON_BROM_PARAADDR(0)"),
+        (0x11119c, "NV_PFALCON2_FALCON_BROM_ENGIDMASK"),
+        (0x111198, "NV_PFALCON2_FALCON_BROM_CURR_UCODE_ID"),
+        (0x111180, "NV_PFALCON2_FALCON_MOD_SEL (RSA3K)"),
+        (0x110104, "NV_PFALCON_FALCON_BOOTVEC"),
+        (0x110040, "NV_PFALCON_FALCON_MAILBOX0 = 0"),
+        (0x110044, "NV_PFALCON_FALCON_MAILBOX1 = 0"),
+        (0x110100, "NV_PFALCON_FALCON_CPUCTL (STARTCPU)"),
+    ];
+
+    #[test]
+    fn i6_writes_exactly_the_listed_gsp_registers() {
+        let (mut g, u, image, _) = fwsec_board();
+        let mut j = Journal::new(4096);
+        let mut c = SimClock::default();
+        let fr = frts(&g);
+        {
+            let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+            fwsec_frts_dma(&mut b, &mut c, &u, &image, fr).unwrap();
+        }
+        let mut seen: Vec<u32> = Vec::new();
+        for &(o, _) in &g.writes {
+            if !seen.contains(&o) {
+                seen.push(o);
+            }
+        }
+        let want: Vec<u32> = I6_WRITE_SET.iter().map(|&(o, _)| o).collect();
+        assert_eq!(seen, want, "I6 wrote a register outside the plan list");
+        // 2 reset + 1 core + 3 setup + 20 blocks x 3 + 2 bases x 2 + 4 BROM
+        // + 1 BOOTVEC + 2 mailboxes + 1 start (SIM image: 16 + 4 blocks).
+        assert_eq!(g.writes.len(), 78);
+        assert!(
+            g.writes
+                .iter()
+                .all(|&(o, _)| (0x110000..=0x113fff).contains(&o))
+        );
+        // Nothing outside GSP: no SEC2, no VRAM window, no PCI config here.
+        assert_eq!(j.writes(), g.writes.len());
+    }
+
     #[test]
     fn wrong_signature_or_brom_values_are_refused_by_the_simulated_rom() {
         // Booter signature for another fuse version: the ROM refuses.
