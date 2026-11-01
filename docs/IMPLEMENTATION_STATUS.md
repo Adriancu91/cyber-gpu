@@ -1,5 +1,18 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 31 — 1 noiembrie 2026, ~13:25–13:35 (ora României), în cloud, FĂRĂ placă — fără lucru nou
+
+Verificat la pornire: CI rularea 77 (vârful `d879742`) verde; în hub nicio comandă nouă pentru `cyber-gpu` după C-51 (C-49, C-51 gata),
+nicio decizie nouă după 1 nov 12:10, niciun rezultat nou de pe placă (ultimul: `2026-11-01-workstation-477-i4`). Propunerea pentru OS
+(`idei/2026-11-01_cyber-gpu-i6-in-os.md`) e încă „propus” — așteaptă „da”-ul centrului de comandă; sesiunea OS e oprită (coada goală).
+Tot ce se putea pregăti în simulare pentru fereastra primelor scrieri e gata (sesiunile 30/30b); pașii următori cer comenzile OS și placa
+→ nu am început lucru nou (nu inventăm lucru). Cod neschimbat: NOT TESTED (nimic de testat). Copia locală a hub-ului era desincronizată
+(istorie rescrisă pe GitHub): aliniată la `origin/main`, copia veche păstrată local pe ramura `backup-local-2026-11-01`.
+
+**Următorul pas:** neschimbat — „da” pentru propunerea OS → sesiunea OS face `gpu pregatire-i6` + `gpu i6 --scrie` → fereastra cu Adrian
+(`docs/FEREASTRA_C-49.md`). Oprirea de siguranță: prima sesiune fără pas după 30b.
+
+---
 ## Sesiunea 30b — 1 noiembrie 2026, ~12:25–12:55 (ora României), în cloud, FĂRĂ placă — C-51 (trecere extra)
 
 **Decizia lui Adrian (DECIZII 1 nov 12:00):** pe placa reală rulează doar Cyber Universe; proba tinygrad pe Ubuntu se anulează. Comanda **C-51**
