@@ -257,6 +257,53 @@ pub fn locate<M: Mmio + ?Sized, K: Clock + ?Sized>(
     r
 }
 
+/// I6, step 2 (C-51): copies, untouched, the FWSEC ucode and the signature
+/// number `sig_index` (chosen with [`crate::fuse::fwsec_signature_choice`])
+/// from the PROM window into RAM. Read-only; the bytes are not interpreted
+/// (the NVIDIA licence forbids analysing them) — they go to
+/// [`crate::gsp::hs_load::fwsec_frts_image`] as they are.
+pub fn read_ucode_and_signature<M: Mmio + ?Sized, K: Clock + ?Sized>(
+    bar0: &mut M,
+    journal: &mut Journal,
+    clock: &mut K,
+    budget_us: u64,
+    loc: &FwsecLocation,
+    sig_index: usize,
+) -> GpuResult<(Vec<u8>, Vec<u8>)> {
+    if bar0.len() < INIT_WINDOW {
+        return Err(GpuError::InvalidArgument(
+            "fereastra BAR0 prea mica pentru I3 (trebuie 4 MiB)",
+        ));
+    }
+    if !loc.fits() || sig_index >= usize::from(loc.desc.signature_count) {
+        return Err(GpuError::InvalidArgument(
+            "FWSEC: descriptor care nu incape sau semnatura inexistenta",
+        ));
+    }
+    let sig_rel = loc.desc_rel + DESC_V3_LEN + sig_index as u32 * RSA3K_SIG_LEN;
+    let sig_ranges = loc.prom_ranges(sig_rel, RSA3K_SIG_LEN)?;
+    let ucode_ranges = loc.ucode_ranges()?;
+    let mut rom = Rom::new(bar0, journal, clock, budget_us);
+    let mut copy = |ranges: &[PromRange], cap: usize| -> GpuResult<Vec<u8>> {
+        let mut out = Vec::with_capacity(cap);
+        for &(start, len) in ranges {
+            for off in start..start + len {
+                out.push(rom.u8(off)?);
+            }
+        }
+        Ok(out)
+    };
+    let r = copy(&sig_ranges, RSA3K_SIG_LEN as usize).and_then(|sig| {
+        let ucode = copy(&ucode_ranges, loc.desc.stored_size as usize)?;
+        Ok((ucode, sig))
+    });
+    journal.push(Event::Step {
+        name: "I6 pregatire: FWSEC copiat din VBIOS in RAM (doar citire)",
+        ok: r.is_ok(),
+    });
+    r
+}
+
 struct Section<'r, 'a, M: Mmio + ?Sized, K: Clock + ?Sized> {
     rom: &'r mut Rom<'a, M, K>,
     sections: &'r [PromRange],
@@ -439,6 +486,41 @@ mod tests {
         assert!(text.contains("descriptor v3 la 0x24a00"));
         assert!(text.contains("criteriul I3b: TRECE"));
         assert!(l.lines().len() == 5);
+    }
+
+    #[test]
+    fn ucode_and_signature_are_copied_untouched_across_images() {
+        // SIMULARE: synthetic ROM; the ucode crosses from one FWSEC image
+        // into the next (0x1872c+0x38d4, then 0x1c000+0x72c).
+        let bytes = rom::ga10x_like_chain_with_fwsec(&SimFwsec::ga10x_like());
+        let mut m = board(&bytes);
+        let l = run(&mut m).0.unwrap();
+        m.reads.clear();
+        let mut j = Journal::new(8);
+        let mut c = SimClock::default();
+        let (ucode, sig) =
+            read_ucode_and_signature(&mut m, &mut j, &mut c, VBIOS_TIMEOUT_US, &l, 1).unwrap();
+        let mut want = bytes[0x1872c..0x1872c + 0x38d4].to_vec();
+        want.extend_from_slice(&bytes[0x1c000..0x1c000 + 0x72c]);
+        assert_eq!(ucode, want);
+        assert_eq!(ucode.len(), l.desc.stored_size as usize);
+        // Signature 1 of 2 starts 384 bytes after the first.
+        assert_eq!(sig, bytes[0x1842c + 384..0x1842c + 768]);
+        assert!(m.writes.is_empty() && j.writes() == 0);
+        assert!(
+            m.reads
+                .iter()
+                .all(|&o| (PROM_BASE..PROM_BASE + PROM_SIZE).contains(&o))
+        );
+        // Each PROM dword read once (sequential copy, one-dword cache).
+        let mut r = m.reads.clone();
+        r.sort_unstable();
+        r.dedup();
+        assert!(r.len() + 2 >= m.reads.len());
+        // A signature that does not exist is refused before any read.
+        m.reads.clear();
+        assert!(read_ucode_and_signature(&mut m, &mut j, &mut c, VBIOS_TIMEOUT_US, &l, 2).is_err());
+        assert!(m.reads.is_empty());
     }
 
     #[test]
