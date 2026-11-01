@@ -45,3 +45,33 @@ InitStep::I6Check => {
 ## Ce trebuie să apară pe placa reală
 4 citiri în jurnal (`0x8241e0`, `0x1183a4`, `0x1fa828`, plus tabelele VBIOS ca la `gpu fwsec`), VRAM `8192 MiB`, semnătura `0`, `1` sau `2`,
 `WPR2 coborat`, `criteriul I6-citire: TRECE`, „0 scrieri”. Un `0xbadf…` la siguranță = eroare de acces (oprire, poză), nu o valoare.
+
+---
+
+# C-51 (1 nov): partea a doua — jurnalul pe loc și `gpu i6 --scrie` (pentru fereastra cu prima scriere)
+
+*Pe placa reală rulează doar Cyber Universe (decizia din 1 nov 12:00); proba tinygrad e anulată. Fixarea: `cyber-gpu` ≥ `22436f2`.*
+
+## A. Jurnalul fiecărui acces, cu ora, pe loc (pentru toate comenzile `gpu`)
+`gpu_core::diag::Journal::with_sink(cap, sink)` cheamă `sink(&event)` la fiecare citire/scriere, în clipa în care se face. OS-ul pune ora
+și scrie rândul în log și în `raport/*.txt` de pe stick (de preferat golit pe stick înainte de pașii care scriu în placă):
+```rust
+fn gpu_sink(e: &gpu_core::diag::Event) { crate::info!("gpu: {}", e); }   // the log line already carries the timestamp
+let mut journal = gpu_core::diag::Journal::with_sink(4096, gpu_sink);
+```
+Formatul rândului e cel din `Event` (`bar0 w 0x110624: 0x00000000 <- 0x00000080 => 0x00000080`); după fereastră îl citim cu
+`nvidia_ga104::i6_log::{parse_line, check_i6}`.
+
+## B. `gpu i6 --scrie` (doar în stick-ul de test, cu `hw-write`; cere `DA` la tastatură)
+Ordinea (planul `docs/FEREASTRA_C-49.md`, pașii 1–5):
+1. `i6_check` (ca la `gpu pregatire-i6`); dacă `!passes()` → stop.
+2. `fwsec::read_ucode_and_signature(win4, …, &loc, check.signature.index)` → `gsp::hs_load::fwsec_frts_image(&loc.desc, &ucode, &sig,
+   check.frts.0)` → imaginea copiată de OS într-o **zonă de RAM contiguă sub 4 GiB** (~60 KiB, aliniată la 256 B), adresa fizică → `DmaImage`.
+3. `gpu_pci::bus_master::set_bus_master(cfg, &BusMasterPermit::new("C-51 I6"), &mut journal, true)` → păstrează valoarea veche.
+4. `gsp::falcon::fwsec_frts_dma(&mut GuardedBar0::new(win16_rw, &mut journal, Some(permit))?, clock, &HsUcode::from_fwsec_v3(&loc.desc)?,
+   &image, check.frts)` — **singura** fereastră BAR0 cu drept de scriere, tot de 16 MiB; `GuardedBar0` refuză orice în afara GSP/SEC2.
+5. `bus_master::restore_command(cfg, &permit, &mut journal, old)` — **și la eroare** în pasul 4.
+6. Rândurile: `pas I6 FWSEC-FRTS: ok`, WPR2 `start..end`, numărul de scrieri (`journal.writes()`).
+
+Cod nou în OS: zona de RAM pentru DMA (cu adresa fizică), fereastra BAR0 cu scriere doar pentru această comandă, confirmarea `DA`.
+Propunerea în hub: `idei/2026-11-01_cyber-gpu-i6-in-os.md`.

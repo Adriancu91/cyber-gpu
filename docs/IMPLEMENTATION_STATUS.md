@@ -1,5 +1,25 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 30b — 1 noiembrie 2026, ~12:25–12:55 (ora României), în cloud, FĂRĂ placă — C-51 (trecere extra)
+
+**Decizia lui Adrian (DECIZII 1 nov 12:00):** pe placa reală rulează doar Cyber Universe; proba tinygrad pe Ubuntu se anulează. Comanda **C-51**
+(completează C-49): primele scrieri direct din OS, pas cu pas; în locul jurnalului tinygrad, referința din simulare + jurnalul nostru complet.
+Recomandarea din sesiunea 30 („întâi tinygrad”) e înlocuită. **Nimic nu a fost testat pe RTX 3070 Ti.**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Jurnal pe loc | `gpu_core::diag::Journal::with_sink`: fiecare eveniment trimis imediat OS-ului (ora + stick) | PASS (SIMULARE): 1 test |
+| Verificarea jurnalului I6 | `nvidia_ga104::i6_log`: `parse_line` (cu/fără prefixul OS) + `check_i6` (ordinea scrierilor I6, blocuri consecutive, nimic în afara GSP, nimic după pornire) | PASS (SIMULARE): 4 teste; 8 greșeli plantate în jurnal, fiecare cu motivul exact; 6 greșeli plantate în verificator prinse |
+| **I5g** Bus Master | `gpu_pci::bus_master::{set_bus_master, restore_command, BusMasterPermit}`: o scriere în COMMAND, recitită; refuz fără decodarea memoriei/fără placă; nimic dacă bitul e deja bun; recitire greșită → valoarea veche la loc | PASS (SIMULARE): 5 teste, 6 greșeli plantate prinse |
+| **I6 pasul 2** | `fwsec::read_ucode_and_signature`: codul FWSEC și semnătura aleasă copiate neatinse din PROM (doar citire, peste granița dintre imagini) | PASS (SIMULARE): 1 test |
+| Planul | `docs/FEREASTRA_C-49.md` rescris: 6 pași, fiecare cu ce se scrie, ce se recitește ca dovadă, criteriul, oprirea sigură; propunerea OS completată (`integration/cyber-universe/C-49_gpu-pregatire-i6.md`, partea C-51) | gata |
+| Compatibilitate OS | doar adăugări (`Journal::with_sink`, `gpu_pci::bus_master`, `nvidia_ga104::{i6_log, fwsec::read_ucode_and_signature}`); câmp privat nou în `Journal` (nicio schimbare vizibilă) | PASS |
+
+Verificări (`tools/check.sh`): format, clippy `-D warnings`, **315 teste PASS** (1 ignorat), build no_std PASS; `--features hw-write` PASS.
+
+**Următorul pas:** sesiunea OS (cu „da”-ul centrului de comandă): `gpu pregatire-i6`, jurnalul pe loc, apoi `gpu i6 --scrie`; fereastra cu Adrian.
+
+---
 ## Sesiunea 30 — 1 noiembrie 2026, ~11:55–12:15 (ora României), în cloud, FĂRĂ placă — OPRIT ridicat (comandă nouă: C-49)
 
 **Oprirea de siguranță s-a ridicat** pe condiția scrisă la sesiunea 28: în hub au apărut **rezultatul ferestrei din 1 nov**

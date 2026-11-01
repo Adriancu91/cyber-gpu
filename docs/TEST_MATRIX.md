@@ -1,6 +1,6 @@
 # Matricea de teste
 
-## Rezultate — sesiunea 30 (1 nov 2026, cloud, fără placă) — C-49: pregătirea I6
+## Rezultate — sesiunea 30 + 30b (1 nov 2026, cloud, fără placă) — C-49/C-51: pregătirea I6
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |
 |---|---|---|---|---|---|
@@ -8,6 +8,10 @@
 | T57 | Alegerea semnăturii FWSEC cu forma de pe placă (ucode_id 9, 3 semnături, masca 0x0007): versiunea 0/1/2 → indexul 0/1/2; versiunea 3 → `Blocked` | `cargo test -p nvidia-ga104 fuse::tests::signature_choice` | conform | conform | PASS (SIMULARE: valorile siguranței sunt ale noastre) |
 | T58 | Verificarea I6 doar citire (`i6_check`): 3 citiri pe placa rece, FRTS sub zona VGA, WPR2 ridicat = nu trece, 0xbadf…/0xffffffff/VRAM implauzibil = eroare | `cargo test -p nvidia-ga104 i6_check` | 3 teste, 0 scrieri | conform; 4 greșeli plantate prinse | PASS (SIMULARE) |
 | T59 | I6 scrie exact cele 18 registre GSP din `docs/FEREASTRA_C-49.md` (78 de scrieri pe imaginea SIM de 20 de blocuri) | `cargo test -p nvidia-ga104 i6_writes_exactly` | lista fixă, nimic în afara GSP | conform | PASS (SIMULARE) |
+| T61 | Jurnal pe loc (`Journal::with_sink`) | `cargo test -p gpu-core sink` | fiecare eveniment, și cele scoase din coadă | conform | PASS (SIMULARE) |
+| T62 | Jurnalul I6 citit înapoi și verificat (`i6_log`) + 8 greșeli plantate în jurnal | `cargo test -p nvidia-ga104 i6_journal` | trece pe jurnalul simulat; fiecare greșeală cu motivul ei | conform | PASS (SIMULARE) |
+| T63 | Bus Master (I5g): 1 scriere recitită, refuzuri, restaurare | `cargo test -p gpu-pci bus_master` | conform | conform; 6 greșeli plantate prinse | PASS (SIMULARE) |
+| T64 | FWSEC copiat din PROM în RAM, neatins, peste granița imaginilor | `cargo test -p nvidia-ga104 ucode_and_signature` | octeți identici, 0 scrieri | conform | PASS (SIMULARE) |
 | T60 | `gpu pregatire-i6` pe placa reală | — (propunere pentru OS) | semnătura 0/1/2, VRAM 8192 MiB, WPR2 coborât, 0 scrieri | — | NOT TESTED |
 
 ## Rezultate — sesiunea 24 (30 oct 2026, cloud, fără placă) — treapta 6 matmul
