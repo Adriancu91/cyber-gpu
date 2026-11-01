@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 33 — 1 noiembrie 2026, ~19:45–20:15 (ora României), în cloud, FĂRĂ placă — C-54
+## Sesiunea 33 — 1 noiembrie 2026, ~19:45–20:05 (ora României), în cloud, FĂRĂ placă — C-54
 
 Comandă nouă în hub: **C-54** (din decizia lui Adrian „da bucla automată”, 1 nov 19:45): pași în lanț la ferestre, lista citirilor fără risc
 pentru bucla automată + unealta de comparare, `gpu-sim` cu datele reale. **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.**
