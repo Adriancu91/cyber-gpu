@@ -82,3 +82,9 @@ commit `8ec351ae`, clonă temporară în sesiune, nimic copiat în repo): `src/c
 `NV_FUSE_OPT_FPF_{GSP,SEC2}_UCODE1_VERSION`), `kernel_gsp_ga100.c` / `kernel_sec2_ga100.c` (indexarea și „bitul cel mai înalt + 1”),
 `g_kernel_gsp_nvoc.c` / `g_kernel_sec2_nvoc.c` (ce cipuri folosesc varianta GA100), `kernel_gsp_frts_tu102.c` și `kernel_gsp_booter.c`
 (cum se folosește versiunea la alegerea semnăturii). Registrul mărimii VRAM (`0x1183A4`) era deja notat la `fb_layout.rs`.
+
+
+**C-54 (1 nov, sesiunea 33):** `gpu_sim::observed`, `read_tour.rs`, `board_compare.rs`, `chain.rs` sunt scrise de noi. Datele din `observed` vin din
+măsurătorile noastre (rapoartele Cyber Universe din hub `rezultate/`, 28 oct–1 nov): doar valori de registre, poziții, mărimi și id-uri; primul
+cuvânt al VBIOS-ului și conținutul imaginilor **nu** sunt reproduse. Pentru temperatură am verificat antetele NVIDIA MIT 570.144 (clonă temporară,
+nimic copiat): nu există `dev_therm.h` pentru Ampere → temperatura nu intră în tur până nu are o sursă confirmată.

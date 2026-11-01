@@ -234,3 +234,13 @@ Condiții: Kronos oprit și salvat; Adrian prezent; stick cu Release-ul care con
 ### Ce se colectează pentru fiecare test
 identificator, hardware/configurație, commit, comanda, așteptat, obținut, cod de ieșire/jurnal (`log gpu`), PASS/FAIL/BLOCKED/NOT TESTED
 → în acest tabel și în `Cyber-hub/rezultate/`.
+
+### C-54 (1 nov, sesiunea 33) — bucla automată și lanțul (toate SIMULARE)
+| Test | Ce verifică | Rezultat |
+|---|---|---|
+| `gpu_sim::observed` (2) | imaginile VBIOS și registrele modelului = valorile de pe placă | PASS (SIMULARE) |
+| `read_tour` (4) | turul pe modelul real dă valorile de pe placă; fereastră mică → „sarit”; placa nu răspunde → eroare; lista onestă | PASS (SIMULARE) |
+| `board_compare` (5) | rapoartele vechi → fapte; 0 diferențe față de model; un model greșit e prins; `fapt …` dus-întors | PASS (SIMULARE) |
+| `chain` (6) | oprire la I7 blocat; eșec I6 → Bus Master pus la loc; modul automat nu rulează pași care scriu; pas doar-citire care scrie = eșec | PASS (SIMULARE) |
+| `gpu tur` pe placă | rulat de bucla automată; raportul comparat cu `compara_raport` | NOT TESTED (comanda OS nu există încă) |
+| `gpu lant` pe placă | doar cu Adrian de față | NOT TESTED |

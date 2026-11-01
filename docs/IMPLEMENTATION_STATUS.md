@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 33 — 1 noiembrie 2026, ~19:45–20:15 (ora României), în cloud, FĂRĂ placă — C-54
+
+Comandă nouă în hub: **C-54** (din decizia lui Adrian „da bucla automată”, 1 nov 19:45): pași în lanț la ferestre, lista citirilor fără risc
+pentru bucla automată + unealta de comparare, `gpu-sim` cu datele reale. **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| (3) Date reale în `gpu-sim` | `gpu_sim::observed`: din rapoartele OS de pe placă (28 oct, 29 oct, 1 nov): Command `0x0003`, D0, Resizable BAR (3 intrări: 16/256/32 MiB), BOOT_0 `0xb74000a1`, BOOT_42 `0x174a1000`, PRIV_LEVEL_MASK `0x8b8f`, GFW `0x3ff`, VBIOS: 4 imagini la `0x0/0xfe00/0x24600/0x29c00` cu mărimile reale, BIT la `0x1b0` cu cele 17 jetoane, tabela PMU `0x87ecb`, descriptorul FWSEC `0x41208` (v3, antet `0x4ac`, ucode `0xea00`, 3 semnături, mască `0x7`, `ucode_id` 9). Doar poziții, mărimi, id-uri — **fără conținut VBIOS/firmware**. Ce încă ghicește: `observed::STILL_SIM` | PASS (SIMULARE): 2 teste |
+| Ce era greșit înainte | modelul vechi ghicea BOOT_0 `0x174000a1` (placa: `0xb74000a1`), Command `0x0007` (placa: Bus Master oprit, `0x0003`), a doua imagine VBIOS la `0x12000` (placa: `0xfe00`), FWSEC `ucode_id` 10 (placa: 9). Modelele vechi rămân (testele vechi le folosesc); cel nou e `observed::*` | — |
+| (2) Turul de citire | `nvidia_ga104::read_tour`: `SAFE_READS` (6 grupe; doar „i6” încă necitită pe placă), `NOT_YET` (temperatura: registrul nu e în antetele NVIDIA MIT 570.144 → nu intră), `run_tour` → fapte `cheie = valoare` prin aceleași funcții doar-citire pe care le folosește OS-ul; respinge rezultatul dacă se jurnalizează vreo scriere | PASS (SIMULARE): 4 teste; pe modelul nou dă exact valorile de pe placă |
+| (2) Unealta de comparare | `nvidia_ga104::board_compare` + exemplul `compara_raport`: citește rapoartele OS (formatul de azi al `gpu`/`gpu gfw`/`gpu vbios`/`gpu fwsec`/`gpu firmware` și liniile noi `fapt …`), compară cu turul pe simulare: LA FEL / DIFERIT / diferit intenționat / doar pe placă / doar în simulare; ieșire 2 la o diferență reală | PASS (SIMULARE): 5 teste. **Pe cele 3 rapoarte reale: 33 la fel, 0 diferit**, 5 diferit intenționat (primul cuvânt VBIOS, cele 4 fișiere firmware), 5 doar în simulare (legătura PCIe, registrele I6) |
+| (1) Pași în lanț | `nvidia_ga104::chain`: `WINDOW_CHAIN` (pregătire-i6 → Bus Master pornit → I6 → I7 → Bus Master oprit → tur-după) + `run_chain`: oprire la primul eșec, curățarea rulează oricum, niciun pas care scrie fără permisiune, I7 (blocat în plan) nu se încearcă, pas doar-citire care scrie = eșec | PASS (SIMULARE): 6 teste, 4 greșeli plantate în cod prinse |
+| Propunerea pentru OS | `integration/cyber-universe/C-54_gpu-tur-si-lant.md` + hub `idei/2026-11-01_cyber-gpu-tur-si-lant.md`: `gpu tur` (lista albă a buclei automate), `gpu lant` (doar cu „DA”, nu în modul automat) | propus |
+| Compatibilitate OS | doar adăugări: `gpu_sim::observed`, `SimConfig::{read_raw, write_raw}`, `nvidia_ga104::{read_tour, board_compare, chain}`; textul blocajului I6 din `init::GA104_PLAN` adus la zi (doar textul) | PASS |
+
+Verificări (`sh tools/check.sh`): format, clippy `-D warnings`, **332 teste PASS** (1 ignorat), build no_std PASS; `--features hw-write` PASS.
+CI: rularea 80 verde; 81 pornită la push.
+
+**Următorul pas:** „da” pentru propunerea `gpu tur` / `gpu lant` → sesiunea OS (după C-52/C-53). După fiecare tur automat: `compara_raport`
+pe raportul nou din `rezultate/`; orice „DIFERIT” → reparăm modelul. Fereastra cu Adrian rămâne cea din `docs/FEREASTRA_C-49.md`.
+
+---
 ## Sesiunea 32 — 1 noiembrie 2026, ~19:25–19:35 (ora României), în cloud, FĂRĂ placă — fără lucru nou
 
 Verificat la pornire: CI rularea pentru `9597863` verde; în hub **nicio comandă nouă pentru `cyber-gpu`** după C-51. Nou de la sesiunea 31:
