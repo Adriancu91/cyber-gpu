@@ -1,5 +1,15 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 35 — 2 noiembrie 2026, ~10:00 (ora României), în cloud, FĂRĂ placă — fără lucru nou
+
+Verificat: CI verde (rularea 85, `5426b8e`); în hub **nicio comandă nouă/preluată pentru `cyber-gpu`**, niciun raport nou în `rezultate/`
+de la placa reală (ultimul: `2026-11-01-workstation-477-i4`), nicio decizie nouă. Cod neschimbat: NOT TESTED (nimic de testat). Nu am inventat lucru nou.
+Atenție: sesiunile 33b, 34 și 35 n-au avut niciun pas → dacă nici următoarea nu are, regula de oprire de siguranță se aplică (scrie „OPRIT”).
+
+**Următorul pas:** neschimbat — fereastra I6 cu Adrian (`docs/FEREASTRA_C-49.md`, Release `os-214`) sau prima tură automată `gpu tur`
+→ raportul în `rezultate/` → `compara_raport` / `i6_log`.
+
+---
 ## Sesiunea 34 — 2 noiembrie 2026, ~01:30 (ora României), în cloud, FĂRĂ placă — fără lucru nou
 
 Verificat: CI verde (rularea 84, `d37cd37`); în hub **nicio comandă nouă/preluată pentru `cyber-gpu`** (C-54 era ultima, gata). Nou de la sesiunea 33:
