@@ -1,5 +1,16 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 36 — 2 noiembrie 2026, ~13:45 (ora României), în cloud, FĂRĂ placă — OPRIT: necesită analiza lui Adrian
+
+**OPRIT: necesită analiza lui Adrian.** Regula de oprire de siguranță se aplică: ultimele 3 sesiuni (33b, 34, 35) n-au terminat niciun pas,
+iar nici acum nu există lucru nou. Verificat: CI verde (rularea 87, `86480ef`); în hub nicio comandă nouă/preluată pentru `cyber-gpu`
+(ultima: C-54, gata), niciun raport nou de pe placă în `rezultate/` (ultimul: `2026-11-01-workstation-477-i4`), nicio decizie nouă pentru noi.
+Cod neschimbat: NOT TESTED (nimic de testat). Nu am început lucru nou.
+
+**Ce ar debloca:** fereastra I6 cu Adrian (`docs/FEREASTRA_C-49.md`, Release `os-214`), un raport `gpu tur` al buclei automate în `rezultate/`,
+sau o comandă nouă de la Adrian / centrul de comandă în `COMENZI.md`. Până atunci, sesiunile următoare doar verifică și se opresc.
+
+---
 ## Sesiunea 35 — 2 noiembrie 2026, ~07:25 (ora României), în cloud, FĂRĂ placă — fără lucru nou
 
 Verificat: CI verde (rularea 85, `5426b8e`); în hub **nicio comandă nouă/preluată pentru `cyber-gpu`**, niciun raport nou în `rezultate/`
