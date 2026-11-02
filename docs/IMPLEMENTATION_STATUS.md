@@ -1,5 +1,11 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 38 — 3 noiembrie 2026, ~01:15 (ora României), în cloud, FĂRĂ placă — OPRIT rămâne
+
+**OPRIT: necesită analiza lui Adrian** (neschimbat). Verificat: CI verde (vârful `3e77f9a`); în hub de la sesiunea 37 nicio comandă nouă/preluată
+pentru `cyber-gpu`, nicio decizie nouă, niciun raport nou în `rezultate/`. Cod neschimbat: NOT TESTED. Nu am început lucru nou.
+
+---
 ## Sesiunea 37 — 2 noiembrie 2026, ~19:40 (ora României), în cloud, FĂRĂ placă — OPRIT rămâne
 
 **OPRIT: necesită analiza lui Adrian** (neschimbat). Verificat din nou: CI verde (vârful `d95b07b`); în hub de la sesiunea 36 nu a apărut nicio
