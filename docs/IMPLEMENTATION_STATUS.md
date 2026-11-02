@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 36 — 2 noiembrie 2026, ~13:45 (ora României), în cloud, FĂRĂ placă — OPRIT: necesită analiza lui Adrian
+## Sesiunea 36 — 2 noiembrie 2026, ~13:27 (ora României), în cloud, FĂRĂ placă — OPRIT: necesită analiza lui Adrian
 
 **OPRIT: necesită analiza lui Adrian.** Regula de oprire de siguranță se aplică: ultimele 3 sesiuni (33b, 34, 35) n-au terminat niciun pas,
 iar nici acum nu există lucru nou. Verificat: CI verde (rularea 87, `86480ef`); în hub nicio comandă nouă/preluată pentru `cyber-gpu`
