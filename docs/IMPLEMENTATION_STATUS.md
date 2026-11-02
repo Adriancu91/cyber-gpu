@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 35 — 2 noiembrie 2026, ~10:00 (ora României), în cloud, FĂRĂ placă — fără lucru nou
+## Sesiunea 35 — 2 noiembrie 2026, ~07:25 (ora României), în cloud, FĂRĂ placă — fără lucru nou
 
 Verificat: CI verde (rularea 85, `5426b8e`); în hub **nicio comandă nouă/preluată pentru `cyber-gpu`**, niciun raport nou în `rezultate/`
 de la placa reală (ultimul: `2026-11-01-workstation-477-i4`), nicio decizie nouă. Cod neschimbat: NOT TESTED (nimic de testat). Nu am inventat lucru nou.
