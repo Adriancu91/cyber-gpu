@@ -291,25 +291,96 @@ pub fn read_wpr2<M: Mmio + ?Sized>(bar: &mut GuardedBar0<'_, M>) -> GpuResult<Op
     Ok(Some(decode_wpr2(lo, hi)))
 }
 
+/// How the WPR2 HI register encoded the end of the region FWSEC created.
+///
+/// Board, 3 Nov 2026 (`rezultate/2026-11-03-workstation-os214-i6`): LO was
+/// exactly the FRTS start we asked for, HI was *not* the exclusive end. The
+/// public references only check LO (RM 570.144 `kernel_gsp_frts_tu102.c`:
+/// `HI != 0` and `LO == frtsOffset`; nova-core: the same, its comment calls HI
+/// "exclusive" but never checks it). The most likely encoding is the last
+/// 4 KiB page (inclusive); the raw HI from `gpu-jurnal-002.txt` will confirm.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Wpr2End {
+    /// HI = end of the region (first byte after it).
+    Exclusive,
+    /// HI = start of the last 4 KiB page of the region.
+    InclusiveLastPage,
+}
+
+/// Everything `check_frts` saw, for the log line and for the window report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrtsCheck {
+    /// The region, end normalised to exclusive (= `frts` when it passed).
+    pub wpr2: Wpr2,
+    /// Raw `NV_PFB_PRI_MMU_WPR2_ADDR_LO` / `_HI`.
+    pub lo_raw: u32,
+    pub hi_raw: u32,
+    pub end_form: Wpr2End,
+}
+
+/// WPR2 granularity: VAL counts 4 KiB pages (`_ALIGNMENT` 0xc).
+const WPR2_PAGE: u64 = 1 << fb::NV_PFB_PRI_MMU_WPR2_ADDR_HI_ALIGNMENT;
+
+/// Pure part of the check: compares LO/HI with the region we asked for.
+/// LO must be exactly `frts.0` (what RM checks); HI must be either the
+/// exclusive end or the inclusive last page of exactly `frts` - anything else
+/// is reported against the HI register, with expected = exclusive end.
+pub fn compare_frts(lo: u32, hi: u32, frts: (u64, u64)) -> GpuResult<FrtsCheck> {
+    let raw = decode_wpr2(lo, hi);
+    if raw.start != frts.0 {
+        return Err(GpuError::VerifyFailed {
+            offset: fb::NV_PFB_PRI_MMU_WPR2_ADDR_LO,
+            expected: (frts.0 >> 12) as u32,
+            actual: (raw.start >> 12) as u32,
+        });
+    }
+    let end_form = if raw.end == frts.1 {
+        Wpr2End::Exclusive
+    } else if frts.1 >= frts.0 + WPR2_PAGE && raw.end == frts.1 - WPR2_PAGE {
+        Wpr2End::InclusiveLastPage
+    } else {
+        return Err(GpuError::VerifyFailed {
+            offset: fb::NV_PFB_PRI_MMU_WPR2_ADDR_HI,
+            expected: (frts.1 >> 12) as u32,
+            actual: (raw.end >> 12) as u32,
+        });
+    };
+    Ok(FrtsCheck {
+        wpr2: Wpr2 {
+            start: frts.0,
+            end: frts.1,
+        },
+        lo_raw: lo,
+        hi_raw: hi,
+        end_form,
+    })
+}
+
 /// After FWSEC-FRTS halted: no error code, WPR2 up, and where we asked
-/// (`frts` = the region from `fb_layout`, start..end).
-pub fn check_frts<M: Mmio + ?Sized>(
+/// (`frts` = the region from `fb_layout`, start..end). A wrong start is
+/// reported at LO (0x1fa824), a wrong end at HI (0x1fa828).
+pub fn check_frts_detail<M: Mmio + ?Sized>(
     bar: &mut GuardedBar0<'_, M>,
     frts: (u64, u64),
-) -> GpuResult<Wpr2> {
+) -> GpuResult<FrtsCheck> {
     let err = bar.read(bus::NV_PBUS_SW_SCRATCH(0xe))? >> 16;
     if err != 0 {
         return Err(GpuError::HardwareFault { code: err });
     }
-    let w = read_wpr2(bar)?.ok_or(GpuError::HardwareFault { code: 0 })?;
-    if (w.start, w.end) != frts {
-        return Err(GpuError::VerifyFailed {
-            offset: fb::NV_PFB_PRI_MMU_WPR2_ADDR_LO,
-            expected: (frts.0 >> 12) as u32,
-            actual: (w.start >> 12) as u32,
-        });
+    let hi = bar.read(fb::NV_PFB_PRI_MMU_WPR2_ADDR_HI)?;
+    if hi == 0 {
+        return Err(GpuError::HardwareFault { code: 0 });
     }
-    Ok(w)
+    let lo = bar.read(fb::NV_PFB_PRI_MMU_WPR2_ADDR_LO)?;
+    compare_frts(lo, hi, frts)
+}
+
+/// [`check_frts_detail`] without the raw values (kept for compatibility).
+pub fn check_frts<M: Mmio + ?Sized>(
+    bar: &mut GuardedBar0<'_, M>,
+    frts: (u64, u64),
+) -> GpuResult<Wpr2> {
+    check_frts_detail(bar, frts).map(|c| c.wpr2)
 }
 
 /// Kept for compatibility: the loader is now `hs_load::dma_load`.
@@ -569,6 +640,37 @@ mod tests {
     }
 
     #[test]
+    fn i6_on_the_fake_with_both_hi_forms_and_a_wrong_end() {
+        // SIM: the board's start (3 Nov 2026) with each HI encoding.
+        let frts = (0x1_ffe0_0000u64, 0x1_fff0_0000u64);
+        for (last_page, form) in [
+            (true, Wpr2End::InclusiveLastPage),
+            (false, Wpr2End::Exclusive),
+        ] {
+            let mut g = FakeGsp::new();
+            g.frts = frts;
+            g.wpr2_hi_last_page = last_page;
+            let mut j = Journal::new(256);
+            let mut c = SimClock::default();
+            let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+            let w = fwsec_frts(&mut b, &mut c, load_ok, frts).unwrap();
+            assert_eq!((w.start, w.end), frts);
+            assert_eq!(check_frts_detail(&mut b, frts).unwrap().end_form, form);
+        }
+        // Same start, end 4 KiB further than asked: fails, and names HI.
+        let mut g = FakeGsp::new();
+        g.frts = (frts.0, frts.1 + 0x2000);
+        let mut j = Journal::new(256);
+        let mut c = SimClock::default();
+        let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+        let e = fwsec_frts(&mut b, &mut c, load_ok, frts).unwrap_err();
+        assert_eq!(
+            format!("{e}"),
+            "verificare esuata la 0x1fa828: asteptat 0x1fff00, citit 0x1fff01"
+        );
+    }
+
+    #[test]
     fn every_failure_is_reported_not_skipped() {
         let run = |fault: SimFault| {
             let mut g = FakeGsp::new();
@@ -643,6 +745,44 @@ mod tests {
         assert!(matches!(
             booter_load(&mut b, &mut c, load_ok, 0),
             Err(GpuError::HardwareFault { code: 0xbad1 })
+        ));
+    }
+
+    #[test]
+    fn frts_end_exclusive_or_last_page_and_hi_reported() {
+        // Board values, 3 Nov 2026: FRTS 0x1ffe00000..0x1fff00000, LO = start.
+        let frts = (0x1_ffe0_0000u64, 0x1_fff0_0000u64);
+        let enc = |a: u64| ((a >> 12) << 4) as u32;
+        let lo = enc(frts.0);
+        let c = compare_frts(lo, enc(frts.1), frts).unwrap();
+        assert_eq!(c.end_form, Wpr2End::Exclusive);
+        assert_eq!((c.wpr2.start, c.wpr2.end), frts);
+        let c = compare_frts(lo, enc(frts.1 - 0x1000), frts).unwrap();
+        assert_eq!(c.end_form, Wpr2End::InclusiveLastPage);
+        assert_eq!((c.wpr2.start, c.wpr2.end), frts);
+        assert_eq!(c.hi_raw, enc(0x1_ffef_f000));
+        // Any other end: reported at HI, not at LO (the 3 Nov message
+        // "la 0x1fa824: asteptat 0x1ffe00, citit 0x1ffe00" named the wrong register).
+        for bad in [frts.1 + 0x1000, frts.1 - 0x2000, frts.0, 0x2_0000_0000] {
+            let e = compare_frts(lo, enc(bad), frts).unwrap_err();
+            assert_eq!(
+                e,
+                GpuError::VerifyFailed {
+                    offset: 0x1fa828,
+                    expected: 0x1fff00,
+                    actual: (bad >> 12) as u32,
+                }
+            );
+            assert!(format!("{e}").contains("0x1fa828"));
+        }
+        // Wrong start: still LO.
+        let e = compare_frts(enc(frts.0 + 0x1000), enc(frts.1), frts).unwrap_err();
+        assert!(matches!(
+            e,
+            GpuError::VerifyFailed {
+                offset: 0x1fa824,
+                ..
+            }
         ));
     }
 

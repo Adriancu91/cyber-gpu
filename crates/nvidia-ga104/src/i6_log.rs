@@ -262,6 +262,33 @@ fn err(write_index: usize, offset: u64, what: &'static str) -> I6LogError {
     }
 }
 
+/// C-58: the WPR2 registers as the journal saw them after FWSEC — the last
+/// read of HI (0x1fa828) and of LO (0x1fa824) — checked with the same rule as
+/// the driver ([`crate::gsp::falcon::compare_frts`]). `None` = the journal has
+/// no non-zero HI read (FWSEC did not get that far, or WPR2 stayed down).
+pub fn wpr2_after_i6(
+    events: &[Event],
+    frts: (u64, u64),
+) -> Option<(
+    u32,
+    u32,
+    gpu_core::error::GpuResult<crate::gsp::falcon::FrtsCheck>,
+)> {
+    let last = |reg: u64| {
+        events.iter().rev().find_map(|e| match *e {
+            Event::MmioRead {
+                bar: 0,
+                offset,
+                value,
+            } if offset == reg => Some(value),
+            _ => None,
+        })
+    };
+    let hi = last(0x1fa828).filter(|&v| v != 0)?;
+    let lo = last(0x1fa824)?;
+    Some((lo, hi, crate::gsp::falcon::compare_frts(lo, hi, frts)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,6 +328,33 @@ mod tests {
         assert_eq!(parse_line("nota: WPR2 deja ridicat"), None);
         assert_eq!(parse_line("bar0 w 0xzz: 0x0 <- 0x1 => 0x1"), None);
         assert_eq!(parse_line("bar0 w 0x110624: 0x0 <- 0x1"), None);
+    }
+
+    #[test]
+    fn wpr2_read_back_from_the_journal_text() {
+        // SIM journal lines with the board's FRTS (3 Nov 2026), OS prefix included.
+        let frts = (0x1_ffe0_0000u64, 0x1_fff0_0000u64);
+        let text = |hi: u32| {
+            format!(
+                "[ 1.0] INFO  gpu: bar0 r 0x1fa828 = 0x00000000\n\
+                 [ 9.0] INFO  gpu: bar0 r 0x1fa828 = {hi:#010x}\n\
+                 [ 9.1] INFO  gpu: bar0 r 0x1fa824 = 0x01ffe000\n"
+            )
+        };
+        let evs = |t: &str| t.lines().filter_map(parse_line).collect::<Vec<_>>();
+        // Inclusive last page: passes.
+        let (lo, hi, r) = wpr2_after_i6(&evs(&text(0x01ffeff0)), frts).unwrap();
+        assert_eq!((lo, hi), (0x01ffe000, 0x01ffeff0));
+        assert_eq!(
+            r.unwrap().end_form,
+            crate::gsp::falcon::Wpr2End::InclusiveLastPage
+        );
+        // Something else: the error names HI.
+        let (_, _, r) = wpr2_after_i6(&evs(&text(0x02000000)), frts).unwrap();
+        assert!(format!("{}", r.unwrap_err()).contains("0x1fa828"));
+        // Only the cold read (HI = 0): nothing to check.
+        let cold = "bar0 r 0x1fa828 = 0x00000000";
+        assert!(wpr2_after_i6(&evs(cold), frts).is_none());
     }
 
     #[test]

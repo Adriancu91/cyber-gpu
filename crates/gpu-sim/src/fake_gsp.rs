@@ -150,6 +150,11 @@ pub struct FakeGsp {
     /// `FALCON_APPLICATION_INTERFACE_DMEM_MAPPER_V3` / `FWSECLIC_FRTS_CMD`)
     /// and creates WPR2 where the command says, instead of at `frts`.
     pub fwsec_mapper_at: Option<u32>,
+    /// SIM, from the board (3 Nov 2026): how FWSEC writes WPR2 HI. `true` =
+    /// the last 4 KiB page of the region (inclusive), the most likely reading
+    /// of the board (LO = start, HI != exclusive end); `false` = the exclusive
+    /// end. Still to be confirmed with the raw HI in `gpu-jurnal-002.txt`.
+    pub wpr2_hi_last_page: bool,
     mem: [FalconMem; 2],
 }
 
@@ -189,7 +194,17 @@ impl FakeGsp {
             dma_faults: 0,
             dma_blocks: 0,
             fwsec_mapper_at: None,
+            wpr2_hi_last_page: true,
             mem: [FalconMem::new(), FalconMem::new()],
+        }
+    }
+
+    /// The address FWSEC puts in WPR2 HI for `frts` (see `wpr2_hi_last_page`).
+    pub fn wpr2_hi_end(&self) -> u64 {
+        if self.wpr2_hi_last_page {
+            self.frts.1 - 0x1000
+        } else {
+            self.frts.1
         }
     }
 
@@ -425,7 +440,7 @@ impl FakeGsp {
                     self.regs
                         .insert(fb::NV_PFB_PRI_MMU_WPR2_ADDR_LO, enc(self.frts.0));
                     self.regs
-                        .insert(fb::NV_PFB_PRI_MMU_WPR2_ADDR_HI, enc(self.frts.1));
+                        .insert(fb::NV_PFB_PRI_MMU_WPR2_ADDR_HI, enc(self.wpr2_hi_end()));
                 }
             },
             (SEC2_BASE, Some(SimUcode::BooterLoad), true) => {
