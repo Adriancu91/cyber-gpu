@@ -1,5 +1,12 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 43 — 4 noiembrie 2026, ~01:30 (ora României), în cloud, FĂRĂ placă — fără lucru nou (așteaptă fereastra C-63, 07:00)
+
+Verificat: CI verde (rularea 95, `9a6e9e5`); în hub de la sesiunea 42 nicio comandă nouă/preluată pentru `cyber-gpu`, nicio decizie nouă,
+niciun raport nou în `rezultate/`. Cod neschimbat: NOT TESTED pe placă. Nu am început lucru nou (nu inventăm lucru fără hardware).
+**Următorul pas:** neschimbat — după fereastra de azi, jurnalele de pe stick în `rezultate/` → `verifica_jurnal_i6` → T68 (HI real).
+
+---
 ## Sesiunea 42 — 3 noiembrie 2026, ~19:30 (ora României), în cloud, FĂRĂ placă — pregătire pentru fereastra C-63 (4 nov 07:00)
 
 În hub: nicio comandă nouă pentru `cyber-gpu`. Nou: **C-61 gata** (OS fixat pe `3286a3b`, Release `os-219`, apoi `os-220`) și **C-63**: fereastra lui
