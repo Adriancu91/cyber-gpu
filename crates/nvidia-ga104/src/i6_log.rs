@@ -289,6 +289,54 @@ pub fn wpr2_after_i6(
     Some((lo, hi, crate::gsp::falcon::compare_frts(lo, hi, frts)))
 }
 
+/// C-63 window: everything a whole stick journal (`raport/gpu-jurnal-00N.txt`)
+/// says about one I6 attempt, in one pass over the text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StickJournal {
+    /// Lines that parsed as register accesses.
+    pub accesses: usize,
+    /// Config-space writes `(offset, before, written, after)`: I5g Bus
+    /// Master on and the restore afterwards (2 expected for one attempt).
+    pub config_writes: Vec<(u16, u32, u32, u32)>,
+    /// [`check_i6`] on the BAR0 accesses (config writes taken out first).
+    /// `None` when the journal has no BAR0 write at all (e.g. only the
+    /// read-only `gpu pregatire-i6`).
+    pub i6: Option<Result<I6Summary, I6LogError>>,
+    /// [`wpr2_after_i6`] on the same accesses.
+    pub wpr2: Option<(
+        u32,
+        u32,
+        gpu_core::error::GpuResult<crate::gsp::falcon::FrtsCheck>,
+    )>,
+}
+
+/// Reads a whole stick journal: separates the config writes (Bus Master),
+/// checks the I6 write order and the WPR2 registers after FWSEC. Pure text
+/// processing, never touches a board.
+pub fn check_stick_journal(text: &str, frts: (u64, u64)) -> StickJournal {
+    let events: Vec<Event> = text.lines().filter_map(parse_line).collect();
+    let mut config_writes = Vec::new();
+    let mut rest = Vec::new();
+    for e in &events {
+        match *e {
+            Event::ConfigWrite {
+                offset,
+                before,
+                written,
+                after,
+            } => config_writes.push((offset, before, written, after)),
+            other => rest.push(other),
+        }
+    }
+    let any_bar_write = rest.iter().any(|e| matches!(e, Event::MmioWrite { .. }));
+    StickJournal {
+        accesses: events.len(),
+        config_writes,
+        i6: any_bar_write.then(|| check_i6(&rest)),
+        wpr2: wpr2_after_i6(&rest, frts),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

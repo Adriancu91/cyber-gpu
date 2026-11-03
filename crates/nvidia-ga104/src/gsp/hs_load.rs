@@ -878,6 +878,59 @@ mod tests {
         assert_eq!(s.writes, 78);
     }
 
+    /// C-63: a whole stick journal (Bus Master on, I6, WPR2 read-back, Bus
+    /// Master off) read in one pass. SIMULARE: journal from the simulated
+    /// board; WPR2 values are the board's FRTS of 3 Nov 2026.
+    #[test]
+    fn whole_stick_journal_is_read_in_one_pass() {
+        use crate::gsp::falcon::Wpr2End;
+        use crate::i6_log::check_stick_journal;
+        use gpu_core::diag::Event;
+        let frts = (0x1_ffe0_0000u64, 0x1_fff0_0000u64);
+        let cfg = |b: u32, w: u32| {
+            std::format!(
+                "[ 599.000] INFO  gpu: {}",
+                Event::ConfigWrite {
+                    offset: 4,
+                    before: b,
+                    written: w,
+                    after: w,
+                }
+            )
+        };
+        let journal = |hi: &str| {
+            let mut l = std::vec![
+                "pas I6 pregatire: ok".into(),
+                "[ 598.0] INFO  gpu: bar0 r 0x1fa828 = 0x00000000".into(),
+                cfg(0x0003, 0x0007),
+            ];
+            l.extend(i6_journal_lines());
+            l.push(std::format!("[ 601.0] INFO  gpu: bar0 r 0x1fa828 = {hi}"));
+            l.push("[ 601.1] INFO  gpu: bar0 r 0x1fa824 = 0x01ffe000".into());
+            l.push(cfg(0x0007, 0x0003));
+            l.join("\n")
+        };
+        let r = check_stick_journal(&journal("0x01ffeff0"), frts);
+        assert_eq!(r.config_writes.len(), 2);
+        assert_eq!(r.config_writes[0], (4, 0x0003, 0x0007, 0x0007));
+        let s = r.i6.unwrap().unwrap();
+        assert_eq!((s.writes, s.sections.len()), (78, 2));
+        let (lo, hi, w) = r.wpr2.unwrap();
+        assert_eq!((lo, hi), (0x01ffe000, 0x01ffeff0));
+        assert_eq!(w.unwrap().end_form, Wpr2End::InclusiveLastPage);
+        // A wrong end is reported at HI, the write order still passes.
+        let r = check_stick_journal(&journal("0x02000000"), frts);
+        assert!(r.i6.unwrap().is_ok());
+        let e = r.wpr2.unwrap().2.unwrap_err();
+        assert!(std::format!("{e}").contains("0x1fa828"));
+        // Read-only journal (gpu pregatire-i6): nothing written, nothing to check.
+        let ro = check_stick_journal("bar0 r 0x1fa828 = 0x00000000\n", frts);
+        assert_eq!(
+            (ro.accesses, ro.i6.is_none(), ro.wpr2.is_none()),
+            (1, true, true)
+        );
+    }
+
     #[test]
     fn i6_journal_check_catches_planted_mistakes() {
         use crate::i6_log::check_i6;

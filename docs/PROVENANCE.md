@@ -96,3 +96,6 @@ open-gpu-kernel-modules tag 570.144 (MIT) `src/nvidia/src/kernel/gpu/gsp/arch/tu
 LO == începutul FRTS; HI nu e comparat) și `kernel_gsp_tu102.c` (HI doar ≠ 0); Linux (GPL, **doar citit**, nimic preluat în cod):
 `drivers/gpu/nova-core/fb.rs`, `fb/regs.rs`, `gsp/hal/tu102.rs` (aceeași verificare doar pe LO; comentariul numește HI „exclusiv”, dar nu-l verifică)
 și nouveau `nvkm/subdev/gsp/fwsec.c` (doar afișează LO/HI). Concluzia că HI ține ultima pagină vine din măsurătoarea noastră pe placă (3 nov), nu din aceste surse.
+
+**C-63 (3 nov, sesiunea 42):** `check_stick_journal` (`i6_log.rs`) și exemplul `verifica_jurnal_i6` sunt scrise de noi, doar procesare de text peste
+funcțiile noastre existente (`parse_line`, `check_i6`, `wpr2_after_i6`); nicio sursă externă nouă.

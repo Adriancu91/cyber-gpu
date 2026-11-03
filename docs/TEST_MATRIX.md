@@ -8,6 +8,7 @@
 | T66 | I6 întreg pe `gpu-sim` cu ambele forme ale HI + un capăt greșit (mesajul numește HI) | `cargo test -p nvidia-ga104 hi_forms` | trece / trece / „verificare esuata la 0x1fa828…” | conform | PASS (SIMULARE) |
 | T67 | `i6_log::wpr2_after_i6`: LO/HI citite din textul jurnalului (cu prefixul OS) și verificate cu aceeași regulă | `cargo test -p nvidia-ga104 wpr2_read_back` | trece pe ultima pagină; HI străin = eroare; doar citirea rece = nimic de verificat | conform | PASS (SIMULARE) |
 | T68 | HI real citit după FWSEC pe placă (`gpu-jurnal-002.txt`, 736 rânduri) | `wpr2_after_i6` pe jurnal | ultima pagină `0x1ffeff000` (cel mai probabil) | — (jurnalul e pe stick) | NOT TESTED |
+| T69 | `i6_log::check_stick_journal` + unealta `verifica_jurnal_i6`: jurnalul întreg de pe stick (Bus Master pornit, I6, citirea WPR2, Bus Master la loc) citit dintr-o trecere | `cargo test -p nvidia-ga104 whole_stick_journal` | 2 scrieri config; ordinea I6 trece; WPR2 ultima pagină trece; HI greșit → eroare la HI; jurnal doar-citire → nimic de verificat | conform | PASS (SIMULARE) |
 
 ## Rezultate — sesiunea 30 + 30b (1 nov 2026, cloud, fără placă) — C-49/C-51: pregătirea I6
 

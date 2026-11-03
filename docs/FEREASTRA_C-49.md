@@ -57,3 +57,18 @@ Programul FWSEC (semnat NVIDIA, nu al nostru) ridică apoi zona protejată WPR2 
 ## După fereastră
 Pozele + `raport/*.txt` (cu jurnalul complet) → hub `rezultate/<data>-workstation-i6/`. Noi rulăm `i6_log::check_i6` pe jurnal și comparăm
 cu simularea. **Fișierele firmware nu se pun niciodată în hub sau în repo.**
+
+## Fereastra 4 nov 2026, 07:00 (C-63) — partea GPU, pe scurt
+
+*Sesiunea 42 (cloud, fără placă). Pașii OS și Release-ul de folosit: în hub, `stare/cyber-universe.md` (acum `os-220`).*
+
+1. **Înainte de orice pe placă:** copiezi `raport\gpu-jurnal-002.txt` de pe stick-ul de test **vechi** (cel din 3 nov) în hub `rezultate/`.
+   E singura dovadă a capătului WPR2 (HI) scris de FWSEC pe 3 nov; stick-ul nou nu-l are.
+2. Pornire rece (cablul scos 30 s) → stick-ul de test nou → `gpu pregatire-i6` → poză (trebuie „WPR2 coborat”, „TRECE”, „0 scrieri”).
+   Altceva → STOP.
+3. `gpu i6 --scrie` + `DA` → poză (rândul nou „WPR2 citit dupa I6: LO … HI … (capat: …)”), apoi `raport`.
+4. Ecran blocat: 1 minut, oprire completă, **nu repeta azi**.
+5. Pozele + `raport\*.txt` + `raport\gpu-jurnal-*.txt` → `rezultate/<data>-workstation-i6/`.
+
+**Ce rulăm noi după:** `verifica_jurnal_i6` pe fiecare jurnal (ordinea celor ~720 de scrieri + LO/HI față de FRTS `0x1ffe00000..0x1fff00000`).
+Dacă I6 trece: I7 (Booter pe SEC2) **nu** se încearcă în această fereastră — vine cu o comandă separată.

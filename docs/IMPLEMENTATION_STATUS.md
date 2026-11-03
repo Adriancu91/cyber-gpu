@@ -1,5 +1,23 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 42 — 3 noiembrie 2026, ~19:30 (ora României), în cloud, FĂRĂ placă — pregătire pentru fereastra C-63 (4 nov 07:00)
+
+În hub: nicio comandă nouă pentru `cyber-gpu`. Nou: **C-61 gata** (OS fixat pe `3286a3b`, Release `os-219`, apoi `os-220`) și **C-63**: fereastra lui
+Adrian pe workstation **4 nov de la 07:00** — printre teste: copierea `gpu-jurnal-002.txt` și I6 repetat (pornire rece). CI verde (rularea 94, `772c1e3`).
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Verificarea jurnalului dintr-o comandă | `i6_log::check_stick_journal` (nou, doar adăugare): desparte scrierile în configurație (Bus Master), verifică ordinea I6 și WPR2 după FWSEC; exemplul `verifica_jurnal_i6` (`cargo run --release -p nvidia-ga104 --example verifica_jurnal_i6 -- gpu-jurnal-002.txt`) dă „TRECE” sau „DE ANALIZAT” (ieșire 2) | PASS (SIMULARE): T69 |
+| Fereastra C-63 în docs | `docs/FEREASTRA_C-49.md`: secțiunea „Fereastra 4 nov (C-63)” — ordinea pentru partea GPU și ce rulăm noi după | doar plan |
+| Compatibilitate OS | doar adăugări (`StickJournal`, `check_stick_journal`) | PASS |
+
+Verificări (`sh tools/check.sh`): format, clippy `-D warnings`, **336 teste PASS** (1 ignorat), build no_std PASS; clippy cu `--features hw-write` PASS.
+
+**Următorul pas:** după fereastră, cu `gpu-jurnal-002.txt` (și jurnalul noului I6) în `rezultate/`: `verifica_jurnal_i6` pe fiecare → T68 (HI real);
+dacă I6 trece pe placă → plan pentru I7 (rămâne blocat până la o comandă separată).
+
+---
 ## Sesiunea 41 — 3 noiembrie 2026, ~13:30 (ora României), în cloud, FĂRĂ placă — doar plan (ideea „un singur program”)
 
 În hub, nicio comandă nouă/preluată pentru `cyber-gpu` după C-58 (gata), niciun raport nou în `rezultate/`. CI verde (rularea 93, `3286a3b`).
