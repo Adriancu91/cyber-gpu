@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 40 — 3 noiembrie 2026, ~12:40 (ora României), în cloud, FĂRĂ placă — C-58 (OPRIT ridicat: comandă nouă)
+
+Starea „OPRIT” se încheie: în hub au apărut rezultatul de pe placă (`rezultate/2026-11-03-workstation-os214-i6/`) și comanda **C-58** pentru noi.
+Pe placă, I6 (`gpu i6 --scrie`) a dat „NU TRECE”: „verificare esuata la 0x1fa824: asteptat 0x1ffe00, citit 0x1ffe00” — începutul WPR2 era exact
+cel cerut, dar mesajul numea registrul greșit; diferea capătul (HI). **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| (1) Eroarea numește HI | `check_frts` (același nume): start greșit → eroare la LO `0x1fa824`; capăt greșit → eroare la HI `0x1fa828` cu așteptat/citit. Nou: `compare_frts`, `check_frts_detail`, `FrtsCheck`, `Wpr2End` (valorile brute LO/HI) | PASS (SIMULARE): T65 |
+| (2) Sursele publice | RM 570.144 (MIT) verifică după FWSEC doar HI ≠ 0 și LO = începutul FRTS; nova-core (GPL, doar citit) la fel — comentariul lui spune „HI exclusiv”, dar nu-l verifică. Pe placă HI ≠ sfârșitul exclusiv → cel mai probabil ultima pagină de 4 KiB (capăt inclusiv). Regula nouă: LO exact; HI = sfârșitul exclusiv **sau** ultima pagină; altceva = eroare | DE CONFIRMAT cu HI brut din `gpu-jurnal-002.txt` |
+| (2) `gpu-sim` | `FakeGsp::wpr2_hi_last_page` (implicit: ultima pagină, ca pe placă; `false` = exclusiv) | PASS (SIMULARE): T66 |
+| (3) Test cu valorile reale | FRTS `0x1ffe00000..0x1fff00000`: ambele forme trec, 5 capete greșite prinse cu mesaj la HI; `i6_log::wpr2_after_i6` citește LO/HI din jurnalul de pe stick | PASS (SIMULARE): T65–T67 |
+| Propunerea pentru OS | `integration/cyber-universe/C-58_wpr2-capat.md` + hub `idei/2026-11-03_cyber-gpu-fixare-c58.md`: fixarea ≥ `af02bea` | propus |
+| Compatibilitate OS | doar adăugări; `check_frts` păstrat (aceleași citiri, în aceeași ordine) | PASS |
+
+Verificări (`sh tools/check.sh`): format, clippy `-D warnings`, **335 teste PASS** (1 ignorat), build no_std PASS; `--features hw-write` PASS.
+
+**Următorul pas:** sesiunea OS mută fixarea (C-52) → la fereastra următoare Adrian copiază `raport/gpu-jurnal-002.txt` în hub → noi confirmăm HI cu
+`wpr2_after_i6` (T68) → abia apoi I6 se repetă pe placă (pornire rece).
+
+---
 ## Sesiunea 39 — 3 noiembrie 2026, ~07:28 (ora României), în cloud, FĂRĂ placă — OPRIT rămâne
 
 **OPRIT: necesită analiza lui Adrian** (neschimbat). Verificat: CI verde (vârful `a8d72c3`); în hub de la sesiunea 38 nicio comandă nouă/preluată

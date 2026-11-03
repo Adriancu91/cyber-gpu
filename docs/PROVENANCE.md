@@ -88,3 +88,11 @@ commit `8ec351ae`, clonă temporară în sesiune, nimic copiat în repo): `src/c
 măsurătorile noastre (rapoartele Cyber Universe din hub `rezultate/`, 28 oct–1 nov): doar valori de registre, poziții, mărimi și id-uri; primul
 cuvânt al VBIOS-ului și conținutul imaginilor **nu** sunt reproduse. Pentru temperatură am verificat antetele NVIDIA MIT 570.144 (clonă temporară,
 nimic copiat): nu există `dev_therm.h` pentru Ampere → temperatura nu intră în tur până nu are o sursă confirmată.
+
+
+**C-58 (3 nov, sesiunea 40):** `compare_frts` / `check_frts_detail` (`gsp/falcon.rs`), `wpr2_after_i6` (`i6_log.rs`) și opțiunea
+`wpr2_hi_last_page` din `gpu-sim` sunt scrise de noi. Citit doar ca specificație, nimic copiat în repo (clone temporare în sesiune):
+open-gpu-kernel-modules tag 570.144 (MIT) `src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_frts_tu102.c` (după FWSEC-FRTS: HI ≠ 0 și
+LO == începutul FRTS; HI nu e comparat) și `kernel_gsp_tu102.c` (HI doar ≠ 0); Linux (GPL, **doar citit**, nimic preluat în cod):
+`drivers/gpu/nova-core/fb.rs`, `fb/regs.rs`, `gsp/hal/tu102.rs` (aceeași verificare doar pe LO; comentariul numește HI „exclusiv”, dar nu-l verifică)
+și nouveau `nvkm/subdev/gsp/fwsec.c` (doar afișează LO/HI). Concluzia că HI ține ultima pagină vine din măsurătoarea noastră pe placă (3 nov), nu din aceste surse.

@@ -1,5 +1,14 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 40 (3 nov 2026, cloud, fără placă) — C-58: verificarea capătului WPR2
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T65 | `compare_frts`: start ≠ cerut → eroare la LO `0x1fa824`; capăt = sfârșit exclusiv sau ultima pagină de 4 KiB → trece; orice alt capăt → eroare la HI `0x1fa828` (așteptat/citit) | `cargo test -p nvidia-ga104 frts_end_exclusive` | conform, cu valorile de pe placă (FRTS `0x1ffe00000..0x1fff00000`) | conform; 5 capete greșite prinse | PASS (SIMULARE) |
+| T66 | I6 întreg pe `gpu-sim` cu ambele forme ale HI + un capăt greșit (mesajul numește HI) | `cargo test -p nvidia-ga104 hi_forms` | trece / trece / „verificare esuata la 0x1fa828…” | conform | PASS (SIMULARE) |
+| T67 | `i6_log::wpr2_after_i6`: LO/HI citite din textul jurnalului (cu prefixul OS) și verificate cu aceeași regulă | `cargo test -p nvidia-ga104 wpr2_read_back` | trece pe ultima pagină; HI străin = eroare; doar citirea rece = nimic de verificat | conform | PASS (SIMULARE) |
+| T68 | HI real citit după FWSEC pe placă (`gpu-jurnal-002.txt`, 736 rânduri) | `wpr2_after_i6` pe jurnal | ultima pagină `0x1ffeff000` (cel mai probabil) | — (jurnalul e pe stick) | NOT TESTED |
+
 ## Rezultate — sesiunea 30 + 30b (1 nov 2026, cloud, fără placă) — C-49/C-51: pregătirea I6
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |
