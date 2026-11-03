@@ -43,4 +43,5 @@ aceleași verificări pe stable și nightly.
 - [docs/HARDWARE_WORKSTATION.md](docs/HARDWARE_WORKSTATION.md) — datele reale ale workstation-ului (K0) și dependența de ReBAR/Above-4G
 - [docs/TEST_MATRIX.md](docs/TEST_MATRIX.md) — rezultatele de azi și planul pentru seara de testare
 - [docs/PROVENANCE.md](docs/PROVENANCE.md) — sursele, licențele, regula clean-room
+- [docs/TINTA_UN_SINGUR_PROGRAM.md](docs/TINTA_UN_SINGUR_PROGRAM.md) — ținta de plan: Kronos pe placă ca un singur program pe simbol (doar plan)
 - [integration/cyber-universe/README.md](integration/cyber-universe/README.md) — raportul de integrare cu OS-ul

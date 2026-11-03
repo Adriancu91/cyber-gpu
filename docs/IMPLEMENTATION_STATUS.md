@@ -1,5 +1,19 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 41 — 3 noiembrie 2026, ~13:30 (ora României), în cloud, FĂRĂ placă — doar plan (ideea „un singur program”)
+
+În hub, nicio comandă nouă/preluată pentru `cyber-gpu` după C-58 (gata), niciun raport nou în `rezultate/`. CI verde (rularea 93, `3286a3b`).
+Nou: ideea `idei/2026-11-03_cyber-gpu-un-singur-bloc.md`, aprobată de Adrian (13:25) **ca direcție de plan**; ne cere s-o păstrăm în `docs/`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Ținta în docs | `docs/TINTA_UN_SINGUR_PROGRAM.md`: ce avem deja în simulare (semafoare QMD/coadă, inel GPFIFO), ce lipsește (atomice în NAK, toate blocurile rezidente, ceas de siguranță, tabel de calcule), ordinea măsurătorilor (întâi costul unei lansări pe placă) | doar plan — NOT TESTED |
+| Cod | neschimbat; `sh tools/check.sh`: 335 teste PASS (1 ignorat), build no_std PASS | NOT TESTED pe placă |
+
+**Următorul pas:** neschimbat față de sesiunea 40 — sesiunea OS mută fixarea (≥ `af02bea`) → la fereastra următoare `raport/gpu-jurnal-002.txt` în hub
+→ confirmăm HI cu `wpr2_after_i6` → I6 se repetă pe placă (pornire rece).
+
+---
 ## Sesiunea 40 — 3 noiembrie 2026, ~12:40 (ora României), în cloud, FĂRĂ placă — C-58 (OPRIT ridicat: comandă nouă)
 
 Starea „OPRIT” se încheie: în hub au apărut rezultatul de pe placă (`rezultate/2026-11-03-workstation-os214-i6/`) și comanda **C-58** pentru noi.
