@@ -83,6 +83,75 @@ pub const WINDOW_CHAIN: &[ChainStep] = &[
     },
 ];
 
+/// C-71: the whole window, I6 to the first computation, for `gpu lant` at a
+/// window with Adrian (run with [`run_chain_ready`] and
+/// [`READY_FOR_WINDOW`]). Every step after I6 is written and tested **only in
+/// SIMULARE**; on the board each one is a first try, and the chain stops at
+/// the first failure with Bus Master put back. [`WINDOW_CHAIN`] stays as it
+/// was (it stops before I7).
+pub const WINDOW_CHAIN_FULL: &[ChainStep] = &[
+    WINDOW_CHAIN[0],
+    WINDOW_CHAIN[1],
+    WINDOW_CHAIN[2],
+    ChainStep {
+        id: "i6-wpr2-citit",
+        what: "doar citire: WPR2 dupa I6 (read_frts_after_i6), forma capatului",
+        writes_hardware: false,
+        cleanup: false,
+        plan_step: "I6",
+    },
+    WINDOW_CHAIN[3],
+    ChainStep {
+        id: "i7-citit",
+        what: "doar citire: cutiile SEC2 si RISC-V GSP dupa I7 (read_after_i7)",
+        writes_hardware: false,
+        cleanup: false,
+        plan_step: "I7",
+    },
+    ChainStep {
+        id: "i8-gsp-init",
+        what: "SetSystemInfo + SetRegistry, soneria GSP, secventiatorul cerut de GSP-RM (doar ferestrele GSP/SEC2), asteptarea GSP_INIT_DONE",
+        writes_hardware: true,
+        cleanup: false,
+        plan_step: "I8",
+    },
+    ChainStep {
+        id: "i8e-golden",
+        what: "golden image: client, dispozitiv, canal, contextele GR promovate (mesaje RPC + soneria dupa fiecare)",
+        writes_hardware: true,
+        cleanup: false,
+        plan_step: "I8",
+    },
+    ChainStep {
+        id: "i9-canal-lucru",
+        what: "clientul de lucru pe tabelele noastre de pagini (scrise in VRAM), grupul de canale, canalul de lucru",
+        writes_hardware: true,
+        cleanup: false,
+        plan_step: "I9",
+    },
+    ChainStep {
+        id: "i10-add64",
+        what: "primul calcul: add64 (64 de adunari f32, NAK), rezultatul comparat bit cu bit cu procesorul",
+        writes_hardware: true,
+        cleanup: false,
+        plan_step: "I10",
+    },
+    ChainStep {
+        id: "i10-cost-lansare",
+        what: "masuratoarea 1 (un singur program): 16 lansari add64 cu marca de timp dupa fiecare",
+        writes_hardware: true,
+        cleanup: false,
+        plan_step: "I10",
+    },
+    WINDOW_CHAIN[4],
+    WINDOW_CHAIN[5],
+];
+
+/// C-71: plan steps that are `Blocked` only because they write to the board
+/// (or need the step before on the board) and may run in the full window
+/// chain when Adrian allows writes. Everything else blocked still stops.
+pub const READY_FOR_WINDOW: &[&str] = &["I5", "I6", "I7", "I8", "I9", "I10"];
+
 /// Steps whose plan status may be `Blocked` and still run in the chain:
 /// I5/I6 are blocked in the plan only because they write ("doar cu Adrian
 /// de fata"); `writes_allowed` is exactly that permission. Anything else
@@ -148,6 +217,18 @@ pub fn run_chain(
     steps: &'static [ChainStep],
     writes_allowed: bool,
     journal: &mut Journal,
+    run: impl FnMut(&ChainStep, &mut Journal) -> GpuResult<()>,
+) -> ChainReport {
+    run_chain_ready(steps, BLOCKED_ONLY_FOR_WRITES, writes_allowed, journal, run)
+}
+
+/// C-71: [`run_chain`] with the list of plan steps that may run although
+/// blocked in the plan (`ready`, e.g. [`READY_FOR_WINDOW`]). Same rules.
+pub fn run_chain_ready(
+    steps: &'static [ChainStep],
+    ready: &[&str],
+    writes_allowed: bool,
+    journal: &mut Journal,
     mut run: impl FnMut(&ChainStep, &mut Journal) -> GpuResult<()>,
 ) -> ChainReport {
     let start_writes = journal.writes();
@@ -176,9 +257,7 @@ pub fn run_chain(
             } else {
                 match plan_status(s.plan_step) {
                     None => Some(format!("pas necunoscut in plan: {}", s.plan_step)),
-                    Some(StepStatus::Blocked(why))
-                        if !BLOCKED_ONLY_FOR_WRITES.contains(&s.plan_step) =>
-                    {
+                    Some(StepStatus::Blocked(why)) if !ready.contains(&s.plan_step) => {
                         Some(format!("blocat in plan ({}): {why}", s.plan_step))
                     }
                     Some(StepStatus::NotImplemented) => {
@@ -389,5 +468,36 @@ mod tests {
         }
         let first_cleanup = WINDOW_CHAIN.iter().position(|s| s.cleanup).unwrap();
         assert!(WINDOW_CHAIN[first_cleanup..].iter().all(|s| s.cleanup));
+    }
+    /// C-71: the full chain's gates — read-only mode stops before Bus
+    /// Master; the old ready list stops it at I7 (blocked in the plan);
+    /// only with READY_FOR_WINDOW does it go further. SIMULARE.
+    #[test]
+    fn full_chain_gates() {
+        let ids: Vec<_> = WINDOW_CHAIN_FULL.iter().map(|s| s.id).collect();
+        assert_eq!(ids.first(), Some(&"pregatire-i6"));
+        assert_eq!(&ids[ids.len() - 2..], ["bus-master-oprit", "tur-dupa"]);
+        let mut ran = Vec::new();
+        let mut j = Journal::new(64);
+        let r = run_chain_ready(
+            WINDOW_CHAIN_FULL,
+            READY_FOR_WINDOW,
+            false,
+            &mut j,
+            |s, _| {
+                ran.push(s.id);
+                Ok(())
+            },
+        );
+        assert_eq!(r.stopped_at.unwrap().0, "bus-master-pornit");
+        assert_eq!(ran, ["pregatire-i6", "tur-dupa"]);
+        let mut j = Journal::new(64);
+        let r = run_chain(WINDOW_CHAIN_FULL, true, &mut j, |_, _| Ok(()));
+        assert_eq!(r.stopped_at.unwrap().0, "i7-booter-gsp");
+        let mut j = Journal::new(64);
+        let r = run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, true, &mut j, |_, _| {
+            Ok(())
+        });
+        assert!(r.all_passed());
     }
 }

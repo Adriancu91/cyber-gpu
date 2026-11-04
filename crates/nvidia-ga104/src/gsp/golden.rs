@@ -340,31 +340,108 @@ pub const RM_REPLY_US: u64 = 5_000_000;
 
 impl<C: Clock + ?Sized, P: FnMut(&mut dyn SharedMem)> RmTransport for QueueTransport<'_, C, P> {
     fn call(&mut self, func: u32, payload: &[u8]) -> GpuResult<Vec<u8>> {
-        self.q.send_rpc(self.mem, func, payload)?;
-        let start = self.clock.now_us();
-        loop {
-            match self.q.recv_rpc(self.mem)? {
-                Some(m) if m.function == func => {
-                    if m.rpc_result != 0 {
-                        return Err(GpuError::HardwareFault { code: m.rpc_result });
-                    }
-                    return Ok(m.payload);
+        queue_call(
+            self.q,
+            self.mem,
+            self.clock,
+            self.timeout_us,
+            &mut self.poll,
+            &mut self.events,
+            func,
+            payload,
+            None,
+        )
+    }
+}
+
+/// C-71: [`QueueTransport`] that rings the GSP doorbell after every message
+/// it puts in the command queue — what the board needs (nouveau r535 and
+/// RM 570.144 write `NV_PGSP_QUEUE_HEAD(0)` after each command; the plain
+/// [`QueueTransport`] never rings and only works with a simulated GSP that
+/// does not wait for the bell). `bell` is the OS's doorbell write (behind
+/// `HardwareWritePermit`, e.g. [`super::falcon::ring_doorbell`]); a failed
+/// bell stops the call with that error.
+pub struct QueueTransportBell<
+    'a,
+    C: Clock + ?Sized,
+    P: FnMut(&mut dyn SharedMem),
+    B: FnMut() -> GpuResult<()>,
+> {
+    pub q: &'a mut CpuQueues,
+    pub mem: &'a mut dyn SharedMem,
+    pub clock: &'a mut C,
+    pub timeout_us: u64,
+    pub poll: P,
+    pub events: Vec<u32>,
+    pub bell: B,
+    /// Doorbells rung so far.
+    pub rung: u32,
+}
+
+impl<C: Clock + ?Sized, P: FnMut(&mut dyn SharedMem), B: FnMut() -> GpuResult<()>> RmTransport
+    for QueueTransportBell<'_, C, P, B>
+{
+    fn call(&mut self, func: u32, payload: &[u8]) -> GpuResult<Vec<u8>> {
+        let bell = &mut self.bell;
+        let rung = &mut self.rung;
+        let mut ring = || {
+            bell()?;
+            *rung += 1;
+            Ok(())
+        };
+        queue_call(
+            self.q,
+            self.mem,
+            self.clock,
+            self.timeout_us,
+            &mut self.poll,
+            &mut self.events,
+            func,
+            payload,
+            Some(&mut ring),
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn queue_call<C: Clock + ?Sized>(
+    q: &mut CpuQueues,
+    mem: &mut dyn SharedMem,
+    clock: &mut C,
+    timeout_us: u64,
+    poll: &mut dyn FnMut(&mut dyn SharedMem),
+    events: &mut Vec<u32>,
+    func: u32,
+    payload: &[u8],
+    bell: Option<&mut dyn FnMut() -> GpuResult<()>>,
+) -> GpuResult<Vec<u8>> {
+    q.send_rpc(mem, func, payload)?;
+    if let Some(b) = bell {
+        b()?;
+    }
+    let start = clock.now_us();
+    loop {
+        match q.recv_rpc(mem)? {
+            Some(m) if m.function == func => {
+                if m.rpc_result != 0 {
+                    return Err(GpuError::HardwareFault { code: m.rpc_result });
                 }
-                Some(m) if m.is_event() => self.events.push(m.function),
-                Some(_) => {
-                    return Err(GpuError::InvalidArgument(
-                        "GSP-RM a raspuns la alta functie",
-                    ));
+                return Ok(m.payload);
+            }
+            Some(m) if m.is_event() => events.push(m.function),
+            Some(_) => {
+                return Err(GpuError::InvalidArgument(
+                    "GSP-RM a raspuns la alta functie",
+                ));
+            }
+            None => {
+                if clock.now_us().saturating_sub(start) >= timeout_us {
+                    return Err(GpuError::Timeout {
+                        waited_us: clock.now_us() - start,
+                    });
                 }
-                None => {
-                    if self.clock.now_us().saturating_sub(start) >= self.timeout_us {
-                        return Err(GpuError::Timeout {
-                            waited_us: self.clock.now_us() - start,
-                        });
-                    }
-                    self.clock.delay_us(100);
-                    (self.poll)(self.mem);
-                }
+                clock.delay_us(100);
+                poll(mem);
             }
         }
     }

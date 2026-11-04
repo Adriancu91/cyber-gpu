@@ -1866,4 +1866,291 @@ mod tests {
         put(&mut b, 20 * 8, 0);
         assert_eq!(rmapi::parse_gr_info(&b), rmapi::parse_gr_info(&good));
     }
+
+    // ---- C-71: the whole window chain, I6 → first computation (SIMULARE) ----
+
+    /// What one simulated window left behind.
+    struct FullWindow {
+        report: crate::chain::ChainReport,
+        command_after: u16,
+        gsp_doorbells: u32,
+        rpc_bells: u32,
+        writes: Vec<(u32, u32)>,
+        median_ns: Option<u64>,
+    }
+
+    /// `gpu lant` with [`crate::chain::WINDOW_CHAIN_FULL`] on the simulated
+    /// board: Bus Master on the observed config space, I6/I7 on `FakeGsp`,
+    /// I8 and every RM call through the real queues to `SimGsp` + `FakeRm`,
+    /// the work channel on our page tables in a simulated VRAM, the launches
+    /// on the command processor model. The simulated GSP answers a command
+    /// only after a doorbell (as the board). `bell_each_rpc = false` uses the
+    /// plain `QueueTransport`, which never rings.
+    fn full_window(bell_each_rpc: bool) -> FullWindow {
+        use crate::chain::{READY_FOR_WINDOW, WINDOW_CHAIN_FULL, run_chain_ready};
+        use crate::gsp::falcon::{self, Engine, GuardedBar0};
+        use crate::gsp::golden::QueueTransportBell;
+        use crate::gsp::rpc::{event, function};
+        use crate::launch_cost;
+        use core::cell::Cell;
+        use gpu_core::diag::Journal;
+        use gpu_core::hal::ConfigSpace;
+        use gpu_pci::bus_master::{BusMasterPermit, restore_command, set_bus_master};
+        use gpu_sim::fake_gsp::{FakeGsp, SimUcode};
+        use gpu_sim::observed;
+
+        const WPR_META: u64 = 0x1_2340_0000;
+        let mut cfg = observed::observed_config();
+        let permit = BusMasterPermit::new("test C-71 (SIMULARE)");
+        let mut old = None;
+        let mut g = FakeGsp::new();
+        let frts = g.frts;
+        let mut clock = SimClock::default();
+        let l = QueueLayout::standard();
+        let mut shm = alloc::vec![0u8; l.total_size];
+        let pages: Vec<u64> = (0..l.page_table_entries as u64)
+            .map(|i| 0x0500_0000 + i * 0x1000)
+            .collect();
+        let mut q = CpuQueues::init(&mut shm, l, &pages).unwrap();
+        let mut gsp: Option<SimGsp> = None;
+        let mut rm = FakeRm::new();
+        let vram = 8u64 << 30;
+        let mut mem: Mem =
+            GpuMemory::new(64 << 20, vram - (256 << 20), Sim(SimVram::new(vram))).unwrap();
+        let bells = Cell::new(0u32);
+        let served = Cell::new(0u32);
+        let mut golden = None;
+        let mut space = None;
+        let mut launch = None;
+        let mut median = None;
+        let mut j = Journal::new(1 << 16);
+        let fail = |w: &'static str| GpuError::InvalidArgument(w);
+        let load = |b: &mut GuardedBar0<'_, FakeGsp>, e: Engine| {
+            let u = match e {
+                Engine::Gsp => SimUcode::FwsecFrts,
+                Engine::Sec2 => SimUcode::BooterLoad,
+            };
+            b.model().sim_load(e.base(), u);
+            Ok(())
+        };
+        let report = run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, true, &mut j, |s, j| {
+            // One RM call: the doorbell after each message (or never), the
+            // simulated GSP answering only after a doorbell it has not served.
+            macro_rules! with_rm {
+                ($g:expr, |$t:ident| $body:expr) => {{
+                    let gsp = gsp.as_mut().ok_or(fail("GSP neinitializat"))?;
+                    let mut b = GuardedBar0::new($g, j, None)?;
+                    let poll = |m: &mut dyn SharedMem| {
+                        if bells.get() > served.get() {
+                            served.set(bells.get());
+                            gsp.service_with(m, |f, p| rm.handle(f, p));
+                        }
+                    };
+                    if bell_each_rpc {
+                        let mut $t = QueueTransportBell {
+                            q: &mut q,
+                            mem: &mut shm,
+                            clock: &mut clock,
+                            timeout_us: RM_REPLY_US,
+                            poll,
+                            events: Vec::new(),
+                            bell: || {
+                                falcon::ring_doorbell(&mut b)?;
+                                bells.set(bells.get() + 1);
+                                Ok(())
+                            },
+                            rung: 0,
+                        };
+                        $body
+                    } else {
+                        let mut $t = QueueTransport {
+                            q: &mut q,
+                            mem: &mut shm,
+                            clock: &mut clock,
+                            timeout_us: RM_REPLY_US,
+                            poll,
+                            events: Vec::new(),
+                        };
+                        $body
+                    }
+                }};
+            }
+            match s.id {
+                "pregatire-i6" => {
+                    let mut b = GuardedBar0::new(&mut g, j, None)?;
+                    match falcon::read_wpr2(&mut b)? {
+                        None => Ok(()),
+                        Some(_) => Err(fail("WPR2 deja ridicat")),
+                    }
+                }
+                "bus-master-pornit" => {
+                    old = Some(set_bus_master(&mut cfg, &permit, j, true)?);
+                    Ok(())
+                }
+                "i6-fwsec-frts" => {
+                    let mut b = GuardedBar0::new(&mut g, j, None)?;
+                    falcon::fwsec_frts(&mut b, &mut clock, load, frts).map(|_| ())
+                }
+                "i6-wpr2-citit" => falcon::read_frts_after_i6(&mut g, j, frts).map(|_| ()),
+                "i7-booter-gsp" => {
+                    let mut b = GuardedBar0::new(&mut g, j, None)?;
+                    falcon::booter_load(&mut b, &mut clock, load, WPR_META)
+                }
+                "i7-citit" => match falcon::read_after_i7(&mut g, j)?.passed() {
+                    true => Ok(()),
+                    false => Err(fail("I7: Booter refuzat sau RISC-V oprit")),
+                },
+                "i8-gsp-init" => {
+                    let sys =
+                        crate::gsp::sysinfo::encode(&crate::gsp::sysinfo::tests::workstation())?;
+                    q.send_rpc(&mut shm, function::GSP_SET_SYSTEM_INFO, &sys)?;
+                    let reg = crate::gsp::registry::encode(&crate::gsp::registry::boot_entries())?;
+                    q.send_rpc(&mut shm, function::SET_REGISTRY, &reg)?;
+                    let mut b = GuardedBar0::new(&mut g, j, None)?;
+                    falcon::ring_doorbell(&mut b)?;
+                    let mut peer = SimGsp::start(&mut shm, l.cmd_queue_offset, l.stat_queue_offset);
+                    q.link_rx(&shm)?;
+                    let mut step = 0;
+                    let ctx = crate::gsp::sequencer::SeqContext {
+                        libos_addr: 0x0000_0002_0000_0000,
+                        app_version: 570_144,
+                    };
+                    crate::gsp::sequencer::wait_init_done(
+                        &mut q,
+                        &mut shm,
+                        &mut b,
+                        &mut clock,
+                        ctx,
+                        crate::gsp::sequencer::INIT_DONE_US,
+                        |m| {
+                            step += 1;
+                            match step {
+                                1 => peer.service(m),
+                                2 => peer.post(m, event::GSP_INIT_DONE, 0, &[]),
+                                _ => {}
+                            }
+                        },
+                    )?;
+                    gsp = Some(peer);
+                    Ok(())
+                }
+                "i8e-golden" => {
+                    let gi = with_rm!(&mut g, |t| init_golden_image(&mut t, &mut mem))?;
+                    golden = Some(gi);
+                    Ok(())
+                }
+                "i9-canal-lucru" => {
+                    let gi = golden.as_ref().ok_or(fail("fara golden image"))?;
+                    let (u, w) = with_rm!(&mut g, |t| {
+                        let u = open_user_space(&mut t, gi.next_handle(), mem.root())?;
+                        let cg = open_compute_group(&mut t, &u)?;
+                        let w = open_work_channel_cleared(&mut t, &mut mem, &u, &cg, gi)?;
+                        query_gr_info(&mut t, &u)?.check_sm86()?;
+                        Ok::<_, GpuError>((u, w))
+                    })?;
+                    space = Some((u, w));
+                    Ok(())
+                }
+                "i10-add64" => {
+                    let (u, w) = space.as_ref().ok_or(fail("fara canal de lucru"))?;
+                    let root = rm
+                        .page_directory(USER_CLIENT, u.vaspace)
+                        .ok_or(fail("RM nu are tabelele"))?
+                        .0;
+                    let k = add64_buffers(&mut mem);
+                    let push = mem.alloc_mapped(0x1000, 0x1000)?;
+                    let mut wq = WorkQueue::new(w, push)?;
+                    wq.submit(mem.writer_mut(), &setup_words())?;
+                    wq.launch_and_signal(mem.writer_mut(), k.qmd.va, k.sem.va, DONE)?;
+                    let (cp, r) = gpu_launches(&mut mem, root, w, &push, &k);
+                    r?;
+                    if read_semaphore(mem.writer_mut(), k.sem.pa)? != DONE
+                        || read_c(&mut mem, &k) != k.want
+                    {
+                        return Err(fail("add64: rezultat diferit de procesor"));
+                    }
+                    wq.update_get(mem.writer_mut())?;
+                    launch = Some((cp, root, push, k, wq));
+                    Ok(())
+                }
+                "i10-cost-lansare" => {
+                    let (cp, root, push, k, wq) = launch.as_mut().ok_or(fail("fara add64"))?;
+                    let (_, w) = space.as_ref().unwrap();
+                    let rec = mem.alloc_mapped(0x1000, 0x1000)?;
+                    put_bytes(mem.writer_mut(), rec.pa, &[0; 17 * 16]);
+                    let mut words = alloc::vec![0u32; 256];
+                    let mut pb = PushBuf::new(&mut words);
+                    launch_cost::encode(&mut pb, k.qmd.va, rec.va, 16, 0x500)?;
+                    let n = pb.len();
+                    wq.submit(mem.writer_mut(), &words[..n])?;
+                    // The GPU's side (SIMULARE clock: 4000 ns per launch).
+                    cp.sim_launch_ns = 4000;
+                    cp.mem
+                        .load_from_vram(&mem.writer().0, *root, rec.va, rec.size)?;
+                    gpu_runs_again(cp, &mut mem, *root, w, push, k)?;
+                    cp.mem
+                        .store_to_vram(&mut mem.writer_mut().0, *root, rec.va, 17 * 16)?;
+                    let mut bytes = Vec::new();
+                    for o in (0..17 * 16).step_by(4) {
+                        bytes.extend_from_slice(
+                            &mem.writer_mut().read_u32(rec.pa + o)?.to_le_bytes(),
+                        );
+                    }
+                    median = Some(launch_cost::analyze(&bytes, 16, 0x500)?.median_ns);
+                    Ok(())
+                }
+                "bus-master-oprit" => match old {
+                    Some(o) => restore_command(&mut cfg, &permit, j, o),
+                    None => Ok(()),
+                },
+                "tur-dupa" => Ok(()),
+                _ => Err(GpuError::NotPermitted("pas fara implementare in test")),
+            }
+        });
+        FullWindow {
+            report,
+            command_after: cfg.read32(0x04) as u16,
+            gsp_doorbells: g.doorbells,
+            rpc_bells: bells.get(),
+            writes: g.writes.clone(),
+            median_ns: median,
+        }
+    }
+
+    /// C-71 (T78): every step of the full window chain passes on the
+    /// simulated board, with the doorbell after every RM call.
+    #[test]
+    fn full_window_chain_passes_every_step_simulated() {
+        let w = full_window(true);
+        assert!(w.report.all_passed(), "{}", w.report);
+        assert_eq!(w.report.steps.len(), crate::chain::WINDOW_CHAIN_FULL.len());
+        // One doorbell for I8, then one per RM call (golden + I9 + GR info).
+        assert!(w.rpc_bells > 10, "{}", w.rpc_bells);
+        assert_eq!(w.gsp_doorbells, 1 + w.rpc_bells);
+        // All register writes in the GSP/SEC2 windows.
+        assert!(w.writes.iter().all(|&(o, _)| {
+            (0x110000..=0x113fff).contains(&o) || (0x840000..=0x843fff).contains(&o)
+        }));
+        assert_eq!(w.median_ns, Some(4000));
+        assert_eq!(w.command_after, gpu_sim::observed::COMMAND);
+    }
+
+    /// C-71 (T79): the plain transport never rings; a GSP that waits for
+    /// the doorbell never answers → the chain stops at the golden image
+    /// (timeout), nothing after it runs, Bus Master is put back.
+    #[test]
+    fn without_a_doorbell_per_rpc_the_chain_stops_at_the_golden_image() {
+        use crate::chain::Outcome;
+        let w = full_window(false);
+        let (at, why) = w.report.stopped_at.clone().unwrap();
+        assert_eq!(at, "i8e-golden", "{why}");
+        assert!(why.starts_with("timeout"), "{why}");
+        assert_eq!(
+            w.report.outcome("i10-add64"),
+            Some(&Outcome::Skipped("lantul s-a oprit inainte"))
+        );
+        assert_eq!(w.report.outcome("bus-master-oprit"), Some(&Outcome::Passed));
+        assert_eq!(w.command_after, gpu_sim::observed::COMMAND);
+        assert_eq!(w.gsp_doorbells, 1);
+    }
 }

@@ -79,7 +79,9 @@ pub const GA104_PLAN: &[Step] = &[
     Step {
         id: "I7",
         what: "pornirea GSP RISC-V si booter_load pe SEC2 cu adresa WPR meta",
-        status: StepStatus::Blocked("necesita I4-I6"),
+        status: StepStatus::Blocked(
+            "scrie in falcon-ul SEC2: doar in fereastra pe workstation, cu Adrian de fata, dupa I6 pe placa; secventa (falcon::booter_load_dma, read_after_i7, i6_log::check_i7) e scrisa si testata doar in SIMULARE",
+        ),
         writes_hardware: true,
     },
     Step {
