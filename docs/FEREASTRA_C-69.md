@@ -5,6 +5,10 @@
 doar în SIMULARE (`gpu-sim`). Regulile din `docs/FEREASTRA_C-49.md` rămân valabile (pornire rece, oprire la primul rezultat neașteptat,
 nicio reîncercare în aceeași fereastră, firmware-ul nu intră niciodată în repo sau în hub).*
 
+> **C-71 (decizia lui Adrian, 4 nov 23:13):** testele pe placă se fac **în grup**. Ferestrele 1–4 de mai jos pot fi o singură fereastră:
+> `gpu lant` cu `chain::WINDOW_CHAIN_FULL` rulează toți pașii în ordine și se oprește curat la primul eșec (Bus Master pus la loc, tur de citire).
+> Lanțul întreg trece cap-coadă în SIMULARE (T78). Lista scurtă pentru fereastră e în hub, `stare/cyber-gpu.md`.
+
 **Ordinea e fixă.** O fereastră începe doar dacă cea dinainte a dat TRECE, verificat de noi pe jurnalul de pe stick.
 
 ## Fereastra 0 — I6 o dată, pornire rece (C-66, deja planificată)

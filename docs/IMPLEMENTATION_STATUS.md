@@ -1,5 +1,25 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 48 — 4 noiembrie 2026, ~23:35 (ora României), în cloud, FĂRĂ placă — C-71 (lucru continuu: I7 → I10 în lanț)
+
+Decizia lui Adrian (23:13): pașii avansează în simulare fără să aștepte fiecare o fereastră; testele pe placă se fac în grup, cu `gpu lant`.
+Comanda **C-71**: I7 → I8 → I9 → I10 în simulare, cu `gpu lant` pregătit să-i ruleze pe toți la fereastră. **Nimic testat pe RTX 3070 Ti.**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Lanțul complet | `chain::WINDOW_CHAIN_FULL` (13 pași: pregătire → Bus Master → I6 → WPR2 citit → I7 → I7 citit → I8 → golden → I9 → I10 add64 → costul lansării → Bus Master la loc → tur), `run_chain_ready` + `READY_FOR_WINDOW`; `WINDOW_CHAIN` / `run_chain` neschimbate | PASS (SIMULARE): T80 |
+| Lanțul rulat cap-coadă | toți cei 13 pași pe placa simulată, cu codul real: `FakeGsp` (I6/I7), cozile reale + `SimGsp` + `FakeRm` (I8, golden, I9), tabelele noastre în VRAM simulat, `add64` bit cu bit, costul lansării (mediana = ceasul simulat) | PASS (SIMULARE): T78 |
+| Defect găsit în simulare | `QueueTransport` nu suna soneria GSP după fiecare mesaj RM (pe placă GSP-RM n-ar fi răspuns la golden image); nou `QueueTransportBell` (soneria după fiecare mesaj); GSP-ul simulat răspunde acum doar după sonerie | PASS (SIMULARE): T78; fără sonerie lanțul se oprește la golden (timeout), Bus Master pus la loc: T79 |
+| Planul | textul de blocare I7 actualizat (scrie în SEC2, doar cu Adrian, după I6 pe placă) | — |
+| Compatibilitate OS | doar adăugări; `QueueTransport` are același comportament | PASS |
+
+Verificări (`sh tools/check.sh`): format, clippy `-D warnings`, **349 teste PASS** (1 ignorat), build no_std PASS; clippy cu `--features hw-write` PASS.
+
+**Următorul pas:** sesiunea OS leagă `gpu lant` de `WINDOW_CHAIN_FULL` (nota `integration/cyber-universe/C-71_gpu-lant-complet.md`); la fereastră,
+un singur `gpu lant` + „DA” rulează tot până la primul eșec. Pentru noi, fără placă: verificarea jurnalului I8 + golden (doar ferestrele GSP/SEC2,
+o sonerie pe mesaj) și extinderea `verifica_jurnal_i7` la tot lanțul.
+
+---
 ## Sesiunea 47 — 4 noiembrie 2026, ~23:00 (ora României), în cloud, FĂRĂ placă — C-69 (comandă nouă: I7–I10 + ținta „un singur program”)
 
 În hub: planul independenței OS aprobat de Adrian („da la tot”) → pentru noi **C-69** (F5: I6 TRECE → I7–I10 → primul calcul → Kronos pe placă).

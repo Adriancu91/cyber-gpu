@@ -1,5 +1,14 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 48 (4 nov 2026, cloud, fără placă) — C-71: lanțul complet al ferestrei
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T78 | `WINDOW_CHAIN_FULL` rulat cap-coadă pe placa simulată (13 pași, cod real, GSP simulat care răspunde doar după sonerie) | `cargo test -p nvidia-ga104 full_window_chain_passes` | toți TREC; o sonerie pe mesaj RM; scrieri doar GSP/SEC2; `add64` bit cu bit; mediana 4000 ns (ceasul simulat); Bus Master la loc | conform | PASS (SIMULARE) |
+| T79 | Același lanț cu transportul vechi (fără sonerie) | `cargo test -p nvidia-ga104 without_a_doorbell_per_rpc` | oprire la `i8e-golden` (timeout), pașii de după săriți, Bus Master la loc | conform | PASS (SIMULARE) |
+| T80 | Porțile lanțului complet: doar-citire → oprire înainte de Bus Master; lista veche → oprire la I7; `READY_FOR_WINDOW` → merge mai departe | `cargo test -p nvidia-ga104 full_chain_gates` | conform | conform | PASS |
+| T81 | `gpu lant` complet pe placa reală | — | TRECE sau oprire curată la primul eșec | — | NOT TESTED (fereastra cu Adrian) |
+
 ## Rezultate — sesiunea 47 (4 nov 2026, cloud, fără placă) — C-69: I7 verificat ca I6 + costul unei lansări
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |
