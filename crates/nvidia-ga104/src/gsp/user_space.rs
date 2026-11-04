@@ -1442,7 +1442,7 @@ mod tests {
                 .store_to_vram(v, root, userd + USERD_GP_GET, 8)
                 .unwrap();
             cp.mem.store_to_vram(v, root, k.c.va, k.c.size).unwrap();
-            cp.mem.store_to_vram(v, root, k.sem.va, 8).unwrap();
+            cp.mem.store_to_vram(v, root, k.sem.va, 16).unwrap();
         }
         (cp, r)
     }
@@ -1729,7 +1729,10 @@ mod tests {
         m.swap(9, 10); // payload halves swapped
         cases.push(("jumatatile valorii", m));
         let mut m = good.clone();
-        m[11] |= 1 << 25; // timestamp release (16-byte record)
+        // timestamp release (16-byte record): since C-69 the model writes
+        // it, so the mistake shows as the 8 bytes after the semaphore
+        // overwritten (checked with the sentinel below).
+        m[11] |= 1 << 25;
         cases.push(("timestamp", m));
         let mut m = good.clone();
         m[11] &= !(1 << 24); // 32-bit payload: the high half never written
@@ -1744,16 +1747,19 @@ mod tests {
                 ..cg
             };
             let w2 = open_work_channel_cleared(&mut d, &mut mem, &u, &cg2, &g).unwrap();
-            put_bytes(mem.writer_mut(), k.sem.pa, &[0; 16]);
+            put_bytes(mem.writer_mut(), k.sem.pa, &[0; 8]);
+            put_bytes(mem.writer_mut(), k.sem.pa + 8, &[0xa5; 8]);
             put_bytes(mem.writer_mut(), k.c.pa, &[0xff; 256]);
             let push = mem.alloc_mapped(0x1000, 0x1000).unwrap();
             let mut q = WorkQueue::new(&w2, push).unwrap();
             q.submit(mem.writer_mut(), &setup_words()).unwrap();
             q.submit(mem.writer_mut(), &words).unwrap();
             let (_, r) = gpu_launches(&mut mem, root, &w2, &push, &k);
+            let after = [0, 4].map(|o| mem.writer_mut().read_u32(k.sem.pa + 8 + o).unwrap());
             let caught = r.is_err()
                 || read_semaphore(mem.writer_mut(), k.sem.pa) != Ok(DONE)
-                || read_c(&mut mem, &k) != k.want;
+                || read_c(&mut mem, &k) != k.want
+                || after != [0xa5a5_a5a5; 2];
             assert!(caught, "greseala „{what}” neprinsa");
         }
     }

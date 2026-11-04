@@ -38,6 +38,8 @@
 //!   the `gpu-sim` model (pure text);
 //! - [`chain`]: C-54 — the window steps in a chain (stop at the first failure,
 //!   cleanup always, no writing step without permission, blocked steps never tried);
+//! - [`launch_cost`]: C-69 — measurement 1 of the one-program target: the
+//!   cost of one launch from GPU timestamps (encoding + reading, SIMULARE);
 //! - [`backend`]: the I1 contract for GA104.
 //!
 //! Sources and licences: docs/GA104_INITIALIZATION.md, docs/PROVENANCE.md.
@@ -63,6 +65,7 @@ pub mod i6_check;
 pub mod i6_log;
 pub mod ids;
 pub mod init;
+pub mod launch_cost;
 pub mod mmu;
 pub mod probe;
 pub mod push;

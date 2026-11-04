@@ -5,7 +5,9 @@
 //! - channel class C56F: `SEM_ADDR_LO/HI`, `SEM_PAYLOAD_LO/HI`, `SEM_EXECUTE`
 //!   (release 32/64-bit, acquire ≥ — an acquire that is not yet satisfied is
 //!   an error here, since nothing else runs in parallel; I10b: `RELEASE_WFI`
-//!   accepted, any other bit — e.g. a timestamp release — refused);
+//!   accepted; C-69: `RELEASE_TIMESTAMP` accepted — a 16-byte record,
+//!   payload at +0, the *simulated* GPU time in ns at +8; any other bit
+//!   refused);
 //! - compute class C7C0: `SET_OBJECT`, `SEND_PCAS_A` (QMD address >> 8) and
 //!   `SEND_SIGNALING_PCAS2_B` (launch), reading a QMD V03_00; I10b:
 //!   `INVALIDATE_SHADER_CACHES_NO_WFI` (fields checked, counted);
@@ -201,6 +203,16 @@ pub struct CommandProcessor {
     /// I10b: `INVALIDATE_SHADER_CACHES_NO_WFI` seen (the model has no
     /// caches; it only checks the fields).
     pub cache_invalidations: u32,
+    /// C-69, SIMULARE: the model's GPU clock (ns), written by a timestamp
+    /// release. It is *not* a measurement: it advances only by the costs
+    /// below, which the test chooses.
+    pub gpu_time_ns: u64,
+    /// C-69, SIMULARE: simulated cost of one launch (added at each launch).
+    pub sim_launch_ns: u64,
+    /// C-69, SIMULARE: simulated cost of one method (added at each method).
+    pub sim_method_ns: u64,
+    /// C-69: `(addr, payload, time_ns)` of every timestamp release.
+    pub timestamps: Vec<(u64, u64, u64)>,
 }
 
 impl Default for CommandProcessor {
@@ -227,6 +239,10 @@ impl CommandProcessor {
             upper: None,
             entries_taken: 0,
             cache_invalidations: 0,
+            gpu_time_ns: 0,
+            sim_launch_ns: 0,
+            sim_method_ns: 0,
+            timestamps: Vec::new(),
         }
     }
 
@@ -324,6 +340,7 @@ impl CommandProcessor {
     }
 
     fn method(&mut self, subch: u8, m: u32, d: u32) -> GpuResult<()> {
+        self.gpu_time_ns += self.sim_method_ns;
         // Host (channel) methods are below 0x100 on every subchannel.
         if m < 0x100 && m != c::NVC7C0_SET_OBJECT {
             return self.host_method(m, d);
@@ -456,6 +473,7 @@ impl CommandProcessor {
                     h::NVC56F_SEM_EXECUTE_ACQUIRE_SWITCH_TSG,
                     h::NVC56F_SEM_EXECUTE_RELEASE_WFI,
                     h::NVC56F_SEM_EXECUTE_PAYLOAD_SIZE,
+                    h::NVC56F_SEM_EXECUTE_RELEASE_TIMESTAMP,
                 ];
                 if known.iter().fold(d, |r, f| f.set(r, 0)) != 0 {
                     return Err(bad("SIM: biti nemodelati in SEM_EXECUTE"));
@@ -464,6 +482,29 @@ impl CommandProcessor {
                     == h::NVC56F_SEM_EXECUTE_PAYLOAD_SIZE_64BIT;
                 if wide && !self.sem_addr.is_multiple_of(8) {
                     return Err(bad("SIM: semafor pe 64 de biti nealiniat la 8"));
+                }
+                // C-69: the 16-byte record (payload, then the time at +8;
+                // layout DEDUS from tinygrad's signal: value at 0, timestamp
+                // at 8). Only on a release, aligned to 16.
+                let stamp = h::NVC56F_SEM_EXECUTE_RELEASE_TIMESTAMP.get(d)
+                    == h::NVC56F_SEM_EXECUTE_RELEASE_TIMESTAMP_EN;
+                if stamp {
+                    if h::NVC56F_SEM_EXECUTE_OPERATION.get(d)
+                        != h::NVC56F_SEM_EXECUTE_OPERATION_RELEASE
+                    {
+                        return Err(bad("SIM: marca de timp doar la eliberare"));
+                    }
+                    if !self.sem_addr.is_multiple_of(16) {
+                        return Err(bad("SIM: semafor cu marca de timp nealiniat la 16"));
+                    }
+                    self.mem
+                        .write(self.sem_addr + 8, &self.gpu_time_ns.to_le_bytes());
+                    let p = if wide {
+                        self.sem_payload
+                    } else {
+                        self.sem_payload & 0xffff_ffff
+                    };
+                    self.timestamps.push((self.sem_addr, p, self.gpu_time_ns));
                 }
                 match h::NVC56F_SEM_EXECUTE_OPERATION.get(d) {
                     h::NVC56F_SEM_EXECUTE_OPERATION_RELEASE => {
@@ -559,6 +600,7 @@ impl CommandProcessor {
             grid,
             block,
         })?;
+        self.gpu_time_ns += self.sim_launch_ns;
         self.events.push(Event::Launch {
             qmd: qmd_va,
             program: index,
