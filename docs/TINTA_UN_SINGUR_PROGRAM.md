@@ -30,7 +30,8 @@ dinainte (un „caiet” de contoare în VRAM), iar cine termină ajută.
 
 ## Cum se măsoară (în ordinea asta)
 
-1. **Costul unei lansări** pe placa reală: N lansări goale cu `release0`, timpul de la `GP_PUT` la ultimul semafor. Fără asta nu știm dacă merită.
+1. **Costul unei lansări** pe placa reală: N lansări, după fiecare o eliberare de semafor cu marcă de timp scrisă de placă. Fără asta nu știm dacă merită.
+   **Pregătit (C-69, sesiunea 47, SIMULARE):** `nvidia-ga104::launch_cost` (`encode` + `analyze`), test T75; pe placă în fereastra 4 din `docs/FEREASTRA_C-69.md`.
 2. **„Câte un program pe calcul”** (varianta simplă, cu semafoare între lansări) pe un strat Kronos.
 3. **„Un singur program”** pe același strat; rezultat identic bit cu bit cu varianta 2 și cu referința de pe procesor (`gpu-compute::reference`).
    Câștigă măsurătoarea; dacă diferența e mică, rămâne varianta simplă.

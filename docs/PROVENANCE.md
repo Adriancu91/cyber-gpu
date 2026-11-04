@@ -104,3 +104,9 @@ deci acceptă și ele această valoare. Nimic copiat.
 
 **C-63 (3 nov, sesiunea 42):** `check_stick_journal` (`i6_log.rs`) și exemplul `verifica_jurnal_i6` sunt scrise de noi, doar procesare de text peste
 funcțiile noastre existente (`parse_line`, `check_i6`, `wpr2_after_i6`); nicio sursă externă nouă.
+
+**C-69 (4 nov, sesiunea 47):** `check_i7`, `check_i6_i7_journal` (`i6_log.rs`), `read_after_i7` / `I7Status` (`gsp/falcon.rs`), `launch_cost.rs`,
+exemplul `verifica_jurnal_i7` și eliberarea cu marcă de timp din `gpu-sim::cmdproc` sunt scrise de noi. Ordinea scrierilor I7 = cea a lui I6 pe
+SEC2 (RM 570.144 `kgspExecuteHsFalcon_GA102`, MIT, citit în sesiunile anterioare). Câmpurile `SEM_EXECUTE.RELEASE_TIMESTAMP` / `PAYLOAD_SIZE`
+vin din `clc56f.h` (open-gpu-doc, MIT, generat în `nvidia-rm570`); poziția mărcii de timp la +8 în înregistrarea de 16 B e **DEDUS** (așa o citește
+semnalul din tinygrad, MIT; necitit din nou în această sesiune) — de confirmat pe placă la prima măsurătoare. Nimic copiat.

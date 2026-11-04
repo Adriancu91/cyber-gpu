@@ -1,5 +1,16 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 47 (4 nov 2026, cloud, fără placă) — C-69: I7 verificat ca I6 + costul unei lansări
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T72 | I7 scrie exact cele 18 registre SEC2 (66 de scrieri pe Booter-ul SIM de 8 + 8 blocuri), cutiile = adresa `GspFwWprMeta` | `cargo test -p nvidia-ga104 i7_writes_exactly` | lista fixă, nimic în afara SEC2 | conform | PASS (SIMULARE) |
+| T73 | Jurnalul I6 + I7 citit dintr-o trecere (`check_i6_i7_journal`) + 8 greșeli plantate în partea I7 | `cargo test -p nvidia-ga104 i6_i7_journal` | I6 78 scrieri, WPR2 trece, I7 66 scrieri, RISC-V activ; fiecare greșeală cu motivul ei | conform | PASS (SIMULARE) |
+| T74 | `read_after_i7` după un Booter refuzat: cutia 0 = codul ROM-ului, RISC-V inactiv, 3 citiri, 0 scrieri | `cargo test -p nvidia-ga104 read_after_i7` | conform | conform | PASS (SIMULARE) |
+| T75 | Costul unei lansări: marcaj + 16 lansări `add64` cu eliberare cu marcă de timp; o lansare refuzată → nicio cifră | `cargo test -p nvidia-ga104 --test sim_launch_cost` + `cargo test -p nvidia-ga104 launch_cost` | mediana = costul simulat ales de test (4070 ns); eroare la înregistrare lipsă/timp înapoi | conform | PASS (SIMULARE) — ceasul e al modelului |
+| T76 | I7 pe placa reală (`verifica_jurnal_i7`) | — | TRECE | — | NOT TESTED (fereastra 1, după I6 TRECE) |
+| T77 | Costul unei lansări pe placa reală | — | 17 înregistrări în ordine, timp crescător | — | NOT TESTED (fereastra 4, după I10) |
+
 ## Rezultate — sesiunea 46 (4 nov 2026, cloud, fără placă) — C-66: capătul WPR2 de 128 KiB + citirea de după I6
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |

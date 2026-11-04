@@ -6,8 +6,10 @@
 //! semaphore release *with a timestamp* (`SEM_EXECUTE.RELEASE_TIMESTAMP`,
 //! `RELEASE_WFI` on, so the time is taken after the launch finished). The
 //! GPU writes a 16-byte record per release — payload at +0, its own clock
-//! in ns at +8 (layout DEDUS from tinygrad's signal: value at 0, timestamp
-//! at 8; MIT, read as specification). The differences between consecutive
+//! in ns at +8 (layout DEDUS: the field `RELEASE_TIMESTAMP` and
+//! `PAYLOAD_SIZE` are in NVIDIA's `clc56f.h`, MIT; the offset 8 is how
+//! tinygrad's signal reads it, value at 0, timestamp at 8 — **to be
+//! confirmed on the board**: the first window checks record 0). The differences between consecutive
 //! records are the cost of one launch + its (tiny) work, measured by the
 //! GPU itself, without the CPU in the loop.
 //!

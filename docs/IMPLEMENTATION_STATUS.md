@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 47 — 4 noiembrie 2026, ~23:00 (ora României), în cloud, FĂRĂ placă — C-69 (comandă nouă: I7–I10 + ținta „un singur program”)
+
+În hub: planul independenței OS aprobat de Adrian („da la tot”) → pentru noi **C-69** (F5: I6 TRECE → I7–I10 → primul calcul → Kronos pe placă).
+I7–I10 aveau deja codul în SIMULARE (sesiunile 7–30); ce lipsea: verificarea I7 la fel de strictă ca I6, lista ferestrelor și primul pas al țintei
+„un singur program”. **Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Lista exactă a scrierilor I7 | `I7_WRITE_SET`: aceleași 18 registre ca la I6, pe SEC2 (`0x840000–0x843FFF`); cutiile 0/1 = adresa `GspFwWprMeta` | PASS (SIMULARE): T72 |
+| Jurnalul I6 + I7 | `i6_log::check_i7`, `check_i6_i7_journal` (verificarea comună cu I6, rescrisă o dată, `check_i6` neschimbat ca rezultat); 8 greșeli plantate prinse | PASS (SIMULARE): T73 |
+| Rezultatul I7 fără permis | `falcon::read_after_i7` + `I7Status`: 3 citiri (cutiile SEC2, RISC-V GSP), jurnalizate, fără scriere — lecția C-66 | PASS (SIMULARE): T74 |
+| Unealta de jurnal | exemplul `verifica_jurnal_i7` (TRECE / DE ANALIZAT) | PASS (rulat pe un jurnal gol: „DE ANALIZAT”, ieșire 2) |
+| Măsurătoarea 1 „un singur program” | `launch_cost`: marcaj de start + N lansări + eliberare cu marcă de timp după fiecare; mediana/min/max; `gpu-sim` modelează marca de timp (ceas simulat) | PASS (SIMULARE): T75 — cifrele sunt ale testului, doar metoda e verificată |
+| Lista ferestrelor | `docs/FEREASTRA_C-69.md`: fereastra 0 (I6) → 1 (I7) → 2 (I8) → 3 (golden + I9) → 4 (I10 + măsurătoarea 1) | doar plan |
+| Pentru OS | `integration/cyber-universe/C-69_i7-fereastra.md` (propunere, doar după I6 TRECE și comandă nouă) | propus |
+| Compatibilitate OS | doar adăugări; `gpu-sim` acceptă acum eliberarea cu marcă de timp (înainte o refuza) | PASS |
+
+Verificări (`sh tools/check.sh`): format, clippy `-D warnings`, **346 teste PASS** (1 ignorat), build no_std PASS; clippy cu `--features hw-write` PASS.
+Oprirea de siguranță nu se aplică (pași terminați în această sesiune).
+
+**Următorul pas:** fereastra 0 (I6 o dată, os-224) → `verifica_jurnal_i6`; între timp, fără placă: lista exactă a scrierilor I8 (soneria +
+secvențiatorul) și verificarea ei în jurnal, ca la I6/I7.
+
+---
 ## Sesiunea 46 — 4 noiembrie 2026, ~19:40 (ora României), în cloud, FĂRĂ placă — C-66 (comandă nouă)
 
 În hub: rezultatul de pe placă `rezultate/2026-11-04-workstation-os222/` și comanda **C-66**. Pe placă (os-222), I6 a rulat FWSEC-FRTS și a dat

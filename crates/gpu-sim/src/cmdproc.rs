@@ -484,8 +484,9 @@ impl CommandProcessor {
                     return Err(bad("SIM: semafor pe 64 de biti nealiniat la 8"));
                 }
                 // C-69: the 16-byte record (payload, then the time at +8;
-                // layout DEDUS from tinygrad's signal: value at 0, timestamp
-                // at 8). Only on a release, aligned to 16.
+                // layout DEDUS, to be confirmed on the board: value at 0,
+                // timestamp at 8, as tinygrad's signal). Only on a release,
+                // aligned to 16.
                 let stamp = h::NVC56F_SEM_EXECUTE_RELEASE_TIMESTAMP.get(d)
                     == h::NVC56F_SEM_EXECUTE_RELEASE_TIMESTAMP_EN;
                 if stamp {
