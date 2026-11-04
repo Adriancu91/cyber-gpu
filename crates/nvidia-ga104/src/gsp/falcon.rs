@@ -356,9 +356,171 @@ pub fn compare_frts(lo: u32, hi: u32, frts: (u64, u64)) -> GpuResult<FrtsCheck> 
     })
 }
 
+/// C-66: every HI encoding the driver accepts. Extends [`Wpr2End`] (kept as
+/// it was, for compatibility) with the form the board actually showed on
+/// 4 Nov 2026 (`rezultate/2026-11-04-workstation-os222`): LO `0x1ffe00` =
+/// the FRTS start, HI `0x1ffee0` = the start of the **last 128 KiB block** of
+/// the 1 MiB region. RM 570.144 (`kernel_gsp_frts_tu102.c`) and nova-core
+/// only check `HI != 0` and LO, so they accept this too. DEDUS: we read HI as
+/// "last 128 KiB block, inclusive"; the other reading (a region 128 KiB
+/// shorter, exclusive end) is not excluded by any public source, but no
+/// driver we read treats it as a failure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Wpr2EndForm {
+    /// HI = end of the region (first byte after it).
+    Exclusive,
+    /// HI = start of the last 4 KiB page of the region.
+    InclusiveLastPage,
+    /// HI = start of the last 128 KiB block of the region (board, 4 Nov 2026).
+    InclusiveLastBlock128K,
+}
+
+impl Wpr2EndForm {
+    /// Short Romanian label for log lines and reports.
+    pub fn label(self) -> &'static str {
+        match self {
+            Wpr2EndForm::Exclusive => "exclusiv",
+            Wpr2EndForm::InclusiveLastPage => "ultima pagina de 4 KiB",
+            Wpr2EndForm::InclusiveLastBlock128K => "ultimul bloc de 128 KiB",
+        }
+    }
+}
+
+/// Like [`FrtsCheck`], with [`Wpr2EndForm`] (C-66).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrtsCheckFull {
+    /// The region, end normalised to exclusive (= `frts` when it passed).
+    pub wpr2: Wpr2,
+    /// Raw `NV_PFB_PRI_MMU_WPR2_ADDR_LO` / `_HI`.
+    pub lo_raw: u32,
+    pub hi_raw: u32,
+    pub form: Wpr2EndForm,
+}
+
+/// The 128 KiB block of the board's WPR2 HI (4 Nov 2026).
+pub const WPR2_BLOCK_128K: u64 = 128 << 10;
+
+/// C-66: the rule the driver uses. LO must be exactly `frts.0`; HI must be
+/// the exclusive end, the last 4 KiB page or the last 128 KiB block of
+/// exactly `frts` (the block only when `frts.1` is 128 KiB aligned and the
+/// region holds at least one block). Anything else is reported at HI, with
+/// expected = exclusive end, as before.
+pub fn compare_frts_full(lo: u32, hi: u32, frts: (u64, u64)) -> GpuResult<FrtsCheckFull> {
+    let raw = decode_wpr2(lo, hi);
+    if raw.start != frts.0 {
+        return Err(GpuError::VerifyFailed {
+            offset: fb::NV_PFB_PRI_MMU_WPR2_ADDR_LO,
+            expected: (frts.0 >> 12) as u32,
+            actual: (raw.start >> 12) as u32,
+        });
+    }
+    let back = |n: u64| frts.1 >= frts.0 + n && raw.end == frts.1 - n;
+    let form = if raw.end == frts.1 {
+        Wpr2EndForm::Exclusive
+    } else if back(WPR2_PAGE) {
+        Wpr2EndForm::InclusiveLastPage
+    } else if frts.1.is_multiple_of(WPR2_BLOCK_128K) && back(WPR2_BLOCK_128K) {
+        Wpr2EndForm::InclusiveLastBlock128K
+    } else {
+        return Err(GpuError::VerifyFailed {
+            offset: fb::NV_PFB_PRI_MMU_WPR2_ADDR_HI,
+            expected: (frts.1 >> 12) as u32,
+            actual: (raw.end >> 12) as u32,
+        });
+    };
+    Ok(FrtsCheckFull {
+        wpr2: Wpr2 {
+            start: frts.0,
+            end: frts.1,
+        },
+        lo_raw: lo,
+        hi_raw: hi,
+        form,
+    })
+}
+
+/// The status reads of [`check_frts_full`], from any BAR0 reader.
+fn frts_full_with(
+    mut read: impl FnMut(u32) -> GpuResult<u32>,
+    frts: (u64, u64),
+) -> GpuResult<FrtsCheckFull> {
+    let err = read(bus::NV_PBUS_SW_SCRATCH(0xe))? >> 16;
+    if err != 0 {
+        return Err(GpuError::HardwareFault { code: err });
+    }
+    let hi = read(fb::NV_PFB_PRI_MMU_WPR2_ADDR_HI)?;
+    if hi == 0 {
+        return Err(GpuError::HardwareFault { code: 0 });
+    }
+    let lo = read(fb::NV_PFB_PRI_MMU_WPR2_ADDR_LO)?;
+    compare_frts_full(lo, hi, frts)
+}
+
+/// C-66: [`check_frts_detail`] with every accepted HI form.
+pub fn check_frts_full<M: Mmio + ?Sized>(
+    bar: &mut GuardedBar0<'_, M>,
+    frts: (u64, u64),
+) -> GpuResult<FrtsCheckFull> {
+    frts_full_with(|o| bar.read(o), frts)
+}
+
+/// C-66: BAR0 that can only **read** the few status registers of
+/// [`EXTRA_READS`] (WPR2 LO/HI, the FRTS error scratch, BOOT_0, BSI scratch).
+/// It has no `write` at all, so it needs no [`HardwareWritePermit`]: this is
+/// what the OS uses to show WPR2 after I6, once the writes are over (on
+/// 4 Nov the permit check refused that read-back: "nepermis de politica de
+/// siguranta"). Every read is journaled (value included), so the stick
+/// journal keeps them.
+pub struct StatusReadBar0<'a, M: Mmio + ?Sized> {
+    mmio: &'a mut M,
+    journal: &'a mut Journal,
+}
+
+impl<'a, M: Mmio + ?Sized> StatusReadBar0<'a, M> {
+    pub fn new(mmio: &'a mut M, journal: &'a mut Journal) -> Self {
+        StatusReadBar0 { mmio, journal }
+    }
+
+    pub fn read(&mut self, off: u32) -> GpuResult<u32> {
+        if !EXTRA_READS.contains(&off) {
+            return Err(GpuError::NotPermitted(
+                "citire doar-de-stare in afara registrelor de stare permise",
+            ));
+        }
+        let v = checked_read32(self.mmio, u64::from(off))?;
+        self.journal.push(Event::MmioRead {
+            bar: 0,
+            offset: u64::from(off),
+            value: v,
+        });
+        if is_priv_error(v) {
+            return Err(GpuError::HardwareFault { code: v });
+        }
+        Ok(v)
+    }
+
+    pub fn journal(&mut self) -> &mut Journal {
+        self.journal
+    }
+}
+
+/// C-66: WPR2 read back after I6 with reads only (no permit), checked with
+/// [`compare_frts_full`]. Three reads: FRTS error scratch, HI, LO.
+pub fn read_frts_after_i6<M: Mmio + ?Sized>(
+    mmio: &mut M,
+    journal: &mut Journal,
+    frts: (u64, u64),
+) -> GpuResult<FrtsCheckFull> {
+    let mut b = StatusReadBar0::new(mmio, journal);
+    frts_full_with(|o| b.read(o), frts)
+}
+
 /// After FWSEC-FRTS halted: no error code, WPR2 up, and where we asked
 /// (`frts` = the region from `fb_layout`, start..end). A wrong start is
 /// reported at LO (0x1fa824), a wrong end at HI (0x1fa828).
+/// Knows only the two forms of [`Wpr2End`] (kept for compatibility); the
+/// board's 128 KiB form fails here — use [`check_frts_full`] (C-66).
 pub fn check_frts_detail<M: Mmio + ?Sized>(
     bar: &mut GuardedBar0<'_, M>,
     frts: (u64, u64),
@@ -375,12 +537,14 @@ pub fn check_frts_detail<M: Mmio + ?Sized>(
     compare_frts(lo, hi, frts)
 }
 
-/// [`check_frts_detail`] without the raw values (kept for compatibility).
+/// [`check_frts_full`] without the raw values (kept for compatibility).
+/// C-66: accepts every form of [`Wpr2EndForm`], including the board's
+/// last 128 KiB block.
 pub fn check_frts<M: Mmio + ?Sized>(
     bar: &mut GuardedBar0<'_, M>,
     frts: (u64, u64),
 ) -> GpuResult<Wpr2> {
-    check_frts_detail(bar, frts).map(|c| c.wpr2)
+    check_frts_full(bar, frts).map(|c| c.wpr2)
 }
 
 /// Kept for compatibility: the loader is now `hs_load::dma_load`.
@@ -650,6 +814,7 @@ mod tests {
             let mut g = FakeGsp::new();
             g.frts = frts;
             g.wpr2_hi_last_page = last_page;
+            g.wpr2_hi_back = None;
             let mut j = Journal::new(256);
             let mut c = SimClock::default();
             let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
@@ -660,6 +825,7 @@ mod tests {
         // Same start, end 4 KiB further than asked: fails, and names HI.
         let mut g = FakeGsp::new();
         g.frts = (frts.0, frts.1 + 0x2000);
+        g.wpr2_hi_back = None;
         let mut j = Journal::new(256);
         let mut c = SimClock::default();
         let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
@@ -667,6 +833,110 @@ mod tests {
         assert_eq!(
             format!("{e}"),
             "verificare esuata la 0x1fa828: asteptat 0x1fff00, citit 0x1fff01"
+        );
+    }
+
+    /// C-66 (T70): the board's values of 4 Nov 2026 (os-222): LO 0x1ffe00,
+    /// HI 0x1ffee0 = the last 128 KiB block of FRTS 0x1ffe00000..0x1fff00000.
+    /// SIMULARE: pure comparison, no board.
+    #[test]
+    fn frts_last_128k_block_from_the_board_passes() {
+        let frts = (0x1_ffe0_0000u64, 0x1_fff0_0000u64);
+        let enc = |a: u64| ((a >> 12) << 4) as u32;
+        let (lo, hi) = (enc(frts.0), enc(0x1_ffee_0000));
+        // The message of 4 Nov, as the older rule still gives it.
+        let e = compare_frts(lo, hi, frts).unwrap_err();
+        assert_eq!(
+            format!("{e}"),
+            "verificare esuata la 0x1fa828: asteptat 0x1fff00, citit 0x1ffee0"
+        );
+        let c = compare_frts_full(lo, hi, frts).unwrap();
+        assert_eq!(c.form, Wpr2EndForm::InclusiveLastBlock128K);
+        assert_eq!((c.wpr2.start, c.wpr2.end), frts);
+        assert_eq!((c.lo_raw >> 4, c.hi_raw >> 4), (0x1ffe00, 0x1ffee0));
+        // The two older forms still pass with the new rule.
+        let f = |h: u64| compare_frts_full(lo, enc(h), frts).map(|c| c.form);
+        assert_eq!(f(frts.1), Ok(Wpr2EndForm::Exclusive));
+        assert_eq!(f(frts.1 - 0x1000), Ok(Wpr2EndForm::InclusiveLastPage));
+        // Anything else between them still fails, at HI.
+        for bad in [
+            frts.1 - 0x2000,
+            frts.1 - 0x1f000,
+            frts.1 - 0x21000,
+            frts.1 - 0x40000,
+            frts.0,
+            frts.1 + 0x1000,
+        ] {
+            assert_eq!(
+                f(bad),
+                Err(GpuError::VerifyFailed {
+                    offset: 0x1fa828,
+                    expected: 0x1fff00,
+                    actual: (bad >> 12) as u32,
+                })
+            );
+        }
+        // A region smaller than one block, or not 128 KiB aligned: no block form.
+        let small = (frts.0, frts.0 + 0x10000);
+        assert!(compare_frts_full(lo, enc(frts.0 - 0x10000), small).is_err());
+        let odd = (frts.0, frts.1 - 0x1000);
+        assert!(compare_frts_full(lo, enc(odd.1 - 0x20000), odd).is_err());
+        // Wrong start: still LO.
+        assert!(matches!(
+            compare_frts_full(enc(frts.0 + 0x1000), hi, frts),
+            Err(GpuError::VerifyFailed {
+                offset: 0x1fa824,
+                ..
+            })
+        ));
+        assert_eq!(c.form.label(), "ultimul bloc de 128 KiB");
+    }
+
+    /// C-66 (T71): I6 on the fake with the board's 128 KiB form (the default
+    /// of `FakeGsp` now) passes `fwsec_frts`, and the read-back after I6 works
+    /// with reads only — no permit, nothing written, 3 reads journaled.
+    /// SIMULARE.
+    #[test]
+    fn i6_with_the_board_hi_and_read_back_without_permit() {
+        let frts = (0x1_ffe0_0000u64, 0x1_fff0_0000u64);
+        let mut g = FakeGsp::new();
+        g.frts = frts;
+        let mut j = Journal::new(256);
+        let mut c = SimClock::default();
+        let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+        let w = fwsec_frts(&mut b, &mut c, load_ok, frts).unwrap();
+        assert_eq!((w.start, w.end), frts);
+        assert_eq!(
+            check_frts_full(&mut b, frts).unwrap().form,
+            Wpr2EndForm::InclusiveLastBlock128K
+        );
+        // The older detailed check (2 forms) still refuses it, at HI.
+        assert!(format!("{}", check_frts_detail(&mut b, frts).unwrap_err()).contains("0x1fa828"));
+        let writes = g.writes.len();
+        let mut j2 = Journal::new(16);
+        let r = read_frts_after_i6(&mut g, &mut j2, frts).unwrap();
+        assert_eq!(r.form, Wpr2EndForm::InclusiveLastBlock128K);
+        assert_eq!(r.hi_raw >> 4, 0x1ffee0);
+        assert_eq!(g.writes.len(), writes, "read-back must not write");
+        assert_eq!(j2.writes(), 0);
+        let reads: Vec<u64> = j2
+            .events()
+            .filter_map(|e| match *e {
+                Event::MmioRead { offset, .. } => Some(offset),
+                _ => None,
+            })
+            .collect();
+        let scratch = u64::from(bus::NV_PBUS_SW_SCRATCH(0xe));
+        assert_eq!(reads, [scratch, 0x1fa828, 0x1fa824]);
+        // Only status registers: a GSP register is refused by the read-only bar.
+        let mut sb = StatusReadBar0::new(&mut g, &mut j2);
+        assert!(matches!(sb.read(0x110100), Err(GpuError::NotPermitted(_))));
+        // Cold board (WPR2 down): the read-back reports it, does not pass.
+        let mut cold = FakeGsp::new();
+        let mut j3 = Journal::new(16);
+        assert_eq!(
+            read_frts_after_i6(&mut cold, &mut j3, frts),
+            Err(GpuError::HardwareFault { code: 0 })
         );
     }
 

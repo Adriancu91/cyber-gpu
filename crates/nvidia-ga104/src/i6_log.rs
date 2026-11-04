@@ -289,6 +289,21 @@ pub fn wpr2_after_i6(
     Some((lo, hi, crate::gsp::falcon::compare_frts(lo, hi, frts)))
 }
 
+/// C-66: [`wpr2_after_i6`] with the driver's current rule
+/// ([`crate::gsp::falcon::compare_frts_full`]: also the board's last 128 KiB
+/// block).
+pub fn wpr2_after_i6_full(
+    events: &[Event],
+    frts: (u64, u64),
+) -> Option<(
+    u32,
+    u32,
+    gpu_core::error::GpuResult<crate::gsp::falcon::FrtsCheckFull>,
+)> {
+    let (lo, hi, _) = wpr2_after_i6(events, frts)?;
+    Some((lo, hi, crate::gsp::falcon::compare_frts_full(lo, hi, frts)))
+}
+
 /// C-63 window: everything a whole stick journal (`raport/gpu-jurnal-00N.txt`)
 /// says about one I6 attempt, in one pass over the text.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -307,6 +322,13 @@ pub struct StickJournal {
         u32,
         u32,
         gpu_core::error::GpuResult<crate::gsp::falcon::FrtsCheck>,
+    )>,
+    /// C-66: [`wpr2_after_i6_full`] on the same accesses (the rule the
+    /// driver uses now; prefer it to `wpr2`).
+    pub wpr2_full: Option<(
+        u32,
+        u32,
+        gpu_core::error::GpuResult<crate::gsp::falcon::FrtsCheckFull>,
     )>,
 }
 
@@ -334,6 +356,7 @@ pub fn check_stick_journal(text: &str, frts: (u64, u64)) -> StickJournal {
         config_writes,
         i6: any_bar_write.then(|| check_i6(&rest)),
         wpr2: wpr2_after_i6(&rest, frts),
+        wpr2_full: wpr2_after_i6_full(&rest, frts),
     }
 }
 
@@ -401,6 +424,13 @@ mod tests {
         let (_, _, r) = wpr2_after_i6(&evs(&text(0x02000000)), frts).unwrap();
         assert!(format!("{}", r.unwrap_err()).contains("0x1fa828"));
         // Only the cold read (HI = 0): nothing to check.
+        // C-66: the board's HI of 4 Nov (last 128 KiB block) passes the new rule.
+        let (_, hi, r) = wpr2_after_i6_full(&evs(&text(0x01ffee00)), frts).unwrap();
+        assert_eq!(hi, 0x01ffee00);
+        assert_eq!(
+            r.unwrap().form,
+            crate::gsp::falcon::Wpr2EndForm::InclusiveLastBlock128K
+        );
         let cold = "bar0 r 0x1fa828 = 0x00000000";
         assert!(wpr2_after_i6(&evs(cold), frts).is_none());
     }

@@ -155,6 +155,11 @@ pub struct FakeGsp {
     /// of the board (LO = start, HI != exclusive end); `false` = the exclusive
     /// end. Still to be confirmed with the raw HI in `gpu-jurnal-002.txt`.
     pub wpr2_hi_last_page: bool,
+    /// SIM, C-66, from the board (4 Nov 2026, os-222): HI = the start of the
+    /// last block of this many bytes of the region (board: 128 KiB, HI
+    /// `0x1ffee0` for FRTS `0x1ffe00000..0x1fff00000`). When set it wins
+    /// over `wpr2_hi_last_page`; `None` = the older forms above.
+    pub wpr2_hi_back: Option<u64>,
     mem: [FalconMem; 2],
 }
 
@@ -195,13 +200,17 @@ impl FakeGsp {
             dma_blocks: 0,
             fwsec_mapper_at: None,
             wpr2_hi_last_page: true,
+            wpr2_hi_back: Some(128 << 10),
             mem: [FalconMem::new(), FalconMem::new()],
         }
     }
 
-    /// The address FWSEC puts in WPR2 HI for `frts` (see `wpr2_hi_last_page`).
+    /// The address FWSEC puts in WPR2 HI for `frts` (see `wpr2_hi_back`,
+    /// then `wpr2_hi_last_page`).
     pub fn wpr2_hi_end(&self) -> u64 {
-        if self.wpr2_hi_last_page {
+        if let Some(n) = self.wpr2_hi_back {
+            self.frts.1 - n
+        } else if self.wpr2_hi_last_page {
             self.frts.1 - 0x1000
         } else {
             self.frts.1

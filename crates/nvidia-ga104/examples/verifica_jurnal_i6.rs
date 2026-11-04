@@ -61,7 +61,7 @@ fn main() {
             );
         }
     }
-    match &r.wpr2 {
+    match &r.wpr2_full {
         None => {
             ok = false;
             println!(
@@ -69,8 +69,8 @@ fn main() {
             );
         }
         Some((lo, hi, Ok(c))) => println!(
-            "WPR2 dupa I6: LO {lo:#010x} HI {hi:#010x} -> TRECE (capat: {:?})",
-            c.end_form
+            "WPR2 dupa I6: LO {lo:#010x} HI {hi:#010x} -> TRECE (capat: {})",
+            c.form.label()
         ),
         Some((lo, hi, Err(e))) => {
             ok = false;
