@@ -1,4 +1,5 @@
-//! C-51: checking the I6 journal that comes back from the board.
+//! C-51: checking the I6 journal that comes back from the board
+//! (C-69: and the I7 one — Booter on SEC2, same load order).
 //!
 //! Without the tinygrad reference run (cancelled 1 nov: on the real board
 //! only Cyber Universe runs), the evidence for I6 is our own journal, saved
@@ -25,25 +26,28 @@ use gpu_core::diag::Event;
 pub const GSP_LO: u64 = 0x11_0000;
 pub const GSP_HI: u64 = 0x11_3fff;
 
-const ENGINE: u64 = 0x1103c0;
-const BCR_CTRL: u64 = 0x111668;
-const FBIF_CTL: u64 = 0x110624;
-const DMACTL: u64 = 0x11010c;
-const TRANSCFG0: u64 = 0x110600;
-const DMATRFBASE: u64 = 0x110110;
-const DMATRFBASE1: u64 = 0x110128;
-const DMATRFMOFFS: u64 = 0x110114;
-const DMATRFFBOFFS: u64 = 0x11011c;
-const DMATRFCMD: u64 = 0x110118;
-const BROM_PARAADDR0: u64 = 0x111210;
-const BROM_ENGIDMASK: u64 = 0x11119c;
-const BROM_CURR_UCODE_ID: u64 = 0x111198;
-const MOD_SEL: u64 = 0x111180;
-const BOOTVEC: u64 = 0x110104;
-const MAILBOX0: u64 = 0x110040;
-const MAILBOX1: u64 = 0x110044;
-const CPUCTL: u64 = 0x110100;
-const CPUCTL_ALIAS: u64 = 0x110130;
+// Offsets inside a falcon window (GSP 0x110000, SEC2 0x840000), from
+// `dev_falcon_v4.h` / `dev_riscv_pri.h` / `dev_falcon_second_pri.h`
+// (570.144, MIT) as generated in `nvidia-rm570`.
+const ENGINE: u64 = 0x3c0;
+const BCR_CTRL: u64 = 0x1668;
+const FBIF_CTL: u64 = 0x624;
+const DMACTL: u64 = 0x10c;
+const TRANSCFG0: u64 = 0x600;
+const DMATRFBASE: u64 = 0x110;
+const DMATRFBASE1: u64 = 0x128;
+const DMATRFMOFFS: u64 = 0x114;
+const DMATRFFBOFFS: u64 = 0x11c;
+const DMATRFCMD: u64 = 0x118;
+const BROM_PARAADDR0: u64 = 0x1210;
+const BROM_ENGIDMASK: u64 = 0x119c;
+const BROM_CURR_UCODE_ID: u64 = 0x1198;
+const MOD_SEL: u64 = 0x1180;
+const BOOTVEC: u64 = 0x104;
+const MAILBOX0: u64 = 0x40;
+const MAILBOX1: u64 = 0x44;
+const CPUCTL: u64 = 0x100;
+const CPUCTL_ALIAS: u64 = 0x130;
 /// `NV_PFALCON_FALCON_DMATRFCMD_IMEM` (bit 4): the block goes to IMEM.
 const CMD_IMEM: u32 = 1 << 4;
 
@@ -143,6 +147,63 @@ pub struct I6LogError {
 /// skipped; any write outside the GSP window is an error. Config-space
 /// writes (I5g, Bus Master) are not part of I6 and are rejected here too.
 pub fn check_i6(events: &[Event]) -> Result<I6Summary, I6LogError> {
+    check_hs_load(events, &GSP_I6, (0, 0))
+}
+
+/// SEC2 falcon window (the only one I7 may write; C-69).
+pub const SEC2_LO: u64 = 0x84_0000;
+pub const SEC2_HI: u64 = 0x84_3fff;
+
+/// One signed-ucode load as the journal shows it: which falcon, and the
+/// words used in the error messages.
+struct HsLoad {
+    lo: u64,
+    hi: u64,
+    outside: &'static str,
+    mailboxes: &'static str,
+    after_start: &'static str,
+    truncated: &'static str,
+    config: &'static str,
+}
+
+const GSP_I6: HsLoad = HsLoad {
+    lo: GSP_LO,
+    hi: GSP_HI,
+    outside: "scriere in afara ferestrei GSP",
+    mailboxes: "cutiile postale trebuie 0 la FWSEC",
+    after_start: "scrieri dupa pornirea FWSEC",
+    truncated: "jurnalul se termina inainte de sfarsitul I6",
+    config: "scriere in configuratie in mijlocul I6",
+};
+
+const SEC2_I7: HsLoad = HsLoad {
+    lo: SEC2_LO,
+    hi: SEC2_HI,
+    outside: "scriere in afara ferestrei SEC2",
+    mailboxes: "cutiile postale trebuie sa fie adresa GspFwWprMeta",
+    after_start: "scrieri dupa pornirea Booter",
+    truncated: "jurnalul se termina inainte de sfarsitul I7",
+    config: "scriere in configuratie in mijlocul I7",
+};
+
+/// C-69: checks the BAR0 writes of an I7 journal (Booter on SEC2) — the
+/// same load order as I6 ([`check_i6`]) on the SEC2 window, with mailbox
+/// 0/1 = the low/high half of the `GspFwWprMeta` address instead of 0.
+/// The events must hold only the I7 part (see [`check_i6_i7_journal`] for
+/// a whole stick journal). Pure text processing.
+pub fn check_i7(events: &[Event], wpr_meta_addr: u64) -> Result<I6Summary, I6LogError> {
+    check_hs_load(
+        events,
+        &SEC2_I7,
+        (wpr_meta_addr as u32, (wpr_meta_addr >> 32) as u32),
+    )
+}
+
+fn check_hs_load(
+    events: &[Event],
+    f: &HsLoad,
+    mailboxes: (u32, u32),
+) -> Result<I6Summary, I6LogError> {
     let mut w: Vec<(u64, u32)> = Vec::new();
     for e in events {
         match *e {
@@ -152,8 +213,8 @@ pub fn check_i6(events: &[Event]) -> Result<I6Summary, I6LogError> {
                 written,
                 ..
             } => {
-                if !(GSP_LO..=GSP_HI).contains(&offset) {
-                    return Err(err(w.len(), offset, "scriere in afara ferestrei GSP"));
+                if !(f.lo..=f.hi).contains(&offset) {
+                    return Err(err(w.len(), offset, f.outside));
                 }
                 w.push((offset, written));
             }
@@ -161,92 +222,93 @@ pub fn check_i6(events: &[Event]) -> Result<I6Summary, I6LogError> {
                 return Err(err(w.len(), offset, "scriere in alt BAR decat BAR0"));
             }
             Event::ConfigWrite { offset, .. } => {
-                return Err(err(
-                    w.len(),
-                    u64::from(offset),
-                    "scriere in configuratie in mijlocul I6",
-                ));
+                return Err(err(w.len(), u64::from(offset), f.config));
             }
             _ => {}
         }
     }
+    let b = f.lo;
     let mut i = 0usize;
     let expect = |i: &mut usize, off: u64, what: &'static str| -> Result<u32, I6LogError> {
+        let off = b + off;
         match w.get(*i) {
             Some(&(o, v)) if o == off => {
                 *i += 1;
                 Ok(v)
             }
             Some(&(o, _)) => Err(err(*i, o, what)),
-            None => Err(err(*i, off, "jurnalul se termina inainte de sfarsitul I6")),
+            None => Err(err(*i, off, f.truncated)),
         }
     };
+    let at = |i: usize| w.get(i).map(|&(o, _)| o - b);
     if expect(&mut i, ENGINE, "lipseste resetarea (ENGINE=1)")? != 1
         || expect(&mut i, ENGINE, "lipseste ENGINE=0")? != 0
     {
-        return Err(err(i - 1, ENGINE, "resetarea nu e 1 apoi 0"));
+        return Err(err(i - 1, b + ENGINE, "resetarea nu e 1 apoi 0"));
     }
     expect(&mut i, BCR_CTRL, "lipseste alegerea nucleului falcon")?;
     expect(&mut i, FBIF_CTL, "lipseste FBIF_CTL")?;
     if expect(&mut i, DMACTL, "lipseste DMACTL")? != 0 {
-        return Err(err(i - 1, DMACTL, "DMACTL trebuie 0"));
+        return Err(err(i - 1, b + DMACTL, "DMACTL trebuie 0"));
     }
     expect(&mut i, TRANSCFG0, "lipseste TRANSCFG(0)")?;
     let mut sections = Vec::new();
-    while w.get(i).map(|&(o, _)| o) == Some(DMATRFBASE) {
+    while at(i) == Some(DMATRFBASE) {
         expect(&mut i, DMATRFBASE, "")?;
         expect(&mut i, DMATRFBASE1, "lipseste DMATRFBASE1")?;
         let mut blocks = 0u32;
         let mut imem = None;
         let mut first = (0u32, 0u32);
-        while w.get(i).map(|&(o, _)| o) == Some(DMATRFMOFFS) {
+        while at(i) == Some(DMATRFMOFFS) {
             let m = expect(&mut i, DMATRFMOFFS, "")?;
-            let f = expect(&mut i, DMATRFFBOFFS, "lipseste DMATRFFBOFFS")?;
+            let fo = expect(&mut i, DMATRFFBOFFS, "lipseste DMATRFFBOFFS")?;
             let c = expect(&mut i, DMATRFCMD, "lipseste DMATRFCMD")?;
             if blocks == 0 {
-                first = (m, f);
-            } else if m != first.0 + 0x100 * blocks || f != first.1 + 0x100 * blocks {
-                return Err(err(i - 3, DMATRFMOFFS, "bloc sarit sau in alta ordine"));
+                first = (m, fo);
+            } else if m != first.0 + 0x100 * blocks || fo != first.1 + 0x100 * blocks {
+                return Err(err(i - 3, b + DMATRFMOFFS, "bloc sarit sau in alta ordine"));
             }
             let is_imem = c & CMD_IMEM != 0;
             if *imem.get_or_insert(is_imem) != is_imem {
                 return Err(err(
                     i - 1,
-                    DMATRFCMD,
+                    b + DMATRFCMD,
                     "IMEM si DMEM amestecate in aceeasi sectiune",
                 ));
             }
             blocks += 1;
         }
         if blocks == 0 {
-            return Err(err(i, DMATRFBASE, "sectiune DMA fara niciun bloc"));
+            return Err(err(i, b + DMATRFBASE, "sectiune DMA fara niciun bloc"));
         }
         sections.push((imem.unwrap_or(false), blocks));
     }
     if sections.is_empty() {
-        return Err(err(i, DMATRFBASE, "nicio copiere DMA"));
+        return Err(err(i, b + DMATRFBASE, "nicio copiere DMA"));
     }
     expect(&mut i, BROM_PARAADDR0, "lipseste BROM_PARAADDR(0)")?;
     expect(&mut i, BROM_ENGIDMASK, "lipseste BROM_ENGIDMASK")?;
     expect(&mut i, BROM_CURR_UCODE_ID, "lipseste BROM_CURR_UCODE_ID")?;
     expect(&mut i, MOD_SEL, "lipseste MOD_SEL")?;
     expect(&mut i, BOOTVEC, "lipseste BOOTVEC")?;
-    if expect(&mut i, MAILBOX0, "lipseste MAILBOX0")? != 0
-        || expect(&mut i, MAILBOX1, "lipseste MAILBOX1")? != 0
+    if expect(&mut i, MAILBOX0, "lipseste MAILBOX0")? != mailboxes.0
+        || expect(&mut i, MAILBOX1, "lipseste MAILBOX1")? != mailboxes.1
     {
-        return Err(err(i - 1, MAILBOX0, "cutiile postale trebuie 0 la FWSEC"));
+        return Err(err(i - 1, b + MAILBOX0, f.mailboxes));
     }
     let start = match w.get(i) {
-        Some(&(o, v)) if o == CPUCTL || o == CPUCTL_ALIAS => v,
+        Some(&(o, v)) if o == b + CPUCTL || o == b + CPUCTL_ALIAS => v,
         Some(&(o, _)) => return Err(err(i, o, "lipseste pornirea (CPUCTL)")),
-        None => return Err(err(i, CPUCTL, "jurnalul se termina inainte de pornire")),
+        None => {
+            return Err(err(i, b + CPUCTL, "jurnalul se termina inainte de pornire"));
+        }
     };
     if start & 0b10 == 0 {
-        return Err(err(i, CPUCTL, "CPUCTL fara STARTCPU"));
+        return Err(err(i, b + CPUCTL, "CPUCTL fara STARTCPU"));
     }
     i += 1;
     if let Some(&(o, _)) = w.get(i) {
-        return Err(err(i, o, "scrieri dupa pornirea FWSEC"));
+        return Err(err(i, o, f.after_start));
     }
     Ok(I6Summary {
         sections,
@@ -337,9 +399,13 @@ pub struct StickJournal {
 /// processing, never touches a board.
 pub fn check_stick_journal(text: &str, frts: (u64, u64)) -> StickJournal {
     let events: Vec<Event> = text.lines().filter_map(parse_line).collect();
+    stick_events(&events, frts)
+}
+
+fn stick_events(events: &[Event], frts: (u64, u64)) -> StickJournal {
     let mut config_writes = Vec::new();
     let mut rest = Vec::new();
-    for e in &events {
+    for e in events {
         match *e {
             Event::ConfigWrite {
                 offset,
@@ -357,6 +423,70 @@ pub fn check_stick_journal(text: &str, frts: (u64, u64)) -> StickJournal {
         i6: any_bar_write.then(|| check_i6(&rest)),
         wpr2: wpr2_after_i6(&rest, frts),
         wpr2_full: wpr2_after_i6_full(&rest, frts),
+    }
+}
+
+/// `NV_PRISCV_RISCV_CPUCTL` of the GSP (`NV_FALCON2_GSP_BASE` 0x111000 +
+/// 0x388); bit 7 = `ACTIVE_STAT` (570.144 `dev_riscv_pri.h`, MIT).
+pub const GSP_RISCV_CPUCTL: u64 = 0x11_1388;
+
+/// C-69: a whole stick journal of a window where I6 and then I7 ran in the
+/// same boot (Bus Master on → I6 → WPR2 read-back → I7 → Bus Master off).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct I6I7Journal {
+    /// The part before the first SEC2 write, read as [`check_stick_journal`].
+    pub i6_part: StickJournal,
+    /// [`check_i7`] on the BAR0 accesses from the first SEC2 write on
+    /// (config writes taken out). `None` = no SEC2 write: I7 did not start.
+    pub i7: Option<Result<I6Summary, I6LogError>>,
+    /// Config-space writes in the I7 part (the Bus Master restore).
+    pub i7_config_writes: Vec<(u16, u32, u32, u32)>,
+    /// Last value read from the GSP RISC-V `CPUCTL`, if any.
+    pub riscv_cpuctl: Option<u32>,
+    /// `ACTIVE_STAT` set in that last value: GSP-RM runs (end of I7).
+    pub riscv_active: bool,
+}
+
+/// C-69: reads the I6 + I7 stick journal in one pass. `wpr_meta_addr` is
+/// the `GspFwWprMeta` address the OS printed for this run. Pure text
+/// processing, never touches a board.
+pub fn check_i6_i7_journal(text: &str, frts: (u64, u64), wpr_meta_addr: u64) -> I6I7Journal {
+    let events: Vec<Event> = text.lines().filter_map(parse_line).collect();
+    let split = events
+        .iter()
+        .position(|e| {
+            matches!(*e, Event::MmioWrite { bar: 0, offset, .. }
+                if (SEC2_LO..=SEC2_HI).contains(&offset))
+        })
+        .unwrap_or(events.len());
+    let (a, b) = events.split_at(split);
+    let mut i7_config_writes = Vec::new();
+    let mut rest = Vec::new();
+    for e in b {
+        match *e {
+            Event::ConfigWrite {
+                offset,
+                before,
+                written,
+                after,
+            } => i7_config_writes.push((offset, before, written, after)),
+            other => rest.push(other),
+        }
+    }
+    let riscv_cpuctl = events.iter().rev().find_map(|e| match *e {
+        Event::MmioRead {
+            bar: 0,
+            offset: GSP_RISCV_CPUCTL,
+            value,
+        } => Some(value),
+        _ => None,
+    });
+    I6I7Journal {
+        i6_part: stick_events(a, frts),
+        i7: (!b.is_empty()).then(|| check_i7(&rest, wpr_meta_addr)),
+        i7_config_writes,
+        riscv_cpuctl,
+        riscv_active: riscv_cpuctl.is_some_and(|v| v & (1 << 7) != 0),
     }
 }
 

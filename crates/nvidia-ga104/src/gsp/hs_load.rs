@@ -980,6 +980,216 @@ mod tests {
         assert_eq!(why(&l), "CPUCTL fara STARTCPU");
     }
 
+    /// C-69: the GspFwWprMeta address used by the I7 tests (SIM).
+    const WPR_META: u64 = 0x1_2340_0000;
+
+    /// The exact set of registers I7 (Booter on SEC2) writes, in
+    /// first-write order — the same 18 falcon registers as I6, on the SEC2
+    /// window (`NV_PSEC` 0x840000). The list in docs/FEREASTRA_C-69.md.
+    pub(crate) const I7_WRITE_SET: [(u32, &str); 18] = [
+        (0x8403c0, "NV_PSEC_FALCON_ENGINE (reset 1, apoi 0)"),
+        (0x841668, "NV_PRISCV_RISCV_BCR_CTRL (nucleul falcon)"),
+        (0x840624, "NV_PFALCON_FBIF_CTL (ALLOW_PHYS_NO_CTX)"),
+        (0x84010c, "NV_PFALCON_FALCON_DMACTL = 0"),
+        (
+            0x840600,
+            "NV_PFALCON_FBIF_TRANSCFG(0) (memorie sistem, fizic)",
+        ),
+        (0x840110, "NV_PFALCON_FALCON_DMATRFBASE"),
+        (0x840128, "NV_PFALCON_FALCON_DMATRFBASE1"),
+        (0x840114, "NV_PFALCON_FALCON_DMATRFMOFFS"),
+        (0x84011c, "NV_PFALCON_FALCON_DMATRFFBOFFS"),
+        (0x840118, "NV_PFALCON_FALCON_DMATRFCMD"),
+        (0x841210, "NV_PFALCON2_FALCON_BROM_PARAADDR(0)"),
+        (0x84119c, "NV_PFALCON2_FALCON_BROM_ENGIDMASK"),
+        (0x841198, "NV_PFALCON2_FALCON_BROM_CURR_UCODE_ID"),
+        (0x841180, "NV_PFALCON2_FALCON_MOD_SEL (RSA3K)"),
+        (0x840104, "NV_PFALCON_FALCON_BOOTVEC"),
+        (
+            0x840040,
+            "NV_PFALCON_FALCON_MAILBOX0 = adresa GspFwWprMeta (jos)",
+        ),
+        (
+            0x840044,
+            "NV_PFALCON_FALCON_MAILBOX1 = adresa GspFwWprMeta (sus)",
+        ),
+        (0x840100, "NV_PFALCON_FALCON_CPUCTL (STARTCPU)"),
+    ];
+
+    /// I6 then I7 on the simulated board; returns the board, the journal
+    /// and the number of I6 writes.
+    fn i6_i7_board() -> (FakeGsp, Journal, usize) {
+        let (mut g, u, image, _) = fwsec_board();
+        let (bu, bimage) = add_booter(&mut g, 0);
+        let mut j = Journal::new(4096);
+        let mut c = SimClock::default();
+        let fr = frts(&g);
+        {
+            let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+            fwsec_frts_dma(&mut b, &mut c, &u, &image, fr).unwrap();
+        }
+        let n = j.writes();
+        // What the OS prints between the two steps: WPR2 after I6 (C-66).
+        crate::gsp::falcon::read_frts_after_i6(&mut g, &mut j, fr).unwrap();
+        {
+            let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+            booter_load_dma(&mut b, &mut c, &bu, &bimage, WPR_META).unwrap();
+        }
+        (g, j, n)
+    }
+
+    /// C-69 (T72). SIMULARE.
+    #[test]
+    fn i7_writes_exactly_the_listed_sec2_registers() {
+        let (g, j, n) = i6_i7_board();
+        let mut seen: Vec<u32> = Vec::new();
+        for &(o, _) in &g.writes[n..] {
+            if !seen.contains(&o) {
+                seen.push(o);
+            }
+        }
+        let want: Vec<u32> = I7_WRITE_SET.iter().map(|&(o, _)| o).collect();
+        assert_eq!(seen, want, "I7 wrote a register outside the plan list");
+        // 2 reset + 1 core + 3 setup + 2 sections x (2 bases + 8 blocks x 3)
+        // + 4 BROM + 1 BOOTVEC + 2 mailboxes + 1 start (SIM Booter: 8 + 8).
+        assert_eq!(g.writes.len() - n, 66);
+        assert!(
+            g.writes[n..]
+                .iter()
+                .all(|&(o, _)| (0x840000..=0x843fff).contains(&o))
+        );
+        assert_eq!(
+            &g.writes[g.writes.len() - 3..g.writes.len() - 1],
+            &[
+                (0x840040, WPR_META as u32),
+                (0x840044, (WPR_META >> 32) as u32)
+            ]
+        );
+        assert_eq!(j.writes(), g.writes.len());
+    }
+
+    /// C-69 (T74): after a refused Booter the read-only status shows why
+    /// (mailbox 0 = the ROM's code, RISC-V not active) — and needs no
+    /// permit, no write. SIMULARE.
+    #[test]
+    fn read_after_i7_reports_a_refused_booter() {
+        let (mut g, u, image, _) = fwsec_board();
+        let (bu, bimage) = add_booter(&mut g, 1); // signature for another fuse
+        let mut j = Journal::new(4096);
+        let mut c = SimClock::default();
+        let fr = frts(&g);
+        {
+            let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+            fwsec_frts_dma(&mut b, &mut c, &u, &image, fr).unwrap();
+            assert!(booter_load_dma(&mut b, &mut c, &bu, &bimage, WPR_META).is_err());
+        }
+        let writes = g.writes.len();
+        let st = crate::gsp::falcon::read_after_i7(&mut g, &mut j).unwrap();
+        assert_eq!(st.sec2_mailbox0, 0xdead);
+        assert!(!st.passed());
+        assert_eq!(g.writes.len(), writes, "the status read wrote nothing");
+        let reads: Vec<u64> = j
+            .events()
+            .filter_map(|e| match *e {
+                gpu_core::diag::Event::MmioRead { offset, .. } => Some(offset),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(reads, [0x840040, 0x840044, 0x111388]);
+    }
+
+    fn i6_i7_journal_lines() -> Vec<std::string::String> {
+        let (mut g, mut j, _) = i6_i7_board();
+        // What the OS prints after I7 (C-69).
+        let st = crate::gsp::falcon::read_after_i7(&mut g, &mut j).unwrap();
+        assert!(st.passed());
+        j.events()
+            .map(|e| std::format!("[ 700.000] INFO  gpu: {e}"))
+            .collect()
+    }
+
+    /// C-69 (T73): the I6 + I7 stick journal read back in one pass, and
+    /// planted mistakes in the I7 part. SIMULARE.
+    #[test]
+    fn i6_i7_journal_passes_and_planted_i7_mistakes_are_caught() {
+        use crate::i6_log::{check_i6_i7_journal, check_i7};
+        let lines = i6_i7_journal_lines();
+        let fr = {
+            let (g, _, _, _) = fwsec_board();
+            frts(&g)
+        };
+        let r = check_i6_i7_journal(&lines.join("\n"), fr, WPR_META);
+        let s6 = r.i6_part.i6.clone().unwrap().unwrap();
+        assert_eq!(s6.writes, 78);
+        assert!(r.i6_part.wpr2_full.as_ref().unwrap().2.is_ok());
+        let s7 = r.i7.clone().unwrap().unwrap();
+        assert_eq!((s7.writes, s7.sections.len()), (66, 2));
+        assert_eq!(s7.sections, [(true, 8), (false, 8)]);
+        assert!(r.riscv_active, "GSP RISC-V read as active at the end");
+        // Wrong address in the journal check = the mailboxes do not match.
+        let r = check_i6_i7_journal(&lines.join("\n"), fr, WPR_META + 0x1000);
+        assert_eq!(
+            r.i7.unwrap().unwrap_err().what,
+            "cutiile postale trebuie sa fie adresa GspFwWprMeta"
+        );
+        // Only I6 in the journal: I7 did not start.
+        let only_i6: Vec<_> = lines
+            .iter()
+            .take_while(|l| !l.contains(" w 0x84"))
+            .cloned()
+            .collect();
+        let r = check_i6_i7_journal(&only_i6.join("\n"), fr, WPR_META);
+        assert!(r.i7.is_none() && !r.riscv_active);
+        // Planted mistakes, I7 part only.
+        let i7: Vec<std::string::String> = lines
+            .iter()
+            .skip_while(|l| !l.contains(" w 0x84"))
+            .cloned()
+            .collect();
+        let why = |l: &[std::string::String]| check_i7(&parse_all(l), WPR_META).unwrap_err().what;
+        let w: Vec<usize> = (0..i7.len()).filter(|&k| i7[k].contains(" w 0x")).collect();
+        // 1. a GSP write in the middle of I7
+        let mut l = i7.clone();
+        l.insert(w[10], "bar0 w 0x110040: 0x0 <- 0x1 => 0x1".into());
+        assert_eq!(why(&l), "scriere in afara ferestrei SEC2");
+        // 2. the doorbell (I8) right after the start belongs to I8, not I7
+        let mut l = i7.clone();
+        l.push("bar0 w 0x110c00: 0x0 <- 0x0 => 0x0".into());
+        assert_eq!(why(&l), "scriere in afara ferestrei SEC2");
+        // 3. a second SEC2 write after the start
+        let mut l = i7.clone();
+        l.push("bar0 w 0x840040: 0x0 <- 0x0 => 0x0".into());
+        assert_eq!(why(&l), "scrieri dupa pornirea Booter");
+        // 4. truncated before the start (hang in the DMA copy)
+        assert_eq!(
+            why(&i7[..w[30]]),
+            "jurnalul se termina inainte de sfarsitul I7"
+        );
+        // 5. a DMEM block skipped
+        let mut l = i7.clone();
+        l.drain(w[40]..=w[42]);
+        assert_eq!(why(&l), "bloc sarit sau in alta ordine");
+        // 6. Bus Master written in the middle of I7
+        let mut l = i7.clone();
+        l.insert(
+            w[5],
+            "cfg  w 0x004: 0x00100006 <- 0x00100002 => 0x00100002".into(),
+        );
+        assert_eq!(why(&l), "scriere in configuratie in mijlocul I7");
+        // 7. FWSEC-style zero mailboxes
+        let mut l = i7.clone();
+        l[w[63]] = "bar0 w 0x840040: 0x0 <- 0x0 => 0x0".into();
+        assert_eq!(
+            why(&l),
+            "cutiile postale trebuie sa fie adresa GspFwWprMeta"
+        );
+        // 8. the I6 checker refuses the I7 part (wrong window)
+        assert_eq!(
+            crate::i6_log::check_i6(&parse_all(&i7)).unwrap_err().what,
+            "scriere in afara ferestrei GSP"
+        );
+    }
+
     #[test]
     fn i6_writes_exactly_the_listed_gsp_registers() {
         let (mut g, u, image, _) = fwsec_board();

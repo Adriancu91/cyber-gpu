@@ -516,6 +516,58 @@ pub fn read_frts_after_i6<M: Mmio + ?Sized>(
     frts_full_with(|o| b.read(o), frts)
 }
 
+/// C-69: the three registers read after I7 to show its result.
+pub const I7_STATUS_READS: [u32; 3] = [
+    sec::NV_PSEC.lo + fv4::NV_PFALCON_FALCON_MAILBOX0,
+    sec::NV_PSEC.lo + fv4::NV_PFALCON_FALCON_MAILBOX1,
+    f2::NV_FALCON2_GSP_BASE + riscv::NV_PRISCV_RISCV_CPUCTL,
+];
+
+/// C-69: what the board says after I7, read with reads only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct I7Status {
+    /// SEC2 mailbox 0 after Booter halted: 0 = Booter succeeded.
+    pub sec2_mailbox0: u32,
+    pub sec2_mailbox1: u32,
+    /// GSP `NV_PRISCV_RISCV_CPUCTL` (bit 7 = `ACTIVE_STAT`).
+    pub riscv_cpuctl: u32,
+}
+
+impl I7Status {
+    /// Booter returned 0 and the GSP RISC-V core runs (GSP-RM started).
+    pub fn passed(&self) -> bool {
+        self.sec2_mailbox0 == 0
+            && riscv::NV_PRISCV_RISCV_CPUCTL_ACTIVE_STAT.get(self.riscv_cpuctl)
+                == riscv::NV_PRISCV_RISCV_CPUCTL_ACTIVE_STAT_ACTIVE
+    }
+}
+
+/// C-69: the I7 result read back with reads only (no permit, no write
+/// function), each read journaled with its value — so the stick journal
+/// shows the end of I7 even when `booter_load_dma` returned an error
+/// (the same lesson as C-66 for WPR2 after I6). Only the three registers of
+/// [`I7_STATUS_READS`].
+pub fn read_after_i7<M: Mmio + ?Sized>(mmio: &mut M, journal: &mut Journal) -> GpuResult<I7Status> {
+    let mut v = [0u32; 3];
+    for (k, &off) in I7_STATUS_READS.iter().enumerate() {
+        let x = checked_read32(mmio, u64::from(off))?;
+        journal.push(Event::MmioRead {
+            bar: 0,
+            offset: u64::from(off),
+            value: x,
+        });
+        if is_priv_error(x) {
+            return Err(GpuError::HardwareFault { code: x });
+        }
+        v[k] = x;
+    }
+    Ok(I7Status {
+        sec2_mailbox0: v[0],
+        sec2_mailbox1: v[1],
+        riscv_cpuctl: v[2],
+    })
+}
+
 /// After FWSEC-FRTS halted: no error code, WPR2 up, and where we asked
 /// (`frts` = the region from `fb_layout`, start..end). A wrong start is
 /// reported at LO (0x1fa824), a wrong end at HI (0x1fa828).
