@@ -110,3 +110,8 @@ exemplul `verifica_jurnal_i7` și eliberarea cu marcă de timp din `gpu-sim::cmd
 SEC2 (RM 570.144 `kgspExecuteHsFalcon_GA102`, MIT, citit în sesiunile anterioare). Câmpurile `SEM_EXECUTE.RELEASE_TIMESTAMP` / `PAYLOAD_SIZE`
 vin din `clc56f.h` (open-gpu-doc, MIT, generat în `nvidia-rm570`); poziția mărcii de timp la +8 în înregistrarea de 16 B e **DEDUS** (așa o citește
 semnalul din tinygrad, MIT; necitit din nou în această sesiune) — de confirmat pe placă la prima măsurătoare. Nimic copiat.
+
+**C-71 (5 nov, sesiunea 49):** `chain_log.rs` (verificarea pas cu pas a jurnalului `gpu lant`) și exemplul `verifica_jurnal_lant` sunt scrise de noi,
+fără surse noi: regulile vin din codul nostru (`chain.rs`, `i6_log.rs`, `gsp/falcon.rs::WRITE_RANGES`, `vram_window::CONTROL_REGISTERS`).
+Soneria GSP `NV_PGSP_QUEUE_HEAD(0)` = 0x110c00 e din `dev_gsp.h` (570.144, MIT, generat în `nvidia-rm570`); soneria canalului de lucru
+0xbb0090 rămâne **DEDUS** (nouveau/tinygrad, citite ca specificație în sesiunile anterioare), doar numărată de unealtă. Nimic copiat.

@@ -1,5 +1,13 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 49 (5 nov 2026, cloud, fără placă) — C-71: verificarea jurnalului pentru tot lanțul
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T82 | Jurnalul lanțului complet (cum l-ar salva OS-ul pe stick), citit pas cu pas cu `chain_log::check_chain_journal`: I6/I7 cu încărcarea DMA reală, I8 (prima scriere = soneria GSP, doar ferestrele GSP/SEC2), golden + I9 (doar sonerii + registrele ferestrei VRAM, o sonerie pe apel RM), I10, Bus Master pus la loc | `cargo test -p nvidia-ga104 full_window_journal_checks` | TRECE; 25 sonerii la golden + I9 = 25 apeluri RM; 7 greșeli plantate prinse (o sonerie lipsă, o sonerie în minus față de apeluri, o scriere străină la golden, Command pus greșit, pas doar-citire care scrie, I8 în afara ferestrelor, pași inversați); lanțul fără sonerii → „OPRIT CURAT la i8e-golden” | conform | PASS (SIMULARE) |
+| T83 | T78 cu încărcarea DMA reală pentru I6/I7 (înainte: încărcare scurtată a simulatorului) | `cargo test -p nvidia-ga104 full_window_chain_passes` | toți cei 13 pași TREC | conform | PASS (SIMULARE) |
+| T84 | Unealta `verifica_jurnal_lant` pe un jurnal fără pași | `cargo run --release -p nvidia-ga104 --example verifica_jurnal_lant -- gol.txt 0x123400000` | „DE ANALIZAT: lipsesc pasi: 0 din 13”, ieșire 2 | conform | PASS |
+
 ## Rezultate — sesiunea 48 (4 nov 2026, cloud, fără placă) — C-71: lanțul complet al ferestrei
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |

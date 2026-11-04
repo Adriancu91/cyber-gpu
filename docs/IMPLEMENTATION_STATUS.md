@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 49 — 5 noiembrie 2026, ~01:50 (ora României), în cloud, FĂRĂ placă — C-71 (lucru continuu): verificarea jurnalului pentru tot lanțul
+
+Pasul următor din sesiunea 48, făcut fără placă: jurnalul unei ferestre `gpu lant` complete se verifică **pas cu pas**, dintr-o comandă.
+**Nimic testat pe RTX 3070 Ti.**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Verificarea jurnalului lanțului | `chain_log::check_chain_journal`: jurnalul se împarte după liniile `pas <id>: ok/ESEC`; fiecare pas cu regula lui: doar-citire = 0 scrieri; Bus Master = 1 scriere în Command, pus exact la loc; I6/I7 = `check_i6`/`check_i7`; WPR2 după I6 și RISC-V activ după I7; **I8** = doar ferestrele GSP/SEC2, prima scriere = soneria; **golden + I9** = doar sonerii (valoarea 0) și cele 4 registre ale ferestrei VRAM, ≥ 1 sonerie, iar cu numărul de apeluri RM dat de OS: exact o sonerie pe apel; **I10** = fereastra VRAM + soneria canalului (0xbb0090, DEDUS, numărată). Verdict: TRECE / OPRIT CURAT la pas / DE ANALIZAT | PASS (SIMULARE): T82 |
+| Simularea mai aproape de placă | lanțul T78 încarcă acum FWSEC și Booter prin DMA, ca pe placă (înainte, simulatorul scurta încărcarea): jurnalul are scrierile I6/I7 reale | PASS (SIMULARE): T83 |
+| Greșeli plantate | 7 greșeli în textul jurnalului, toate prinse; lanțul fără sonerii → „OPRIT CURAT la i8e-golden” | PASS (SIMULARE): T82 |
+| Unealta | exemplul `verifica_jurnal_lant` (ieșire 0 TRECE / 3 OPRIT CURAT / 2 DE ANALIZAT) | PASS: T84 (jurnal fără pași → DE ANALIZAT) |
+| Pentru OS | `integration/cyber-universe/C-71_jurnal-lant.md`: ce trebuie să conțină jurnalul de pe stick (liniile `pas`, opțional numărul apelurilor RM) | propus |
+| Compatibilitate OS | doar adăugări (modul nou `chain_log`); nimic redenumit sau șters | PASS |
+
+Verificări (`sh tools/check.sh`): format, clippy `-D warnings`, **352 teste PASS** (1 ignorat), build no_std PASS; clippy cu `--features hw-write` PASS.
+Oprirea de siguranță nu se aplică (pas terminat în această sesiune).
+
+**Următorul pas:** sesiunea OS leagă `gpu lant` de `WINDOW_CHAIN_FULL` și copiază liniile `pas` în jurnalul de pe stick; după fereastră:
+`verifica_jurnal_lant`. Fără placă, pentru noi: verificarea citirii înapoi a tabelelor de pagini din jurnal (I9) — de văzut dacă aduce un plus
+cinstit; altfel, așteptăm fereastra. Înainte de I10 pe placă: aprobarea soneriei canalului de lucru (0xbb0090, încă nu e pe lista permisă).
+
+---
 ## Sesiunea 48 — 4 noiembrie 2026, ~23:35 (ora României), în cloud, FĂRĂ placă — C-71 (lucru continuu: I7 → I10 în lanț)
 
 Decizia lui Adrian (23:13): pașii avansează în simulare fără să aștepte fiecare o fereastră; testele pe placă se fac în grup, cu `gpu lant`.

@@ -621,7 +621,7 @@ pub fn dma_load<M: Mmio + ?Sized, C: Clock + ?Sized>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::super::falcon::{booter_load_dma, fwsec_frts_dma};
     use super::*;
     use gpu_core::diag::Journal;
@@ -716,6 +716,15 @@ mod tests {
             f[0x200 + k * 384..0x200 + (k + 1) * 384].fill(0xc0 + k as u8);
         }
         f
+    }
+
+    /// C-71: the simulated board with both signed-ucode images in system
+    /// memory (FWSEC for I6, Booter for I7), for the full window chain.
+    /// SIMULARE: synthetic bytes, never NVIDIA firmware.
+    pub(crate) fn i6_i7_dma_board() -> (FakeGsp, [(HsUcode, DmaImage); 2]) {
+        let (mut g, u, image, _) = fwsec_board();
+        let (bu, bimage) = add_booter(&mut g, 0);
+        (g, [(u, image), (bu, bimage)])
     }
 
     fn add_booter(g: &mut FakeGsp, fuse: u32) -> (HsUcode, DmaImage) {

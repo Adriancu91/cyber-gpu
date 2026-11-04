@@ -38,6 +38,8 @@
 //!   the `gpu-sim` model (pure text);
 //! - [`chain`]: C-54 — the window steps in a chain (stop at the first failure,
 //!   cleanup always, no writing step without permission, blocked steps never tried);
+//! - [`chain_log`]: C-71 — the stick journal of a whole `gpu lant` window,
+//!   checked step by step (pure text);
 //! - [`launch_cost`]: C-69 — measurement 1 of the one-program target: the
 //!   cost of one launch from GPU timestamps (encoding + reading, SIMULARE);
 //! - [`backend`]: the I1 contract for GA104.
@@ -53,6 +55,7 @@ pub mod backend;
 pub mod board_compare;
 pub mod boot;
 pub mod chain;
+pub mod chain_log;
 pub mod fb_layout;
 pub mod firmware;
 pub mod fuse;

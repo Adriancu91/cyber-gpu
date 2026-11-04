@@ -76,6 +76,13 @@ Pași 1–4 ca în fereastra 1, apoi:
 ## Fereastra 5 și după
 Treptele matmul (T55) cu viteză măsurată, apoi un strat Kronos (comparat cu procesorul), apoi Kronos pe placă în OS — fiecare cu comandă nouă.
 
+## După orice fereastră cu `gpu lant` complet (C-71, sesiunea 49)
+Un singur jurnal pentru tot lanțul se verifică pas cu pas, dintr-o comandă (doar text, nu atinge placa):
+`cargo run --release -p nvidia-ga104 --example verifica_jurnal_lant -- gpu-jurnal-00N.txt <adresa GspFwWprMeta> [apeluri RM | -]`
+→ „TRECE” (ieșire 0), „OPRIT CURAT la <pas>” (ieșire 3: lanțul s-a oprit la primul eșec și a pus Bus Master la loc) sau
+„DE ANALIZAT: …” (ieșire 2). Reguli: pașii doar-citire fără nicio scriere; I6/I7 în ordinea exactă; I8 doar în ferestrele GSP/SEC2,
+prima scriere = soneria; golden + I9 doar sonerii (o sonerie pe apel RM) și registrele ferestrei VRAM; Bus Master pus exact la loc.
+
 ## Ce rămâne neschimbat în toate ferestrele
 - Orice cod care scrie în placă e în spatele opțiunii `hw-write` (oprită implicit) și cere `HardwareWritePermit` + „DA” de la Adrian.
 - Jurnalul fiecărui acces se scrie pe stick pe loc; după fiecare fereastră: poze + `raport/*.txt` + `raport/gpu-jurnal-*.txt` → hub `rezultate/`.

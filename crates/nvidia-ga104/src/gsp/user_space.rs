@@ -1877,6 +1877,10 @@ mod tests {
         rpc_bells: u32,
         writes: Vec<(u32, u32)>,
         median_ns: Option<u64>,
+        /// C-71: the whole journal as the OS would save it on the stick.
+        journal_text: alloc::string::String,
+        frts: (u64, u64),
+        wpr_meta: u64,
     }
 
     /// `gpu lant` with [`crate::chain::WINDOW_CHAIN_FULL`] on the simulated
@@ -1888,7 +1892,7 @@ mod tests {
     /// plain `QueueTransport`, which never rings.
     fn full_window(bell_each_rpc: bool) -> FullWindow {
         use crate::chain::{READY_FOR_WINDOW, WINDOW_CHAIN_FULL, run_chain_ready};
-        use crate::gsp::falcon::{self, Engine, GuardedBar0};
+        use crate::gsp::falcon::{self, GuardedBar0};
         use crate::gsp::golden::QueueTransportBell;
         use crate::gsp::rpc::{event, function};
         use crate::launch_cost;
@@ -1896,14 +1900,14 @@ mod tests {
         use gpu_core::diag::Journal;
         use gpu_core::hal::ConfigSpace;
         use gpu_pci::bus_master::{BusMasterPermit, restore_command, set_bus_master};
-        use gpu_sim::fake_gsp::{FakeGsp, SimUcode};
         use gpu_sim::observed;
 
         const WPR_META: u64 = 0x1_2340_0000;
         let mut cfg = observed::observed_config();
         let permit = BusMasterPermit::new("test C-71 (SIMULARE)");
         let mut old = None;
-        let mut g = FakeGsp::new();
+        let (mut g, [(fw_u, fw_img), (bo_u, bo_img)]) =
+            crate::gsp::hs_load::tests::i6_i7_dma_board();
         let frts = g.frts;
         let mut clock = SimClock::default();
         let l = QueueLayout::standard();
@@ -1925,14 +1929,6 @@ mod tests {
         let mut median = None;
         let mut j = Journal::new(1 << 16);
         let fail = |w: &'static str| GpuError::InvalidArgument(w);
-        let load = |b: &mut GuardedBar0<'_, FakeGsp>, e: Engine| {
-            let u = match e {
-                Engine::Gsp => SimUcode::FwsecFrts,
-                Engine::Sec2 => SimUcode::BooterLoad,
-            };
-            b.model().sim_load(e.base(), u);
-            Ok(())
-        };
         let report = run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, true, &mut j, |s, j| {
             // One RM call: the doorbell after each message (or never), the
             // simulated GSP answering only after a doorbell it has not served.
@@ -1989,12 +1985,12 @@ mod tests {
                 }
                 "i6-fwsec-frts" => {
                     let mut b = GuardedBar0::new(&mut g, j, None)?;
-                    falcon::fwsec_frts(&mut b, &mut clock, load, frts).map(|_| ())
+                    falcon::fwsec_frts_dma(&mut b, &mut clock, &fw_u, &fw_img, frts).map(|_| ())
                 }
                 "i6-wpr2-citit" => falcon::read_frts_after_i6(&mut g, j, frts).map(|_| ()),
                 "i7-booter-gsp" => {
                     let mut b = GuardedBar0::new(&mut g, j, None)?;
-                    falcon::booter_load(&mut b, &mut clock, load, WPR_META)
+                    falcon::booter_load_dma(&mut b, &mut clock, &bo_u, &bo_img, WPR_META)
                 }
                 "i7-citit" => match falcon::read_after_i7(&mut g, j)?.passed() {
                     true => Ok(()),
@@ -2114,6 +2110,9 @@ mod tests {
             rpc_bells: bells.get(),
             writes: g.writes.clone(),
             median_ns: median,
+            journal_text: j.events().map(|e| alloc::format!("{e}\n")).collect(),
+            frts,
+            wpr_meta: WPR_META,
         }
     }
 
@@ -2152,5 +2151,91 @@ mod tests {
         assert_eq!(w.report.outcome("bus-master-oprit"), Some(&Outcome::Passed));
         assert_eq!(w.command_after, gpu_sim::observed::COMMAND);
         assert_eq!(w.gsp_doorbells, 1);
+    }
+
+    /// C-71 (T81): the stick journal of the simulated full window, read
+    /// back with `chain_log`: every step conform, one GSP doorbell per RM
+    /// call; planted mistakes in the text are all caught. SIMULARE.
+    #[test]
+    fn full_window_journal_checks_step_by_step() {
+        use crate::chain_log::{ChainVerdict, check_chain_journal};
+        let w = full_window(true);
+        assert!(w.report.all_passed(), "{}", w.report);
+        let check = |t: &str, n: Option<u32>| check_chain_journal(t, w.frts, w.wpr_meta, n);
+        let r = check(&w.journal_text, Some(w.rpc_bells));
+        assert_eq!(r.verdict(), ChainVerdict::Passed, "{r:?}");
+        assert_eq!(r.steps.len(), crate::chain::WINDOW_CHAIN_FULL.len());
+        assert_eq!(r.rm_doorbells, w.rpc_bells);
+        assert_eq!(r.step("i8-gsp-init").unwrap().gsp_doorbells, 1);
+        assert!(r.i6.is_some() && r.i7.is_some());
+        let lines: Vec<&str> = w.journal_text.lines().collect();
+        let at = |id: &str| {
+            lines
+                .iter()
+                .position(|l| *l == alloc::format!("pas {id}: ok"))
+                .unwrap()
+        };
+        let edit = |f: &dyn Fn(&mut Vec<alloc::string::String>)| {
+            let mut v: Vec<alloc::string::String> = lines.iter().map(|l| (*l).into()).collect();
+            f(&mut v);
+            v.join("\n")
+        };
+        let bad = |t: &str, n: Option<u32>, want: &str| match check(t, n).verdict() {
+            ChainVerdict::ToAnalyse(why) => assert!(why.contains(want), "{why}"),
+            v => panic!("{want}: {v:?}"),
+        };
+        // 1. one doorbell fewer than the RM calls the OS printed.
+        bad(&w.journal_text, Some(w.rpc_bells + 1), "una pe mesaj");
+        let golden = at("i8e-golden");
+        let gb = (0..golden)
+            .rev()
+            .find(|&i| lines[i].starts_with("bar0 w 0x110c00"))
+            .unwrap();
+        bad(
+            &edit(&|v| {
+                v.remove(gb);
+            }),
+            Some(w.rpc_bells),
+            "una pe mesaj",
+        );
+        // 2. a register write in golden that is not a doorbell.
+        bad(
+            &edit(&|v| v.insert(golden, "bar0 w 0x001200: 0x0 <- 0x1 => 0x1".into())),
+            None,
+            "i8e-golden: scriere care nu e sonerie",
+        );
+        // 3. Bus Master restored to a different value.
+        let off = at("bus-master-oprit") - 1;
+        bad(
+            &edit(&|v| v[off] = "cfg  w 0x004: 0x00100007 <- 0x00100007 => 0x00100007".into()),
+            None,
+            "bus-master-oprit: Command pus",
+        );
+        // 4. a read-only step that wrote.
+        let r7 = at("i7-citit");
+        bad(
+            &edit(&|v| v.insert(r7, "bar0 w 0x110040: 0x0 <- 0x1 => 0x1".into())),
+            None,
+            "i7-citit: pas doar-citire",
+        );
+        // 5. I8 that writes outside the GSP/SEC2 windows.
+        let i8 = at("i8-gsp-init");
+        bad(
+            &edit(&|v| v.insert(i8, "bar0 w 0x000200: 0x0 <- 0x1 => 0x1".into())),
+            None,
+            "afara ferestrelor GSP/SEC2",
+        );
+        // 6. steps out of order.
+        let (a, b) = (at("i9-canal-lucru"), at("i10-add64"));
+        bad(&edit(&|v| v.swap(a, b)), None, "alta ordine");
+        // 7. without a doorbell per RM call the chain stops at golden, and
+        //    the journal shows a clean stop with Bus Master put back.
+        let n = full_window(false);
+        let r = check_chain_journal(&n.journal_text, n.frts, n.wpr_meta, None);
+        assert_eq!(
+            r.verdict(),
+            ChainVerdict::StoppedCleanly("i8e-golden".into()),
+            "{r:?}"
+        );
     }
 }
