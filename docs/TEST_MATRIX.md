@@ -1,5 +1,13 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 46 (4 nov 2026, cloud, fără placă) — C-66: capătul WPR2 de 128 KiB + citirea de după I6
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T68 | Jurnalul real `gpu-jurnal-002.txt` (3 nov, placă) prin `verifica_jurnal_i6` | `cargo run --release -p nvidia-ga104 --example verifica_jurnal_i6 -- gpu-jurnal-002.txt` | ordinea I6 trece; HI citit după FWSEC | ordinea I6 **TRECE** (720 scrieri, 2 scrieri config); HI lipsește din jurnal (codul de atunci nu jurnaliza citirile WPR2) → HI confirmat din ecranul de pe 4 nov: `0x1ffee0` | PARȚIAL (date de pe placă, verificare pe gazdă) |
+| T70 | `compare_frts_full`: valorile de pe placă din 4 nov (LO `0x1ffe00`, HI `0x1ffee0`) → TRECE, forma „ultimul bloc de 128 KiB”; formele vechi trec; 6 capete greșite prinse la HI; zonă prea mică/nealiniată → fără forma de bloc; regula veche dă exact mesajul din 4 nov | `cargo test -p nvidia-ga104 frts_last_128k` | conform | conform | PASS (SIMULARE) |
+| T71 | I6 pe `gpu-sim` cu forma plăcii (implicită acum) + `read_frts_after_i6` fără permis: 0 scrieri, 3 citiri în jurnal, registru GSP refuzat, placă rece raportată | `cargo test -p nvidia-ga104 read_back_without_permit` | conform | conform | PASS (SIMULARE) |
+
 ## Rezultate — sesiunea 40 (3 nov 2026, cloud, fără placă) — C-58: verificarea capătului WPR2
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |

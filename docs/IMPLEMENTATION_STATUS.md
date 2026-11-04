@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 46 — 4 noiembrie 2026, ~19:40 (ora României), în cloud, FĂRĂ placă — C-66 (comandă nouă)
+
+În hub: rezultatul de pe placă `rezultate/2026-11-04-workstation-os222/` și comanda **C-66**. Pe placă (os-222), I6 a rulat FWSEC-FRTS și a dat
+„NU TRECE … la 0x1fa828: asteptat 0x1fff00, citit 0x1ffee0”: LO = exact începutul FRTS, HI = începutul ultimului bloc de **128 KiB** al zonei →
+FWSEC-FRTS a reușit pe placă, regula noastră nu cunoștea această formă. Al doilea defect: citirea WPR2 de după I6 era refuzată (cerea permis de scriere).
+**Nimic din această sesiune nu a fost testat pe RTX 3070 Ti.**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Capătul de 128 KiB | `compare_frts_full` / `check_frts_full` / `Wpr2EndForm` (3 forme, cu `label()` în română); `check_frts` (folosit de I6) acceptă acum forma plăcii | PASS (SIMULARE): T70 |
+| Citirea după I6 | `read_frts_after_i6` + `StatusReadBar0`: doar citiri, 3 registre de stare, fără permis, fără funcție de scriere, fiecare citire în jurnal | PASS (SIMULARE): T71 |
+| `gpu-sim` | `FakeGsp::wpr2_hi_back` (implicit 128 KiB, ca placa) | PASS (SIMULARE) |
+| Jurnalul real din 3 nov | `verifica_jurnal_i6` pe `gpu-jurnal-002.txt`: ordinea celor 720 de scrieri I6 TRECE, Bus Master pornit/pus la loc; HI nu era în jurnal (codul vechi nu jurnaliza citirile) | PARȚIAL: T68 |
+| Unealta de jurnal | `wpr2_after_i6_full`, câmpul `StickJournal::wpr2_full`; `verifica_jurnal_i6` folosește regula nouă | PASS (SIMULARE) |
+| Pentru OS | `integration/cyber-universe/C-66_wpr2-bloc-128k.md`: fixarea ≥ `9ac89b8` + înlocuirea a 1 funcție în `gpu_i6.rs` | propus |
+| Compatibilitate OS | doar adăugări; `check_frts_detail` / `Wpr2End` neschimbate (refuză forma de 128 KiB — de aceea OS-ul trece pe funcția nouă) | PASS |
+
+Verificări (`sh tools/check.sh`): format, clippy `-D warnings`, **338 teste PASS** (1 ignorat), build no_std PASS; clippy cu `--features hw-write` PASS.
+Oprirea de siguranță nu se aplică (pas terminat în această sesiune).
+
+**Următorul pas:** sesiunea OS face partea ei din C-66 (fixare + Release) → fereastra următoare: I6 o dată, pornire rece → așteptat TRECE →
+jurnalul de pe stick în hub → `verifica_jurnal_i6` → plan pentru I7 (doar cu comandă nouă).
+
+---
 ## Sesiunea 45 — 4 noiembrie 2026, ~13:30 (ora României), în cloud, FĂRĂ placă — fără lucru nou (fereastra C-63 s-a încheiat, jurnalele lipsesc)
 
 Verificat: CI verde (rularea 97, `70fc8e3`); în hub nicio comandă nouă/preluată pentru `cyber-gpu`; singura decizie nouă (11:33, „super-școala de

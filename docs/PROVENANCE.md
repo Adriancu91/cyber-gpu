@@ -97,5 +97,10 @@ LO == începutul FRTS; HI nu e comparat) și `kernel_gsp_tu102.c` (HI doar ≠ 0
 `drivers/gpu/nova-core/fb.rs`, `fb/regs.rs`, `gsp/hal/tu102.rs` (aceeași verificare doar pe LO; comentariul numește HI „exclusiv”, dar nu-l verifică)
 și nouveau `nvkm/subdev/gsp/fwsec.c` (doar afișează LO/HI). Concluzia că HI ține ultima pagină vine din măsurătoarea noastră pe placă (3 nov), nu din aceste surse.
 
+**C-66 (4 nov, sesiunea 46):** `compare_frts_full`, `check_frts_full`, `Wpr2EndForm`, `StatusReadBar0`, `read_frts_after_i6` (`gsp/falcon.rs`),
+`wpr2_after_i6_full` (`i6_log.rs`) și `FakeGsp::wpr2_hi_back` (`gpu-sim`) sunt scrise de noi. Forma „ultimul bloc de 128 KiB” vine din măsurătoarea
+de pe placă (4 nov, os-222: HI `0x1ffee0`), nu dintr-o sursă; aceleași surse ca la C-58 (RM 570.144 MIT, nova-core GPL doar citit) verifică doar LO,
+deci acceptă și ele această valoare. Nimic copiat.
+
 **C-63 (3 nov, sesiunea 42):** `check_stick_journal` (`i6_log.rs`) și exemplul `verifica_jurnal_i6` sunt scrise de noi, doar procesare de text peste
 funcțiile noastre existente (`parse_line`, `check_i6`, `wpr2_after_i6`); nicio sursă externă nouă.
