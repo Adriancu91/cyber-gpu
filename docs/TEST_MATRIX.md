@@ -1,5 +1,11 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 50 (5 nov 2026, cloud, fără placă) — C-71: fereastra VRAM în jurnalul lanțului
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T85 | Jurnalul real al ferestrei VRAM (`VramWindow` pe modelul PRAMIN din `gpu-sim`: tabelele de pagini, invalidarea, punerea la loc) pus în pasul I9 al jurnalului T82 | `cargo test -p nvidia-ga104 full_window_journal_checks` | lanțul tot TRECE; fereastra lăsată mutată → „fereastra VRAM (0x1700) lasata la …”; o mutare recitită diferit → „nu s-a mutat” | conform | PASS (SIMULARE) |
+
 ## Rezultate — sesiunea 49 (5 nov 2026, cloud, fără placă) — C-71: verificarea jurnalului pentru tot lanțul
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |

@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 50 — 5 noiembrie 2026 (ora României), în cloud, FĂRĂ placă — C-71 (lucru continuu): fereastra VRAM în jurnalul lanțului
+
+Nicio comandă nouă în hub (C-18 și C-20 sunt de mult `gata`; ultimele: C-66, C-69, C-71 — gata pentru noi). Pasul rămas din sesiunea 49
+(„citirea înapoi a tabelelor de pagini din jurnal, dacă aduce un plus cinstit”) s-a redus la ce se vede cinstit în jurnal: cuvintele din VRAM
+nu sunt în jurnal (driverul le recitește singur și oprește la nepotrivire), dar **mutările ferestrei VRAM** sunt. **Nimic testat pe RTX 3070 Ti.**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Fereastra VRAM în jurnal | `chain_log::check_chain_journal`: fiecare scriere în `0x1700` (`NV_PBUS_BAR0_WINDOW`) recitită egal; la sfârșitul jurnalului fereastra pusă înapoi la valoarea dinaintea primei mutări (stare a plăcii, ca Bus Master) | PASS (SIMULARE): T85 |
+| Jurnal real, nu inventat | jurnalul `VramWindow` (tabelele de pagini + invalidarea + punerea la loc, pe modelul PRAMIN din `gpu-sim`) pus în pasul I9 al jurnalului T82: lanțul tot TRECE; 2 greșeli plantate prinse (fereastra nepusă la loc, mutare recitită diferit) | PASS (SIMULARE): T85 |
+| Pentru OS | `integration/cyber-universe/C-71_fereastra-vram.md` (informare: `restore()` și pe drumul de eroare, când vor exista I9/I10 în OS) | propus |
+| Compatibilitate OS | doar adăugare: constanta `chain_log::VRAM_WINDOW` | PASS |
+
+Verificări (`sh tools/check.sh`): format, clippy `-D warnings`, **352 teste PASS** (1 ignorat; T85 e în testul T82), build no_std PASS; clippy cu `--features hw-write` PASS.
+Oprirea de siguranță nu se aplică (pas terminat în această sesiune).
+
+**Următorul pas:** fără placă, nu mai rămâne nimic cu plus cinstit în cyber-gpu: I6–I10 sunt în SIMULARE și în lanț, jurnalul se verifică pas cu pas.
+Totul așteaptă: (1) răspunsul lui Adrian la întrebarea OS-ului despre I7–I10 în `gpu lant` (`stare/cyber-universe.md`), (2) fereastra pe workstation,
+(3) aprobarea soneriei canalului de lucru (`0xBB0090`) înainte de I10 pe placă. Sesiunile următoare fără comandă nouă sau jurnal nou: oprire scurtă.
+
+---
 ## Sesiunea 49 — 5 noiembrie 2026, ~01:50 (ora României), în cloud, FĂRĂ placă — C-71 (lucru continuu): verificarea jurnalului pentru tot lanțul
 
 Pasul următor din sesiunea 48, făcut fără placă: jurnalul unei ferestre `gpu lant` complete se verifică **pas cu pas**, dintr-o comandă.
