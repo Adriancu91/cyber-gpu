@@ -199,6 +199,172 @@ pub fn check_i7(events: &[Event], wpr_meta_addr: u64) -> Result<I6Summary, I6Log
     )
 }
 
+/// `NV_PFALCON_FALCON_OS` (GSP-RM version after Booter, C-75).
+const FALCON_OS: u64 = 0x80;
+
+/// C-75: what a correct I7 journal in the board's order contained.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct I7LibosSummary {
+    /// The Booter load on SEC2 ([`check_i7`] on that part).
+    pub booter: I6Summary,
+    /// The LibOS address the GSP mailboxes kept (read back equal).
+    pub libos: u64,
+    /// All BAR0 writes of the step.
+    pub writes: usize,
+}
+
+/// C-75: checks an I7 journal in the order the board needs
+/// ([`crate::gsp::falcon::booter_load_dma_libos`]): on the GSP window
+/// ENGINE = 1, ENGINE = 0, BCR_CTRL = RISC-V (read back with CORE_SELECT
+/// set), MAILBOX0/1 = the LibOS address, **each read back equal**; then the
+/// Booter load on SEC2 exactly as [`check_i7`]; then one write of the GSP
+/// `FALCON_OS` = 570144, read back equal. `libos_addr = None` takes the
+/// address from the journal (it must be non-zero). The journal of 5 Nov
+/// 2026 (os-246: mailboxes written without the GSP reset, read back 0) is
+/// reported at its first write. Pure text processing.
+pub fn check_i7_libos(
+    events: &[Event],
+    wpr_meta_addr: u64,
+    libos_addr: Option<u64>,
+) -> Result<I7LibosSummary, I6LogError> {
+    let in_sec2 = |o: u64| (SEC2_LO..=SEC2_HI).contains(&o);
+    let is_sec2_write =
+        |e: &Event| matches!(*e, Event::MmioWrite { bar: 0, offset, .. } if in_sec2(offset));
+    let writes: Vec<(u64, u32, u32)> = events
+        .iter()
+        .filter_map(|e| match *e {
+            Event::MmioWrite {
+                bar: 0,
+                offset,
+                written,
+                after,
+                ..
+            } => Some((offset, written, after)),
+            _ => None,
+        })
+        .collect();
+    let Some(first) = events.iter().position(is_sec2_write) else {
+        return Err(err(writes.len(), SEC2_LO, "lipseste Booter pe SEC2"));
+    };
+    let last = events.iter().rposition(is_sec2_write).unwrap_or(first);
+    if let Some(k) = events.iter().position(|e| {
+        matches!(*e, Event::ConfigWrite { .. })
+            || matches!(*e, Event::MmioWrite { bar, .. } if bar != 0)
+    }) {
+        let n = events[..k]
+            .iter()
+            .filter(|x| matches!(x, Event::MmioWrite { bar: 0, .. }))
+            .count();
+        return Err(err(
+            n,
+            0,
+            "scriere in configuratie sau in alt BAR in mijlocul I7",
+        ));
+    }
+    let before = |e: &[Event]| {
+        e.iter()
+            .filter(|x| matches!(x, Event::MmioWrite { bar: 0, .. }))
+            .count()
+    };
+    let n_pre = before(&events[..first]);
+    let pre = &writes[..n_pre.min(writes.len())];
+    let g = GSP_LO;
+    // The os-246 form: mailboxes first, no GSP reset.
+    if let Some(&(o, wr, af)) = pre.first()
+        && o == g + MAILBOX0
+    {
+        return Err(err(
+            0,
+            o,
+            if wr != af {
+                "cutia GSP nu a pastrat adresa LibOS: GSP nu a fost resetat in RISC-V dupa FWSEC"
+            } else {
+                "lipseste resetarea GSP in RISC-V inainte de cutiile LibOS"
+            },
+        ));
+    }
+    let exp = [
+        (ENGINE, "lipseste resetarea GSP (ENGINE=1)"),
+        (ENGINE, "lipseste ENGINE=0 la GSP"),
+        (BCR_CTRL, "lipseste trecerea GSP pe RISC-V (BCR_CTRL)"),
+        (MAILBOX0, "lipseste cutia GSP 0 (adresa LibOS)"),
+        (MAILBOX1, "lipseste cutia GSP 1 (adresa LibOS)"),
+    ];
+    for (k, &(off, what)) in exp.iter().enumerate() {
+        match pre.get(k) {
+            Some(&(o, _, _)) if o == g + off => {}
+            Some(&(o, _, _)) => return Err(err(k, o, what)),
+            None => return Err(err(k, g + off, what)),
+        }
+    }
+    if pre.len() > exp.len() {
+        return Err(err(
+            exp.len(),
+            pre[exp.len()].0,
+            "scriere in plus inainte de Booter",
+        ));
+    }
+    if pre[0].1 != 1 || pre[1].1 != 0 {
+        return Err(err(1, g + ENGINE, "resetarea GSP nu e 1 apoi 0"));
+    }
+    if pre[2].2 & (1 << 4) == 0 {
+        return Err(err(
+            2,
+            g + BCR_CTRL,
+            "GSP nu a trecut pe RISC-V (CORE_SELECT citit 0)",
+        ));
+    }
+    for k in [3, 4] {
+        if pre[k].1 != pre[k].2 {
+            return Err(err(k, pre[k].0, "cutia GSP nu a pastrat adresa LibOS"));
+        }
+    }
+    let libos = u64::from(pre[3].1) | u64::from(pre[4].1) << 32;
+    if libos == 0 || libos_addr.is_some_and(|a| a != libos) {
+        return Err(err(
+            3,
+            g + MAILBOX0,
+            "cutiile GSP nu au adresa LibOS asteptata",
+        ));
+    }
+    let booter = check_i7(&events[first..=last], wpr_meta_addr).map_err(|e| I6LogError {
+        write_index: e.write_index + n_pre,
+        ..e
+    })?;
+    let n_mid = before(&events[first..=last]);
+    let post = &writes[(n_pre + n_mid).min(writes.len())..];
+    let at = n_pre + n_mid;
+    match post.first() {
+        None => {
+            return Err(err(
+                at,
+                g + FALCON_OS,
+                "lipseste versiunea GSP-RM (FALCON_OS) dupa Booter",
+            ));
+        }
+        Some(&(o, _, _)) if o != g + FALCON_OS => {
+            return Err(err(
+                at,
+                o,
+                "dupa Booter e permisa doar versiunea GSP-RM (FALCON_OS)",
+            ));
+        }
+        Some(&(o, wr, af)) => {
+            if wr != crate::gsp::falcon::GSP_RM_APP_VERSION_570_144 || wr != af {
+                return Err(err(at, o, "FALCON_OS trebuie 570144, recitit egal"));
+            }
+        }
+    }
+    if let Some(&(o, _, _)) = post.get(1) {
+        return Err(err(at + 1, o, "scriere in plus dupa versiunea GSP-RM"));
+    }
+    Ok(I7LibosSummary {
+        booter,
+        libos,
+        writes: writes.len(),
+    })
+}
+
 fn check_hs_load(
     events: &[Event],
     f: &HsLoad,
@@ -493,6 +659,36 @@ pub fn check_i6_i7_journal(text: &str, frts: (u64, u64), wpr_meta_addr: u64) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The I7 lines of the board journal of 5 Nov 2026 (os-246), shortened:
+    /// the two GSP mailbox writes that read back 0, then the first SEC2
+    /// writes. Real values, copied from `os246-gpu-jurnal-002.txt`.
+    const OS246_I7_START: &str = "\
+[  298.172009] gpu: bar0 w 0x110040: 0x00000000 <- 0x09c71000 => 0x00000000
+[  298.195009] gpu: bar0 w 0x110044: 0x00000000 <- 0x00000000 => 0x00000000
+[  298.218027] gpu: nota: falcon: RESET_READY nu a venit; continui
+[  298.241119] gpu: bar0 w 0x8403c0: 0x00000000 <- 0x00000001 => 0x00000001
+[  298.264045] gpu: bar0 w 0x8403c0: 0x00000001 <- 0x00000000 => 0x00000000
+[  298.287289] gpu: bar0 w 0x841668: 0x00000110 <- 0x00000000 => 0x00000001
+";
+
+    /// C-75 (T88): the real os-246 I7 journal is reported at its first
+    /// write with the cause (GSP not reset into RISC-V after FWSEC); the
+    /// same lines with the mailbox kept say the reset is missing.
+    #[test]
+    fn i7_libos_rule_names_the_cause_on_the_board_journal() {
+        let ev: Vec<Event> = OS246_I7_START.lines().filter_map(parse_line).collect();
+        let e = check_i7_libos(&ev, 0x09c6_1000, None).unwrap_err();
+        assert_eq!((e.write_index, e.offset), (0, 0x110040));
+        assert!(e.what.contains("nu a fost resetat in RISC-V"), "{}", e.what);
+        let kept = OS246_I7_START.replacen("=> 0x00000000", "=> 0x09c71000", 1);
+        let ev: Vec<Event> = kept.lines().filter_map(parse_line).collect();
+        let e = check_i7_libos(&ev, 0x09c6_1000, None).unwrap_err();
+        assert!(e.what.contains("lipseste resetarea GSP"), "{}", e.what);
+        // No SEC2 write at all.
+        let e = check_i7_libos(&ev[..2], 0x09c6_1000, None).unwrap_err();
+        assert_eq!(e.what, "lipseste Booter pe SEC2");
+    }
     use alloc::format;
 
     #[test]

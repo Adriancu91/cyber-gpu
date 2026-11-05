@@ -1891,6 +1891,12 @@ mod tests {
     /// only after a doorbell (as the board). `bell_each_rpc = false` uses the
     /// plain `QueueTransport`, which never rings.
     fn full_window(bell_each_rpc: bool) -> FullWindow {
+        full_window_with(bell_each_rpc, true)
+    }
+
+    /// `libos_order = false`: I7 with the old [`crate::gsp::falcon::booter_load_dma`]
+    /// (no GSP reset, no LibOS mailboxes), as the OS ran it on 5 Nov.
+    fn full_window_with(bell_each_rpc: bool, libos_order: bool) -> FullWindow {
         use crate::chain::{READY_FOR_WINDOW, WINDOW_CHAIN_FULL, run_chain_ready};
         use crate::gsp::falcon::{self, GuardedBar0};
         use crate::gsp::golden::QueueTransportBell;
@@ -1903,6 +1909,7 @@ mod tests {
         use gpu_sim::observed;
 
         const WPR_META: u64 = 0x1_2340_0000;
+        const LIBOS: u64 = 0x0000_0002_0000_0000;
         let mut cfg = observed::observed_config();
         let permit = BusMasterPermit::new("test C-71 (SIMULARE)");
         let mut old = None;
@@ -1990,7 +1997,13 @@ mod tests {
                 "i6-wpr2-citit" => falcon::read_frts_after_i6(&mut g, j, frts).map(|_| ()),
                 "i7-booter-gsp" => {
                     let mut b = GuardedBar0::new(&mut g, j, None)?;
-                    falcon::booter_load_dma(&mut b, &mut clock, &bo_u, &bo_img, WPR_META)
+                    if libos_order {
+                        falcon::booter_load_dma_libos(
+                            &mut b, &mut clock, &bo_u, &bo_img, WPR_META, LIBOS,
+                        )
+                    } else {
+                        falcon::booter_load_dma(&mut b, &mut clock, &bo_u, &bo_img, WPR_META)
+                    }
                 }
                 "i7-citit" => match falcon::read_after_i7(&mut g, j)?.passed() {
                     true => Ok(()),
@@ -2004,11 +2017,17 @@ mod tests {
                     q.send_rpc(&mut shm, function::SET_REGISTRY, &reg)?;
                     let mut b = GuardedBar0::new(&mut g, j, None)?;
                     falcon::ring_doorbell(&mut b)?;
+                    // C-75: GSP-RM finds its queues only through the LibOS
+                    // address it had when Booter started it (board, 5 Nov).
+                    if g.libos_at_booter != Some(LIBOS) {
+                        return Err(fail("cozi GSP: GSP-RM pornit fara adresa LibOS"));
+                    }
+                    let mut b = GuardedBar0::new(&mut g, j, None)?;
                     let mut peer = SimGsp::start(&mut shm, l.cmd_queue_offset, l.stat_queue_offset);
                     q.link_rx(&shm)?;
                     let mut step = 0;
                     let ctx = crate::gsp::sequencer::SeqContext {
-                        libos_addr: 0x0000_0002_0000_0000,
+                        libos_addr: LIBOS,
                         app_version: 570_144,
                     };
                     crate::gsp::sequencer::wait_init_done(
@@ -2151,6 +2170,57 @@ mod tests {
         assert_eq!(w.report.outcome("bus-master-oprit"), Some(&Outcome::Passed));
         assert_eq!(w.command_after, gpu_sim::observed::COMMAND);
         assert_eq!(w.gsp_doorbells, 1);
+    }
+
+    /// C-75 (T86): I7 in the old order (as `os-246` on 5 Nov: no GSP reset
+    /// after FWSEC, the LibOS mailboxes written and not kept) gives on the
+    /// simulated board what the real board gave: I7 passes (Booter 0, RISC-V
+    /// active), I8 stops at the GSP queues, Bus Master is put back; the
+    /// journal check names the cause at the first I7 write. In the new order
+    /// ([`crate::gsp::falcon::booter_load_dma_libos`]) the same chain passes
+    /// and the journal shows the LibOS address kept. SIMULARE.
+    #[test]
+    fn old_i7_order_reproduces_the_board_and_the_libos_order_passes() {
+        use crate::chain::Outcome;
+        use crate::chain_log::{ChainVerdict, check_chain_journal};
+        let w = full_window_with(true, false);
+        assert_eq!(w.report.outcome("i7-booter-gsp"), Some(&Outcome::Passed));
+        assert_eq!(w.report.outcome("i7-citit"), Some(&Outcome::Passed));
+        let (at, why) = w.report.stopped_at.clone().unwrap();
+        assert_eq!(at, "i8-gsp-init", "{why}");
+        assert!(why.contains("LibOS"), "{why}");
+        assert_eq!(w.report.outcome("bus-master-oprit"), Some(&Outcome::Passed));
+        assert_eq!(w.command_after, gpu_sim::observed::COMMAND);
+        // The old function writes no GSP mailbox: the chain_log rule for
+        // the old form (SEC2 only) still applies to it.
+        let r = check_chain_journal(&w.journal_text, w.frts, w.wpr_meta, None);
+        assert_eq!(r.i7_libos, None);
+
+        let n = full_window_with(true, true);
+        assert!(n.report.all_passed(), "{}", n.report);
+        let r = check_chain_journal(&n.journal_text, n.frts, n.wpr_meta, Some(n.rpc_bells));
+        assert_eq!(r.verdict(), ChainVerdict::Passed, "{r:?}");
+        let s = r.i7_libos.unwrap();
+        assert_eq!(s.libos, 0x0000_0002_0000_0000);
+        assert_eq!(r.i7.as_ref(), Some(&s.booter));
+        // 5 GSP writes before Booter + 1 after.
+        assert_eq!(s.writes, s.booter.writes + 6);
+        // Planted mistakes in the new I7 part are caught.
+        let bad = |from: &str, to: &str| {
+            let t = n.journal_text.replacen(from, to, 1);
+            assert_ne!(t, n.journal_text, "{from}");
+            match check_chain_journal(&t, n.frts, n.wpr_meta, Some(n.rpc_bells)).verdict() {
+                ChainVerdict::ToAnalyse(why) => why,
+                v => panic!("{from}: {v:?}"),
+            }
+        };
+        let why = bad("<- 0x0008b320 => 0x0008b320", "<- 0x0008b321 => 0x0008b321");
+        assert!(why.contains("FALCON_OS"), "{why}");
+        let why = bad(
+            "0x110044: 0x00000000 <- 0x00000002 => 0x00000002",
+            "0x110044: 0x00000000 <- 0x00000002 => 0x00000000",
+        );
+        assert!(why.contains("LibOS"), "{why}");
     }
 
     /// C-71 (T81): the stick journal of the simulated full window, read

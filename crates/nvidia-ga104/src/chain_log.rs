@@ -109,6 +109,10 @@ pub struct ChainJournal {
     /// I6 / I7 load order, when those steps are in the journal.
     pub i6: Option<I6Summary>,
     pub i7: Option<I6Summary>,
+    /// C-75: I7 in the board's order (GSP reset into RISC-V + LibOS
+    /// mailboxes before Booter, GSP-RM version after), when the journal has
+    /// that form ([`i6_log::check_i7_libos`]); `i7` then holds its Booter part.
+    pub i7_libos: Option<i6_log::I7LibosSummary>,
     /// GSP doorbells in golden + I9 (one per RM call on a correct run).
     pub rm_doorbells: u32,
 }
@@ -187,6 +191,7 @@ pub fn check_chain_journal(
         problems: Vec::new(),
         i6: None,
         i7: None,
+        i7_libos: None,
         rm_doorbells: 0,
     };
     let mut seg: Vec<Event> = Vec::new();
@@ -363,6 +368,21 @@ fn check_step(
                 }
                 Err(e) => Some(load_error("I6", e)),
             },
+            "i7-booter-gsp"
+                if ok
+                    && bar0
+                        .first()
+                        .is_some_and(|&(o, _)| (0x11_0000..=0x11_3fff).contains(&o)) =>
+            {
+                match i6_log::check_i7_libos(seg, wpr_meta_addr, None) {
+                    Ok(s) => {
+                        out.i7 = Some(s.booter.clone());
+                        out.i7_libos = Some(s);
+                        None
+                    }
+                    Err(e) => Some(load_error("I7", e)),
+                }
+            }
             "i7-booter-gsp" if ok => match i6_log::check_i7(seg, wpr_meta_addr) {
                 Ok(s) => {
                     out.i7 = Some(s);

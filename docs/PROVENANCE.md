@@ -115,3 +115,10 @@ semnalul din tinygrad, MIT; necitit din nou în această sesiune) — de confirm
 fără surse noi: regulile vin din codul nostru (`chain.rs`, `i6_log.rs`, `gsp/falcon.rs::WRITE_RANGES`, `vram_window::CONTROL_REGISTERS`).
 Soneria GSP `NV_PGSP_QUEUE_HEAD(0)` = 0x110c00 e din `dev_gsp.h` (570.144, MIT, generat în `nvidia-rm570`); soneria canalului de lucru
 0xbb0090 rămâne **DEDUS** (nouveau/tinygrad, citite ca specificație în sesiunile anterioare), doar numărată de unealtă. Nimic copiat.
+
+**C-75 (5 nov, sesiunea 51):** `gsp_reset_into_riscv`, `write_libos_mailboxes`, `booter_load_dma_libos` (`gsp/falcon.rs`), `check_i7_libos`
+(`i6_log.rs`) și modelul „cutii GSP blocate după FWSEC” din `gpu-sim::fake_gsp` sunt scrise de noi. Ordinea (resetarea GSP în modul RISC-V după
+FWSEC, BCR_CTRL = 0x111, cutiile 0/1 = adresa LibOS înainte de Booter, `FALCON_OS` = 570144 după) e citită ca specificație din nouveau
+(`r535_gsp_oneinit` / `ga102_gsp_reset`, MIT, citite în sesiunile anterioare) și RM 570.144 (MIT); câmpurile BCR_CTRL din `dev_riscv_pri.h`
+(570.144, MIT, generat în `nvidia-rm570`). Efectul de pe placă (cutia scrisă `0x09c71000`, citită 0) e **OBSERVAT** în jurnalul din 5 nov;
+cauza (FWSEC lasă GSP blocat până la resetare) e **DEDUS**. Nimic copiat.

@@ -736,6 +736,115 @@ pub fn wait_riscv_active<M: Mmio + ?Sized, C: Clock + ?Sized>(
     Ok(())
 }
 
+/// C-75: the GSP-RM version GSP-RM checks in `NV_PFALCON_FALCON_OS` after
+/// Booter (570.144 → 570144; the same value the sequencer's CORE_RESUME
+/// writes).
+pub const GSP_RM_APP_VERSION_570_144: u32 = 570_144;
+
+/// C-75: `NV_PRISCV_RISCV_BCR_CTRL` value that hands the GSP engine to its
+/// RISC-V core: CORE_SELECT = RISCV, BRFETCH = TRUE, VALID = TRUE (the
+/// `0x111` nouveau `ga102_gsp_reset` sets; field positions from
+/// `dev_riscv_pri.h`, MIT).
+pub const GSP_BCR_RISCV: u32 = riscv::NV_PRISCV_RISCV_BCR_CTRL_VALID_TRUE
+    | (riscv::NV_PRISCV_RISCV_BCR_CTRL_CORE_SELECT_RISCV << 4)
+    | (riscv::NV_PRISCV_RISCV_BCR_CTRL_BRFETCH_TRUE << 8);
+
+/// C-75: after FWSEC-FRTS the GSP falcon is left as FWSEC left it (falcon
+/// core, HS); on the board (5 Nov 2026, os-246) the LibOS address written
+/// to its mailboxes then did not stick (read back 0) and GSP-RM never
+/// created its queues. Order read in nouveau (`r535_gsp_oneinit`: "Reset
+/// GSP into RISC-V mode", `ga102_gsp_reset`) and RM 570.144: engine reset +
+/// scrubbing, then BCR_CTRL = RISC-V. Only GSP-window writes. SIMULARE.
+pub fn gsp_reset_into_riscv<M: Mmio + ?Sized, C: Clock + ?Sized>(
+    bar: &mut GuardedBar0<'_, M>,
+    clock: &mut C,
+) -> GpuResult<()> {
+    reset(bar, clock, Engine::Gsp)?;
+    let bcr = Engine::Gsp.riscv_base() + riscv::NV_PRISCV_RISCV_BCR_CTRL;
+    bar.write(bcr, GSP_BCR_RISCV)?;
+    poll(bar, clock, CORE_SELECT_US, bcr, |v| {
+        riscv::NV_PRISCV_RISCV_BCR_CTRL_CORE_SELECT.get(v)
+            == riscv::NV_PRISCV_RISCV_BCR_CTRL_CORE_SELECT_RISCV
+    })?;
+    Ok(())
+}
+
+/// C-75: writes the LibOS address in GSP mailbox 0/1 and reads both back.
+/// A mailbox that did not keep its value stops here (before Booter), with
+/// the value read: no Booter run on a GSP that will not find its queues.
+pub fn write_libos_mailboxes<M: Mmio + ?Sized>(
+    bar: &mut GuardedBar0<'_, M>,
+    libos_addr: u64,
+) -> GpuResult<()> {
+    if libos_addr == 0 {
+        return Err(GpuError::InvalidArgument("I7: adresa LibOS este 0"));
+    }
+    let g = Engine::Gsp.base();
+    let want = [libos_addr as u32, (libos_addr >> 32) as u32];
+    let regs = [
+        fv4::NV_PFALCON_FALCON_MAILBOX0,
+        fv4::NV_PFALCON_FALCON_MAILBOX1,
+    ];
+    for (&r, &v) in regs.iter().zip(want.iter()) {
+        bar.write(g + r, v)?;
+    }
+    for (&r, &v) in regs.iter().zip(want.iter()) {
+        let got = bar.read(g + r)?;
+        if got != v {
+            bar.journal().push(Event::Note(
+                "I7: cutia GSP nu a pastrat adresa LibOS; opresc inainte de Booter",
+            ));
+            return Err(GpuError::HardwareFault { code: got });
+        }
+    }
+    Ok(())
+}
+
+/// C-75: I7 in the order the board needs: GSP reset into RISC-V
+/// ([`gsp_reset_into_riscv`]) → LibOS address in the GSP mailboxes, read
+/// back ([`write_libos_mailboxes`]) → Booter on SEC2 over DMA with the
+/// `GspFwWprMeta` address (as [`booter_load_dma`]) → GSP-RM version in
+/// `NV_PFALCON_FALCON_OS` → wait for the RISC-V core. [`booter_load_dma`]
+/// stays as it was (compatibility). Tested only in SIMULARE.
+pub fn booter_load_dma_libos<M: Mmio + ?Sized, C: Clock + ?Sized>(
+    bar: &mut GuardedBar0<'_, M>,
+    clock: &mut C,
+    ucode: &super::hs_load::HsUcode,
+    image: &super::hs_load::DmaImage,
+    wpr_meta_addr: u64,
+    libos_addr: u64,
+) -> GpuResult<()> {
+    if read_wpr2(bar)?.is_none() {
+        return Err(GpuError::InvalidArgument(
+            "I7 inainte de I6: WPR2 nu e ridicat",
+        ));
+    }
+    gsp_reset_into_riscv(bar, clock)?;
+    write_libos_mailboxes(bar, libos_addr)?;
+    reset(bar, clock, Engine::Sec2)?;
+    select_falcon_core(bar, clock, Engine::Sec2)?;
+    super::hs_load::dma_load(bar, clock, Engine::Sec2, ucode, image)?;
+    let (mb0, _) = run_to_halt(
+        bar,
+        clock,
+        Engine::Sec2,
+        (wpr_meta_addr as u32, (wpr_meta_addr >> 32) as u32),
+    )?;
+    if mb0 != 0 {
+        return Err(GpuError::HardwareFault { code: mb0 });
+    }
+    bar.write(
+        Engine::Gsp.base() + fv4::NV_PFALCON_FALCON_OS,
+        GSP_RM_APP_VERSION_570_144,
+    )?;
+    wait_riscv_active(bar, clock)?;
+    bar.journal().push(Event::Step {
+        name: "I7 GSP RISC-V + LibOS + Booter",
+        ok: true,
+    });
+    Ok(())
+}
+
 /// "Doorbell": tells GSP-RM there is something in the command queue
 /// (`NV_PGSP_QUEUE_HEAD(0) = 0`, tinygrad/nouveau).
 pub fn ring_doorbell<M: Mmio + ?Sized>(bar: &mut GuardedBar0<'_, M>) -> GpuResult<()> {
@@ -790,6 +899,52 @@ mod tests {
 
     const FRTS: (u64, u64) = ((8 << 30) - (2 << 20), (8 << 30) - (1 << 20));
     const META: u64 = 0x1_2345_6000;
+
+    /// C-75 (T87): after FWSEC-FRTS the simulated GSP drops mailbox writes
+    /// (as the board on 5 Nov): `write_libos_mailboxes` notices it and
+    /// stops before any SEC2 write; after `gsp_reset_into_riscv` the
+    /// address is kept and the core reads RISC-V. SIMULARE.
+    #[test]
+    fn libos_mailboxes_need_the_gsp_reset_after_fwsec() {
+        let mut g = FakeGsp::new();
+        let mut j = Journal::new(512);
+        let mut c = SimClock::default();
+        {
+            let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+            fwsec_frts(&mut b, &mut c, load_ok, FRTS).unwrap();
+        }
+        assert!(g.gsp_mailbox_locked);
+        let n = g.writes.len();
+        {
+            let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+            assert_eq!(
+                write_libos_mailboxes(&mut b, 0x2_0000_0000),
+                Err(GpuError::HardwareFault { code: 0 })
+            );
+        }
+        assert!(
+            g.writes[n..]
+                .iter()
+                .all(|&(o, _)| (0x110000..0x114000).contains(&o))
+        );
+        {
+            let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+            gsp_reset_into_riscv(&mut b, &mut c).unwrap();
+            write_libos_mailboxes(&mut b, 0x2_0000_0000).unwrap();
+            assert_eq!(
+                write_libos_mailboxes(&mut b, 0),
+                Err(GpuError::InvalidArgument("I7: adresa LibOS este 0"))
+            );
+        }
+        assert!(!g.gsp_mailbox_locked);
+        let bcr = g
+            .writes
+            .iter()
+            .rev()
+            .find(|&&(o, _)| o == 0x111668)
+            .unwrap();
+        assert_eq!(bcr.1, 0x111);
+    }
 
     fn load_ok(b: &mut GuardedBar0<'_, FakeGsp>, e: Engine) -> GpuResult<()> {
         let u = match e {

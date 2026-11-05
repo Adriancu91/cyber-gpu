@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 51 — 5 noiembrie 2026, ~13:00 (ora României), în cloud, FĂRĂ placă — C-75 (din jurnalul real): de ce I8 s-a oprit la cozile GSP
+
+În hub a apărut jurnalul ferestrei de azi cu `os-246` (`rezultate/2026-11-05-workstation-os242/os246-gpu-jurnal-002.txt`): I6 și **I7 TREC pe placa
+reală**, I8 se oprește („antetul cozii de stare nu are forma 570.144”). Jurnalul arată cauza: `bar0 w 0x110040: 0x00000000 <- 0x09c71000 => 0x00000000`
+— cutia GSP **nu a păstrat** adresa LibOS, deci GSP-RM a pornit fără ea și nu și-a creat cozile. Cauza DEDUS: după FWSEC, GSP trebuie **resetat în
+modul RISC-V** înainte de cutii (ordinea nouveau / RM 570.144) — exact întrebarea 1 a sesiunii OS. **Nimic testat pe RTX 3070 Ti.**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Diagnosticul pe jurnalul real | `verifica_jurnal_lant` pe jurnalul os-246: `i7-booter-gsp` → „cutia GSP nu a pastrat adresa LibOS: GSP nu a fost resetat in RISC-V dupa FWSEC” | PASS (jurnal real): T88 |
+| I7 în ordinea plăcii | `falcon::booter_load_dma_libos`: resetare GSP + BCR_CTRL = 0x111 (RISC-V) → cutiile LibOS recitite (oprire înainte de Booter dacă nu se păstrează) → Booter → `FALCON_OS` = 570144 → RISC-V activ | PASS (SIMULARE): T86, T87 |
+| Simularea ca placa | `gpu-sim`: după FWSEC cutiile GSP ignoră scrierile până la resetarea GSP (OBSERVAT 5 nov); I8 simulat pornește doar dacă GSP-RM a primit adresa LibOS. Ordinea veche reproduce placa (I7 TRECE, I8 oprit), ordinea nouă trece tot lanțul | PASS (SIMULARE): T86 |
+| Regula jurnalului | `i6_log::check_i7_libos` (5 scrieri GSP înainte, Booter ca `check_i7`, 1 scriere `FALCON_OS` după, fiecare recitită egal); `chain_log` o alege singur | PASS (SIMULARE + jurnal real): T86, T88 |
+| Pentru OS | `integration/cyber-universe/C-75_i7-reset-gsp-libos.md`: un apel `booter_load_dma_libos` în locul scrierilor proprii la I7 (3 scrieri noi, toate în fereastra GSP) | propus |
+| Compatibilitate OS | doar adăugări; câmp nou `ChainJournal::i7_libos`; `booter_load_dma` / `check_i7` neschimbate | PASS |
+
+Verificări (`sh tools/check.sh`): format, clippy `-D warnings`, **355 teste PASS** (1 ignorat), build no_std PASS; clippy cu `--features hw-write` PASS.
+Oprirea de siguranță nu se aplică (pas terminat în această sesiune).
+
+**Următorul pas:** sesiunea OS cheamă `booter_load_dma_libos` la I7 (Release nou) → fereastra următoare: `gpu lant`, așteptat rândul
+`0x110040 … => 0x09c71000` (păstrat) și I8 TRECE; dacă cutia tot nu se păstrează, oprire curată înainte de Booter. Apoi `verifica_jurnal_lant`.
+
+---
 ## Sesiunea 50 — 5 noiembrie 2026 (ora României), în cloud, FĂRĂ placă — C-71 (lucru continuu): fereastra VRAM în jurnalul lanțului
 
 Nicio comandă nouă în hub (C-18 și C-20 sunt de mult `gata`; ultimele: C-66, C-69, C-71 — gata pentru noi). Pasul rămas din sesiunea 49

@@ -160,6 +160,17 @@ pub struct FakeGsp {
     /// `0x1ffee0` for FRTS `0x1ffe00000..0x1fff00000`). When set it wins
     /// over `wpr2_hi_last_page`; `None` = the older forms above.
     pub wpr2_hi_back: Option<u64>,
+    /// SIM, C-75, from the board (5 Nov 2026, os-246): after FWSEC-FRTS ran
+    /// on the GSP falcon, writes to the GSP mailboxes 0/1 did not stick
+    /// (written `0x09c71000`, read back 0). Modelled as: set when FWSEC
+    /// halts on GSP, cleared by a GSP engine reset (nouveau resets GSP into
+    /// RISC-V mode before writing them) or by a Booter that succeeded.
+    /// The cause on the board is DEDUS; only the effect is OBSERVAT.
+    pub gsp_mailbox_locked: bool,
+    /// SIM, C-75: the LibOS address (GSP mailbox 0/1) at the moment Booter
+    /// started GSP-RM; `None` = GSP-RM started without it (as on the board
+    /// on 5 Nov: the status queue never appeared).
+    pub libos_at_booter: Option<u64>,
     mem: [FalconMem; 2],
 }
 
@@ -201,6 +212,8 @@ impl FakeGsp {
             fwsec_mapper_at: None,
             wpr2_hi_last_page: true,
             wpr2_hi_back: Some(128 << 10),
+            gsp_mailbox_locked: false,
+            libos_at_booter: None,
             mem: [FalconMem::new(), FalconMem::new()],
         }
     }
@@ -445,6 +458,7 @@ impl FakeGsp {
                         }
                     }
                     self.regs.insert(bus::NV_PBUS_SW_SCRATCH(0xe), 0);
+                    self.gsp_mailbox_locked = true;
                     let enc = |a: u64| ((a >> 12) << 4) as u32;
                     self.regs
                         .insert(fb::NV_PFB_PRI_MMU_WPR2_ADDR_LO, enc(self.frts.0));
@@ -467,6 +481,11 @@ impl FakeGsp {
                 }
                 self.booter_arg = Some(arg);
                 self.regs.insert(mb0, 0);
+                let g0 = self.raw(GSP_BASE + fv4::NV_PFALCON_FALCON_MAILBOX0);
+                let g1 = self.raw(GSP_BASE + fv4::NV_PFALCON_FALCON_MAILBOX1);
+                let libos = u64::from(g0) | u64::from(g1) << 32;
+                self.libos_at_booter = (libos != 0).then_some(libos);
+                self.gsp_mailbox_locked = false;
                 if self.fault != SimFault::RiscvStaysOff {
                     self.riscv_active = true;
                     let h = gc6::NV_PGC6_BSI_SECURE_SCRATCH_14;
@@ -508,6 +527,7 @@ impl FakeGsp {
                 if base == GSP_BASE && v & 1 == 1 {
                     // GSP reset stops GSP-RM and clears the stage-3 hand-off.
                     self.riscv_active = false;
+                    self.gsp_mailbox_locked = false;
                     let h = gc6::NV_PGC6_BSI_SECURE_SCRATCH_14;
                     let cleared = self.raw(h) & !(1 << 26);
                     self.regs.insert(h, cleared);
@@ -526,6 +546,11 @@ impl FakeGsp {
                     f.halted = false;
                     f.run_left = Some(RUN_POLLS);
                 }
+            }
+            fv4::NV_PFALCON_FALCON_MAILBOX0 | fv4::NV_PFALCON_FALCON_MAILBOX1
+                if base == GSP_BASE && self.gsp_mailbox_locked =>
+            {
+                // Dropped, as on the board on 5 Nov 2026 (C-75). SIM
             }
             fv4::NV_PFALCON_FALCON_DMATRFCMD => {
                 if self.fault != SimFault::DmaQueueFull {
