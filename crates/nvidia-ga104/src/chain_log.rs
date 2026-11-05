@@ -24,6 +24,11 @@
 //!   (`0xbb0090`, DEDUS, counted separately — not approved yet, see
 //!   `docs/IMPLEMENTATION_STATUS.md`), nothing else.
 //!
+//! - across the whole chain: every move of the VRAM window
+//!   (`NV_PBUS_BAR0_WINDOW`) reads back as written, and by the end of the
+//!   journal the window is back to the value it had before its first move
+//!   (board state put back, like Bus Master).
+//!
 //! Verdict: [`ChainVerdict::Passed`] only if every step of the chain is in
 //! the journal, in order, `ok`, and no rule is broken; a chain that stopped
 //! at a step and then only ran its cleanup steps (Bus Master put back) is
@@ -45,6 +50,9 @@ pub const GSP_DOORBELL: u64 = 0x11_0c00;
 /// The work-channel doorbell, `NV_VIRTUAL_FUNCTION_FULL_PHYS_OFFSET` +
 /// `0x30090` (DEDUS from nouveau/tinygrad, docs/GA104_INITIALIZATION.md).
 pub const WORK_DOORBELL: u64 = 0xbb_0090;
+/// `NV_PBUS_BAR0_WINDOW`: the VRAM window register moved by
+/// [`crate::vram_window::VramWindow`] (570.144 `gm107/dev_bus.h`, MIT).
+pub const VRAM_WINDOW: u64 = nvidia_rm570::regs::gm107_dev_bus::NV_PBUS_BAR0_WINDOW as u64;
 /// PCI Command register (config space offset).
 const COMMAND: u16 = 0x04;
 
@@ -186,6 +194,8 @@ pub fn check_chain_journal(
     let mut all: Vec<Event> = Vec::new();
     let mut next = 0usize; // index in WINDOW_CHAIN_FULL
     let mut command_before: Option<u32> = None;
+    // The VRAM window register: (value before the first move, last value written).
+    let mut window: Option<(u32, u32)> = None;
     for line in text.lines() {
         if let Some((id, ok)) = parse_step(line) {
             let Some(pos) = WINDOW_CHAIN_FULL[next..].iter().position(|s| s.id == id) else {
@@ -214,9 +224,33 @@ pub fn check_chain_journal(
             continue;
         }
         if let Some(e) = i6_log::parse_line(line) {
+            if let Event::MmioWrite {
+                bar: 0,
+                offset: VRAM_WINDOW,
+                before,
+                written,
+                after,
+            } = e
+            {
+                window.get_or_insert((before, written)).1 = written;
+                if after != written {
+                    out.problems.push(format!(
+                        "fereastra VRAM ({VRAM_WINDOW:#x}) nu s-a mutat: scris {written:#010x}, recitit {after:#010x}"
+                    ));
+                }
+            }
             seg.push(e);
             all.push(e);
         }
+    }
+    // The VRAM window is board state, like Bus Master: whatever moved it
+    // (page tables in golden / I9 / I10) must put it back before the end.
+    if let Some((original, last)) = window
+        && last != original
+    {
+        out.problems.push(format!(
+            "fereastra VRAM ({VRAM_WINDOW:#x}) lasata la {last:#010x}, inainte era {original:#010x}"
+        ));
     }
     if seg
         .iter()

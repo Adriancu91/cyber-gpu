@@ -2228,6 +2228,68 @@ mod tests {
         // 6. steps out of order.
         let (a, b) = (at("i9-canal-lucru"), at("i10-add64"));
         bad(&edit(&|v| v.swap(a, b)), None, "alta ordine");
+        // 8. (T85) on the board I9 writes our page tables through the VRAM
+        //    window: the real `VramWindow` journal (SIMULARE PRAMIN model)
+        //    put into the I9 segment keeps the chain conform; a window not
+        //    put back, or one that did not move, is caught.
+        {
+            use crate::mmu::{GpuMemory, PageAttr};
+            use crate::vram_window::VramWindow;
+            use gpu_core::diag::Journal;
+            use gpu_sim::pramin::SimBar0Vram;
+            let vram = 8u64 << 30;
+            let mut bar = SimBar0Vram::new(SimVram::new(vram), 0x0000_0012);
+            let mut wj = Journal::new(256);
+            let mut clock = SimClock::default();
+            let win = VramWindow::new(&mut bar, &mut wj, None, vram, &[(0, 16 << 20)]).unwrap();
+            let mut m = GpuMemory::new(64 << 20, vram - (256 << 20), win).unwrap();
+            m.map(0x10_0000_0000, 0x1_2340_0000, 3 << 20, PageAttr::default())
+                .unwrap();
+            let root = m.root();
+            m.writer_mut().invalidate_tlb(&mut clock, root).unwrap();
+            m.writer_mut().restore().unwrap();
+            drop(m);
+            let wl: Vec<alloc::string::String> =
+                wj.events().map(|e| alloc::format!("{e}")).collect();
+            let moves: Vec<usize> = wl
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| l.starts_with("bar0 w 0x001700"))
+                .map(|(i, _)| i)
+                .collect();
+            assert!(moves.len() >= 2, "{wl:?}");
+            let with = |f: &dyn Fn(&mut Vec<alloc::string::String>)| {
+                let mut wl = wl.clone();
+                f(&mut wl);
+                let i9 = at("i9-canal-lucru");
+                edit(&|v| {
+                    for (k, l) in wl.iter().enumerate() {
+                        v.insert(i9 + k, l.clone());
+                    }
+                })
+            };
+            let good = with(&|_| {});
+            let r = check(&good, Some(w.rpc_bells));
+            assert_eq!(r.verdict(), ChainVerdict::Passed, "{r:?}");
+            let last = *moves.last().unwrap();
+            bad(
+                &with(&|v| {
+                    v.remove(last);
+                }),
+                None,
+                "fereastra VRAM (0x1700) lasata la",
+            );
+            let first = moves[0];
+            bad(
+                &with(&|v| {
+                    let l = v[first].clone();
+                    let (head, _) = l.rsplit_once("=> ").unwrap();
+                    v[first] = alloc::format!("{head}=> 0x00000000");
+                }),
+                None,
+                "nu s-a mutat",
+            );
+        }
         // 7. without a doorbell per RM call the chain stops at golden, and
         //    the journal shows a clean stop with Bus Master put back.
         let n = full_window(false);
