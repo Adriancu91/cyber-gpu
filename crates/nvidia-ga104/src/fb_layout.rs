@@ -232,6 +232,30 @@ impl FbLayout {
         }
     }
 
+    /// After I7, checked against the board: Booter raises WPR2 from the
+    /// start written in `GspFwWprMeta` (this layout's `wpr2.start`) up to the
+    /// end of FRTS. `wpr2_read` = WPR2 as read back after I7 (decoded LO/HI);
+    /// the HI register may hold the exact end or the start of the last
+    /// 128 KiB block (both seen as forms of FRTS, C-66). Same start and an
+    /// end inside the last FRTS block → the VRAM free for us (as
+    /// [`Self::free_below`]); anything else → error, so nothing is written
+    /// in VRAM on a guess (real values from 5 Nov 2026:
+    /// `0x1f4100000..0x1ffee0000`).
+    pub fn free_after_i7(&self, wpr2_read: (u64, u64)) -> GpuResult<Region> {
+        let (start, end) = wpr2_read;
+        if start != self.wpr2.start {
+            return Err(GpuError::InvalidArgument(
+                "WPR2 dupa I7 nu incepe unde a cerut GspFwWprMeta: zona VRAM necunoscuta, nimic scris",
+            ));
+        }
+        if end < self.frts.end - FRTS_ALIGN || end > self.frts.end {
+            return Err(GpuError::InvalidArgument(
+                "WPR2 dupa I7 nu se termina la capatul FRTS: zona VRAM necunoscuta, nimic scris",
+            ));
+        }
+        Ok(self.free_below())
+    }
+
     /// VRAM below the non-WPR heap: what is left for our buffers.
     pub fn free_below(&self) -> Region {
         Region {
@@ -346,6 +370,53 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// T91: the free VRAM after I7, against WPR2 as the board reported it on
+    /// 5 Nov 2026 (`0x01f41000/0x01ffee00` → `0x1f4100000..0x1ffee0000`).
+    /// `booter_load` 24 684 B is the real file size (COMPATIBILITATE_FIRMWARE);
+    /// the GSP `.fwimage` size is not in the repo: 60 MiB is DEDUS from that
+    /// WPR2 start (any size in (59.97, 60.97] MiB gives the same layout).
+    #[test]
+    fn free_after_i7_matches_board_wpr2() {
+        let board = crate::gsp::falcon::decode_wpr2(0x01f4_1000, 0x01ff_ee00);
+        assert_eq!((board.start, board.end), (0x1_f410_0000, 0x1_ffee_0000));
+        let p = FbParams {
+            fb_size: 8 * GIB,
+            vga_workspace_reg: None,
+            bootloader_size: 24_684,
+            gsp_elf_size: 60 * MIB,
+        };
+        let l = FbLayout::compute(&p).unwrap();
+        assert_eq!(l.wpr2.start, board.start);
+        let free = l.free_after_i7((board.start, board.end)).unwrap();
+        assert_eq!(free, l.free_below());
+        assert_eq!(free.end, 0x1_f400_0000);
+        // The exact-end form of HI is accepted too.
+        assert!(l.free_after_i7((board.start, l.frts.end)).is_ok());
+        // Same WPR2 and free zone for the whole deduced ELF size range.
+        for s in [0x3bf_9001u64, 0x3cf_9000] {
+            let l2 = FbLayout::compute(&FbParams {
+                gsp_elf_size: s,
+                ..p
+            })
+            .unwrap();
+            assert_eq!((l2.wpr2, l2.heap), (l.wpr2, l.heap));
+        }
+        // Booter placed WPR2 elsewhere (e.g. another ELF size): refused.
+        let other = FbLayout::compute(&FbParams {
+            gsp_elf_size: 30 * MIB,
+            ..p
+        })
+        .unwrap();
+        assert!(other.free_after_i7((board.start, board.end)).is_err());
+        // WPR2 still only FRTS (I7 did not widen it) or a wrong end: refused.
+        assert!(l.free_after_i7((l.frts.start, board.end)).is_err());
+        assert!(l.free_after_i7((board.start, l.frts.end + MIB)).is_err());
+        assert!(
+            l.free_after_i7((board.start, l.frts.end - 2 * FRTS_ALIGN))
+                .is_err()
+        );
     }
 
     #[test]

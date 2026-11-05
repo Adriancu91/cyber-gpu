@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 53 — 5 noiembrie 2026, ~19:30 (ora României), în cloud, FĂRĂ placă — C-71 (lucru continuu): zona VRAM după I7
+
+Nicio comandă nouă în hub pentru cyber-gpu și niciun jurnal nou de pe placă după sesiunea 52. Sesiunea OS a scos `os-249` (tot lanțul I6 → I10
+în `gpu lant`) și a cerut în `stare/cyber-universe.md` „confirmarea zonei VRAM pentru golden/I9/I10 (peste 256 MiB, sub GSP-RM)”.
+**Nimic testat pe RTX 3070 Ti.**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Zona VRAM pe valorile reale | WPR2 după I7 de pe placă (5 nov) = începutul pe care îl dă `FbLayout` (cu `booter_load` real și `.fwimage` DEDUS din WPR2); zona liberă se termină la `0x1f4000000`, sub heap-ul non-WPR și sub WPR2 | PASS (valori reale): T91 |
+| Verificare nouă, doar aritmetică | `FbLayout::free_after_i7(wpr2_citit)`: aceeași zonă ca `free_below()` doar dacă WPR2 recitit după I7 începe unde a cerut `GspFwWprMeta` și se termină în ultimul bloc FRTS; altfel eroare înainte de orice scriere în VRAM | PASS: T91 |
+| Pentru OS | `integration/cyber-universe/C-71_zona-vram-dupa-i7.md`: zona OS e bună; propunere opțională: `free_after_i7` în loc de `free_below` (nicio scriere sau citire nouă) | propus |
+| Compatibilitate OS | doar adăugare (`FbLayout::free_after_i7`); nimic redenumit sau șters | PASS |
+
+Verificări (`sh tools/check.sh`): format, clippy `-D warnings`, **358 teste PASS** (1 ignorat), build no_std PASS; clippy cu `--features hw-write` PASS.
+Oprirea de siguranță nu se aplică (pas terminat în această sesiune).
+
+**Următorul pas:** fără placă, nimic cu plus cinstit în cyber-gpu. Așteptăm fereastra pe workstation cu `os-249` (`gpu lant` + DA), apoi
+`verifica_jurnal_lant` pe jurnalele din `rezultate/`. Dacă I8 trece pe placă: compararea zonei VRAM cu regiunile FB raportate de GSP-RM
+(`GET_GSP_STATIC_INFO`). Sesiunile următoare fără comandă nouă sau jurnal nou: oprire scurtă.
+
+---
 ## Sesiunea 52 — 5 noiembrie 2026, ~13:45 (ora României), în cloud, FĂRĂ placă — C-71 (lucru continuu): soneria canalului de lucru din antetele MIT
 
 Nicio comandă nouă în hub pentru cyber-gpu și niciun jurnal nou de pe placă după sesiunea 51. Rămânea întrebarea 3 a sesiunii OS (I10): adresa

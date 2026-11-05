@@ -1,5 +1,11 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 53 (5 nov 2026, cloud, fără placă) — C-71: zona VRAM după I7
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T91 | Zona VRAM liberă după I7, față de WPR2 citit pe placă la 5 nov (`LO 0x01f41000 / HI 0x01ffee00` → `0x1f4100000..0x1ffee0000`); `booter_load` 24 684 B (real), `.fwimage` 60 MiB (DEDUS din WPR2: orice mărime în (59,97; 60,97] MiB dă același WPR2) | `cargo test -p nvidia-ga104 free_after_i7` | același început de WPR2 ca `GspFwWprMeta`; zona liberă = `free_below()`, capăt `0x1f4000000`; refuzat: WPR2 în altă parte (alt ELF), WPR2 doar FRTS, capăt greșit | conform | PASS (valori reale, aritmetică) |
+
 ## Rezultate — sesiunea 50 (5 nov 2026, cloud, fără placă) — C-71: fereastra VRAM în jurnalul lanțului
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |
