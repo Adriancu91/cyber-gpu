@@ -17,8 +17,8 @@ Verificări (`sh tools/check.sh`): format, clippy `-D warnings`, **352 teste PAS
 Oprirea de siguranță nu se aplică (pas terminat în această sesiune).
 
 **Următorul pas:** fără placă, nu mai rămâne nimic cu plus cinstit în cyber-gpu: I6–I10 sunt în SIMULARE și în lanț, jurnalul se verifică pas cu pas.
-Totul așteaptă: (1) răspunsul lui Adrian la întrebarea OS-ului despre I7–I10 în `gpu lant` (`stare/cyber-universe.md`), (2) fereastra pe workstation,
-(3) aprobarea soneriei canalului de lucru (`0xBB0090`) înainte de I10 pe placă. Sesiunile următoare fără comandă nouă sau jurnal nou: oprire scurtă.
+Totul așteaptă: (1) partea OS din C-72 (Adrian a spus „da I7–I10” la 07:27; P6-56 în OS), (2) fereastra pe workstation (azi de la ~08:30),
+(3) soneria canalului de lucru `0xBB0090` e DEDUSĂ: prima probă reală la I10, în lanț. Sesiunile următoare fără comandă nouă sau jurnal nou: oprire scurtă.
 
 ---
 ## Sesiunea 49 — 5 noiembrie 2026, ~01:50 (ora României), în cloud, FĂRĂ placă — C-71 (lucru continuu): verificarea jurnalului pentru tot lanțul
