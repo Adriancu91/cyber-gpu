@@ -1,5 +1,11 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 54 (6 nov 2026, cloud, fără placă) — C-71: Booter-ul simulat lărgește WPR2 ca placa
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T92 | `gpu-sim`: Booter-ul simulat citește `GspFwWprMeta` din memoria de sistem simulată (`FakeGsp::wpr_meta_mem`) și coboară WPR2 LO la `gspFwWprStart`, HI rămâne cel scris de FWSEC (ca placa la 5 nov: după I6 `0x1ffe00000..0x1ffee0000`, după I7 `0x1f4100000..0x1ffee0000`) | `cargo test -p nvidia-ga104 --lib booter_widens` | după I7 WPR2 = valorile plăcii; `free_after_i7` = `free_below()`; meta cu magic greșit → Booter refuză (cod SIM `0xbad2`), WPR2 rămâne doar FRTS, zona refuzată | conform | PASS (SIMULARE) |
+
 ## Rezultate — sesiunea 53 (5 nov 2026, cloud, fără placă) — C-71: zona VRAM după I7
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |

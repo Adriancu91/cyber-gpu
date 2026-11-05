@@ -171,6 +171,15 @@ pub struct FakeGsp {
     /// started GSP-RM; `None` = GSP-RM started without it (as on the board
     /// on 5 Nov: the status queue never appeared).
     pub libos_at_booter: Option<u64>,
+    /// SIM, from the board (5 Nov 2026, os-246; noted by the OS session):
+    /// system memory holding the `GspFwWprMeta` Booter reads at I7
+    /// (physical base, bytes). When set and the Booter argument points
+    /// inside it, a Booter that succeeds lowers WPR2 LO to the meta's
+    /// `gspFwWprStart` and leaves HI as FWSEC wrote it (the board after I7:
+    /// `0x1f4100000..0x1ffee0000`, HI unchanged since I6). A wrong magic or
+    /// a start not below FRTS: Booter fails with SIM code `0xbad2`.
+    /// `None` = the older model (WPR2 left as FWSEC set it).
+    pub wpr_meta_mem: Option<(u64, Vec<u8>)>,
     mem: [FalconMem; 2],
 }
 
@@ -214,6 +223,7 @@ impl FakeGsp {
             wpr2_hi_back: Some(128 << 10),
             gsp_mailbox_locked: false,
             libos_at_booter: None,
+            wpr_meta_mem: None,
             mem: [FalconMem::new(), FalconMem::new()],
         }
     }
@@ -318,6 +328,30 @@ impl FakeGsp {
         let start = u64::from(w(c + 32)?) << 12;
         let size = u64::from(w(c + 36)?) << 12;
         (ok && start != 0 && size != 0).then_some((start, start + size))
+    }
+
+    /// SIM "Booter": the WPR2 start it takes from `GspFwWprMeta` at `arg`
+    /// (offsets and magic from the MIT 570.144 header, via `nvidia-rm570`).
+    /// `Ok(None)` = no meta modelled at that address (older model).
+    fn sim_booter_wpr2_start(&self, arg: u64) -> Result<Option<u64>, ()> {
+        use nvidia_rm570::{GSP_FW_WPR_META_MAGIC, structs::GspFwWprMeta};
+        let Some((base, bytes)) = self.wpr_meta_mem.as_ref() else {
+            return Ok(None);
+        };
+        let Some(o) = arg
+            .checked_sub(*base)
+            .and_then(|o| usize::try_from(o).ok())
+            .filter(|o| o + core::mem::size_of::<GspFwWprMeta>() <= bytes.len())
+        else {
+            return Ok(None);
+        };
+        let q = |f: usize| u64::from_le_bytes(bytes[o + f..o + f + 8].try_into().unwrap_or([0; 8]));
+        let start = q(core::mem::offset_of!(GspFwWprMeta, gspFwWprStart));
+        let ok = q(core::mem::offset_of!(GspFwWprMeta, magic)) == GSP_FW_WPR_META_MAGIC
+            && start != 0
+            && start.is_multiple_of(0x1000)
+            && start < self.frts.0;
+        if ok { Ok(Some(start)) } else { Err(()) }
     }
 
     /// SIM reset value: REQUIRE_CTX set until the driver writes DMACTL.
@@ -432,7 +466,8 @@ impl FakeGsp {
     }
 
     /// What the "program" did when it halts. SIM error codes: 0xdead =
-    /// nothing loaded / wrong core, 0xbad1 = booter found no WPR2.
+    /// nothing loaded / wrong core, 0xbad1 = booter found no WPR2,
+    /// 0xbad2 = booter refused the `GspFwWprMeta` (see `wpr_meta_mem`).
     fn halt_effects(&mut self, base: u32) {
         let f = *self.falcon_mut(base);
         let mb0 = base + fv4::NV_PFALCON_FALCON_MAILBOX0;
@@ -478,6 +513,17 @@ impl FakeGsp {
                 if !wpr2 || arg == 0 {
                     self.regs.insert(mb0, 0xbad1);
                     return;
+                }
+                match self.sim_booter_wpr2_start(arg) {
+                    Ok(Some(start)) => {
+                        let lo = ((start >> 12) << 4) as u32;
+                        self.regs.insert(fb::NV_PFB_PRI_MMU_WPR2_ADDR_LO, lo);
+                    }
+                    Ok(None) => {}
+                    Err(()) => {
+                        self.regs.insert(mb0, 0xbad2);
+                        return;
+                    }
                 }
                 self.booter_arg = Some(arg);
                 self.regs.insert(mb0, 0);

@@ -1,5 +1,24 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 54 — 6 noiembrie 2026, ~01:30 (ora României), în cloud, FĂRĂ placă — C-71 (lucru continuu): Booter-ul simulat lărgește WPR2 ca placa
+
+Nicio comandă nouă în hub pentru cyber-gpu și niciun jurnal nou de pe placă după sesiunea 53. Sesiunea OS (`os-250`, folosește `free_after_i7`) a
+lăsat o observație pentru noi: „modelul `FakeGsp` nu lărgește WPR2 după Booter (placa da)”. **Nimic testat pe RTX 3070 Ti.**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Modelul Booter-ului | `gpu-sim`: câmp nou `FakeGsp::wpr_meta_mem` (memoria de sistem simulată cu `GspFwWprMeta`); Booter-ul simulat care reușește coboară WPR2 LO la `gspFwWprStart` din meta, HI rămâne cel de la I6 (OBSERVAT pe placă la 5 nov); magic greșit / început nepotrivit → refuz, cod SIM `0xbad2`. Implicit `None` = modelul vechi, testele vechi neschimbate | PASS (SIMULARE): T92 |
+| Pe valorile plăcii | aranjamentul T91 + meta-ul dat de `wpr_meta::encode`: după I6 `0x1ffe00000..0x1ffee0000`, după I7 `0x1f4100000..0x1ffee0000` = exact placa; `free_after_i7` trece fără valori puse de mână | PASS (SIMULARE): T92 |
+| Pentru OS | `integration/cyber-universe/C-71_wpr2-largit-in-sim.md` (opțional: meta-ul în model în loc de LO-ul scris de mână în `gpu lant --sim`) | propus |
+| Compatibilitate OS | doar adăugare (un câmp public nou în `gpu-sim`); nimic redenumit sau șters | PASS |
+
+Verificări (`sh tools/check.sh`): format, clippy `-D warnings`, **359 teste PASS** (1 ignorat), build no_std PASS; clippy cu `--features hw-write` PASS.
+Oprirea de siguranță nu se aplică (pas terminat în această sesiune).
+
+**Următorul pas:** fără placă, nimic cu plus cinstit în cyber-gpu. Așteptăm fereastra pe workstation cu `os-250` (`gpu lant` + DA), apoi
+`verifica_jurnal_lant` pe jurnalele din `rezultate/`. Sesiunile următoare fără comandă nouă sau jurnal nou: oprire scurtă.
+
+---
 ## Sesiunea 53 — 5 noiembrie 2026, ~19:30 (ora României), în cloud, FĂRĂ placă — C-71 (lucru continuu): zona VRAM după I7
 
 Nicio comandă nouă în hub pentru cyber-gpu și niciun jurnal nou de pe placă după sesiunea 52. Sesiunea OS a scos `os-249` (tot lanțul I6 → I10

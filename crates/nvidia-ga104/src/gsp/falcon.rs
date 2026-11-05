@@ -986,6 +986,66 @@ mod tests {
         assert!(g.writes.is_empty());
     }
 
+    /// C-71 (T92): the simulated Booter lowers WPR2 to `gspFwWprStart` from
+    /// the `GspFwWprMeta` we wrote, as the board did on 5 Nov 2026 (after I7:
+    /// `0x01f41000/0x01ffee00`, HI the same as after I6), so
+    /// `FbLayout::free_after_i7` passes on the model too. A meta with a bad
+    /// magic: Booter refuses (SIM code), WPR2 stays FRTS only, the free zone
+    /// is refused. SIMULARE.
+    #[test]
+    fn booter_widens_wpr2_from_the_meta_like_the_board() {
+        use crate::fb_layout::{FbLayout, FbParams, GIB, MIB};
+        use crate::gsp::wpr_meta::{self, SysmemInputs};
+        let l = FbLayout::compute(&FbParams {
+            fb_size: 8 * GIB,
+            vga_workspace_reg: None,
+            bootloader_size: 24_684,
+            gsp_elf_size: 60 * MIB,
+        })
+        .unwrap();
+        let frts = (l.frts.start, l.frts.end);
+        let inputs = SysmemInputs {
+            radix3_elf_addr: 0x0200_0000,
+            radix3_elf_size: 60 * MIB,
+            bootloader_addr: 0x0600_0000,
+            bootloader_size: 24_684,
+            bootloader_code_offset: 0x100,
+            bootloader_data_offset: 0x4000,
+            bootloader_manifest_offset: 0x5000,
+            signature_addr: 0x0610_0000,
+            signature_size: 4096,
+        };
+        let meta = wpr_meta::encode(&l, &inputs).unwrap();
+        let board = decode_wpr2(0x01f4_1000, 0x01ff_ee00);
+        let run = |meta: &[u8]| {
+            let mut g = FakeGsp::new();
+            g.frts = frts;
+            g.wpr_meta_mem = Some((META, meta.to_vec()));
+            let mut j = Journal::new(256);
+            let mut c = SimClock::default();
+            let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+            fwsec_frts(&mut b, &mut c, load_ok, frts).unwrap();
+            let after_i6 = read_wpr2(&mut b).unwrap().unwrap();
+            let r = booter_load(&mut b, &mut c, load_ok, META);
+            let after_i7 = read_wpr2(&mut b).unwrap().unwrap();
+            let mb0 = b.read(0x840040).unwrap();
+            (after_i6, r, after_i7, mb0)
+        };
+        let (i6, r, i7, mb0) = run(&meta);
+        assert!(r.is_ok());
+        assert_eq!(mb0, 0);
+        assert_eq!((i6.start, i6.end), (frts.0, board.end));
+        assert_eq!(i7, board);
+        assert_eq!(l.free_after_i7((i7.start, i7.end)).unwrap(), l.free_below());
+        let mut bad = meta;
+        bad[0] ^= 1;
+        let (_, r, i7, mb0) = run(&bad);
+        assert!(r.is_err());
+        assert_eq!(mb0, 0xbad2);
+        assert_eq!(i7.start, frts.0);
+        assert!(l.free_after_i7((i7.start, i7.end)).is_err());
+    }
+
     #[test]
     fn i6_i7_full_sequence_simulated() {
         let mut g = FakeGsp::new();
