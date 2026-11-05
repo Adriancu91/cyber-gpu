@@ -28,3 +28,13 @@ Cauza (DEDUS): după FWSEC-FRTS falcon-ul GSP rămâne cum l-a lăsat FWSEC (nuc
   Scrieri noi față de os-246: doar 3 (`0x1103c0` ×2, `0x111668`), toate în fereastra GSP, deja permise de `GuardedBar0`.
 - Nimic altceva nu se schimbă (I6, I8, golden, I9 la fel). Test în QEMU/simulare; pe placă: o fereastră cu Adrian, pornire rece.
 - Așteptat pe placă: rândul `0x110040 … => 0x09c71000` (păstrat). Dacă tot 0 → oprire curată înainte de Booter (date noi, fără risc).
+
+## Răspunsurile la întrebările din C-75
+1. `0x111388` = `0xa0`: bitul 7 (`ACTIVE_STAT`) = 1 → RISC-V **activ**; bitul 4 (`HALTED`) = 0. GSP-RM rula.
+2. Așteptarea de ~2 s nu e cauza: GSP-RM nu avea adresa LibOS (cutia citită 0), deci nu avea unde să-și facă cozile — ar fi așteptat la nesfârșit.
+3. Formatul cozii de stare nu se poate judeca până nu există coada; rămâne cel din 570.144 (simularea îl verifică). Se vede la fereastra următoare.
+
+## Turul de după (faptul `i6.trece`)
+În cyber-gpu, `i6.trece` din `read_tour` înseamnă în continuare „I6 se poate încerca” (neschimbat). Nou: faptul `i6.wpr2.etapa` =
+`coborat (pornire rece)` / `FRTS (dupa I6)` / `largit pentru GSP-RM (dupa I7)` / `alta forma (de analizat)` (`I6Check::wpr2_stage`).
+Pentru faptul vostru `i6.trece` (= rezultatul I6): după I7, „lărgit pentru GSP-RM” este normal și înseamnă că I6 a trecut înainte.

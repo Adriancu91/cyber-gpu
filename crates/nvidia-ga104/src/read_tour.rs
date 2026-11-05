@@ -333,6 +333,7 @@ where
                         },
                     ));
                     facts.push(Fact::new("i6.trece", yes(c.passes())));
+                    facts.push(Fact::new("i6.wpr2.etapa", c.wpr2_stage()));
                 }
                 Err(e) => facts.push(Fact::new("i6", format!("eroare: {e}"))),
             }

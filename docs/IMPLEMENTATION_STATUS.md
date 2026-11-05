@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 51 — 5 noiembrie 2026, ~13:00 (ora României), în cloud, FĂRĂ placă — C-75 (din jurnalul real): de ce I8 s-a oprit la cozile GSP
+## Sesiunea 51 — 5 noiembrie 2026, ~13:00 (ora României), în cloud, FĂRĂ placă — C-75 (comanda nouă, jurnalul real): de ce I8 s-a oprit la cozile GSP
 
 În hub a apărut jurnalul ferestrei de azi cu `os-246` (`rezultate/2026-11-05-workstation-os242/os246-gpu-jurnal-002.txt`): I6 și **I7 TREC pe placa
 reală**, I8 se oprește („antetul cozii de stare nu are forma 570.144”). Jurnalul arată cauza: `bar0 w 0x110040: 0x00000000 <- 0x09c71000 => 0x00000000`
@@ -13,10 +13,12 @@ modul RISC-V** înainte de cutii (ordinea nouveau / RM 570.144) — exact între
 | I7 în ordinea plăcii | `falcon::booter_load_dma_libos`: resetare GSP + BCR_CTRL = 0x111 (RISC-V) → cutiile LibOS recitite (oprire înainte de Booter dacă nu se păstrează) → Booter → `FALCON_OS` = 570144 → RISC-V activ | PASS (SIMULARE): T86, T87 |
 | Simularea ca placa | `gpu-sim`: după FWSEC cutiile GSP ignoră scrierile până la resetarea GSP (OBSERVAT 5 nov); I8 simulat pornește doar dacă GSP-RM a primit adresa LibOS. Ordinea veche reproduce placa (I7 TRECE, I8 oprit), ordinea nouă trece tot lanțul | PASS (SIMULARE): T86 |
 | Regula jurnalului | `i6_log::check_i7_libos` (5 scrieri GSP înainte, Booter ca `check_i7`, 1 scriere `FALCON_OS` după, fiecare recitită egal); `chain_log` o alege singur | PASS (SIMULARE + jurnal real): T86, T88 |
+| Turul de după I7 | faptul nou `i6.wpr2.etapa` (`I6Check::wpr2_stage`): coborât / FRTS (după I6) / lărgit pentru GSP-RM (după I7); `i6.trece` (= „I6 se poate încerca”) neschimbat | PASS (valori reale): T89 |
+| Răspunsuri C-75 | (1) `0xa0` la `0x111388` = bitul 7 ACTIVE_STAT = 1 → RISC-V **activ** (bitul 4 HALTED = 0); (2) cele ~2 s nu sunt cauza: GSP-RM rula, dar fără adresa LibOS nu avea unde să-și facă cozile; (3) formatul cozii nu se poate judeca până nu există coada — rămâne cel din 570.144 | analiză |
 | Pentru OS | `integration/cyber-universe/C-75_i7-reset-gsp-libos.md`: un apel `booter_load_dma_libos` în locul scrierilor proprii la I7 (3 scrieri noi, toate în fereastra GSP) | propus |
 | Compatibilitate OS | doar adăugări; câmp nou `ChainJournal::i7_libos`; `booter_load_dma` / `check_i7` neschimbate | PASS |
 
-Verificări (`sh tools/check.sh`): format, clippy `-D warnings`, **355 teste PASS** (1 ignorat), build no_std PASS; clippy cu `--features hw-write` PASS.
+Verificări (`sh tools/check.sh`): format, clippy `-D warnings`, **356 teste PASS** (1 ignorat), build no_std PASS; clippy cu `--features hw-write` PASS.
 Oprirea de siguranță nu se aplică (pas terminat în această sesiune).
 
 **Următorul pas:** sesiunea OS cheamă `booter_load_dma_libos` la I7 (Release nou) → fereastra următoare: `gpu lant`, așteptat rândul

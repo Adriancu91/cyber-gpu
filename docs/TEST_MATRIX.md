@@ -8,6 +8,7 @@
 | T86 | I7 în ordinea veche (ca `os-246` pe 5 nov: fără resetarea GSP după FWSEC) pe placa simulată, apoi în ordinea nouă `booter_load_dma_libos` | `cargo test -p nvidia-ga104 old_i7_order` | vechi: I7 TRECE, I8 oprit la cozile GSP (ca pe placă), Bus Master la loc; nou: lanțul tot TRECE, jurnalul arată adresa LibOS păstrată; 2 greșeli plantate prinse (FALCON_OS greșit, cutia GSP necitită egal) | conform | PASS (SIMULARE) |
 | T87 | După FWSEC, cutiile GSP nu păstrează scrierea (modelul plăcii, 5 nov); `write_libos_mailboxes` oprește înainte de orice scriere SEC2; după `gsp_reset_into_riscv` (BCR = 0x111) adresa rămâne | `cargo test -p nvidia-ga104 libos_mailboxes_need` | eroare cu valoarea citită (0), nicio scriere SEC2; apoi păstrată | conform | PASS (SIMULARE) |
 | T88 | Jurnalul REAL `os246-gpu-jurnal-002.txt` (rândurile I7) citit cu `check_i7_libos` | `cargo test -p nvidia-ga104 i7_libos_rule` | raportat la prima scriere: „cutia GSP nu a pastrat adresa LibOS: GSP nu a fost resetat in RISC-V dupa FWSEC” | conform (și `verifica_jurnal_lant` pe tot jurnalul dă același verdict) | PASS (jurnal real, regula — nu placa) |
+| T89 | Etapa WPR2 în turul de citire (faptul nou `i6.wpr2.etapa`) cu valorile brute de pe placă din 5 nov | `cargo test -p nvidia-ga104 wpr2_stage` | 0/0 → „coborat”; `0x01ffe000/0x01ffee00` → „FRTS (dupa I6)”; `0x01f41000/0x01ffee00` → „largit pentru GSP-RM (dupa I7)” | conform | PASS (valori reale, regula) |
 
 ## Rezultate — sesiunea 49 (5 nov 2026, cloud, fără placă) — C-71: verificarea jurnalului pentru tot lanțul
 

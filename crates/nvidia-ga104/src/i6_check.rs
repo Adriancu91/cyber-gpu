@@ -45,6 +45,22 @@ impl I6Check {
     pub fn passes(&self) -> bool {
         self.wpr2.is_none()
     }
+
+    /// C-75: which boot stage the WPR2 seen here matches, read-only:
+    /// down = cold start; starting at FRTS = after I6 (FWSEC-FRTS); starting
+    /// lower and ending inside FRTS = after I7 (Booter widened it for
+    /// GSP-RM, as on the board on 5 Nov 2026: `0x1f4100000..0x1ffee0000`).
+    /// `passes()` keeps its meaning (I6 may be attempted).
+    pub fn wpr2_stage(&self) -> &'static str {
+        match self.wpr2 {
+            None => "coborat (pornire rece)",
+            Some((s, _)) if s == self.frts.0 => "FRTS (dupa I6)",
+            Some((s, e)) if s < self.frts.0 && e > self.frts.0 && e <= self.frts.1 => {
+                "largit pentru GSP-RM (dupa I7)"
+            }
+            Some(_) => "alta forma (de analizat)",
+        }
+    }
 }
 
 fn read<M: Mmio + ?Sized>(bar0: &mut M, journal: &mut Journal, off: u64) -> GpuResult<u32> {
@@ -146,6 +162,29 @@ mod tests {
             "3 reads, LO not needed"
         );
         assert!(m.writes.is_empty(), "nothing written");
+    }
+
+    /// C-75 (T89): the WPR2 values of the board on 5 Nov 2026 (raw LO/HI
+    /// from `os246-gpu-jurnal-002.txt`) give the right stage: after I6 =
+    /// FRTS, after I7 = widened for GSP-RM; cold start = down.
+    #[test]
+    fn wpr2_stage_from_the_board_values() {
+        let stage = |lo: u32, hi: u32| {
+            let mut m = board();
+            m.set(0x1fa824, lo);
+            m.set(0x1fa828, hi);
+            let mut j = Journal::new(16);
+            let c = i6_check(&mut m, &mut j, &desc(), 0x6000, 63 << 20).unwrap();
+            assert_eq!(c.frts, (0x1_ffe0_0000, 0x1_fff0_0000));
+            c.wpr2_stage()
+        };
+        assert_eq!(stage(0, 0), "coborat (pornire rece)");
+        assert_eq!(stage(0x01ff_e000, 0x01ff_ee00), "FRTS (dupa I6)");
+        assert_eq!(
+            stage(0x01f4_1000, 0x01ff_ee00),
+            "largit pentru GSP-RM (dupa I7)"
+        );
+        assert_eq!(stage(0x0100_0000, 0x0110_0000), "alta forma (de analizat)");
     }
 
     #[test]
