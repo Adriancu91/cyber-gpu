@@ -122,3 +122,10 @@ FWSEC, BCR_CTRL = 0x111, cutiile 0/1 = adresa LibOS înainte de Booter, `FALCON_
 (`r535_gsp_oneinit` / `ga102_gsp_reset`, MIT, citite în sesiunile anterioare) și RM 570.144 (MIT); câmpurile BCR_CTRL din `dev_riscv_pri.h`
 (570.144, MIT, generat în `nvidia-rm570`). Efectul de pe placă (cutia scrisă `0x09c71000`, citită 0) e **OBSERVAT** în jurnalul din 5 nov;
 cauza (FWSEC lasă GSP blocat până la resetare) e **DEDUS**. Nimic copiat.
+
+**Sesiunea 52 (5 nov), soneria canalului de lucru:** `push::DOORBELL` (`crates/nvidia-ga104/src/push.rs`) și testul T90 sunt scrise de noi; valoarea
+vine din constanta generată automat `tu102_dev_vm::NV_VIRTUAL_FUNCTION_DOORBELL` (open-gpu-kernel-modules 570.144, `tu102/dev_vm.h`, MIT, notificarea
+în `crates/nvidia-rm570/LICENSE-NVIDIA`; generatorul `tools/gen-rm570/gen_regs.py` primește un prefix nou). Că GA104 o folosește așa e citit ca
+specificație din RM 570.144 (MIT): `kernel_fifo_ga100.c` (`kfifoUpdateUsermodeDoorbell_GA100`), `kernel_fifo_tu102.c`
+(`kfifoUpdateUsermodeDoorbell_TU102`), `kern_gpu_tu102.c` (`gpuGetVirtRegPhysOffset_TU102`), `g_kernel_fifo_nvoc.c` / `g_gpu_nvoc.h` (legarea HAL).
+0xbb0090 trece din **DEDUS** în **DOCUMENTAT** (antet + cale RM); pe placă rămâne neobservat. Nimic copiat.

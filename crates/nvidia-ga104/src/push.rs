@@ -10,15 +10,36 @@
 //! Nothing here has been executed by a GPU; there is no channel yet (init.rs I9).
 
 use gpu_core::error::{GpuError, GpuResult};
+use nvidia_rm570::regs::tu102_dev_vm as vm;
 
 /// Class ids (open-gpu-doc, MIT).
 pub const AMPERE_CHANNEL_GPFIFO_A: u32 = 0xc56f;
 pub const AMPERE_COMPUTE_B: u32 = 0xc7c0;
 
 /// Doorbell (NOTIFY_CHANNEL_PENDING) offset in BAR0 for GA10x.
-/// INFERRED: nouveau vfn/ga100.c base 0xb80000 + user 0x030000 + 0x90.
+/// First INFERRED from nouveau vfn/ga100.c (base 0xb80000 + user 0x030000 +
+/// 0x90); the same value is now [`DOORBELL`], taken from NVIDIA's MIT headers.
+/// Kept (same value) so the OS that already uses this name still builds.
 /// Not on the read allow-list and never written by this crate yet.
 pub const DOORBELL_INFERRED: u64 = 0x00bb_0090;
+
+/// The work-submit doorbell in BAR0, from NVIDIA's MIT headers
+/// (open-gpu-kernel-modules 570.144, `nvidia-rm570`): `tu102/dev_vm.h`
+/// `NV_VIRTUAL_FUNCTION_DOORBELL` (0x30090) at
+/// `DRF_BASE(NV_VIRTUAL_FUNCTION_FULL_PHYS_OFFSET)` (0xb80000).
+///
+/// That GA104 uses it this way is read from RM 570.144 (MIT, as
+/// specification): `kfifoUpdateUsermodeDoorbell_GA100` calls the `_TU102`
+/// version when RM runs on the CPU (our case: GSP-RM runs on the GSP, the
+/// driver on the CPU), which writes the work-submit token with
+/// `GPU_VREG_WR32(NV_VIRTUAL_FUNCTION_DOORBELL)`; `gpuGetVirtRegPhysOffset_TU102`
+/// gives the PF the base above. DOCUMENTED, not yet OBSERVED on the board:
+/// the first write is I10, in the chain, with Adrian present.
+pub const DOORBELL: u64 =
+    (vm::NV_VIRTUAL_FUNCTION_FULL_PHYS_OFFSET.lo + vm::NV_VIRTUAL_FUNCTION_DOORBELL) as u64;
+
+// The inferred value and the headers agree (checked when compiling).
+const _: () = assert!(DOORBELL == DOORBELL_INFERRED);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]

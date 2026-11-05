@@ -9,6 +9,7 @@
 | T87 | După FWSEC, cutiile GSP nu păstrează scrierea (modelul plăcii, 5 nov); `write_libos_mailboxes` oprește înainte de orice scriere SEC2; după `gsp_reset_into_riscv` (BCR = 0x111) adresa rămâne | `cargo test -p nvidia-ga104 libos_mailboxes_need` | eroare cu valoarea citită (0), nicio scriere SEC2; apoi păstrată | conform | PASS (SIMULARE) |
 | T88 | Jurnalul REAL `os246-gpu-jurnal-002.txt` (rândurile I7) citit cu `check_i7_libos` | `cargo test -p nvidia-ga104 i7_libos_rule` | raportat la prima scriere: „cutia GSP nu a pastrat adresa LibOS: GSP nu a fost resetat in RISC-V dupa FWSEC” | conform (și `verifica_jurnal_lant` pe tot jurnalul dă același verdict) | PASS (jurnal real, regula — nu placa) |
 | T89 | Etapa WPR2 în turul de citire (faptul nou `i6.wpr2.etapa`) cu valorile brute de pe placă din 5 nov | `cargo test -p nvidia-ga104 wpr2_stage` | 0/0 → „coborat”; `0x01ffe000/0x01ffee00` → „FRTS (dupa I6)”; `0x01f41000/0x01ffee00` → „largit pentru GSP-RM (dupa I7)” | conform | PASS (valori reale, regula) |
+| T90 | Soneria canalului de lucru: valoarea dedusă `0xbb0090` = antetul MIT 570.144 (`NV_VIRTUAL_FUNCTION_FULL_PHYS_OFFSET` + `NV_VIRTUAL_FUNCTION_DOORBELL`) | `cargo test -p nvidia-ga104 --test rm570_crosscheck work_doorbell` | `0xb80000 + 0x30090 = 0xbb0090` = `push::DOORBELL` = `DOORBELL_INFERRED` = `chain_log::WORK_DOORBELL` (și verificat la compilare) | conform | PASS (aritmetică, fără placă) |
 
 ## Rezultate — sesiunea 49 (5 nov 2026, cloud, fără placă) — C-71: verificarea jurnalului pentru tot lanțul
 

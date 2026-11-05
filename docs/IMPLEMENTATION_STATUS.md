@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 52 — 5 noiembrie 2026, ~13:45 (ora României), în cloud, FĂRĂ placă — C-71 (lucru continuu): soneria canalului de lucru din antetele MIT
+
+Nicio comandă nouă în hub pentru cyber-gpu și niciun jurnal nou de pe placă după sesiunea 51. Rămânea întrebarea 3 a sesiunii OS (I10): adresa
+soneriei canalului de lucru `0xBB0090` era doar DEDUSĂ (nouveau/tinygrad). **Nimic testat pe RTX 3070 Ti.**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Sursa adresei | antetul MIT 570.144 `tu102/dev_vm.h`: `NV_VIRTUAL_FUNCTION_DOORBELL = 0x30090`; RM 570.144 (citit ca specificație): GA104 → `kfifoUpdateUsermodeDoorbell_GA100` → `_TU102` (RM pe procesor) → `GPU_VREG_WR32`, baza `0xB80000` (`gpuGetVirtRegPhysOffset_TU102`) | DOCUMENTAT (nu OBSERVAT) |
+| Generatorul | `tools/gen-rm570/gen_regs.py`: prefix nou în `tu102_dev_vm`; `regs.rs` regenerat (verificat întâi că generatorul reproduce exact fișierul vechi) — 1 constantă nouă | PASS |
+| Codul | `push::DOORBELL` = baza + `NV_VIRTUAL_FUNCTION_DOORBELL` din antet; verificare la compilare că e egal cu `DOORBELL_INFERRED` și `chain_log::WORK_DOORBELL` | PASS: T90 |
+| Pentru OS | `integration/cyber-universe/C-72_soneria-i10.md`: răspunsul la întrebarea 3 (adresa, doar în pasul I10 al lanțului, citirile prin `VramWindow::read_u32`, `invalidate_tlb` înainte de prima sonerie) | propus |
+| Compatibilitate OS | doar adăugare (`push::DOORBELL`); nimic redenumit sau șters | PASS |
+
+Verificări (`sh tools/check.sh`): format, clippy `-D warnings`, **357 teste PASS** (1 ignorat), build no_std PASS; clippy cu `--features hw-write` PASS.
+Oprirea de siguranță nu se aplică (pas terminat în această sesiune).
+
+**Următorul pas:** fără placă, nimic cu plus cinstit în cyber-gpu. Așteptăm: (1) sesiunea OS — I7 cu `booter_load_dma_libos` (nota C-75) și I10 (nota
+C-72), Release nou; (2) fereastra următoare pe workstation (`gpu lant` + DA); (3) apoi `verifica_jurnal_lant` pe jurnalul din `rezultate/`.
+Sesiunile următoare fără comandă nouă sau jurnal nou: oprire scurtă.
+
+---
 ## Sesiunea 51 — 5 noiembrie 2026, ~13:00 (ora României), în cloud, FĂRĂ placă — C-75 (comanda nouă, jurnalul real): de ce I8 s-a oprit la cozile GSP
 
 În hub a apărut jurnalul ferestrei de azi cu `os-246` (`rezultate/2026-11-05-workstation-os242/os246-gpu-jurnal-002.txt`): I6 și **I7 TREC pe placa

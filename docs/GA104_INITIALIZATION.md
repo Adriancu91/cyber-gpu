@@ -81,8 +81,12 @@ nouveau a adăugat GR pe GA102 în Linux 6.2 (`c4bdac754ca0`), cu firmware-uri d
 - Clase (open-gpu-doc, MIT): `AMPERE_CHANNEL_GPFIFO_A 0xC56F` (`classes/host/clc56f.h`), `AMPERE_COMPUTE_B 0xC7C0`
   (`classes/compute/clc7c0.h`), QMD V03_00 în `clc7c0qmd.h`.
 - Antet de metodă și intrare GPFIFO: `clc56f.h` l. 265–332 → implementat în `push.rs` (doar codificare).
-- Doorbell: pe Volta e la `0x810000+0x90`; pe GA10x nouveau folosește VFN `0xb80000` + user `0x030000` → **`0xBB0090` (dedus)**.
-  Nu e pe lista permisă; nu se scrie.
+- Doorbell: pe Volta e la `0x810000+0x90`; pe GA10x nouveau folosește VFN `0xb80000` + user `0x030000` → `0xBB0090` (dedus la început).
+  **Sesiunea 52 (5 nov): aceeași valoare e în antetul MIT 570.144** — `tu102/dev_vm.h`: `NV_VIRTUAL_FUNCTION_DOORBELL = 0x30090`, la baza
+  `NV_VIRTUAL_FUNCTION_FULL_PHYS_OFFSET` = `0xB80000` (generată în `nvidia-rm570`, `push::DOORBELL`, test T90). Calea din RM 570.144 (citită ca
+  specificație): `kfifoUpdateUsermodeDoorbell_GA100` → `_TU102` când RM rulează pe procesor → `GPU_VREG_WR32(NV_VIRTUAL_FUNCTION_DOORBELL, token)`;
+  `gpuGetVirtRegPhysOffset_TU102` dă baza `0xB80000` (fără SR-IOV). Stare: **DOCUMENTAT, încă NEOBSERVAT pe placă**. Prima scriere = I10, în lanț,
+  cu Adrian de față (C-72); nu se scrie în afara lanțului.
 - Pe calea GSP, canalele se alocă **prin RPC către RM**, nu prin registre directe.
 
 ## 7. Necunoscute

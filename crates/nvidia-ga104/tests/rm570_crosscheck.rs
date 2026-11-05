@@ -212,3 +212,22 @@ fn system_info_matches_the_header() {
     // It fits one queue element (no continuation records needed).
     const { assert!(sysinfo::SIZE <= nvidia_ga104::gsp::rpc::MAX_PAYLOAD) };
 }
+
+/// T90 (session 52): the work-channel doorbell, first DEDUS (`0xbb0090`,
+/// nouveau/tinygrad), equals the value from the 570.144 MIT header
+/// (`tu102/dev_vm.h`: `NV_VIRTUAL_FUNCTION_DOORBELL` at the PF's
+/// "virtual function" base). Arithmetic only: nothing written anywhere.
+#[test]
+fn work_doorbell_matches_the_header() {
+    use nvidia_ga104::{chain_log, push};
+    use nvidia_rm570::regs::tu102_dev_vm as vm;
+    assert_eq!(vm::NV_VIRTUAL_FUNCTION_DOORBELL, 0x30090);
+    assert_eq!(vm::NV_VIRTUAL_FUNCTION_FULL_PHYS_OFFSET.lo, 0xb8_0000);
+    let from_header =
+        u64::from(vm::NV_VIRTUAL_FUNCTION_FULL_PHYS_OFFSET.lo + vm::NV_VIRTUAL_FUNCTION_DOORBELL);
+    assert_eq!(push::DOORBELL, from_header);
+    assert_eq!(push::DOORBELL_INFERRED, from_header);
+    assert_eq!(chain_log::WORK_DOORBELL, from_header);
+    // Inside the "virtual function" range of the same header.
+    assert!(from_header <= u64::from(vm::NV_VIRTUAL_FUNCTION_FULL_PHYS_OFFSET.hi));
+}

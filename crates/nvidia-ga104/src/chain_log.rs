@@ -21,7 +21,7 @@
 //!   ([`crate::vram_window::CONTROL_REGISTERS`]); with the number of RM calls
 //!   the OS printed, the doorbells must match it exactly (one per message);
 //! - `i10-*`: the VRAM-window registers and the work-channel doorbell
-//!   (`0xbb0090`, DEDUS, counted separately — not approved yet, see
+//!   (`0xbb0090`, from the MIT headers, not yet observed; counted separately, see
 //!   `docs/IMPLEMENTATION_STATUS.md`), nothing else.
 //!
 //! - across the whole chain: every move of the VRAM window
@@ -48,8 +48,12 @@ use crate::i6_log::{self, I6Summary};
 /// `NV_PGSP_QUEUE_HEAD(0)`: the GSP doorbell (570.144 `dev_gsp.h`, MIT).
 pub const GSP_DOORBELL: u64 = 0x11_0c00;
 /// The work-channel doorbell, `NV_VIRTUAL_FUNCTION_FULL_PHYS_OFFSET` +
-/// `0x30090` (DEDUS from nouveau/tinygrad, docs/GA104_INITIALIZATION.md).
+/// `NV_VIRTUAL_FUNCTION_DOORBELL` (0x30090): first DEDUS from
+/// nouveau/tinygrad, now from the 570.144 MIT headers ([`crate::push::DOORBELL`],
+/// docs/GA104_INITIALIZATION.md). Not yet observed on the board.
 pub const WORK_DOORBELL: u64 = 0xbb_0090;
+
+const _: () = assert!(WORK_DOORBELL == crate::push::DOORBELL);
 /// `NV_PBUS_BAR0_WINDOW`: the VRAM window register moved by
 /// [`crate::vram_window::VramWindow`] (570.144 `gm107/dev_bus.h`, MIT).
 pub const VRAM_WINDOW: u64 = nvidia_rm570::regs::gm107_dev_bus::NV_PBUS_BAR0_WINDOW as u64;

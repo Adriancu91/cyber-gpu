@@ -50,8 +50,13 @@ HEADERS = [
     # uses that layout (kbusSetBAR0WindowVidOffset_GM107) on TU10x..AD10x, GA104 included.
     ("tu102_dev_ram", "ogkm", "src/common/inc/swref/published/turing/tu102/dev_ram.h", "NV_PRAMIN"),
     ("gm107_dev_bus", "ogkm", "src/common/inc/swref/published/maxwell/gm107/dev_bus.h", "NV_PBUS_BAR0_WINDOW"),
+    # I10: the work-submit doorbell. RM 570.144 writes NV_VIRTUAL_FUNCTION_DOORBELL
+    # through GPU_VREG_WR32 (base DRF_BASE(NV_VIRTUAL_FUNCTION_FULL_PHYS_OFFSET) on
+    # bare metal, gpuGetVirtRegPhysOffset_TU102; kfifoUpdateUsermodeDoorbell_GA100 ->
+    # _TU102 when RM runs on the CPU side).
     ("tu102_dev_vm", "ogkm", "src/common/inc/swref/published/turing/tu102/dev_vm.h",
-     ("NV_VIRTUAL_FUNCTION_FULL_PHYS_OFFSET", "NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE")),
+     ("NV_VIRTUAL_FUNCTION_FULL_PHYS_OFFSET", "NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE",
+      "NV_VIRTUAL_FUNCTION_DOORBELL")),
     ("clc56f", "ogd", "classes/host/clc56f.h", None),
     ("clc7c0", "ogd", "classes/compute/clc7c0.h", None),
     ("qmd_v03_00", "ogd", "classes/compute/clc6c0qmd.h", "NVC6C0_QMDV03_00_"),

@@ -1033,6 +1033,8 @@ pub mod tu102_dev_vm {
     pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_TRIGGER_FALSE: u32 = 0x0;
     /// `-W--V`
     pub const NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE_TRIGGER_TRUE: u32 = 0x1;
+    /// `-W-4R`
+    pub const NV_VIRTUAL_FUNCTION_DOORBELL: u32 = 0x30090;
 }
 
 /// From `classes/host/clc56f.h` (open-gpu-doc).
