@@ -77,6 +77,7 @@ pub mod radix3;
 pub mod read_tour;
 pub mod regs;
 pub mod sha256;
+pub mod transfer;
 pub mod vbios;
 pub mod vbios_diag;
 pub mod vram_window;

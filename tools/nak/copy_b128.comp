@@ -1,0 +1,27 @@
+// C-83 I11: a large, safe copy through the work channel. Each thread copies one 16-byte unit
+// (uvec4 load + uvec4 store): dst.v[i] = src.v[i] for i < n. Integers only, so the copy is exact bit for bit.
+// Used in both directions (host RAM -> VRAM and VRAM -> host RAM); which memory each address is in is decided
+// by the page tables, not by the program.
+// Requirements (our launcher checks them, the kernel does not): src and dst aligned to 16 bytes, n = bytes / 16,
+// the grid covers n with blocks of 256 threads; threads past n do nothing.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Src { uvec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) writeonly buffer Dst { uvec4 v[]; };
+
+layout(push_constant) uniform Args {
+    Src src;
+    Dst dst;
+    uint n;
+} args;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i < args.n) {
+        args.dst.v[i] = args.src.v[i];
+    }
+}

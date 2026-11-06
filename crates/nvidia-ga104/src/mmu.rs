@@ -198,6 +198,55 @@ pub fn encode_pte(pa: u64, attr: PageAttr) -> GpuResult<u64> {
     Ok(e as u64)
 }
 
+/// C-83 (I11): the highest host-RAM bus address (exclusive) a system-memory
+/// PTE may name here. `ADDRESS_SYS` is bits 53:8 (46 bits of 4 KiB pages);
+/// we stop at 2^52, the x86-64 physical address limit, so a wrong value from
+/// the OS is refused instead of encoded.
+pub const SYS_ADDR_LIMIT: u64 = 1 << 52;
+
+/// C-83 (I11): a 4 KiB PTE for a page of **host RAM** (a DMA page of the
+/// OS), aperture `SYSTEM_COHERENT_MEMORY` (the GPU's reads and writes are
+/// snooped by the CPU caches), address in `ADDRESS_SYS`. Fields from the
+/// generated `dev_mmu.h` (570.144, MIT). Coherent + `VOL` (not kept in the
+/// GPU's L2) is our choice for buffers the CPU reads right after the GPU:
+/// DEDUS from RM 570.144's sysmem PTEs and tinygrad's `nvdev.py`; **not yet
+/// observed on the board**.
+pub fn encode_pte_sys(bus: u64, attr: PageAttr) -> GpuResult<u64> {
+    if !bus.is_multiple_of(PAGE) || bus >= SYS_ADDR_LIMIT {
+        return Err(GpuError::InvalidArgument(
+            "MMU: adresa RAM nealiniata sau prea mare",
+        ));
+    }
+    let mut e = put(
+        0,
+        f::NV_MMU_VER2_PTE_VALID,
+        f::NV_MMU_VER2_PTE_VALID_TRUE as u128,
+    )?;
+    e = put(
+        e,
+        f::NV_MMU_VER2_PTE_APERTURE,
+        f::NV_MMU_VER2_PTE_APERTURE_SYSTEM_COHERENT_MEMORY as u128,
+    )?;
+    e = put(e, f::NV_MMU_VER2_PTE_VOL, attr.volatile as u128)?;
+    e = put(e, f::NV_MMU_VER2_PTE_READ_ONLY, attr.read_only as u128)?;
+    e = put(
+        e,
+        f::NV_MMU_VER2_PTE_ADDRESS_SYS,
+        (bus >> f::NV_MMU_VER2_PTE_ADDRESS_SHIFT) as u128,
+    )?;
+    e = put(e, f::NV_MMU_VER2_PTE_KIND, KIND_GENERIC)?;
+    Ok(e as u64)
+}
+
+/// C-83 (I11): host RAM mapped into the GPU's VA: `va .. va + size`, page `i`
+/// at bus address `pages[i]` (the OS's DMA pages need not be contiguous).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SysMapping {
+    pub va: u64,
+    pub size: u64,
+    pub pages: Vec<u64>,
+}
+
 /// The driver's memory: VRAM ranges, GPU VAs, page tables.
 pub struct GpuMemory<W: VramWrite> {
     vram: RangeAllocator,
@@ -208,6 +257,8 @@ pub struct GpuMemory<W: VramWrite> {
     tables: BTreeMap<(usize, u64), u64>,
     /// Mapped 4 KiB pages: VA → PA (no page is ever mapped twice).
     pages: BTreeMap<u64, u64>,
+    /// C-83: mapped 4 KiB pages of host RAM: VA → bus address.
+    sys_pages: BTreeMap<u64, u64>,
     /// Number of 8-byte writes made through `w`.
     pub writes: u64,
 }
@@ -228,6 +279,7 @@ impl<W: VramWrite> GpuMemory<W> {
             root: 0,
             tables: BTreeMap::new(),
             pages: BTreeMap::new(),
+            sys_pages: BTreeMap::new(),
             writes: 0,
         };
         m.root = m.new_table()?;
@@ -309,7 +361,9 @@ impl<W: VramWrite> GpuMemory<W> {
                 "MMU: mapare in afara spatiului de adrese",
             ));
         }
-        if self.pages.range(va..va_end).next().is_some() {
+        if self.pages.range(va..va_end).next().is_some()
+            || self.sys_pages.range(va..va_end).next().is_some()
+        {
             return Err(GpuError::InvalidArgument("MMU: pagina deja mapata"));
         }
         for i in 0..n {
@@ -324,6 +378,72 @@ impl<W: VramWrite> GpuMemory<W> {
     /// Where a mapped VA lands, from the driver's own bookkeeping.
     pub fn lookup(&self, va: u64) -> Option<u64> {
         self.pages.get(&(va & !(PAGE - 1))).map(|p| p + (va % PAGE))
+    }
+
+    /// C-83 (I11): maps host-RAM pages (`pages[i]` = bus address of page `i`,
+    /// 4 KiB aligned, below [`SYS_ADDR_LIMIT`]) at `va` with
+    /// [`encode_pte_sys`]. Refuses, before writing anything, a page that is
+    /// already mapped (VRAM or RAM), an empty list or a bad address.
+    pub fn map_sys(&mut self, va: u64, pages: &[u64], attr: PageAttr) -> GpuResult<()> {
+        if pages.is_empty() || !va.is_multiple_of(PAGE) {
+            return Err(GpuError::InvalidArgument(
+                "MMU: mapare RAM goala sau nealiniata",
+            ));
+        }
+        let Some(va_end) = va.checked_add(pages.len() as u64 * PAGE) else {
+            return Err(GpuError::InvalidArgument("MMU: mapare prea mare"));
+        };
+        if va_end > 1 << VA_BITS {
+            return Err(GpuError::InvalidArgument(
+                "MMU: mapare in afara spatiului de adrese",
+            ));
+        }
+        for &b in pages {
+            encode_pte_sys(b, attr)?;
+        }
+        if self.pages.range(va..va_end).next().is_some()
+            || self.sys_pages.range(va..va_end).next().is_some()
+        {
+            return Err(GpuError::InvalidArgument("MMU: pagina deja mapata"));
+        }
+        for (i, &b) in pages.iter().enumerate() {
+            let v = va + i as u64 * PAGE;
+            let pt = self.table(4, v)?;
+            self.write(pt + LEVELS[4].index(v) * 8, encode_pte_sys(b, attr)?)?;
+            self.sys_pages.insert(v, b);
+        }
+        Ok(())
+    }
+
+    /// C-83 (I11): takes a free GPU VA range and maps the host-RAM `pages`
+    /// there (volatile: the GPU does not keep them in its L2, see
+    /// [`encode_pte_sys`]).
+    pub fn alloc_sys_mapped(&mut self, pages: &[u64]) -> GpuResult<SysMapping> {
+        if pages.is_empty() {
+            return Err(GpuError::InvalidArgument("MMU: mapare RAM goala"));
+        }
+        let attr = PageAttr {
+            volatile: true,
+            read_only: false,
+        };
+        for &b in pages {
+            encode_pte_sys(b, attr)?; // a bad page refused before any VA is taken
+        }
+        let size = pages.len() as u64 * PAGE;
+        let va = self.va.alloc(size, PAGE)?;
+        self.map_sys(va, pages, attr)?;
+        Ok(SysMapping {
+            va,
+            size,
+            pages: pages.to_vec(),
+        })
+    }
+
+    /// C-83: the bus address a mapped host-RAM VA lands on.
+    pub fn lookup_sys(&self, va: u64) -> Option<u64> {
+        self.sys_pages
+            .get(&(va & !(PAGE - 1)))
+            .map(|p| p + (va % PAGE))
     }
 }
 

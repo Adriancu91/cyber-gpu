@@ -39,7 +39,7 @@ use nvidia_rm570::regs::{clc7c0 as c, clc56f as h, qmd_v03_00 as q};
 use nvidia_rm570::rmapi::AmpereAControlGPFifo;
 use nvidia_rm570::{Field, QMD_SIZE, QmdField};
 
-use crate::vram::{SimVram, translate};
+use crate::vram::{Aperture, SimVram, translate, translate_any};
 
 const PAGE: u64 = 4096;
 
@@ -137,6 +137,64 @@ impl GpuMem {
                 .map_err(|_| bad("SIM: adresa GPU fara traducere"))?
                 .pa;
             vram.write_u64(pa, self.read_u64(va + off)?).map_err(bad)?;
+        }
+        Ok(())
+    }
+}
+
+impl GpuMem {
+    /// C-83 (I11): like [`Self::load_from_vram`], but a page may also be in
+    /// host RAM (`sys`, a second [`SimVram`] used as the model of the
+    /// OS's DMA memory, indexed by bus address), found by [`translate_any`].
+    pub fn load_from(
+        &mut self,
+        vram: &SimVram,
+        sys: &SimVram,
+        root: u64,
+        va: u64,
+        len: u64,
+    ) -> GpuResult<()> {
+        if !va.is_multiple_of(8) || !len.is_multiple_of(8) {
+            return Err(bad("SIM: copiere nealiniata"));
+        }
+        for off in (0..len).step_by(8) {
+            let t = translate_any(vram, root, va + off)
+                .map_err(|_| bad("SIM: adresa GPU fara traducere"))?;
+            let v = match t.aperture {
+                Aperture::Vram => vram.read_u64(t.addr),
+                _ => sys.read_u64(t.addr),
+            }
+            .map_err(bad)?;
+            self.write(va + off, &v.to_le_bytes());
+        }
+        Ok(())
+    }
+
+    /// C-83 (I11): the reverse of [`Self::load_from`]; a read-only page is
+    /// refused (the GPU would fault).
+    pub fn store_to(
+        &self,
+        vram: &mut SimVram,
+        sys: &mut SimVram,
+        root: u64,
+        va: u64,
+        len: u64,
+    ) -> GpuResult<()> {
+        if !va.is_multiple_of(8) || !len.is_multiple_of(8) {
+            return Err(bad("SIM: copiere nealiniata"));
+        }
+        for off in (0..len).step_by(8) {
+            let t = translate_any(vram, root, va + off)
+                .map_err(|_| bad("SIM: adresa GPU fara traducere"))?;
+            if t.read_only {
+                return Err(bad("SIM: scriere GPU intr-o pagina doar-citire"));
+            }
+            let v = self.read_u64(va + off)?;
+            match t.aperture {
+                Aperture::Vram => vram.write_u64(t.addr, v),
+                _ => sys.write_u64(t.addr, v),
+            }
+            .map_err(bad)?;
         }
         Ok(())
     }
@@ -1063,6 +1121,74 @@ pub fn matmul_vec4_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
                 }
             }
         }
+    }
+    Ok(())
+}
+
+/// C-83 I11: the CPU stand-in for `tools/nak/out/copy_b128.sm86.sass`.
+/// Arguments in cbuf0 as NVK places the push constants (source 0x28,
+/// destination 0x30, count of 16-byte units 0x38); blocks of 256×1×1; thread
+/// `i` (block × 256 + lane) copies unit `i` if `i < n` — so, like the program,
+/// a grid too small copies only what its threads cover. Bytes are copied as
+/// they are (the program moves `uvec4` integers).
+pub fn copy_b128_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [256, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 {
+        return Err(bad("SIM: copy_b128 cere blocuri de 256x1x1, grila 1D"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad("SIM: baza grupurilor (cbuf0 0x0) trebuie sa fie 0"));
+    }
+    let src = l.mem.read_u64(l.cbuf0 + 0x28)?;
+    let dst = l.mem.read_u64(l.cbuf0 + 0x30)?;
+    let n = l.mem.read_u32(l.cbuf0 + 0x38)? as u64;
+    if !src.is_multiple_of(16) || !dst.is_multiple_of(16) {
+        return Err(bad("SIM: copy_b128 cu adrese nealiniate la 16"));
+    }
+    let units = n.min(l.grid[0] as u64 * 256);
+    let mut buf = [0u8; 16];
+    for i in 0..units {
+        l.mem.read(src + 16 * i, &mut buf)?;
+        l.mem.write(dst + 16 * i, &buf);
+    }
+    Ok(())
+}
+
+/// C-83 I12: what `q8_matvec` needs from its QMD: 128 bytes of shared memory
+/// (32 partial sums). No hardware barrier: with a workgroup of 32 threads (one
+/// warp) NAK compiled `barrier()` to `MEMBAR` only — the dump has no
+/// `BAR.SYNC` (`q8_matvec.sm86.txt`).
+pub const Q8_MATVEC_NEEDS: Needs = Needs {
+    shared_bytes: 128,
+    barriers: 0,
+};
+
+/// C-83 I12: the CPU stand-in for `tools/nak/out/q8_matvec.sm86.sass`:
+/// cbuf0 0x28 = W (Q8_0 rows), 0x30 = x, 0x38 = y, 0x40 = rows,
+/// 0x44 = blocks per row; one block of 32×1×1 per row (grid x = rows);
+/// each row through `gpu_compute::q8::row_gpu_order` (the program's exact
+/// order and operations). Blocks past `rows` write nothing, like the program.
+pub fn q8_matvec_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [32, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 {
+        return Err(bad("SIM: q8_matvec cere blocuri de 32x1x1, grila 1D"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad("SIM: baza grupurilor (cbuf0 0x0) trebuie sa fie 0"));
+    }
+    let w = l.mem.read_u64(l.cbuf0 + 0x28)?;
+    let x = l.mem.read_u64(l.cbuf0 + 0x30)?;
+    let y = l.mem.read_u64(l.cbuf0 + 0x38)?;
+    let rows = l.mem.read_u32(l.cbuf0 + 0x40)? as u64;
+    let blocks = l.mem.read_u32(l.cbuf0 + 0x44)? as usize;
+    if !(w | x | y).is_multiple_of(4) {
+        return Err(bad("SIM: q8_matvec cu adrese nealiniate la 4"));
+    }
+    let row_bytes = blocks * gpu_compute::q8::BLOCK_BYTES;
+    let xs = l.mem.read_f32s(x, blocks * gpu_compute::q8::BLOCK)?;
+    let mut row = alloc::vec![0u8; row_bytes];
+    for r in 0..rows.min(l.grid[0] as u64) {
+        l.mem.read(w + r * row_bytes as u64, &mut row)?;
+        let v = gpu_compute::q8::row_gpu_order(&row, &xs);
+        l.mem.write_u32(y + 4 * r, v.to_bits());
     }
     Ok(())
 }

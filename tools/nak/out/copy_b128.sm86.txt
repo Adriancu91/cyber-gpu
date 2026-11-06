@@ -1,0 +1,40 @@
+NAK IR after calc_instr_deps:
+block.u 0 L1 [] -> {
+      r0     = s2r sr[0x25]                                 // delay=5 wr:0
+      r1     = s2r sr[0x21]                                 // delay=1 wr:1
+      r0     = iadd3 r0 c[0x0][0x0] rZ                      // delay=6 wt=000001
+      r0     = shf.l.w.i32 r0 rZ 0x8                        // delay=6
+      r0     = iadd3 r0 r1 rZ                               // delay=6 wt=000010
+      p0     = isetp.lt.u32 r0 c[0x0][0x38]                 // delay=13
+@!p0           bra L0                                       // delay=1
+} -> [1, 2]
+block 1 L3 [0] -> {
+      r1     = prmt r0 [0xbbbb] rZ                          // delay=1
+      r2     = shf.l.w.u64 r0 rZ 0x4                        // delay=5
+      r0     = shf.l.w.u64.hi r0 r1 0x4                     // delay=1
+      r4 p0  = iadd3 r2 c[0x0][0x28] rZ                     // delay=13
+      r5     = iadd3.x r0 c[0x0][0x2c] rZ p0 pF             // delay=6
+      r8..12 = ld.global.a64.constant.b128 [r4..6]          // delay=1 wr:0
+      r2 p0  = iadd3 r2 c[0x0][0x30] rZ                     // delay=13
+      r3     = iadd3.x r0 c[0x0][0x34] rZ p0 pF             // delay=6
+               st.global.a64.strong.sys.b128 [r2..4] r8..12 // delay=2 wt=000001 rd:0
+               exit                                         // delay=1 wt=000001
+} -> []
+block 2 L0 [0] -> {
+               exit                                         // delay=1
+} -> []
+
+Stage: compute
+Instruction count: 18
+Num GPRs: 19
+SLM size: 0
+Encoded shader:
+  00007919 00000000 00002500 000e0a00 00017919 00000000 00002100 000e4200
+  00007a10 00000000 07ffe0ff 001fcc00 00007819 00000008 00000cff 000fcc00
+  00007210 00000001 07ffe0ff 002fcc00 00007a0c 00000e00 03f01070 000fda00
+  00008947 000000a0 03800000 000fc200 00017816 0000bbbb 000000ff 000fc200
+  00027819 00000004 00000aff 000fca00 00007819 00000004 00010a01 000fc200
+  02047a10 00000a00 07f1e0ff 000fda00 00057a10 00000b00 007fe4ff 000fcc00
+  04087381 00000000 001e8d00 000e0200 02027a10 00000c00 07f1e0ff 000fda00
+  00037a10 00000d00 007fe4ff 000fcc00 02007386 00000008 00114d00 0011c400
+  0000794d 00000000 03800000 001fc200 0000794d 00000000 03800000 000fc200

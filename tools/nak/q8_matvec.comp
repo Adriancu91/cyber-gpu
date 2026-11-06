@@ -1,0 +1,61 @@
+// C-83 I12: y = W * x with W in Kronos's Q8_0 format (KGR1, hub `integrare/kronos/format_greutati.md`):
+// every row = `blocks` blocks of 36 bytes = an f32 scale + 32 signed bytes; value = scale * number.
+// One workgroup of 32 threads per row. Thread t takes the blocks b = t, t + 32, t + 64, ... in that order:
+//   part = 0; for each of its blocks: s = 0; for i in 0..32: s += float(q[i]) * x[32 b + i]; part += scale * s;
+// then the 32 parts are added in a fixed tree in shared memory (stride 16, 8, 4, 2, 1), thread 0 writes y[row].
+// The order is fixed, so the result is reproducible; the CPU oracle (gpu-compute::q8::matvec_gpu_order) follows
+// the operations NAK emits for it (see q8_matvec.sm86.txt), bit for bit.
+// Requirements (the launcher checks them): w and x 4-byte aligned, grid x = rows, block 32x1x1.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Words { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+
+layout(push_constant) uniform Args {
+    Words w;
+    In x;
+    Out y;
+    uint rows;
+    uint blocks;
+} args;
+
+shared float parts[32];
+
+void main() {
+    uint row = gl_WorkGroupID.x;
+    uint t = gl_LocalInvocationID.x;
+    float part = 0.0;
+    if (row < args.rows) {
+        uint base = row * args.blocks * 9u;   // 36 bytes = 9 words per block
+        for (uint b = t; b < args.blocks; b += 32u) {
+            uint wb = base + b * 9u;
+            float scale = uintBitsToFloat(args.w.v[wb]);
+            float s = 0.0;
+            for (uint k = 0u; k < 8u; k++) {
+                int q4 = int(args.w.v[wb + 1u + k]);
+                uint xi = b * 32u + k * 4u;
+                for (uint j = 0u; j < 4u; j++) {
+                    float q = float(bitfieldExtract(q4, int(8u * j), 8));
+                    s += q * args.x.v[xi + j];
+                }
+            }
+            part += scale * s;
+        }
+    }
+    parts[t] = part;
+    barrier();
+    for (uint stride = 16u; stride > 0u; stride >>= 1u) {
+        if (t < stride) {
+            parts[t] = parts[t] + parts[t + stride];
+        }
+        barrier();
+    }
+    if (t == 0u && row < args.rows) {
+        args.y.v[row] = parts[0];
+    }
+}

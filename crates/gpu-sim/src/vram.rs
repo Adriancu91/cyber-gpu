@@ -178,6 +178,84 @@ pub fn translate(vram: &SimVram, root: u64, va: u64) -> Result<Translation, Walk
     })
 }
 
+/// C-83 (I11): where a page lands — VRAM or host RAM.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Aperture {
+    Vram,
+    /// `SYSTEM_COHERENT_MEMORY` (2): host RAM, snooped.
+    SysCoherent,
+    /// `SYSTEM_NON_COHERENT_MEMORY` (3): host RAM, not snooped.
+    SysNonCoherent,
+}
+
+/// C-83 (I11): a walk that also accepts host-RAM pages (the last level only;
+/// directories must still be in VRAM).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AnyTranslation {
+    pub aperture: Aperture,
+    /// VRAM address or host bus address.
+    pub addr: u64,
+    pub volatile: bool,
+    pub read_only: bool,
+    pub kind: u8,
+}
+
+/// C-83 (I11): like [`translate`], but a PTE with aperture 2 or 3 is a
+/// host-RAM page: `ADDRESS_SYS` = bits 53:8, in 4 KiB units (hand reading of
+/// `dev_mmu.h`, like the rest of this walker). A PTE equal to the poison
+/// pattern is refused as [`WalkError::SystemMemory`] (it would decode as a
+/// valid coherent page — exactly the garbage a forgotten table holds).
+/// [`translate`] is unchanged: it still refuses every host-RAM page.
+pub fn translate_any(vram: &SimVram, root: u64, va: u64) -> Result<AnyTranslation, WalkError> {
+    match translate(vram, root, va) {
+        Ok(t) => {
+            return Ok(AnyTranslation {
+                aperture: Aperture::Vram,
+                addr: t.pa,
+                volatile: t.volatile,
+                read_only: t.read_only,
+                kind: t.kind,
+            });
+        }
+        Err(WalkError::SystemMemory(4)) => {}
+        Err(e) => return Err(e),
+    }
+    // Only the PT entry pointed to host RAM: walk again to read it.
+    let pt = pt_of(vram, root, va)?;
+    let e = vram
+        .read_u64(pt + ((va >> 12) & 0x1ff) * 8)
+        .map_err(|_| WalkError::OutOfVram(4))?;
+    if e == POISON {
+        return Err(WalkError::SystemMemory(4));
+    }
+    let aperture = match (e >> 1) & 3 {
+        2 => Aperture::SysCoherent,
+        3 => Aperture::SysNonCoherent,
+        _ => return Err(WalkError::SystemMemory(4)),
+    };
+    let page = (e >> 8) & ((1 << 46) - 1);
+    Ok(AnyTranslation {
+        aperture,
+        addr: (page << 12) + (va & 0xfff),
+        volatile: e & (1 << 3) != 0,
+        read_only: e & (1 << 6) != 0,
+        kind: (e >> 56) as u8,
+    })
+}
+
+/// The PT address for `va` (the directory part of [`translate`], which has
+/// already accepted it when this is called).
+fn pt_of(vram: &SimVram, root: u64, va: u64) -> Result<u64, WalkError> {
+    let rd = |lvl: u8, pa: u64| vram.read_u64(pa).map_err(|_| WalkError::OutOfVram(lvl));
+    let mut table = root;
+    for (lvl, shift, bits) in [(0u8, 47u32, 2u32), (1, 38, 9), (2, 29, 9)] {
+        let idx = (va >> shift) & ((1 << bits) - 1);
+        table = vid_addr(rd(lvl, table + idx * 8)?);
+    }
+    let idx = (va >> 21) & 0xff;
+    Ok(vid_addr(rd(3, table + idx * 16 + 8)?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,6 +272,50 @@ mod tests {
         assert!(v.read_u64(1 << 20).is_err());
         assert!(v.touched(0x0, 0x1000) && !v.touched(0x1000, 0x1000));
         assert_eq!(v.writes, 1);
+    }
+
+    /// C-83: a host-RAM PTE (aperture 2, `ADDRESS_SYS`) is found by
+    /// `translate_any`, refused by `translate`; poison is refused by both.
+    #[test]
+    fn host_ram_pages_translate_only_with_translate_any() {
+        let mut v = SimVram::new(64 << 20);
+        let (pd3, pd2, pd1, pd0, pt) = (0x1000u64, 0x2000, 0x3000, 0x4000, 0x5000);
+        let pde = |next: u64| (1 << 1) | ((next >> 12) << 8);
+        let va: u64 = (1 << 38) | (2 << 29) | (3 << 21) | (4 << 12) | 0x40;
+        v.write_u64(pd3, pde(pd2)).unwrap();
+        v.write_u64(pd2 + 8, pde(pd1)).unwrap();
+        v.write_u64(pd1 + 2 * 8, pde(pd0)).unwrap();
+        v.write_u64(pd0 + 3 * 16, 0).unwrap();
+        v.write_u64(pd0 + 3 * 16 + 8, pde(pt)).unwrap();
+        let bus = 0x0012_3456_7000u64; // above 4 GiB, bits beyond ADDRESS_VID
+        v.write_u64(
+            pt + 4 * 8,
+            1 | (2 << 1) | (1 << 3) | ((bus >> 12) << 8) | (6 << 56),
+        )
+        .unwrap();
+        assert_eq!(translate(&v, pd3, va), Err(WalkError::SystemMemory(4)));
+        assert_eq!(
+            translate_any(&v, pd3, va),
+            Ok(AnyTranslation {
+                aperture: Aperture::SysCoherent,
+                addr: bus + 0x40,
+                volatile: true,
+                read_only: false,
+                kind: 6
+            })
+        );
+        // The neighbour PTE was never written: poison, refused.
+        assert_eq!(
+            translate_any(&v, pd3, va + 0x1000),
+            Err(WalkError::SystemMemory(4))
+        );
+        // A VRAM page still comes out as VRAM.
+        v.write_u64(pt + 5 * 8, 1 | (0x0234_5000u64 >> 12) << 8)
+            .unwrap();
+        assert_eq!(
+            translate_any(&v, pd3, va + 0x1000 - 0x40).unwrap().aperture,
+            Aperture::Vram
+        );
     }
 
     /// A hand-built walk (tables written here word by word) translates, and
