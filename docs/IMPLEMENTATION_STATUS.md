@@ -1,5 +1,23 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 61 — 7 noiembrie 2026, ~01:30 (ora României), în cloud, FĂRĂ placă — C-83: răspuns la întrebarea OS despre zona de pushbuffer
+
+Pornită de programare. Nicio comandă nouă pentru cyber-gpu, niciun jurnal nou de pe placă. **Nimic testat pe RTX 3070 Ti.**
+Golul găsit: în `stare/cyber-universe.md` OS-ul întreabă dacă o zonă de pushbuffer de 16 KiB pentru #513 e bună.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Mărimea pe simbol | `kronos_model::push_bytes_per_token(layers)` (adăugare): 7 832 B pentru 12 straturi | PASS |
+| Zona de 16 KiB | testul `a_16_kib_area_carries_513_tokens`: 4 KiB nu încape, 8 KiB un simbol, 16 KiB două în zbor; 512 simboluri la rând fără să atingă o bucată în zbor; al treilea refuzat | PASS (SIMULARE, aritmetica zonei) |
+| Pentru OS | răspuns în `integration/cyber-universe/C-83_i14.md`: 16 KiB e bine | propus |
+| Compatibilitate OS | doar adăugare | PASS |
+
+Verificări (`sh tools/check.sh`, Rust 1.99.1): format, clippy `-D warnings`, **394 teste PASS** (4 ignorate), build no_std PASS.
+
+**Următorul pas (C-83):** neschimbat — duminică seara (8 nov) lista exactă pentru luni; „un singur program pe simbol” după măsurătoarea de pe placă.
+Fără comandă nouă, jurnal nou sau întrebare nouă, sesiunile următoare: oprire scurtă.
+
+---
 ## Sesiunea 60 — 6 noiembrie 2026, ~20:05 (ora României), în cloud, FĂRĂ placă — C-34: copia din hub reîmprospătată pentru OS
 
 Pornită de programare. Nicio comandă nouă pentru cyber-gpu, niciun jurnal nou de pe placă; CI verde pe `0974ecd`. **Nimic testat pe RTX 3070 Ti.**

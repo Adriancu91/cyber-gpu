@@ -55,6 +55,14 @@ pub const fn launches_per_token(layers: usize) -> usize {
     kl::LAUNCHES_PER_TOKEN * layers + 3
 }
 
+/// Bytes of the one pushbuffer stretch a token needs
+/// ([`crate::transfer::encode_sequence`] of [`launches_per_token`]): 7 832 for
+/// #513's 12 layers. The pushbuffer area must hold at least this; twice this
+/// lets the next token be written while the previous one is still in flight.
+pub const fn push_bytes_per_token(layers: usize) -> usize {
+    4 * crate::transfer::sequence_words(launches_per_token(layers))
+}
+
 /// The launches of one token at `pos` (`token` < vocab, `pos` < context); the logits land at `v.logits`.
 pub fn token_launches(
     s: &Shape,

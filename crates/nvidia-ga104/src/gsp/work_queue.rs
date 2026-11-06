@@ -589,6 +589,46 @@ mod tests {
         }
     }
 
+    /// C-83 (OS question, 6 nov): a 16 KiB pushbuffer area for #513 (12
+    /// layers, 7 832 B per token) holds two tokens in flight and wraps
+    /// cleanly over a whole context; 8 KiB holds one, the I10 4 KiB none.
+    #[test]
+    fn a_16_kib_area_carries_513_tokens() {
+        let bytes = crate::kronos_model::push_bytes_per_token(12) as u64;
+        assert_eq!(bytes, 7832);
+        let q = |size: u64| WorkQueue {
+            ring: Ring::new(8).unwrap(),
+            ring_pa: 0,
+            userd_pa: 0x40,
+            push: Mapping {
+                va: VA_BASE,
+                pa: 0x10_0000,
+                size,
+            },
+            in_flight: VecDeque::new(),
+            last_fence: None,
+            token: 0,
+        };
+        assert_eq!(q(0x1000).place(bytes), None);
+        assert_eq!(q(0x2000).place(bytes), Some(0));
+        let mut wq = q(0x4000);
+        // 512 tokens, at most two in flight: the oldest is retired first.
+        for _ in 0..512 {
+            if wq.in_flight.len() == 2 {
+                wq.in_flight.pop_front();
+            }
+            let off = wq.place(bytes).expect("room after one retire");
+            assert!(off + bytes <= 0x4000);
+            wq.in_flight.push_back(InFlight {
+                start: off,
+                end: off + bytes,
+                fence: None,
+            });
+        }
+        // A third token never fits while two are in flight.
+        assert_eq!(wq.place(bytes), None);
+    }
+
     fn words(f: impl FnOnce(&mut PushBuf<'_>) -> GpuResult<()>) -> Vec<u32> {
         let mut mem = [0u32; 32];
         let mut pb = PushBuf::new(&mut mem);
