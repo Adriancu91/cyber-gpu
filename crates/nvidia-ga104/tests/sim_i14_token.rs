@@ -286,3 +286,272 @@ fn wrong_token_row_is_caught() {
         "in afara VA"
     );
 }
+
+// ------------------------------------------------------------------ the KGR1 control vectors (hub, S39/C-24)
+//
+// The hub is private and this repo is public, so the vectors are NOT in the repo. They are prepared locally from a
+// clone of the hub by `tools/vectori-kgr1/pregateste.py` (into `target/vectori-kgr1/`, never committed) and read at
+// run time from the folder in `KGR1_VECTORI`. Without it these tests are ignored; run with `--ignored` and no folder,
+// they FAIL (never a silent pass). The files: a tiny Kronos (2 layers, 4 heads, n_emb 32, vocabulary 16 384) with
+// RANDOM weights, and what Kronos's own engine without PyTorch (`unelte/inferenta_bruta.py`, cyberspace) gives on
+// three texts. The checks are the hub README's: argmax on every position identical, 5 greedy tokens identical, the
+// last-position logits within 1e-3 (absolute). It ties our CPU oracle — and, in SIMULATION, our program models on
+// the work channel — to Kronos's reference engine. It says nothing about the board.
+
+const VECTORS_NEED: &str = "vectorii KGR1 din hub: python3 -I tools/vectori-kgr1/pregateste.py <hub>/integrare/kronos/vectori target/vectori-kgr1, apoi KGR1_VECTORI=$PWD/target/vectori-kgr1 cargo test --release -p nvidia-ga104 --test sim_i14_token kgr1 -- --ignored";
+
+struct Files {
+    kgr: Vec<u8>,
+    txt: String,
+    logits: Vec<u8>,
+}
+
+fn files() -> Files {
+    let dir = std::env::var("KGR1_VECTORI")
+        .unwrap_or_else(|_| panic!("lipseste KGR1_VECTORI: {VECTORS_NEED}"));
+    let read = |n: &str| {
+        std::fs::read(format!("{dir}/{n}"))
+            .unwrap_or_else(|e| panic!("{dir}/{n}: {e}; {VECTORS_NEED}"))
+    };
+    Files {
+        kgr: read("kronos_mic_q8_0.kgr"),
+        txt: String::from_utf8(read("kronos_mic_q8_0.txt")).unwrap(),
+        logits: read("kronos_mic_q8_0_logits.f32"),
+    }
+}
+
+/// The hub README's tolerance for the Q8_0 vectors (absolute, last position).
+const VECTOR_TOL: f32 = 1e-3;
+
+/// A minimal KGR1 reader (hub `format_greutati.md`), host-only, for the test file.
+fn read_kgr1(f: &[u8]) -> OwnedModel {
+    use std::collections::HashMap;
+    let mut o = 0usize;
+    let mut take = |n: usize| {
+        let s = &f[o..o + n];
+        o += n;
+        s
+    };
+    assert_eq!(take(4), b"KGR1");
+    let u32_ = |b: &[u8]| u32::from_le_bytes(b.try_into().unwrap());
+    let u64_ = |b: &[u8]| u64::from_le_bytes(b.try_into().unwrap());
+    assert_eq!(u32_(take(4)), 1);
+    let (nkv, nt) = (u64_(take(8)), u64_(take(8)));
+    let mut ints = HashMap::new();
+    let mut eps = 0.0f64;
+    for _ in 0..nkv {
+        let n = u64_(take(8)) as usize;
+        let k = String::from_utf8(take(n).to_vec()).unwrap();
+        match u32_(take(4)) {
+            1 => {
+                ints.insert(k, i64::from_le_bytes(take(8).try_into().unwrap()));
+            }
+            2 => {
+                let v = f64::from_le_bytes(take(8).try_into().unwrap());
+                if k == "ln_eps" {
+                    eps = v;
+                }
+            }
+            3 => {
+                let n = u64_(take(8)) as usize;
+                let v = take(n);
+                if k == "arhitectura" {
+                    assert_eq!(v, b"kronos_gpt");
+                }
+            }
+            other => panic!("fel necunoscut {other}"),
+        }
+    }
+    let mut tensors = HashMap::new();
+    for _ in 0..nt {
+        let n = u64_(take(8)) as usize;
+        let name = String::from_utf8(take(n).to_vec()).unwrap();
+        let nd = u32_(take(4)) as usize;
+        let dims: Vec<usize> = (0..nd).map(|_| u64_(take(8)) as usize).collect();
+        let kind = u32_(take(4));
+        let off = u64_(take(8)) as usize;
+        tensors.insert(name, (dims, kind, off));
+    }
+    let data = o.div_ceil(32) * 32;
+    let bytes = |name: &str, kind: u32| -> &[u8] {
+        let (dims, k, off) = &tensors[name];
+        assert_eq!(*k, kind, "{name}");
+        let n = match kind {
+            0 => 4 * dims.iter().product::<usize>(),
+            _ => dims[0] * dims[1] / 32 * 36,
+        };
+        &f[data + off..data + off + n]
+    };
+    let f32s = |name: &str| -> Vec<f32> {
+        bytes(name, 0)
+            .chunks(4)
+            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+            .collect()
+    };
+    let q8 = |name: &str| bytes(name, 1).to_vec();
+    assert_eq!(ints["cap_legat"], 1);
+    let n_layers = ints["n_straturi"] as usize;
+    OwnedModel {
+        shape: Shape {
+            e: ints["n_emb"] as usize,
+            heads: ints["n_capete"] as usize,
+            eps: eps as f32,
+        },
+        vocab: ints["vocabular"] as usize,
+        context: ints["context"] as usize,
+        emb_tok: q8("emb_token.weight"),
+        emb_pos: q8("emb_pozitie.weight"),
+        layers: (0..n_layers)
+            .map(|i| {
+                let p = |s: &str| format!("straturi.{i}.{s}");
+                kl::OwnedLayer {
+                    ln1_g: f32s(&p("ln1.weight")),
+                    ln1_b: f32s(&p("ln1.bias")),
+                    wqkv: q8(&p("atentie.in_proj_weight")),
+                    bqkv: f32s(&p("atentie.in_proj_bias")),
+                    wout: q8(&p("atentie.out_proj.weight")),
+                    bout: f32s(&p("atentie.out_proj.bias")),
+                    ln2_g: f32s(&p("ln2.weight")),
+                    ln2_b: f32s(&p("ln2.bias")),
+                    wfc: q8(&p("mlp.0.weight")),
+                    bfc: f32s(&p("mlp.0.bias")),
+                    wproj: q8(&p("mlp.2.weight")),
+                    bproj: f32s(&p("mlp.2.bias")),
+                }
+            })
+            .collect(),
+        ln_g: f32s("ln.weight"),
+        ln_b: f32s("ln.bias"),
+    }
+}
+
+struct Vector {
+    text: String,
+    prompt: Vec<usize>,
+    argmax: Vec<usize>,
+    greedy: Vec<usize>,
+    logits: Vec<f32>,
+}
+
+fn vectors(f: &Files, vocab: usize) -> Vec<Vector> {
+    let nums = |l: &str| -> Vec<usize> { l.split(' ').map(|v| v.parse().unwrap()).collect() };
+    let mut out: Vec<Vector> = Vec::new();
+    for line in f.txt.lines() {
+        let (k, v) = line.split_once(' ').unwrap();
+        match k {
+            "text" => out.push(Vector {
+                text: v.to_string(),
+                prompt: vec![],
+                argmax: vec![],
+                greedy: vec![],
+                logits: vec![],
+            }),
+            "simboluri" => out.last_mut().unwrap().prompt = nums(v),
+            "argmax" => out.last_mut().unwrap().argmax = nums(v),
+            "greedy" => out.last_mut().unwrap().greedy = nums(v),
+            _ => {}
+        }
+    }
+    assert_eq!(f.logits.len(), 4 * vocab * out.len());
+    for (i, t) in out.iter_mut().enumerate() {
+        t.logits = f.logits[4 * vocab * i..4 * vocab * (i + 1)]
+            .chunks(4)
+            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+            .collect();
+    }
+    out
+}
+
+fn max_abs(a: &[f32], b: &[f32]) -> f32 {
+    assert_eq!(a.len(), b.len());
+    a.iter()
+        .zip(b)
+        .fold(0.0f32, |m, (x, y)| m.max((x - y).abs()))
+}
+
+/// Our CPU oracle alone (no GPU, no simulation) against Kronos's reference engine.
+#[test]
+#[ignore = "cere KGR1_VECTORI (vectorii din hub-ul privat, pregatiti local)"]
+fn kgr1_control_vectors_cpu_oracle() {
+    let f = files();
+    let m = read_kgr1(&f.kgr);
+    assert_eq!(
+        (m.shape.e, m.shape.heads, m.layers.len(), m.vocab, m.context),
+        (32, 4, 2, 16384, 64)
+    );
+    let w = m.weights();
+    let vs = vectors(&f, m.vocab);
+    assert_eq!(vs.len(), 3);
+    for t in &vs {
+        let mut c = Caches::new(m.layers.len(), m.shape.e);
+        let mut seq = t.prompt.clone();
+        for pos in 0..t.prompt.len() + t.greedy.len() - 1 {
+            let l = model::step_cpu(&w, &mut c, seq[pos], pos).unwrap();
+            let top = model::argmax(&l).unwrap();
+            if pos < t.prompt.len() {
+                assert_eq!(top, t.argmax[pos], "{}: pozitia {pos}", t.text);
+            }
+            if pos + 1 == t.prompt.len() {
+                let d = max_abs(&l, &t.logits);
+                eprintln!(
+                    "vectori KGR1, procesor: {}: abaterea logit-urilor {d:e}",
+                    t.text
+                );
+                assert!(d <= VECTOR_TOL, "{}: logit-uri {d:e}", t.text);
+            }
+            if pos + 1 >= seq.len() {
+                seq.push(top);
+            }
+        }
+        assert_eq!(&seq[t.prompt.len()..], &t.greedy[..], "{}", t.text);
+    }
+}
+
+/// SIMULARE: the same vectors through the work channel (`16·2 + 3 = 35` launches per token, program models).
+#[test]
+#[ignore = "cere KGR1_VECTORI (vectorii din hub-ul privat, pregatiti local)"]
+fn kgr1_control_vectors_on_the_work_channel() {
+    let f = files();
+    let m = read_kgr1(&f.kgr);
+    for t in vectors(&f, m.vocab) {
+        let (seq, v) = generate(&m, &t.prompt, t.greedy.len());
+        for (pos, x) in v.iter().enumerate() {
+            assert!(x.passes(), "{}: {}", t.text, x.line(pos));
+        }
+        assert_eq!(&seq[t.prompt.len()..], &t.greedy[..], "{}", t.text);
+    }
+    // The last-position logits of the channel against the reference engine's, for one text.
+    let t = &vectors(&f, m.vocab)[0];
+    let mut r = rig();
+    let g = upload(&mut r, &m);
+    let mut got = Vec::new();
+    for (pos, &tok) in t.prompt.iter().enumerate() {
+        got = token(&mut r, &g, &m, tok, pos).unwrap();
+        assert_eq!(model::argmax(&got), Some(t.argmax[pos]), "pozitia {pos}");
+    }
+    let d = max_abs(&got, &t.logits);
+    eprintln!(
+        "vectori KGR1, SIMULARE pe canal: {}: abaterea logit-urilor {d:e}",
+        t.text
+    );
+    assert!(d <= VECTOR_TOL, "logit-uri {d:e}");
+}
+
+/// The check can fail: one scale of the first token's embedding row 1 % off moves the logits out of 1e-3.
+#[test]
+#[ignore = "cere KGR1_VECTORI (vectorii din hub-ul privat, pregatiti local)"]
+fn kgr1_control_vectors_catch_a_changed_weight() {
+    let f = files();
+    let mut m = read_kgr1(&f.kgr);
+    let t = &vectors(&f, m.vocab)[0];
+    let row = t.prompt[0] * m.shape.e / 32 * 36;
+    let s = f32::from_le_bytes(m.emb_tok[row..row + 4].try_into().unwrap()) * 1.01;
+    m.emb_tok[row..row + 4].copy_from_slice(&s.to_le_bytes());
+    let w = m.weights();
+    let mut c = Caches::new(m.layers.len(), m.shape.e);
+    let mut l = Vec::new();
+    for (pos, &tok) in t.prompt.iter().enumerate() {
+        l = model::step_cpu(&w, &mut c, tok, pos).unwrap();
+    }
+    assert!(max_abs(&l, &t.logits) > VECTOR_TOL);
+}

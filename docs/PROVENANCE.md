@@ -141,3 +141,8 @@ mână din același antet. Alegerea „coerent + VOL” pentru RAM: DEDUS din fe
 sunt scrise de noi. Ordinea stratului e cea din formatul KGR1 al lui Kronos (hub `integrare/kronos/format_greutati.md`); erf după Abramowitz & Stegun
 7.1.26 (formula publică, ca `gpu_compute::math::erf`). I14: `kronos_model.rs`, `gpu-compute/src/model.rs`, `tools/nak/embed.comp`,
 `WorkQueue::submit_fenced`, scrise de noi; ordinea simbolului din KGR1 (hub). Nimic copiat.
+
+**Sesiunea 59 (6 nov), C-83 I14 — vectorii de control KGR1:** testele `kgr1_*` din `crates/nvidia-ga104/tests/sim_i14_token.rs`, cititorul KGR1 din
+test (după `format_greutati.md` din hub) și `tools/vectori-kgr1/pregateste.py` sunt scrise de noi. Vectorii înșiși (hub-ul nostru privat,
+`integrare/kronos/vectori/`, Kronos S39/C-24) **nu intră în acest repo public**: scriptul îi pregătește local, în `target/` (necomis), iar testele îi
+citesc din `KGR1_VECTORI`. Nimic străin.
