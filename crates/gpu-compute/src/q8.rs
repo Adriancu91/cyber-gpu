@@ -65,7 +65,12 @@ pub fn quantize_row(x: &[f32], out: &mut [u8]) -> GpuResult<()> {
     if !x.len().is_multiple_of(BLOCK) || out.len() != x.len() / BLOCK * BLOCK_BYTES {
         return Err(bad("Q8_0: marimi nepotrivite la cuantizare"));
     }
-    for (xs, o) in x.chunks_exact(BLOCK).zip(out.chunks_exact_mut(BLOCK_BYTES)) {
+    for (xs, o) in x
+        .as_chunks::<BLOCK>()
+        .0
+        .iter()
+        .zip(out.as_chunks_mut::<BLOCK_BYTES>().0.iter_mut())
+    {
         let m = xs.iter().fold(0.0f32, |m, v| m.max(v.abs()));
         let s = m / 127.0;
         o[..4].copy_from_slice(&s.to_le_bytes());
@@ -90,8 +95,10 @@ pub fn matvec_cpu(w: &[u8], rows: usize, cols: usize, x: &[f32], y: &mut [f32]) 
     for (r, out) in y.iter_mut().enumerate() {
         let mut acc = 0.0f32;
         for (b, xs) in w[r * rb..(r + 1) * rb]
-            .chunks_exact(BLOCK_BYTES)
-            .zip(x.chunks_exact(BLOCK))
+            .as_chunks::<BLOCK_BYTES>()
+            .0
+            .iter()
+            .zip(x.as_chunks::<BLOCK>().0.iter())
         {
             let (s, qs) = block(b);
             let part = qs.zip(xs).fold(0.0f32, |a, (q, &x)| a + q * x);
@@ -115,7 +122,9 @@ pub fn row_gpu_order(row: &[u8], x: &[f32]) -> f32 {
     let mut parts = [0.0f32; GPU_THREADS];
     for (t, part) in parts.iter_mut().enumerate() {
         for (b, blk) in row
-            .chunks_exact(BLOCK_BYTES)
+            .as_chunks::<BLOCK_BYTES>()
+            .0
+            .iter()
             .enumerate()
             .skip(t)
             .step_by(GPU_THREADS)
@@ -169,8 +178,10 @@ pub fn margin(w: &[u8], rows: usize, cols: usize, x: &[f32]) -> GpuResult<Vec<f6
     Ok((0..rows)
         .map(|r| {
             let s: f64 = w[r * rb..(r + 1) * rb]
-                .chunks_exact(BLOCK_BYTES)
-                .zip(x.chunks_exact(BLOCK))
+                .as_chunks::<BLOCK_BYTES>()
+                .0
+                .iter()
+                .zip(x.as_chunks::<BLOCK>().0.iter())
                 .map(|(b, xs)| {
                     let (sc, qs) = block(b);
                     qs.zip(xs)
@@ -258,8 +269,10 @@ mod tests {
             let rb = cols / BLOCK * BLOCK_BYTES;
             for r in 0..rows {
                 let exact: f64 = w[r * rb..(r + 1) * rb]
-                    .chunks_exact(BLOCK_BYTES)
-                    .zip(x.chunks_exact(BLOCK))
+                    .as_chunks::<BLOCK_BYTES>()
+                    .0
+                    .iter()
+                    .zip(x.as_chunks::<BLOCK>().0.iter())
                     .map(|(bl, xs)| {
                         let (s, qs) = block(bl);
                         s as f64 * qs.zip(xs).map(|(q, &x)| q as f64 * x as f64).sum::<f64>()

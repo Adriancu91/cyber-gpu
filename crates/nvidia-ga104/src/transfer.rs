@@ -117,7 +117,7 @@ pub fn fill_pattern(buf: &mut [u8], seed: u32) -> GpuResult<()> {
     if !buf.len().is_multiple_of(4) {
         return Err(bad("model: lungime nemultiplu de 4"));
     }
-    for (i, w) in buf.chunks_exact_mut(4).enumerate() {
+    for (i, w) in buf.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         w.copy_from_slice(&pattern_word(seed, i as u64).to_le_bytes());
     }
     Ok(())
