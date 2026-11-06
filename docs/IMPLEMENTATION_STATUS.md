@@ -1,5 +1,21 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 60 — 6 noiembrie 2026, ~20:05 (ora României), în cloud, FĂRĂ placă — C-34: copia din hub reîmprospătată pentru OS
+
+Pornită de programare. Nicio comandă nouă pentru cyber-gpu, niciun jurnal nou de pe placă; CI verde pe `0974ecd`. **Nimic testat pe RTX 3070 Ti.**
+Golul găsit: sesiunile 57–59 n-au reîmprospătat copia din hub (C-34), iar sesiunea OS (P6-62, partea ei din C-83) aștepta `e681bea` în copie.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Copia din hub | `git bundle create` pe `g0-g2-fundatie` (clona locală era superficială → `git fetch --unshallow` întâi, altfel copia ieșea incompletă), `git bundle verify` OK | PASS |
+| Clonare de probă | clonă din copie + `sh tools/check.sh` pe ea (Rust 1.99.1): **393 teste PASS** (4 ignorate), clippy, format, build no_std | PASS |
+| Firmware | în istoric doar cod/documente cu „fwsec” în nume, niciun fișier binar de firmware | PASS |
+| Compatibilitate OS | nicio schimbare de cod | PASS |
+
+**Următorul pas (C-83):** neschimbat — duminică seara lista exactă pentru luni; „un singur program pe simbol” după măsurătoarea de pe placă.
+**Regulă pentru sesiunile următoare:** după orice push, copia din hub (C-34) se reîmprospătează în aceeași sesiune; clona trebuie să fie completă (nu superficială).
+
+---
 ## Sesiunea 59 — 6 noiembrie 2026, ~19:30–20:00 (ora României), în cloud, FĂRĂ placă — C-83 I14: vectorii de control KGR1 ai lui Kronos
 
 Pornită de programare. Nicio comandă nouă pentru cyber-gpu, niciun jurnal nou de pe placă; CI verde pe `e681bea`. **Nimic testat pe RTX 3070 Ti.**
