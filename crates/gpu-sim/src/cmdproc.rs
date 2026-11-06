@@ -1289,6 +1289,26 @@ pub fn gelu_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// C-83 I14: `embed.comp` — token row 0x28, position row 0x30 (both Q8_0), x 0x38, n 0x40; blocks of 256.
+pub fn embed_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [256, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 || l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad("SIM: embed cere blocuri de 256x1x1, grila 1D, baza 0"));
+    }
+    let (t, p, x) = (
+        l.mem.read_u64(l.cbuf0 + 0x28)?,
+        l.mem.read_u64(l.cbuf0 + 0x30)?,
+        l.mem.read_u64(l.cbuf0 + 0x38)?,
+    );
+    let n = (l.mem.read_u32(l.cbuf0 + 0x40)? as u64).min(l.grid[0] as u64 * 256) as usize;
+    let bytes = n.div_ceil(gpu_compute::q8::BLOCK) * gpu_compute::q8::BLOCK_BYTES;
+    let (mut tr, mut pr) = (alloc::vec![0u8; bytes], alloc::vec![0u8; bytes]);
+    l.mem.read(t, &mut tr)?;
+    l.mem.read(p, &mut pr)?;
+    l.mem
+        .write_f32s(x, &gpu_compute::model::embed_gpu(&tr, &pr, n));
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

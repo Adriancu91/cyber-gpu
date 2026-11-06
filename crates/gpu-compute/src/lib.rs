@@ -24,6 +24,7 @@ pub mod cpu;
 pub mod kernels;
 pub mod layer;
 pub mod math;
+pub mod model;
 pub mod op;
 pub mod q8;
 pub mod reference;

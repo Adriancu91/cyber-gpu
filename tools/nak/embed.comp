@@ -1,0 +1,22 @@
+// C-83 I14: x = token embedding + position embedding, both rows of Kronos's Q8_0 matrices (KGR1: blocks of 36 bytes =
+// f32 scale + 32 signed bytes). The driver gives the address of each row (token row, position row), so the program
+// needs no index arithmetic on the table: x[i] = scale_t(i/32) * q_t[i] + scale_p(i/32) * q_p[i]. 256 threads, i < n.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Words { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args { Words tok; Words pos; Out x; uint n; } args;
+float value(Words row, uint i) {
+    uint b = i / 32u, j = i % 32u;
+    float s = uintBitsToFloat(row.v[b * 9u]);
+    int q4 = int(row.v[b * 9u + 1u + j / 4u]);
+    return s * float(bitfieldExtract(q4, int(8u * (j % 4u)), 8));
+}
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i < args.n) {
+        args.x.v[i] = value(args.tok, i) + value(args.pos, i);
+    }
+}

@@ -36,21 +36,25 @@ pub enum Prog {
     LayerNorm,
     Attention,
     Gelu,
+    /// I14: the token + position embedding (`embed.comp`).
+    Embed,
 }
 
-pub const PROGRAMS: [Prog; 6] = [
+pub const PROGRAMS: [Prog; 7] = [
     Prog::Copy,
     Prog::Q8Matvec,
     Prog::Vadd,
     Prog::LayerNorm,
     Prog::Attention,
     Prog::Gelu,
+    Prog::Embed,
 ];
 
 pub const VADD: &[u8] = include_bytes!("../../../tools/nak/out/vadd.sm86.sass");
 pub const LAYERNORM: &[u8] = include_bytes!("../../../tools/nak/out/layernorm.sm86.sass");
 pub const ATTENTION: &[u8] = include_bytes!("../../../tools/nak/out/attention.sm86.sass");
 pub const GELU: &[u8] = include_bytes!("../../../tools/nak/out/gelu.sm86.sass");
+pub const EMBED: &[u8] = include_bytes!("../../../tools/nak/out/embed.sm86.sass");
 
 impl Prog {
     pub fn code(self) -> &'static [u8] {
@@ -61,13 +65,14 @@ impl Prog {
             Prog::LayerNorm => LAYERNORM,
             Prog::Attention => ATTENTION,
             Prog::Gelu => GELU,
+            Prog::Embed => EMBED,
         }
     }
 
     /// Threads per block (`local_size_x`).
     pub fn block(self) -> u32 {
         match self {
-            Prog::Copy | Prog::Vadd | Prog::Gelu => 256,
+            Prog::Copy | Prog::Vadd | Prog::Gelu | Prog::Embed => 256,
             Prog::Q8Matvec | Prog::LayerNorm | Prog::Attention => 32,
         }
     }
@@ -114,7 +119,7 @@ impl Launch {
     }
 }
 
-fn cbuf(vas: &[u64], words: &[u32]) -> [u8; 256] {
+pub(crate) fn cbuf(vas: &[u64], words: &[u32]) -> [u8; 256] {
     let mut c = [0u8; 256];
     for (i, v) in vas.iter().enumerate() {
         c[0x28 + 8 * i..0x30 + 8 * i].copy_from_slice(&v.to_le_bytes());
@@ -126,7 +131,7 @@ fn cbuf(vas: &[u64], words: &[u32]) -> [u8; 256] {
     c
 }
 
-fn blocks(n: usize, per: u32) -> u32 {
+pub(crate) fn blocks(n: usize, per: u32) -> u32 {
     n.div_ceil(per as usize) as u32
 }
 

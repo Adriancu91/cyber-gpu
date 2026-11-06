@@ -475,6 +475,31 @@ impl WorkQueue {
         self.submit_inner(w, &buf[..n], Some((sem_va, value)))
     }
 
+    /// C-83: [`Self::submit`] for a pushbuffer that ends with its own
+    /// release of `value` at `fence_va` (e.g. the last timestamp record of
+    /// `transfer::encode_sequence`): the stretch is given back by
+    /// [`Self::retire`]`(fence_va, v)` once the driver read `v >= value`
+    /// there. `value` must grow from one fenced submit to the next on the
+    /// same `fence_va`. Nothing is written on a refusal.
+    pub fn submit_fenced<W: ChannelMemory + ?Sized>(
+        &mut self,
+        w: &mut W,
+        words: &[u32],
+        fence_va: u64,
+        value: u64,
+    ) -> GpuResult<Doorbell> {
+        if !in_our_va(fence_va, 8) {
+            return Err(bad("semafor in afara adreselor noastre"));
+        }
+        if let Some((va, last)) = self.last_fence
+            && va == fence_va
+            && value <= last
+        {
+            return Err(bad("valoarea semaforului nu creste"));
+        }
+        self.submit_inner(w, words, Some((fence_va, value)))
+    }
+
     /// Gives back the pushbuffer stretches whose completion semaphore at
     /// `sem_va` has reached `completed` (the value the driver read with
     /// [`read_semaphore`]), oldest first; stops at the first one not yet

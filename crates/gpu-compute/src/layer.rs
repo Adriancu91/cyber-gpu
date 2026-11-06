@@ -107,7 +107,7 @@ fn check_caches(s: &Shape, kc: &[f32], vc: &[f32], pos: usize) -> GpuResult<()> 
 
 // ---------------------------------------------------------------- CPU engine order
 
-fn layernorm_cpu(x: &[f32], g: &[f32], b: &[f32], eps: f32) -> Vec<f32> {
+pub(crate) fn layernorm_cpu(x: &[f32], g: &[f32], b: &[f32], eps: f32) -> Vec<f32> {
     let n = x.len() as f32;
     let mean = x.iter().sum::<f32>() / n;
     let var = x.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / n;
@@ -186,7 +186,7 @@ pub fn vadd_gpu(a: &[f32], b: &[f32]) -> Vec<f32> {
     a.iter().zip(b).map(|(&a, &b)| add_f32_ftz(a, b)).collect()
 }
 
-fn mul_ftz(a: f32, b: f32) -> f32 {
+pub(crate) fn mul_ftz(a: f32, b: f32) -> f32 {
     ftz(ftz(a) * ftz(b))
 }
 
