@@ -104,6 +104,22 @@ pub const GA104_PLAN: &[Step] = &[
         status: StepStatus::Blocked("necesita I9 si un program SM86 valid (docs/TOOLCHAIN.md)"),
         writes_hardware: true,
     },
+    Step {
+        id: "I11",
+        what: "C-83: copiere mare RAM <-> VRAM prin canalul de lucru (copy_b128, PTE spre RAM), verificata bit cu bit, viteza cu ceasul placii",
+        status: StepStatus::Blocked(
+            "necesita I10 pe placa; transfer::encode_round_trip + mmu::alloc_sys_mapped scrise si testate doar in SIMULARE",
+        ),
+        writes_hardware: true,
+    },
+    Step {
+        id: "I12",
+        what: "C-83: inmultirea matrice x vector Q8_0 (q8_matvec, NAK), comparata cu procesorul (identic sau in marja scrisa dinainte)",
+        status: StepStatus::Blocked(
+            "necesita I11 pe placa; q8_matvec::judge scris si testat doar in SIMULARE",
+        ),
+        writes_hardware: true,
+    },
 ];
 
 pub struct InitPlan {

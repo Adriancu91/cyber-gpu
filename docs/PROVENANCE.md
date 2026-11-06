@@ -129,3 +129,10 @@ vine din constanta generată automat `tu102_dev_vm::NV_VIRTUAL_FUNCTION_DOORBELL
 specificație din RM 570.144 (MIT): `kernel_fifo_ga100.c` (`kfifoUpdateUsermodeDoorbell_GA100`), `kernel_fifo_tu102.c`
 (`kfifoUpdateUsermodeDoorbell_TU102`), `kern_gpu_tu102.c` (`gpuGetVirtRegPhysOffset_TU102`), `g_kernel_fifo_nvoc.c` / `g_gpu_nvoc.h` (legarea HAL).
 0xbb0090 trece din **DEDUS** în **DOCUMENTAT** (antet + cale RM); pe placă rămâne neobservat. Nimic copiat.
+
+**Sesiunea 57 (6 nov), C-83 I11–I12:** `transfer.rs`, `q8_matvec.rs`, `gpu-compute/src/q8.rs`, adăugirile din `mmu.rs`, `gpu-sim` (`translate_any`,
+`copy_b128_on_cpu`, `q8_matvec_on_cpu`) și programele GLSL `tools/nak/copy_b128.comp`, `tools/nak/q8_matvec.comp` sunt scrise de noi. Câmpurile PTE pentru RAM
+(`APERTURE_SYSTEM_COHERENT_MEMORY`, `ADDRESS_SYS`) vin din constantele generate din `dev_mmu.h` (570.144, MIT); al doilea cititor din `gpu-sim` e scris de
+mână din același antet. Alegerea „coerent + VOL” pentru RAM: DEDUS din felul în care RM 570.144 și tinygrad `nvdev.py` (MIT) mapează memoria de sistem
+(citite ca specificație). Formatul Q8_0 e al lui Kronos (KGR1, `integrare/kronos/format_greutati.md` din hub); ordinea motorului OS e citită din
+`cyber-universe/user/src/kgr.rs` (proiectul nostru). Binarele `.sm86.sass` sunt ieșirea Mesa NAK 25.0.7 (MIT) pe programele noastre. Nimic copiat.

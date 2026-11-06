@@ -147,6 +147,43 @@ pub const WINDOW_CHAIN_FULL: &[ChainStep] = &[
     WINDOW_CHAIN[5],
 ];
 
+/// C-83: the window of 9 nov — [`WINDOW_CHAIN_FULL`] with I11 (large copy
+/// RAM ↔ VRAM) and I12 (Q8_0 matrix × vector) after I10, before the cleanup.
+/// Written and tested **only in SIMULARE**; run with [`run_chain_ready`] and
+/// [`READY_FOR_WINDOW_C83`]. [`WINDOW_CHAIN_FULL`] stays as it was.
+pub const WINDOW_CHAIN_C83: &[ChainStep] = &[
+    WINDOW_CHAIN_FULL[0],
+    WINDOW_CHAIN_FULL[1],
+    WINDOW_CHAIN_FULL[2],
+    WINDOW_CHAIN_FULL[3],
+    WINDOW_CHAIN_FULL[4],
+    WINDOW_CHAIN_FULL[5],
+    WINDOW_CHAIN_FULL[6],
+    WINDOW_CHAIN_FULL[7],
+    WINDOW_CHAIN_FULL[8],
+    WINDOW_CHAIN_FULL[9],
+    WINDOW_CHAIN_FULL[10],
+    ChainStep {
+        id: "i11-copiere",
+        what: "copiere RAM -> VRAM -> RAM prin canalul de lucru (copy_b128), verificata bit cu bit, viteza din 3 marci de timp",
+        writes_hardware: true,
+        cleanup: false,
+        plan_step: "I11",
+    },
+    ChainStep {
+        id: "i12-q8-matvec",
+        what: "y = W*x, W Q8_0 3072x768 (copiere sus, q8_matvec, copiere jos), comparat cu procesorul",
+        writes_hardware: true,
+        cleanup: false,
+        plan_step: "I12",
+    },
+    WINDOW_CHAIN_FULL[11],
+    WINDOW_CHAIN_FULL[12],
+];
+
+/// C-83: [`READY_FOR_WINDOW`] plus I11 and I12.
+pub const READY_FOR_WINDOW_C83: &[&str] = &["I5", "I6", "I7", "I8", "I9", "I10", "I11", "I12"];
+
 /// C-71: plan steps that are `Blocked` only because they write to the board
 /// (or need the step before on the board) and may run in the full window
 /// chain when Adrian allows writes. Everything else blocked still stops.
@@ -499,5 +536,54 @@ mod tests {
             Ok(())
         });
         assert!(r.all_passed());
+    }
+
+    /// C-83: the new chain is the old one with I11 and I12 between I10 and
+    /// the cleanup; without writes allowed it stops before the first writer;
+    /// a failure in I11 skips I12 and still runs the cleanup.
+    #[test]
+    fn c83_chain_adds_i11_i12_before_cleanup() {
+        let ids: Vec<_> = WINDOW_CHAIN_C83.iter().map(|s| s.id).collect();
+        let full: Vec<_> = WINDOW_CHAIN_FULL.iter().map(|s| s.id).collect();
+        assert_eq!(ids[..11], full[..11]);
+        assert_eq!(ids[11..13], ["i11-copiere", "i12-q8-matvec"]);
+        assert_eq!(ids[13..], full[11..]);
+        assert!(full[10] == "i10-cost-lansare" && full[11] == "bus-master-oprit");
+        let mut j = Journal::new(256);
+        let r = run_chain_ready(
+            WINDOW_CHAIN_C83,
+            READY_FOR_WINDOW_C83,
+            true,
+            &mut j,
+            |s, _| {
+                if s.id == "i11-copiere" {
+                    Err(GpuError::InvalidArgument("i11: inregistrarea 1 lipseste"))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert_eq!(r.stopped_at.as_ref().map(|s| s.0), Some("i11-copiere"));
+        assert!(matches!(
+            r.outcome("i12-q8-matvec"),
+            Some(Outcome::Skipped(_))
+        ));
+        assert_eq!(r.outcome("bus-master-oprit"), Some(&Outcome::Passed));
+        // The old list of ready steps stops at I11 (blocked in the plan).
+        let mut j = Journal::new(256);
+        let r = run_chain_ready(WINDOW_CHAIN_C83, READY_FOR_WINDOW, true, &mut j, |_, _| {
+            Ok(())
+        });
+        assert_eq!(r.stopped_at.as_ref().map(|s| s.0), Some("i11-copiere"));
+        // All pass with the C-83 list.
+        let mut j = Journal::new(256);
+        let r = run_chain_ready(
+            WINDOW_CHAIN_C83,
+            READY_FOR_WINDOW_C83,
+            true,
+            &mut j,
+            |_, _| Ok(()),
+        );
+        assert!(r.all_passed(), "{r}");
     }
 }

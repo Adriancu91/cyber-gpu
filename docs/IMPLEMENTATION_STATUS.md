@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 57 — 6 noiembrie 2026, ~17:45–19:00 (ora României), în cloud, FĂRĂ placă — C-83: I11 și I12 în SIMULARE
+
+Comandă nouă de la Adrian în hub: **C-83** („până luni, cât mai mulți pași în simulare, și după I10”). Fereastra de azi (C-79) s-a închis fără
+test (C-80), deci niciun jurnal nou. **Nimic testat pe RTX 3070 Ti.** Oprirea de siguranță nu se aplică (pași terminați în această sesiune).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| I11 — RAM văzut de GPU | `mmu::encode_pte_sys` / `map_sys` / `alloc_sys_mapped` (aperture coerent, `ADDRESS_SYS`, `VOL`; pagini DMA împrăștiate); în `gpu-sim` un al doilea cititor `translate_any` + RAM simulat | PASS (SIMULARE): T93 |
+| I11 — copierea mare | programul `copy_b128` (NAK, 288 B); `transfer`: cbuf, QMD, o intrare GPFIFO cu 3 mărci de timp, analiza vitezei; RAM → VRAM → RAM bit cu bit pe tot lanțul golden → canal de lucru | PASS (SIMULARE): T94, T95 |
+| I12 — oracolul | `gpu_compute::q8`: ordinea motorului OS, ordinea programului (citită în fișa NAK: FMUL + 31 FFMA + FFMA + 5 FADD, toate FTZ), marja scrisă dinainte | PASS: T96 |
+| I12 — pe canalul de lucru | `q8_matvec` (NAK, 8 048 B, 128 B partajată, fără barieră hardware); `q8_matvec::judge`; W/x în RAM → copiere sus → înmulțire → copiere jos, 3072 × 768: **identic** cu oracolul | PASS (SIMULARE): T97, T98 |
+| Lanțul | `WINDOW_CHAIN_C83` + `READY_FOR_WINDOW_C83`; I11/I12 în `GA104_PLAN` (blocate până la placă); `chain_log` le permite doar soneria + fereastra VRAM | PASS (SIMULARE): T99 |
+| CI | clippy 1.99 are o regulă nouă (`chunks_exact_to_as_chunks`): primul push a picat, reparat în `4ac1646` | PASS |
+| Pentru OS | `integration/cyber-universe/C-83_i11-i12.md` (pașii, scrierile noi, ce așteptăm) | propus |
+| Compatibilitate OS | doar adăugări; `nvidia-ga104` depinde acum normal de `gpu-compute` (era doar la teste) | PASS |
+
+Verificări (`sh tools/check.sh`, Rust 1.99.1): format, clippy `-D warnings`, **380 teste PASS** (1 ignorat), build no_std PASS; clippy cu
+`--features hw-write` PASS; clippy nightly PASS.
+
+**Următorul pas (C-83):** I13 — un strat întreg al lui Kronos pe placă (LayerNorm, qkv, atenția cu softmax, proiecția, GELU erf, MLP), fiecare
+program NAK cu oracolul lui ca la I12, comparat cu motorul KGR1 din OS. Apoi I14 (un simbol #513). Duminică seara: lista pentru fereastra de luni.
+
+---
 ## Sesiunea 56 — 6 noiembrie 2026, ~13:30 (ora României), în cloud, FĂRĂ placă — oprire scurtă
 
 Nicio comandă nouă în hub pentru cyber-gpu (nimic `nou`/`preluat`), niciun jurnal nou de pe placă (ultimul: `rezultate/2026-11-05-workstation-os242`;

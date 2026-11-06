@@ -1,5 +1,17 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 57 (6 nov 2026, cloud, fără placă) — C-83: I11 (copiere mare) și I12 (matrice × vector Q8_0)
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T93 | PTE pentru RAM (`mmu::encode_pte_sys`, `alloc_sys_mapped`) citite de un al doilea cititor scris de mână (`gpu_sim::vram::translate_any`); otrava refuzată | `cargo test -p gpu-sim --lib host_ram` | pagina RAM găsită doar de `translate_any`, la adresa dată de OS | conform | PASS (SIMULARE) |
+| T94 | I11 cap-coadă: golden → canal de lucru → copiere RAM → VRAM → RAM (`copy_b128`, NAK) într-o intrare GPFIFO cu 3 mărci de timp; 16 B, 0x3230 B, 256 KiB | `cargo test -p nvidia-ga104 --test sim_i11_copy` | al doilea buffer RAM = modelul, bit cu bit; cuvintele VRAM la fel; paginile = cele date de OS | conform | PASS (SIMULARE) |
+| T95 | I11 greșeli plantate: grilă cu un bloc prea mică, pagină RAM dublată, destinație doar-citire, înregistrări lipsă | `cargo test -p nvidia-ga104 --test sim_i11_copy planted` | fiecare prinsă (deplasarea exactă / refuz / „înregistrarea 0”) | conform | PASS (SIMULARE) |
+| T96 | Oracolul Q8_0: ordinea NAK (`matvec_gpu_order`) față de motorul OS (`matvec_cpu`) în marja scrisă dinainte; marja prinde o greșeală de 1e-3 și o coloană inversată | `cargo test -p gpu-compute q8` | toate formele în marjă; greșelile prinse | conform | PASS |
+| T97 | I12 cap-coadă: W și x în RAM → copiere sus → `q8_matvec` (NAK) → copiere jos, 4 mărci de timp; 1×32 … 3072×768 | `cargo test -p nvidia-ga104 --test sim_i12_q8` | verdict **identic** bit cu bit cu oracolul programului | conform | PASS (SIMULARE) |
+| T98 | I12 greșeli plantate: x mutat cu un bloc, grilă cu un rând mai mică, QMD fără memorie partajată, un octet de greutate stricat | idem, `planted` | niciodată „trece”: rândul numit (63, 5) sau lansare refuzată | conform | PASS (SIMULARE) |
+| T99 | Lanțul C-83: `WINDOW_CHAIN_C83` = lanțul complet + I11 + I12 înainte de curățare; eșec la I11 → I12 sărit, Bus Master pus la loc | `cargo test -p nvidia-ga104 --lib c83_chain` | ordinea și oprirea corecte | conform | PASS (SIMULARE) |
+
 ## Rezultate — sesiunea 54 (6 nov 2026, cloud, fără placă) — C-71: Booter-ul simulat lărgește WPR2 ca placa
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |

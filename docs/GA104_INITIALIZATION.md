@@ -89,6 +89,20 @@ nouveau a adăugat GR pe GA102 în Linux 6.2 (`c4bdac754ca0`), cu firmware-uri d
   cu Adrian de față (C-72); nu se scrie în afara lanțului.
 - Pe calea GSP, canalele se alocă **prin RPC către RM**, nu prin registre directe.
 
+## 6b. I11–I12 (C-83) — scrise și testate doar în SIMULARE (sesiunea 57)
+- **I11, copierea mare:** un program de calcul (`copy_b128`, 16 octeți pe fir, NAK) pe **același canal de lucru și același obiect** ca I10 — nicio
+  clasă nouă, niciun obiect RM nou, niciun registru nou. Singurul lucru nou pentru placă: PTE-uri care arată spre **RAM** (aperture
+  `SYSTEM_COHERENT_MEMORY`, `ADDRESS_SYS` = adresa de magistrală a paginii DMA a OS-ului, `VOL` = 1). DEDUS, neobservat. Motorul de copiere
+  (`AMPERE_DMA_COPY_B`, al doilea canal ca la tinygrad) rămâne pentru mai târziu, dacă viteza nu ajunge.
+  Ordinea într-o intrare GPFIFO: invalidare cache → marca 0 → copiere RAM→VRAM → marca 1 → copiere VRAM→RAM (alt buffer) → marca 2. Fiecare
+  marcă are `RELEASE_WFI`, deci copierile merg una după alta; vitezele = octeți / (diferența mărcilor). Verificare: al doilea buffer RAM =
+  modelul `pattern_word`, cuvânt cu cuvânt; 3 cuvinte din VRAM citite prin fereastră.
+- **I12, y = W·x cu W în Q8_0:** `q8_matvec` (NAK): un grup de 32 de fire pe rând, fiecare fir blocurile t, t+32, …, apoi suma în arbore în memoria
+  partajată (128 B). NAK a scos bariera hardware (un singur warp) → QMD cu 128 B partajată și 0 bariere. Operațiile citite în fișa NAK: `FMUL.FTZ`
+  pentru primul termen, 31 `FFMA.FTZ`, `FFMA.FTZ` scara × suma, 5 `FADD.FTZ` în arbore → oracolul `gpu_compute::q8::matvec_gpu_order`.
+  Verdictul (scris înainte): **identic** cu oracolul; altfel **în marjă** față de motorul OS (`2·k·2⁻²⁴·Σ|termeni|`) = trece, de analizat; altfel
+  **nu trece**. Intrarea ferestrei: 3072 × 768 sintetic (forma `mlp.0` a lui Kronos), fără fișier.
+
 ## 7. Necunoscute
 1. Structurile RPC GSP-RM depind de versiune (r535 vs r570); nu au documentație oficială, doar codul nouveau/nova și headerele MIT ale NVIDIA.
 2. Registrul exact și semnificația GFW_BOOT pe GA104 (nova `devinit.rst` descrie procedura; adresa trebuie extrasă și verificată).

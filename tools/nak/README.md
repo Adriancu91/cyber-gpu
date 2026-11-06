@@ -124,3 +124,13 @@ Câștigul de viteză (siboehm: ~×1,1 față de treapta 5 pe A6000) se poate ve
 ## Licențe
 Mesa (NAK, NVK, drm-shim): MIT, folosit ca unealtă — nimic copiat în `crates/`. Binarul din `out/` e ieșirea compilatorului pentru
 programele noastre (`add64.comp`, `matmul_*.comp`, cod propriu, `LICENSE`); nu conține cod NVIDIA. `ptxas` nu se folosește (C-18).
+
+## C-83 (6 nov 2026, sesiunea 57, cloud) — COMPILAT, NU RULAT
+Mesa 25.0.7 reconstruit în cloud; `add64` a ieșit **identic** (aceeași sumă SHA-256).
+
+| Program | Comandă | Ieșire | SHA-256 `.sm86.sass` |
+|---|---|---|---|
+| `copy_b128.comp` (I11): `dst[i] = src[i]`, `uvec4`, 256 fire pe bloc; argumente src/dst/n la cbuf0 0x28/0x30/0x38 | `sh tools/nak/build.sh kernel copy_b128 24` | 18 instrucțiuni, **288 octeți**, 19 registre; `ld.global...constant.b128`, `st.global.strong.sys.b128` | `ab8449d03cc3f521500f1239d1eabd77158c328e61708817bc7fd2a6826d7bdc` |
+| `q8_matvec.comp` (I12): y = W·x, W în Q8_0; W/x/y la 0x28/0x30/0x38, rânduri 0x40, blocuri pe rând 0x44; 32 fire pe rând | `sh tools/nak/build.sh kernel q8_matvec 32` | 503 instrucțiuni, **8 048 octeți**, 19 registre; 128 B partajată, **fără `BAR.SYNC`** (un warp); 1 `FMUL.FTZ`, 32 `FFMA.FTZ`, 5 `FADD.FTZ` | `d8c118cc0683b98b40b0143ed76aec479274172b58b0b3f7ae608c21900bd028` |
+
+Atenție pentru OS: `q8_matvec` are 8 KiB — bufferul programului trebuie să aibă mărimea programului, nu o pagină de 4 KiB (testul a prins asta).
