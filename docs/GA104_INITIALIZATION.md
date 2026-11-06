@@ -102,6 +102,10 @@ nouveau a adăugat GR pe GA102 în Linux 6.2 (`c4bdac754ca0`), cu firmware-uri d
   pentru primul termen, 31 `FFMA.FTZ`, `FFMA.FTZ` scara × suma, 5 `FADD.FTZ` în arbore → oracolul `gpu_compute::q8::matvec_gpu_order`.
   Verdictul (scris înainte): **identic** cu oracolul; altfel **în marjă** față de motorul OS (`2·k·2⁻²⁴·Σ|termeni|`) = trece, de analizat; altfel
   **nu trece**. Intrarea ferestrei: 3072 × 768 sintetic (forma `mlp.0` a lui Kronos), fără fișier.
+- **I13, un strat Kronos (sesiunea 58):** 16 lansări pe poziție, în ordinea motorului procesorului: LayerNorm → qkv (`q8_matvec`) → +bias (`vadd`)
+  → cheia și valoarea copiate în cache-uri (`copy_b128`) → atenția (un warp pe cap, softmax cu max/sumă în arbore) → proiecția + bias → rezidual
+  → LayerNorm → `fc` + bias → GELU erf → `proj` + bias → rezidual înapoi în x. Programe noi: `vadd`, `layernorm`, `attention`, `gelu`. Toleranța
+  (scrisă înainte): |placă − procesor| ≤ 1e-4 + 1e-4·|x| pe fiecare element. Intrarea ferestrei: strat sintetic 768/12, 4 poziții.
 
 ## 7. Necunoscute
 1. Structurile RPC GSP-RM depind de versiune (r535 vs r570); nu au documentație oficială, doar codul nouveau/nova și headerele MIT ale NVIDIA.

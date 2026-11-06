@@ -148,7 +148,8 @@ pub const WINDOW_CHAIN_FULL: &[ChainStep] = &[
 ];
 
 /// C-83: the window of 9 nov — [`WINDOW_CHAIN_FULL`] with I11 (large copy
-/// RAM ↔ VRAM) and I12 (Q8_0 matrix × vector) after I10, before the cleanup.
+/// RAM ↔ VRAM), I12 (Q8_0 matrix × vector) and I13 (one Kronos layer) after
+/// I10, before the cleanup.
 /// Written and tested **only in SIMULARE**; run with [`run_chain_ready`] and
 /// [`READY_FOR_WINDOW_C83`]. [`WINDOW_CHAIN_FULL`] stays as it was.
 pub const WINDOW_CHAIN_C83: &[ChainStep] = &[
@@ -177,12 +178,20 @@ pub const WINDOW_CHAIN_C83: &[ChainStep] = &[
         cleanup: false,
         plan_step: "I12",
     },
+    ChainStep {
+        id: "i13-strat",
+        what: "un strat Kronos sintetic 768/12 capete pe 4 pozitii (16 lansari fiecare), comparat cu procesorul",
+        writes_hardware: true,
+        cleanup: false,
+        plan_step: "I13",
+    },
     WINDOW_CHAIN_FULL[11],
     WINDOW_CHAIN_FULL[12],
 ];
 
-/// C-83: [`READY_FOR_WINDOW`] plus I11 and I12.
-pub const READY_FOR_WINDOW_C83: &[&str] = &["I5", "I6", "I7", "I8", "I9", "I10", "I11", "I12"];
+/// C-83: [`READY_FOR_WINDOW`] plus I11, I12 and I13.
+pub const READY_FOR_WINDOW_C83: &[&str] =
+    &["I5", "I6", "I7", "I8", "I9", "I10", "I11", "I12", "I13"];
 
 /// C-71: plan steps that are `Blocked` only because they write to the board
 /// (or need the step before on the board) and may run in the full window
@@ -546,8 +555,8 @@ mod tests {
         let ids: Vec<_> = WINDOW_CHAIN_C83.iter().map(|s| s.id).collect();
         let full: Vec<_> = WINDOW_CHAIN_FULL.iter().map(|s| s.id).collect();
         assert_eq!(ids[..11], full[..11]);
-        assert_eq!(ids[11..13], ["i11-copiere", "i12-q8-matvec"]);
-        assert_eq!(ids[13..], full[11..]);
+        assert_eq!(ids[11..14], ["i11-copiere", "i12-q8-matvec", "i13-strat"]);
+        assert_eq!(ids[14..], full[11..]);
         assert!(full[10] == "i10-cost-lansare" && full[11] == "bus-master-oprit");
         let mut j = Journal::new(256);
         let r = run_chain_ready(

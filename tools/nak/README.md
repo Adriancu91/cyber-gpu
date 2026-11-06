@@ -134,3 +134,15 @@ Mesa 25.0.7 reconstruit în cloud; `add64` a ieșit **identic** (aceeași sumă 
 | `q8_matvec.comp` (I12): y = W·x, W în Q8_0; W/x/y la 0x28/0x30/0x38, rânduri 0x40, blocuri pe rând 0x44; 32 fire pe rând | `sh tools/nak/build.sh kernel q8_matvec 32` | 503 instrucțiuni, **8 048 octeți**, 19 registre; 128 B partajată, **fără `BAR.SYNC`** (un warp); 1 `FMUL.FTZ`, 32 `FFMA.FTZ`, 5 `FADD.FTZ` | `d8c118cc0683b98b40b0143ed76aec479274172b58b0b3f7ae608c21900bd028` |
 
 Atenție pentru OS: `q8_matvec` are 8 KiB — bufferul programului trebuie să aibă mărimea programului, nu o pagină de 4 KiB (testul a prins asta).
+
+## C-83 I13 (6 nov 2026, sesiunea 58, cloud) — COMPILAT, NU RULAT
+Toate cu 19 registre; cele cu 32 de fire = un warp, NAK n-a pus `BAR.SYNC` (doar `MEMBAR`).
+
+| Program | Comandă | Ieșire | Operații speciale | SHA-256 `.sm86.sass` |
+|---|---|---|---|---|
+| `vadd.comp`: c = a + b; a/b/c 0x28/0x30/0x38, n 0x40; 256 fire | `build.sh kernel vadd 32` | 22 instr., 352 B | 1 `FADD.FTZ` (bit cu bit) | `8757ddc1348f2ae034342c24a364639db3bdb85402e70b16a84410cb4e0487f5` |
+| `layernorm.comp`: x/g/b/y 0x28–0x40, n 0x48, inv_n 0x4c, eps 0x50; 32 fire, 128 B partajată | `build.sh kernel layernorm 48` | 271 instr., 4 336 B | `MUFU.RSQ` (aproximativ); NAK contopește `x − mean` într-un FFMA | `fdbe075c7290feaca6842e39efdd009d598ab8fa8df3593eb15ffa88b4444f44` |
+| `attention.comp`: q/kc/vc/o 0x28–0x40, n_pos 0x48, n_emb 0x4c, d 0x50, scale 0x54; un bloc de 32 pe cap, 2 176 B partajată | `build.sh kernel attention 48` | 301 instr., 4 816 B | `MUFU.EX2`, `MUFU.RCP` (aproximative) | `cda698124bd7db7d4287c18ede7c414152b196e67ab05380051d91c1daf51c36` |
+| `gelu.comp`: x/y 0x28/0x30, n 0x38; 256 fire; erf A&S 7.1.26 | `build.sh kernel gelu 24` | 41 instr., 656 B | `MUFU.EX2`, `MUFU.RCP` | `9498b7f54c2d7d482c03e118eeb95dd2d4755749fbeb48091633358e2cadc08a` |
+
+Unitățile MUFU sunt aproximative și nedocumentate bit cu bit: stratul se judecă în toleranță față de procesor, nu bit cu bit.

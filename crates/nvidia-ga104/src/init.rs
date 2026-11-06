@@ -120,6 +120,14 @@ pub const GA104_PLAN: &[Step] = &[
         ),
         writes_hardware: true,
     },
+    Step {
+        id: "I13",
+        what: "C-83: un strat Kronos intreg (16 lansari pe pozitie, 6 programe NAK), comparat cu motorul procesorului in toleranta 1e-4",
+        status: StepStatus::Blocked(
+            "necesita I12 pe placa; kronos_layer::token_launches + judge scrise si testate doar in SIMULARE",
+        ),
+        writes_hardware: true,
+    },
 ];
 
 pub struct InitPlan {

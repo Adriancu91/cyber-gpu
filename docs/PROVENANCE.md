@@ -136,3 +136,7 @@ specificație din RM 570.144 (MIT): `kernel_fifo_ga100.c` (`kfifoUpdateUsermodeD
 mână din același antet. Alegerea „coerent + VOL” pentru RAM: DEDUS din felul în care RM 570.144 și tinygrad `nvdev.py` (MIT) mapează memoria de sistem
 (citite ca specificație). Formatul Q8_0 e al lui Kronos (KGR1, `integrare/kronos/format_greutati.md` din hub); ordinea motorului OS e citită din
 `cyber-universe/user/src/kgr.rs` (proiectul nostru). Binarele `.sm86.sass` sunt ieșirea Mesa NAK 25.0.7 (MIT) pe programele noastre. Nimic copiat.
+
+**Sesiunea 58 (6 nov), C-83 I13:** `kronos_layer.rs`, `gpu-compute/src/layer.rs`, modelele din `gpu-sim` și programele `tools/nak/{vadd,layernorm,attention,gelu}.comp`
+sunt scrise de noi. Ordinea stratului e cea din formatul KGR1 al lui Kronos (hub `integrare/kronos/format_greutati.md`); erf după Abramowitz & Stegun
+7.1.26 (formula publică, ca `gpu_compute::math::erf`). Nimic copiat.

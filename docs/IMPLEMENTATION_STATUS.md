@@ -1,5 +1,25 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 58 — 6 noiembrie 2026, ~18:15 (ora României), în cloud, FĂRĂ placă — C-83 pasul 3: I13 în SIMULARE
+
+Pornită manual cu amintirea comenzii C-83. Niciun jurnal nou de pe placă, nicio comandă nouă pentru cyber-gpu (C-85 e pentru kronos).
+**Nimic testat pe RTX 3070 Ti.**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Programele | 4 programe noi compilate cu NAK: `vadd`, `layernorm`, `attention`, `gelu` (fișele și sumele în `tools/nak/README.md`) | COMPILAT |
+| Referința | `gpu_compute::layer::step_cpu` (stratul în ordinea motorului procesorului, o poziție nouă + cache-uri) și modelele celor 4 programe; toleranța 1e-4 + 1e-4·\|x\| | PASS: T100 |
+| Stratul pe canal | `kronos_layer::token_launches` (16 lansări pe poziție), `Launch::qmd`, `LayerVas`, `test_layer`, `judge`; 768/12 pe 2 poziții și 64/2 pe 6: în toleranță (768: < 1e-5) | PASS (SIMULARE): T101, T102 |
+| Lanțul | `i13-strat` în `WINDOW_CHAIN_C83`, I13 în `GA104_PLAN` și `READY_FOR_WINDOW_C83`; `chain_log` îi permite doar soneria + fereastra VRAM | PASS (SIMULARE): T103 |
+| Pentru OS | `integration/cyber-universe/C-83_i13.md` | propus |
+| Compatibilitate OS | doar adăugări | PASS |
+
+Verificări (`sh tools/check.sh`, Rust 1.99.1): format, clippy `-D warnings`, **386 teste PASS** (1 ignorat), build no_std PASS; clippy cu `hw-write` și nightly PASS.
+
+**Următorul pas (C-83):** I14 — un simbol întreg al lui #513 (încorporare, 12 straturi, LayerNorm final, logit-uri, argmax), comparat cu procesorul și cu
+textele de control; apoi „un singur program pe simbol”. Duminică seara: lista pentru fereastra de luni.
+
+---
 ## Sesiunea 57 — 6 noiembrie 2026, ~17:45–19:00 (ora României), în cloud, FĂRĂ placă — C-83: I11 și I12 în SIMULARE
 
 Comandă nouă de la Adrian în hub: **C-83** („până luni, cât mai mulți pași în simulare, și după I10”). Fereastra de azi (C-79) s-a închis fără

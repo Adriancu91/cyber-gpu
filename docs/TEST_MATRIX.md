@@ -1,5 +1,14 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 58 (6 nov 2026, cloud, fără placă) — C-83: I13 (un strat Kronos întreg)
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T100 | Modelele programelor (`layernorm_gpu`, `gelu_gpu`, `vadd_gpu`) față de motorul procesorului; toleranța stratului | `cargo test -p gpu-compute layer` | în toleranța 1e-4 + 1e-4·\|x\| | conform | PASS |
+| T101 | I13 cap-coadă: 16 lansări pe poziție (6 programe NAK) pe canalul de lucru, cache-urile cheie/valoare cresc în VRAM; strat mic 64/2 pe 6 poziții, strat Kronos 768/12 pe 2 poziții | `cargo test --release -p nvidia-ga104 --test sim_i13_layer` | x după strat în toleranță la fiecare poziție (768: abatere < 1e-5) | conform | PASS (SIMULARE) |
+| T102 | I13 greșeli plantate: rezidual lipsă, atenția cu o poziție în minus, GELU sărit | idem, `planted` | niciodată „trece” | conform | PASS (SIMULARE) |
+| T103 | Lanțul C-83 cu `i13-strat` după `i12-q8-matvec`, înainte de curățare | `cargo test -p nvidia-ga104 --lib c83_chain` | ordinea și oprirea corecte | conform | PASS (SIMULARE) |
+
 ## Rezultate — sesiunea 57 (6 nov 2026, cloud, fără placă) — C-83: I11 (copiere mare) și I12 (matrice × vector Q8_0)
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |
