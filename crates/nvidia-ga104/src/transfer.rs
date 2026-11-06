@@ -27,6 +27,7 @@
 
 use alloc::format;
 use alloc::string::String;
+use alloc::vec::Vec;
 
 use gpu_core::error::{GpuError, GpuResult};
 
@@ -168,6 +169,64 @@ pub fn encode_round_trip(
 
 /// Words [`encode_round_trip`] writes (for sizing the pushbuffer area).
 pub const ROUND_TRIP_WORDS: usize = 2 + 3 * 6 + 2 * 4;
+
+/// C-83 (I12+): the general form of [`encode_round_trip`]: invalidate the
+/// shader caches, record 0, then for each QMD `k`: launch it, record `k + 1`
+/// (payload `first_payload + k + 1`). Each record waits for the launch
+/// before it (WFI), so the launches run one after the other and record
+/// `k + 1` − record `k` is the time of launch `k`.
+pub fn encode_sequence(
+    p: &mut PushBuf<'_>,
+    qmds: &[u64],
+    records_va: u64,
+    first_payload: u32,
+) -> GpuResult<()> {
+    if qmds.is_empty() {
+        return Err(bad("secventa fara lansari"));
+    }
+    invalidate_caches(p)?;
+    timestamp_release(p, records_va, first_payload)?;
+    for (k, &q) in qmds.iter().enumerate() {
+        launch(p, q)?;
+        timestamp_release(
+            p,
+            records_va + (k as u64 + 1) * RECORD,
+            first_payload.wrapping_add(k as u32 + 1),
+        )?;
+    }
+    Ok(())
+}
+
+/// Words [`encode_sequence`] writes for `n` launches.
+pub const fn sequence_words(n: usize) -> usize {
+    2 + 6 + n * (4 + 6)
+}
+
+/// Reads the `n + 1` records of [`encode_sequence`]: every payload as asked,
+/// time never going back; returns the `n` durations (ns). A wrong payload
+/// names the first launch that did not finish.
+pub fn analyze_sequence(records: &[u8], n: usize, first_payload: u32) -> GpuResult<Vec<u64>> {
+    if records.len() < (n + 1) * RECORD as usize {
+        return Err(bad("secventa: prea putine inregistrari"));
+    }
+    let mut t = Vec::with_capacity(n + 1);
+    for k in 0..=n {
+        let r = &records[k * RECORD as usize..(k + 1) * RECORD as usize];
+        let got = u32::from_le_bytes([r[0], r[1], r[2], r[3]]);
+        if got != first_payload.wrapping_add(k as u32) {
+            return Err(if k == 0 {
+                bad("secventa: inregistrarea 0 lipseste (canalul nu a pornit)")
+            } else {
+                bad("secventa: o lansare nu s-a terminat (inregistrarea ei lipseste)")
+            });
+        }
+        t.push(u64::from_le_bytes(r[8..16].try_into().unwrap_or([0; 8])));
+    }
+    if t.windows(2).any(|w| w[1] < w[0]) {
+        return Err(bad("secventa: ceasul placii merge inapoi"));
+    }
+    Ok(t.windows(2).map(|w| w[1] - w[0]).collect())
+}
 
 /// The two directions, measured by the GPU's clock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -330,6 +389,35 @@ mod tests {
         assert!(analyze_round_trip(&back, 8 << 20, 0x600).is_err());
         assert!(analyze_round_trip(&r[..40], 8 << 20, 0x600).is_err());
         assert_eq!(CopySpeed::mb_per_s(1, 0), 0);
+    }
+
+    #[test]
+    fn sequences_encode_and_analyze() {
+        let va = crate::mmu::VA_BASE;
+        let mut w = [0u32; 64];
+        let mut p = PushBuf::new(&mut w);
+        encode_sequence(
+            &mut p,
+            &[va + 0x100, va + 0x200, va + 0x300],
+            va + 0x400,
+            0x700,
+        )
+        .unwrap();
+        assert_eq!(p.len(), sequence_words(3));
+        let mut w = [0u32; 64];
+        let mut p = PushBuf::new(&mut w);
+        assert!(encode_sequence(&mut p, &[], va + 0x400, 0x700).is_err());
+        let mut r = [0u8; 64];
+        for (k, t) in [10u64, 30, 60, 100].into_iter().enumerate() {
+            r[16 * k..16 * k + 16].copy_from_slice(&rec(0x700 + k as u32, t));
+        }
+        assert_eq!(analyze_sequence(&r, 3, 0x700).unwrap(), [20, 30, 40]);
+        let mut miss = r;
+        miss[48] = 0;
+        assert!(analyze_sequence(&miss, 3, 0x700).is_err());
+        assert!(analyze_sequence(&r[..48], 3, 0x700).is_err());
+        // The round trip is the sequence of two.
+        assert_eq!(sequence_words(2), ROUND_TRIP_WORDS);
     }
 
     #[test]

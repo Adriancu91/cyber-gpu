@@ -9,132 +9,19 @@
 //! Nothing here touches or proves anything about the real board; the speeds
 //! are the test's own simulated clock.
 
-use gpu_core::error::{GpuError, GpuResult};
-use gpu_sim::cmdproc::{CommandProcessor, copy_b128_on_cpu};
-use gpu_sim::fake_rm::FakeRm;
-use gpu_sim::vram::SimVram;
-use nvidia_ga104::gsp::golden::{GoldenMemory, Mapping, RmTransport, init_golden_image};
-use nvidia_ga104::gsp::user_space::{
-    USER_CLIENT, WorkChannel, open_compute_group, open_user_space, open_work_channel_cleared,
-};
-use nvidia_ga104::gsp::work_queue::{
-    ChannelMemory, LOCAL_MEM_WINDOW, SHARED_MEM_WINDOW, USERD_GP_GET, WorkQueue, compute_setup,
-};
-use nvidia_ga104::mmu::{GpuMemory, PageAttr, SysMapping, VramWrite};
+mod common;
+
+use common::{Rig, dma_pages, gpu_runs as run, put_bytes, rig, span, sys_read, sys_write};
+use gpu_core::error::GpuResult;
+use gpu_sim::cmdproc::{CommandProcessor, Needs, copy_b128_on_cpu};
+use nvidia_ga104::gsp::golden::{GoldenMemory, Mapping};
+use nvidia_ga104::gsp::work_queue::ChannelMemory;
+use nvidia_ga104::mmu::{PageAttr, SysMapping};
 use nvidia_ga104::push::PushBuf;
 use nvidia_ga104::transfer::{self, COPY_B128, ROUND_TRIP_WORDS};
 
-struct Sim(SimVram);
-impl VramWrite for Sim {
-    fn write_u64(&mut self, pa: u64, v: u64) -> GpuResult<()> {
-        self.0.write_u64(pa, v).map_err(GpuError::InvalidArgument)
-    }
-}
-impl ChannelMemory for Sim {
-    fn write_u32(&mut self, pa: u64, v: u32) -> GpuResult<()> {
-        let (a, sh) = (pa & !7, (pa & 4) * 8);
-        let old = self.0.read_u64(a).map_err(GpuError::InvalidArgument)?;
-        let new = (old & !(0xffff_ffff << sh)) | ((v as u64) << sh);
-        self.0.write_u64(a, new).map_err(GpuError::InvalidArgument)
-    }
-    fn read_u32(&mut self, pa: u64) -> GpuResult<u32> {
-        let v = self
-            .0
-            .read_u64(pa & !7)
-            .map_err(GpuError::InvalidArgument)?;
-        Ok((v >> ((pa & 4) * 8)) as u32)
-    }
-}
-
-struct Direct(FakeRm);
-impl RmTransport for Direct {
-    fn call(&mut self, f: u32, p: &[u8]) -> GpuResult<Vec<u8>> {
-        match self.0.handle(f, p) {
-            Some((0, r)) => Ok(r),
-            Some((code, _)) => Err(GpuError::HardwareFault { code }),
-            None => Err(GpuError::NotImplemented("functie necunoscuta modelului")),
-        }
-    }
-}
-
-type Mem = GpuMemory<Sim>;
 const SEED: u32 = 0x83;
 const FIRST: u32 = 0x600;
-/// The host RAM model: 64 GiB of bus addresses (sparse).
-const HOST_RAM: u64 = 64 << 30;
-
-fn put_bytes(w: &mut Sim, pa: u64, bytes: &[u8]) {
-    for (i, ch) in bytes.chunks(4).enumerate() {
-        let mut b = [0u8; 4];
-        b[..ch.len()].copy_from_slice(ch);
-        w.write_u32(pa + 4 * i as u64, u32::from_le_bytes(b))
-            .unwrap();
-    }
-}
-
-/// The OS's DMA pages: deliberately not contiguous and above 4 GiB
-/// (page i of buffer `which` at a scattered bus address).
-fn dma_pages(which: u64, n: usize) -> Vec<u64> {
-    (0..n as u64)
-        .map(|i| 0x1_2000_0000 + which * 0x1000_0000 + ((i * 7) % n as u64) * 0x2000)
-        .collect()
-}
-
-fn sys_write(sys: &mut SimVram, m: &SysMapping, data: &[u8]) {
-    for (i, ch) in data.chunks(8).enumerate() {
-        let off = 8 * i as u64;
-        let mut b = [0u8; 8];
-        b[..ch.len()].copy_from_slice(ch);
-        let bus = m.pages[(off / 0x1000) as usize] + off % 0x1000;
-        sys.write_u64(bus, u64::from_le_bytes(b)).unwrap();
-    }
-}
-
-fn sys_read(sys: &SimVram, m: &SysMapping, len: u64) -> Vec<u8> {
-    (0..len.div_ceil(8))
-        .flat_map(|i| {
-            let off = 8 * i;
-            let bus = m.pages[(off / 0x1000) as usize] + off % 0x1000;
-            sys.read_u64(bus).unwrap().to_le_bytes()
-        })
-        .take(len as usize)
-        .collect()
-}
-
-struct Rig {
-    mem: Mem,
-    root: u64,
-    w: WorkChannel,
-    push: Mapping,
-    wq: WorkQueue,
-    sys: SimVram,
-}
-
-fn rig() -> Rig {
-    let mut d = Direct(FakeRm::new());
-    let vram = 8u64 << 30;
-    let mut mem = GpuMemory::new(64 << 20, vram - (256 << 20), Sim(SimVram::new(vram))).unwrap();
-    let g = init_golden_image(&mut d, &mut mem).unwrap();
-    let u = open_user_space(&mut d, g.next_handle(), mem.root()).unwrap();
-    let cg = open_compute_group(&mut d, &u).unwrap();
-    let w = open_work_channel_cleared(&mut d, &mut mem, &u, &cg, &g).unwrap();
-    let root = d.0.page_directory(USER_CLIENT, u.vaspace).unwrap().0;
-    let push = mem.alloc_mapped(0x1000, 0x1000).unwrap();
-    let mut wq = WorkQueue::new(&w, push).unwrap();
-    let mut buf = [0u32; 16];
-    let mut pb = PushBuf::new(&mut buf);
-    compute_setup(&mut pb, LOCAL_MEM_WINDOW, SHARED_MEM_WINDOW).unwrap();
-    let n = pb.len();
-    wq.submit(mem.writer_mut(), &buf[..n]).unwrap();
-    Rig {
-        mem,
-        root,
-        w,
-        push,
-        wq,
-        sys: SimVram::new(HOST_RAM),
-    }
-}
 
 /// Everything one round trip needs, written by the driver.
 struct Trip {
@@ -208,14 +95,7 @@ fn submit(r: &mut Rig, t: &Trip) {
 /// The GPU's side: every buffer fetched through the page tables (VRAM or
 /// host RAM), the channel run, what the GPU wrote stored back the same way.
 fn gpu_runs(r: &mut Rig, t: &Trip) -> GpuResult<CommandProcessor> {
-    let mut cp = CommandProcessor::new();
-    cp.register_program(COPY_B128, copy_b128_on_cpu);
-    cp.sim_launch_ns = 250_000;
-    cp.sim_method_ns = 100;
-    let v = &r.mem.writer().0;
-    let maps: Vec<(u64, u64)> = [
-        &r.w.ring,
-        &r.push,
+    let loads: Vec<(u64, u64)> = [
         &t.prog,
         &t.cbufs[0],
         &t.cbufs[1],
@@ -225,25 +105,16 @@ fn gpu_runs(r: &mut Rig, t: &Trip) -> GpuResult<CommandProcessor> {
         &t.vbuf,
     ]
     .iter()
-    .map(|m| (m.va, m.size.next_multiple_of(8)))
+    .map(|m| span(m))
     .chain([(t.src.va, t.src.size), (t.dst.va, t.dst.size)])
     .collect();
-    for &(va, len) in &maps {
-        cp.mem.load_from(v, &r.sys, r.root, va, len)?;
-    }
-    let userd = r.w.ring.va + r.w.userd_offset;
-    cp.run_channel(r.w.ring.va, r.w.entries, userd)?;
-    let v = &mut r.mem.writer_mut().0;
-    cp.mem
-        .store_to(v, &mut r.sys, r.root, userd + USERD_GP_GET, 8)?;
-    for (va, len) in [
-        (t.vbuf.va, t.vbuf.size.next_multiple_of(8)),
-        (t.dst.va, t.dst.size),
-        (t.records.va, 48),
-    ] {
-        cp.mem.store_to(v, &mut r.sys, r.root, va, len)?;
-    }
-    Ok(cp)
+    let stores = [span(&t.vbuf), (t.dst.va, t.dst.size), (t.records.va, 48)];
+    run(
+        r,
+        &[(COPY_B128, copy_b128_on_cpu, Needs::default())],
+        &loads,
+        &stores,
+    )
 }
 
 fn records(r: &mut Rig, t: &Trip) -> Vec<u8> {

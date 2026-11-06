@@ -14,10 +14,12 @@ gpu-command.workspace = true
 gpu-memory.workspace = true
 # Data only (offsets/fields generated from NVIDIA MIT headers), no_std, no deps.
 nvidia-rm570.workspace = true
+# C-83 I12: the Q8_0 oracle and margin the verdict needs (gpu_compute::q8);
+# workspace crate, no_std, its own deps are already ours.
+gpu-compute.workspace = true
 
 [dev-dependencies]
 gpu-sim.workspace = true
-gpu-compute.workspace = true
 
 [features]
 # Off by default. Only for the workstation window with Adrian present (C-18):
