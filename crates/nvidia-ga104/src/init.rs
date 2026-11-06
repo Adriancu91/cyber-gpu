@@ -128,6 +128,14 @@ pub const GA104_PLAN: &[Step] = &[
         ),
         writes_hardware: true,
     },
+    Step {
+        id: "I14",
+        what: "C-83: un simbol intreg al lui #513 (embed, 12 straturi, LayerNorm final, logit-uri), simbolul greedy si logit-urile comparate cu procesorul",
+        status: StepStatus::Blocked(
+            "necesita I13 pe placa si #513 pe stick; kronos_model::token_launches + judge scrise si testate doar in SIMULARE, pe un model mic sintetic",
+        ),
+        writes_hardware: true,
+    },
 ];
 
 pub struct InitPlan {

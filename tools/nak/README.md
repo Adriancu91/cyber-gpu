@@ -146,3 +146,8 @@ Toate cu 19 registre; cele cu 32 de fire = un warp, NAK n-a pus `BAR.SYNC` (doar
 | `gelu.comp`: x/y 0x28/0x30, n 0x38; 256 fire; erf A&S 7.1.26 | `build.sh kernel gelu 24` | 41 instr., 656 B | `MUFU.EX2`, `MUFU.RCP` | `9498b7f54c2d7d482c03e118eeb95dd2d4755749fbeb48091633358e2cadc08a` |
 
 Unitățile MUFU sunt aproximative și nedocumentate bit cu bit: stratul se judecă în toleranță față de procesor, nu bit cu bit.
+
+## C-83 I14 (6 nov 2026, sesiunea 58) — COMPILAT, NU RULAT
+| Program | Comandă | Ieșire | Operații | SHA-256 `.sm86.sass` |
+|---|---|---|---|---|
+| `embed.comp`: x = rândul simbolului + rândul poziției (ambele Q8_0); rând simbol 0x28, rând poziție 0x30, x 0x38, n 0x40; 256 fire | `build.sh kernel embed 32` | 55 instr., 880 B, 19 registre | `FFMA.FTZ(scara_s, q_s, FMUL.FTZ(scara_p, q_p))` (model bit cu bit: `gpu_compute::model::embed_gpu`) | `b7c4252a457bf9fe3f3708aa13b8d61717d47f4916663c7cf3bc324e55cd3cb0` |

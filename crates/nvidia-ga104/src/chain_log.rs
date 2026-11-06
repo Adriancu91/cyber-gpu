@@ -400,13 +400,13 @@ fn check_step(
                 out.rm_doorbells += gsp_doorbells;
                 rm_calls(ok, &bar0, gsp_doorbells)
             }
-            // C-83: I11 and I12 write nothing new on the board: only the
+            // C-83: I11-I14 write nothing new on the board: only the
             // work doorbell and the VRAM window, as I10.
-            "i10-add64" | "i10-cost-lansare" | "i11-copiere" | "i12-q8-matvec" | "i13-strat" => {
-                bar0.iter()
-                    .find(|&&(o, _)| o != WORK_DOORBELL && !is_vram_window(o))
-                    .map(|&(o, _)| format!("scriere neasteptata in I10 la {o:#x}"))
-            }
+            "i10-add64" | "i10-cost-lansare" | "i11-copiere" | "i12-q8-matvec" | "i13-strat"
+            | "i14-simbol" => bar0
+                .iter()
+                .find(|&&(o, _)| o != WORK_DOORBELL && !is_vram_window(o))
+                .map(|&(o, _)| format!("scriere neasteptata in I10 la {o:#x}")),
             _ => None,
         }
     };

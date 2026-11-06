@@ -1,12 +1,14 @@
 # Matricea de teste
 
-## Rezultate — sesiunea 58 (6 nov 2026, cloud, fără placă) — C-83: I13 (un strat Kronos întreg)
+## Rezultate — sesiunea 58 (6 nov 2026, cloud, fără placă) — C-83: I13 (un strat Kronos întreg) și I14 (un simbol întreg)
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |
 |---|---|---|---|---|---|
 | T100 | Modelele programelor (`layernorm_gpu`, `gelu_gpu`, `vadd_gpu`) față de motorul procesorului; toleranța stratului | `cargo test -p gpu-compute layer` | în toleranța 1e-4 + 1e-4·\|x\| | conform | PASS |
 | T101 | I13 cap-coadă: 16 lansări pe poziție (6 programe NAK) pe canalul de lucru, cache-urile cheie/valoare cresc în VRAM; strat mic 64/2 pe 6 poziții, strat Kronos 768/12 pe 2 poziții | `cargo test --release -p nvidia-ga104 --test sim_i13_layer` | x după strat în toleranță la fiecare poziție (768: abatere < 1e-5) | conform | PASS (SIMULARE) |
 | T102 | I13 greșeli plantate: rezidual lipsă, atenția cu o poziție în minus, GELU sărit | idem, `planted` | niciodată „trece” | conform | PASS (SIMULARE) |
+| T104 | I14: simboluri întregi (embed + straturi + LayerNorm final + logit-uri, `16·straturi + 3` lansări), model sintetic 64/2/2 straturi/256 simboluri: prompt + 5 simboluri greedy; și lățimea Kronos 768/12 cu 1 strat, 512 simboluri | `cargo test --release -p nvidia-ga104 --test sim_i14_token` | simbolurile identice cu procesorul, logit-urile în 1e-3 + 1e-3·\|x\|; zona de pushbuffer refolosită (`submit_fenced`) | conform | PASS (SIMULARE) |
+| T105 | I14: rândul de încorporare greșit, simbol în afara vocabularului, semafor care nu crește | idem, `wrong_token_row` | niciodată „trece” / refuz înainte de scriere | conform | PASS (SIMULARE) |
 | T103 | Lanțul C-83 cu `i13-strat` după `i12-q8-matvec`, înainte de curățare | `cargo test -p nvidia-ga104 --lib c83_chain` | ordinea și oprirea corecte | conform | PASS (SIMULARE) |
 
 ## Rezultate — sesiunea 57 (6 nov 2026, cloud, fără placă) — C-83: I11 (copiere mare) și I12 (matrice × vector Q8_0)

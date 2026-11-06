@@ -106,6 +106,10 @@ nouveau a adăugat GR pe GA102 în Linux 6.2 (`c4bdac754ca0`), cu firmware-uri d
   → cheia și valoarea copiate în cache-uri (`copy_b128`) → atenția (un warp pe cap, softmax cu max/sumă în arbore) → proiecția + bias → rezidual
   → LayerNorm → `fc` + bias → GELU erf → `proj` + bias → rezidual înapoi în x. Programe noi: `vadd`, `layernorm`, `attention`, `gelu`. Toleranța
   (scrisă înainte): |placă − procesor| ≤ 1e-4 + 1e-4·|x| pe fiecare element. Intrarea ferestrei: strat sintetic 768/12, 4 poziții.
+- **I14, un simbol întreg:** `embed` (rândul simbolului + rândul poziției, ambele Q8_0) → cele L straturi (un singur scratch comun, câte un set de
+  greutăți și cache-uri pe strat) → LayerNorm final → logit-urile cu capul legat (`q8_matvec` peste `emb_token`): `16·L + 3` lansări (195 pentru
+  #513), o intrare GPFIFO, ultima înregistrare e și semaforul zonei de pushbuffer (`WorkQueue::submit_fenced`). Verdict: simbolul greedy = al
+  procesorului și fiecare logit în 1e-3 + 1e-3·|x|.
 
 ## 7. Necunoscute
 1. Structurile RPC GSP-RM depind de versiune (r535 vs r570); nu au documentație oficială, doar codul nouveau/nova și headerele MIT ale NVIDIA.
