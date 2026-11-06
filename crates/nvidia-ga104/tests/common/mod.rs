@@ -107,6 +107,8 @@ pub struct Rig {
     pub push: Mapping,
     pub wq: WorkQueue,
     pub sys: SimVram,
+    /// The GPU model, kept between doorbells (it keeps the compute object bound by the first pass).
+    pub cp: Option<CommandProcessor>,
 }
 
 /// Golden image → working client → work channel → compute setup submitted.
@@ -133,25 +135,32 @@ pub fn rig() -> Rig {
         push,
         wq,
         sys: SimVram::new(HOST_RAM),
+        cp: None,
     }
 }
 
-/// The GPU's side of one doorbell: `programs` registered, every `(va, len)`
-/// of `loads` fetched through the page tables (VRAM or host RAM), the
-/// channel run, `GPGet` and every `(va, len)` of `stores` written back.
-/// Simulated clock: 250 us per launch, 100 ns per method.
+/// The GPU's side of one doorbell: `programs` registered (on the first doorbell), every `(va, len)` of `loads`
+/// fetched through the page tables (VRAM or host RAM), the channel run, `GPGet` and every `(va, len)` of
+/// `stores` written back. The model is kept in the rig for the next doorbell (as the board keeps its state).
+/// Simulated clock: 250 us per launch, 100 ns per method. Returns a snapshot of the events/timestamps of this
+/// doorbell only.
 pub fn gpu_runs(
     r: &mut Rig,
     programs: &[(&[u8], ProgramFn, Needs)],
     loads: &[(u64, u64)],
     stores: &[(u64, u64)],
 ) -> GpuResult<CommandProcessor> {
-    let mut cp = CommandProcessor::new();
-    for &(code, f, n) in programs {
-        cp.register_program_with_needs(code, f, n);
-    }
-    cp.sim_launch_ns = 250_000;
-    cp.sim_method_ns = 100;
+    let mut cp = r.cp.take().unwrap_or_else(|| {
+        let mut cp = CommandProcessor::new();
+        for &(code, f, n) in programs {
+            cp.register_program_with_needs(code, f, n);
+        }
+        cp.sim_launch_ns = 250_000;
+        cp.sim_method_ns = 100;
+        cp
+    });
+    cp.events.clear();
+    cp.timestamps.clear();
     let v = &r.mem.writer().0;
     let base = [(r.w.ring.va, r.w.ring.size), (r.push.va, r.push.size)];
     for &(va, len) in base.iter().chain(loads) {
@@ -159,15 +168,23 @@ pub fn gpu_runs(
             .load_from(v, &r.sys, r.root, va, len.next_multiple_of(8))?;
     }
     let userd = r.w.ring.va + r.w.userd_offset;
-    cp.run_channel(r.w.ring.va, r.w.entries, userd)?;
+    let res = cp.run_channel(r.w.ring.va, r.w.entries, userd);
     let v = &mut r.mem.writer_mut().0;
-    cp.mem
-        .store_to(v, &mut r.sys, r.root, userd + USERD_GP_GET, 8)?;
-    for &(va, len) in stores {
+    let stored = (|| {
+        res?;
         cp.mem
-            .store_to(v, &mut r.sys, r.root, va, len.next_multiple_of(8))?;
-    }
-    Ok(cp)
+            .store_to(v, &mut r.sys, r.root, userd + USERD_GP_GET, 8)?;
+        for &(va, len) in stores {
+            cp.mem
+                .store_to(v, &mut r.sys, r.root, va, len.next_multiple_of(8))?;
+        }
+        Ok(())
+    })();
+    let mut snap = CommandProcessor::new();
+    snap.events = cp.events.clone();
+    snap.timestamps = cp.timestamps.clone();
+    r.cp = Some(cp);
+    stored.map(|()| snap)
 }
 
 /// `(va, size)` of a VRAM mapping, for `gpu_runs`.

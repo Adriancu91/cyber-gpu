@@ -68,6 +68,7 @@ pub mod i6_check;
 pub mod i6_log;
 pub mod ids;
 pub mod init;
+pub mod kronos_layer;
 pub mod launch_cost;
 pub mod mmu;
 pub mod probe;

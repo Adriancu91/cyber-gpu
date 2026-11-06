@@ -1,0 +1,62 @@
+// C-83 I13: attention of ONE new position over the cached keys/values of positions 0..n_pos-1, for one head per
+// workgroup (grid x = heads), 32 threads (one warp). q = the new position's queries (n_emb values, head h at h*d),
+// kc/vc = caches [position][n_emb]. score_s = (q_h . k_s,h) * scale; p = softmax(score); out_h = sum_s p_s v_s,h.
+// Thread t takes positions s = t, t+32, ... and later dimensions c = t, t+32, ...; max and sum in fixed trees.
+// exp() and the final 1/sum are the GPU's approximate MUFU.EX2 / MUFU.RCP: compared with the CPU in a margin.
+// Requirements (the launcher checks them): n_pos <= 512, d <= 128.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args { In q; In kc; In vc; Out o; uint n_pos; uint n_emb; uint d; float scale; } args;
+shared float sc[512];
+shared float parts[32];
+void main() {
+    uint h = gl_WorkGroupID.x;
+    uint t = gl_LocalInvocationID.x;
+    uint base = h * args.d;
+    float m = -3.402823466e38;
+    for (uint s = t; s < args.n_pos; s += 32u) {
+        float dot = 0.0;
+        for (uint c = 0u; c < args.d; c++) {
+            dot += args.q.v[base + c] * args.kc.v[s * args.n_emb + base + c];
+        }
+        float v = dot * args.scale;
+        sc[s] = v;
+        m = max(m, v);
+    }
+    parts[t] = m;
+    barrier();
+    for (uint st = 16u; st > 0u; st >>= 1u) {
+        if (t < st) {
+            parts[t] = max(parts[t], parts[t + st]);
+        }
+        barrier();
+    }
+    m = parts[0];
+    barrier();
+    float sum = 0.0;
+    for (uint s = t; s < args.n_pos; s += 32u) {
+        float e = exp(sc[s] - m);
+        sc[s] = e;
+        sum += e;
+    }
+    parts[t] = sum;
+    barrier();
+    for (uint st = 16u; st > 0u; st >>= 1u) {
+        if (t < st) {
+            parts[t] = parts[t] + parts[t + st];
+        }
+        barrier();
+    }
+    float inv = 1.0 / parts[0];
+    for (uint c = t; c < args.d; c += 32u) {
+        float acc = 0.0;
+        for (uint s = 0u; s < args.n_pos; s++) {
+            acc += sc[s] * args.vc.v[s * args.n_emb + base + c];
+        }
+        args.o.v[base + c] = acc * inv;
+    }
+}

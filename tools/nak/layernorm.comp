@@ -1,0 +1,43 @@
+// C-83 I13: y = (x - mean) * inversesqrt(var + eps) * g + b over one vector of n values (LayerNorm of a Kronos layer).
+// One workgroup of 32 threads (one warp). Thread t adds x[t], x[t+32], ... in order; the 32 partial sums are added in a
+// fixed tree (stride 16..1) in shared memory; mean = sum * inv_n (inv_n = 1/n rounded, given by the driver, so there
+// is no division in the program); the same for the variance of (x - mean). inversesqrt is the GPU's approximate
+// MUFU.RSQ: the result is compared with the CPU in a margin, not bit for bit.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args { In x; In g; In b; Out y; uint n; float inv_n; float eps; } args;
+shared float parts[32];
+float tree(float v, uint t) {
+    parts[t] = v;
+    barrier();
+    for (uint s = 16u; s > 0u; s >>= 1u) {
+        if (t < s) {
+            parts[t] = parts[t] + parts[t + s];
+        }
+        barrier();
+    }
+    float r = parts[0];
+    barrier();
+    return r;
+}
+void main() {
+    uint t = gl_LocalInvocationID.x;
+    float s = 0.0;
+    for (uint i = t; i < args.n; i += 32u) {
+        s += args.x.v[i];
+    }
+    float mean = tree(s, t) * args.inv_n;
+    float q = 0.0;
+    for (uint i = t; i < args.n; i += 32u) {
+        float d = args.x.v[i] - mean;
+        q += d * d;
+    }
+    float inv = inversesqrt(tree(q, t) * args.inv_n + args.eps);
+    for (uint i = t; i < args.n; i += 32u) {
+        args.y.v[i] = (args.x.v[i] - mean) * inv * args.g.v[i] + args.b.v[i];
+    }
+}

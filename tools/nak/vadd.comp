@@ -1,0 +1,15 @@
+// C-83 I13: c[i] = a[i] + b[i] for i < n (bias and residual additions of a Kronos layer).
+// 256 threads per block; one FADD.FTZ per element, so the oracle is gpu-compute's add_f32_ftz, bit for bit.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args { In a; In b; Out c; uint n; } args;
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i < args.n) {
+        args.c.v[i] = args.a.v[i] + args.b.v[i];
+    }
+}

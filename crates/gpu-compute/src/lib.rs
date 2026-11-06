@@ -22,6 +22,7 @@ extern crate alloc;
 
 pub mod cpu;
 pub mod kernels;
+pub mod layer;
 pub mod math;
 pub mod op;
 pub mod q8;

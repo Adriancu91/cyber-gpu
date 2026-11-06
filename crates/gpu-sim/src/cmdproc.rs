@@ -1193,6 +1193,102 @@ pub fn q8_matvec_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// C-83 I13: `vadd.comp` — cbuf0 a 0x28, b 0x30, c 0x38, n 0x40; blocks of 256.
+pub fn vadd_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [256, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 || l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad("SIM: vadd cere blocuri de 256x1x1, grila 1D, baza 0"));
+    }
+    let (a, b, c) = (
+        l.mem.read_u64(l.cbuf0 + 0x28)?,
+        l.mem.read_u64(l.cbuf0 + 0x30)?,
+        l.mem.read_u64(l.cbuf0 + 0x38)?,
+    );
+    let n = (l.mem.read_u32(l.cbuf0 + 0x40)? as u64).min(l.grid[0] as u64 * 256) as usize;
+    let out = gpu_compute::layer::vadd_gpu(&l.mem.read_f32s(a, n)?, &l.mem.read_f32s(b, n)?);
+    l.mem.write_f32s(c, &out);
+    Ok(())
+}
+
+/// C-83 I13: what `layernorm` / `attention` need: shared memory (128 B / 2 176 B), no hardware barrier (one warp).
+pub const LAYERNORM_NEEDS: Needs = Needs {
+    shared_bytes: 128,
+    barriers: 0,
+};
+pub const ATTENTION_NEEDS: Needs = Needs {
+    shared_bytes: 4 * (512 + 32),
+    barriers: 0,
+};
+
+/// C-83 I13: `layernorm.comp` — x 0x28, g 0x30, b 0x38, y 0x40, n 0x48, inv_n 0x4c, eps 0x50; one block of 32.
+pub fn layernorm_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [32, 1, 1] || l.grid != [1, 1, 1] {
+        return Err(bad("SIM: layernorm cere un bloc de 32x1x1"));
+    }
+    let r = |l: &Launch<'_>, o: u64| l.mem.read_u64(l.cbuf0 + o);
+    let (x, g, b, y) = (r(l, 0x28)?, r(l, 0x30)?, r(l, 0x38)?, r(l, 0x40)?);
+    let n = l.mem.read_u32(l.cbuf0 + 0x48)? as usize;
+    let inv_n = f32::from_bits(l.mem.read_u32(l.cbuf0 + 0x4c)?);
+    let eps = f32::from_bits(l.mem.read_u32(l.cbuf0 + 0x50)?);
+    if n == 0 || inv_n.to_bits() != (1.0 / n as f32).to_bits() {
+        return Err(bad("SIM: layernorm cu inv_n diferit de 1/n"));
+    }
+    let out = gpu_compute::layer::layernorm_gpu(
+        &l.mem.read_f32s(x, n)?,
+        &l.mem.read_f32s(g, n)?,
+        &l.mem.read_f32s(b, n)?,
+        eps,
+    );
+    l.mem.write_f32s(y, &out);
+    Ok(())
+}
+
+/// C-83 I13: `attention.comp` — q 0x28, kc 0x30, vc 0x38, o 0x40, n_pos 0x48, n_emb 0x4c, d 0x50, scale 0x54; one
+/// block of 32 per head (grid x = heads).
+pub fn attention_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [32, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 || l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad("SIM: attention cere blocuri de 32x1x1, grila = capete"));
+    }
+    let r = |l: &Launch<'_>, o: u64| l.mem.read_u64(l.cbuf0 + o);
+    let (q, kc, vc, o) = (r(l, 0x28)?, r(l, 0x30)?, r(l, 0x38)?, r(l, 0x40)?);
+    let n_pos = l.mem.read_u32(l.cbuf0 + 0x48)? as usize;
+    let e = l.mem.read_u32(l.cbuf0 + 0x4c)? as usize;
+    let d = l.mem.read_u32(l.cbuf0 + 0x50)? as usize;
+    let scale = f32::from_bits(l.mem.read_u32(l.cbuf0 + 0x54)?);
+    let heads = l.grid[0] as usize;
+    if n_pos == 0 || n_pos > 512 || d == 0 || d > 128 || heads * d > e {
+        return Err(bad("SIM: attention cu forme in afara programului"));
+    }
+    let qs = l.mem.read_f32s(q, e)?;
+    let ks = l.mem.read_f32s(kc, n_pos * e)?;
+    let vs = l.mem.read_f32s(vc, n_pos * e)?;
+    let args = gpu_compute::layer::AttnArgs { n_pos, e, d, scale };
+    for h in 0..heads {
+        let out = gpu_compute::layer::attention_head_gpu(&qs, &ks, &vs, &args, h);
+        l.mem.write_f32s(o + 4 * (h * d) as u64, &out);
+    }
+    Ok(())
+}
+
+/// C-83 I13: `gelu.comp` — x 0x28, y 0x30, n 0x38; blocks of 256.
+pub fn gelu_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [256, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 || l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad("SIM: gelu cere blocuri de 256x1x1, grila 1D, baza 0"));
+    }
+    let (x, y) = (
+        l.mem.read_u64(l.cbuf0 + 0x28)?,
+        l.mem.read_u64(l.cbuf0 + 0x30)?,
+    );
+    let n = (l.mem.read_u32(l.cbuf0 + 0x38)? as u64).min(l.grid[0] as u64 * 256) as usize;
+    let out: Vec<f32> = l
+        .mem
+        .read_f32s(x, n)?
+        .into_iter()
+        .map(gpu_compute::layer::gelu_gpu)
+        .collect();
+    l.mem.write_f32s(y, &out);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

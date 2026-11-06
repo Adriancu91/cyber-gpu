@@ -1,0 +1,23 @@
+// C-83 I13: y = 0.5 x (1 + erf(x / sqrt 2)), the exact GELU of Kronos's MLP, erf by Abramowitz & Stegun 7.1.26 in f32
+// (the same formula as gpu-compute::math::erf). exp() and the division are the GPU's approximate MUFU.EX2 / MUFU.RCP:
+// compared with the CPU in a margin. 256 threads per block, i < n.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args { In x; Out y; uint n; } args;
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i < args.n) {
+        float x = args.x.v[i];
+        float z = x * 0.70710678118654752;
+        float a = abs(z);
+        float t = 1.0 / (1.0 + 0.3275911 * a);
+        float p = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+        float e = 1.0 - p * exp(-a * a);
+        float erf = z < 0.0 ? -e : e;
+        args.y.v[i] = 0.5 * x * (1.0 + erf);
+    }
+}
