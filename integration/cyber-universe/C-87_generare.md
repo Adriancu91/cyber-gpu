@@ -46,3 +46,26 @@
 1. `run_model`: o poziție → `impl TokenRunner`; bucla → `Generation::run`; rândul de viteză → `stats().line("placa")`.
 2. Înainte de urcare: `VramBudget::of_model(&m)?.check(free, largest, rezerva)` cu `st.mem.vram_free()`; refuz cinstit dacă nu încape.
 3. Pentru 24 de straturi: zona de pushbuffer 32 KiB.
+
+# C-87 pasul 3 — recuperare fără repornirea calculatorului
+
+**Doar SIMULARE.** Adăugări: `recovery` (modul nou), `user_space::stop_compute_group`, `transfer::records_seen`.
+
+Pericolul după o blocare nu e placa, ci RAM-ul calculatorului: paginile RAM date plăcii (I11, copierea logit-urilor) ar putea fi
+scrise mai târziu de un canal încă viu, după ce OS-ul le-a dat altcuiva. De aceea:
+
+1. după `Stop::Eroare` nu se mai trimite nimic;
+2. `gsp_ping` — un control RM doar de citire (ex. `query_gr_info`), cu limita voastră de timp;
+3. dacă GSP răspunde: `stop_compute_group` (control RM `GPFIFO_SCHEDULE` cu `bEnable = 0`, **niciun registru scris de noi**);
+4. citire `GPGet`/`GPPut` din USERD;
+5. **Bus Master oprit, întotdeauna** (aceeași scriere + recitire ca pasul de curățenie al lanțului);
+6. `recovery::recover(&mut ops)` dă verdictul: paginile RAM **eliberate** doar dacă grupul a fost oprit prin RM ȘI Bus Master e
+   oprit; altfel **carantină** (OS-ul nu le refolosește până la repornire) și placa rămâne oprită până la următoarea pornire —
+   calculatorul merge mai departe, Kronos pe procesor. `Recovered::lines` = rândurile de jurnal; `recovery::classify` +
+   `transfer::records_seen` spun în jurnal dacă placa n-a luat comanda sau s-a oprit la o lansare anume.
+
+Testat: pașii în ordine și fiecare încercat chiar dacă cel dinainte a picat; GSP tăcut → carantină, Bus Master tot oprit;
+cu `FakeRm` + spațiu de configurare simulat, după defectul de la poziția 5: grupul scos de pe listă, Bus Master oprit, RAM eliberat.
+
+Ce ar trebui în OS (decizia voastră): în `gpu lant`, la orice eroare după I10, `recover` înainte de pasul de curățenie;
+paginile din `Carantina` scoase din alocator până la repornire; un `gpu lant` nou refuzat după `DoarDupaRepornire`.

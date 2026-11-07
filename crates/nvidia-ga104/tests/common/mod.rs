@@ -10,7 +10,8 @@ use gpu_sim::fake_rm::FakeRm;
 use gpu_sim::vram::SimVram;
 use nvidia_ga104::gsp::golden::{GoldenMemory, Mapping, RmTransport, init_golden_image};
 use nvidia_ga104::gsp::user_space::{
-    USER_CLIENT, WorkChannel, open_compute_group, open_user_space, open_work_channel_cleared,
+    ComputeGroup, USER_CLIENT, UserSpace, WorkChannel, open_compute_group, open_user_space,
+    open_work_channel_cleared,
 };
 use nvidia_ga104::gsp::work_queue::{
     ChannelMemory, LOCAL_MEM_WINDOW, SHARED_MEM_WINDOW, USERD_GP_GET, WorkQueue, compute_setup,
@@ -40,7 +41,7 @@ impl ChannelMemory for Sim {
     }
 }
 
-struct Direct(FakeRm);
+pub struct Direct(pub FakeRm);
 impl RmTransport for Direct {
     fn call(&mut self, f: u32, p: &[u8]) -> GpuResult<Vec<u8>> {
         match self.0.handle(f, p) {
@@ -109,6 +110,10 @@ pub struct Rig {
     pub sys: SimVram,
     /// The GPU model, kept between doorbells (it keeps the compute object bound by the first pass).
     pub cp: Option<CommandProcessor>,
+    /// C-87 (recovery): GSP-RM's model and the client/group the channel lives in.
+    pub rm: Direct,
+    pub u: UserSpace,
+    pub cg: ComputeGroup,
 }
 
 /// Golden image → working client → work channel → compute setup submitted.
@@ -141,6 +146,9 @@ pub fn rig_with_push(push_bytes: u64) -> Rig {
         wq,
         sys: SimVram::new(HOST_RAM),
         cp: None,
+        rm: d,
+        u,
+        cg,
     }
 }
 

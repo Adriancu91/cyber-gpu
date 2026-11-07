@@ -433,6 +433,96 @@ fn generation_stops_cleanly_at_a_fault() {
     assert_eq!(gn.seq, seq);
 }
 
+/// C-87 step 3, SIMULARE: after the fault above, the recovery with GSP-RM's model (`FakeRm`) and a simulated
+/// config space: the group is taken off the runlist by the RM control, Bus Master goes off (re-read), the RAM pages
+/// are given back; with GSP silent the same steps leave them in quarantine and the board off until a restart.
+#[test]
+fn recovery_after_a_fault_without_a_restart() {
+    use gpu_core::diag::Journal;
+    use gpu_core::error::GpuError;
+    use gpu_pci::bus_master::{BusMasterPermit, set_bus_master};
+    use gpu_sim::pci::SimConfig;
+    use nvidia_ga104::gsp::user_space::{query_gr_info, stop_compute_group};
+    use nvidia_ga104::gsp::work_queue::{ChannelMemory, USERD_GP_GET, USERD_GP_PUT};
+    use nvidia_ga104::recovery::{self, NextChain, RamPages, RecoveryOps};
+
+    struct Ops<'a> {
+        r: &'a mut Rig,
+        cfg: SimConfig,
+        silent: bool,
+    }
+    impl RecoveryOps for Ops<'_> {
+        fn gsp_ping(&mut self) -> GpuResult<()> {
+            if self.silent {
+                return Err(GpuError::Timeout { waited_us: 500_000 });
+            }
+            query_gr_info(&mut self.r.rm, &self.r.u).map(|_| ())
+        }
+        fn stop_group(&mut self) -> GpuResult<()> {
+            stop_compute_group(&mut self.r.rm, &self.r.u, &self.r.cg)
+        }
+        fn ring_pointers(&mut self) -> GpuResult<(u32, u32)> {
+            let userd = self.r.w.ring.pa + self.r.w.userd_offset;
+            let m = self.r.mem.writer_mut();
+            Ok((
+                m.read_u32(userd + USERD_GP_GET)?,
+                m.read_u32(userd + USERD_GP_PUT)?,
+            ))
+        }
+        fn bus_master_off(&mut self) -> GpuResult<bool> {
+            let mut j = Journal::new(16);
+            set_bus_master(
+                &mut self.cfg,
+                &BusMasterPermit::new("recuperare"),
+                &mut j,
+                false,
+            )?;
+            Ok(self.cfg.read_raw(4) & 4 == 0)
+        }
+    }
+
+    for silent in [false, true] {
+        let m = small(7, 64);
+        let mut run = sim_runner(&m, Some(5));
+        let mut gn = Generation::new(GenPlan::new(&[5, 17, 3], 40, m.vocab, m.context).unwrap());
+        assert!(matches!(
+            gn.run(&mut run, None),
+            Stop::Eroare { pos: 5, .. }
+        ));
+        assert!(run.r.rm.0.is_scheduled(run.r.cg.channel_group));
+        let mut cfg = SimConfig::workstation_rtx3070ti();
+        cfg.write_raw(4, cfg.read_raw(4) | 0x6); // memory decode + Bus Master on, as in the window
+        let mut ops = Ops {
+            r: &mut run.r,
+            cfg,
+            silent,
+        };
+        let got = recovery::recover(&mut ops);
+        for l in &got.lines {
+            eprintln!("SIMULARE: {l}");
+        }
+        assert!(got.bus_master_off);
+        assert!(got.ring.is_some());
+        let tsg = run.r.cg.channel_group;
+        if silent {
+            assert_eq!(
+                (got.ram, got.next),
+                (RamPages::Carantina, NextChain::DoarDupaRepornire)
+            );
+            assert!(
+                run.r.rm.0.is_scheduled(tsg),
+                "fara GSP, grupul nu a putut fi oprit"
+            );
+        } else {
+            assert_eq!(
+                (got.ram, got.next),
+                (RamPages::Eliberate, NextChain::Permis)
+            );
+            assert!(!run.r.rm.0.is_scheduled(tsg));
+        }
+    }
+}
+
 /// The context is the limit: a 16-position model stops at 16 positions with "context plin", not with an error.
 #[test]
 fn generation_stops_at_a_full_context() {

@@ -228,6 +228,21 @@ pub fn analyze_sequence(records: &[u8], n: usize, first_payload: u32) -> GpuResu
     Ok(t.windows(2).map(|w| w[1] - w[0]).collect())
 }
 
+/// C-87 (recovery journal): how many of the `n + 1` records of [`encode_sequence`] carry their payload, in order
+/// from record 0 — after a wait that ended without the last one, it says how far the board got.
+pub fn records_seen(records: &[u8], n: usize, first_payload: u32) -> usize {
+    (0..=n)
+        .take_while(|&k| {
+            records
+                .get(k * RECORD as usize..k * RECORD as usize + 4)
+                .is_some_and(|r| {
+                    u32::from_le_bytes([r[0], r[1], r[2], r[3]])
+                        == first_payload.wrapping_add(k as u32)
+                })
+        })
+        .count()
+}
+
 /// The two directions, measured by the GPU's clock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CopySpeed {

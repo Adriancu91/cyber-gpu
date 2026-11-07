@@ -122,6 +122,27 @@ pub fn open_user_space<T: RmTransport + ?Sized>(
 
 /// I10c: GR0's shape and SM version, from GSP-RM only (never assumed).
 /// One control on `u.subdevice`; GSP-RM's refusal comes back as its status.
+/// C-87 (recovery): takes the channel group off the runlist (`NVA06C_CTRL_CMD_GPFIFO_SCHEDULE`, `bEnable = 0`) — the
+/// same RM control that put it there, with the other value; no register is written by us. After a hang the
+/// channel's work is no longer scheduled; GSP-RM must answer for this to be known.
+pub fn stop_compute_group<T: RmTransport + ?Sized>(
+    t: &mut T,
+    u: &UserSpace,
+    cg: &ComputeGroup,
+) -> GpuResult<()> {
+    let mut rm = Rm {
+        t,
+        client: u.client,
+        next: u.next_handle,
+    };
+    rm.control(
+        cg.channel_group,
+        cmd::TSG_SCHEDULE,
+        &rmapi::schedule_params(false),
+    )?;
+    Ok(())
+}
+
 pub fn query_gr_info<T: RmTransport + ?Sized>(t: &mut T, u: &UserSpace) -> GpuResult<GrInfo> {
     let mut rm = Rm {
         t,
@@ -872,6 +893,27 @@ mod tests {
             assert!(g.gr_bufs.iter().all(|(_, gm)| gm.pa != m.pa));
         }
         assert_eq!(w.userd_offset, 0x2000);
+        assert!(d.0.is_scheduled(cg.channel_group));
+        // C-87: the group can be taken off again (recovery), and put back.
+        stop_compute_group(&mut d, &u, &cg).unwrap();
+        assert!(!d.0.is_scheduled(cg.channel_group));
+        assert_eq!(
+            d.0.log.controls.last(),
+            Some(&(c_cmd::TSG_SCHEDULE, status::OK))
+        );
+        d.0.log.controls.pop();
+        Rm {
+            t: &mut d,
+            client: u.client,
+            next: w.next_handle,
+        }
+        .control(
+            cg.channel_group,
+            cmd::TSG_SCHEDULE,
+            &rmapi::schedule_params(true),
+        )
+        .unwrap();
+        d.0.log.controls.pop();
         assert!(d.0.is_scheduled(cg.channel_group));
         // The order GSP-RM saw: channel, compute, 2 promotes, token, schedule.
         let n = d.0.log.controls.len();

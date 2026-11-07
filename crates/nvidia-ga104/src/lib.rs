@@ -79,6 +79,7 @@ pub mod q8_matvec;
 pub mod qmd;
 pub mod radix3;
 pub mod read_tour;
+pub mod recovery;
 pub mod regs;
 pub mod sha256;
 pub mod transfer;

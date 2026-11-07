@@ -632,6 +632,9 @@ impl FakeRm {
                         } else {
                             if params[0] != 0 && !self.scheduled.contains(&object) {
                                 self.scheduled.push(object);
+                            } else if params[0] == 0 {
+                                // C-87: bEnable = 0 takes the group off the runlist.
+                                self.scheduled.retain(|&t| t != object);
                             }
                             status::OK
                         }
