@@ -1,5 +1,24 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 64 — 7 noiembrie 2026, ~17:45–19:00 (ora României), în cloud, FĂRĂ placă — C-87: generare continuă, recuperare, modelul mare
+
+Pornită de programare. **Comandă nouă: C-87** (Adrian, prin centrul de comandă: „mai mulți pași în simulare până luni”). **Nimic testat pe RTX 3070 Ti.**
+
+| Pas C-87 | Ce s-a făcut | Rezultat |
+|---|---|---|
+| 1. Generare continuă | `kronos_gen::Generation` (+ `GenPlan`, `TokenRunner`, `TokenCheck`, `Stop`, `GenStats`): N simboluri la rând, o trimitere `submit_fenced` pe poziție, cache-urile cresc; **oprire la prima eroare**, nimic trimis după; viteza doar din marcajele de timp ale plăcii (cu și fără pauzele driverului) | PASS (SIMULARE): 40 de simboluri ca procesorul (logit-uri ≤ 3,2e-7); defect plantat la poziția 5 → oprire acolo, 6 trimiteri, 3 simboluri păstrate; context plin → oprire curată |
+| 2. Un singur program pe simbol | neînceput: cere un program NAK nou („megakernel” cu barieră pe toată placa) + Mesa reconstruit în cloud | NOT TESTED — rămâne următorul pas |
+| 3. Recuperare fără repornire | `recovery::recover` (ping GSP doar citire → `user_space::stop_compute_group` prin RM, niciun registru scris de noi → GPGet/GPPut → **Bus Master oprit mereu**); paginile RAM ale plăcii eliberate doar dacă e dovedit că nimic nu le mai poate scrie, altfel carantină până la repornire; `classify` + `transfer::records_seen` pentru jurnal | PASS (SIMULARE): cu `FakeRm` + configurare simulată, GSP viu → RAM eliberat; GSP tăcut → carantină, Bus Master tot oprit |
+| 4. Modelul mare (24 straturi, 183M) | `kronos_gen::VramBudget` (calculat înainte de urcare, verificat față de `GpuMemory::vram_free()`), `push_bytes_with_copy` | PASS: 24 straturi E 128 pe canal (387 lansări/poziție) ca procesorul (SIMULARE); bugetul 183M ≈ 270 MiB, #513 ≈ 142 MiB (calcul); **pushbuffer 32 KiB pentru 24 de straturi** (16 KiB nu mai ajung) |
+| Compatibilitate OS | doar adăugări (`GpuMemory::vram_free`, `RangeAllocator::largest_free`, module noi, `stop_compute_group`, `records_seen`); `FakeRm` acceptă și `bEnable = 0` | PASS |
+
+Verificări (`sh tools/check.sh`, Rust 1.97.0): format, clippy `-D warnings`, **410 teste PASS** (4 ignorate), build no_std PASS; local cu vectorii KGR1: 3/3 PASS.
+Nota pentru OS: `integration/cyber-universe/C-87_generare.md`.
+
+**Următorul pas:** C-87 pasul 2 („un singur program pe simbol”: programul NAK persistent + modelul lui în `gpu-sim`, comparat cu cele 195 de lansări);
+duminică seara (8 nov) lista exactă pentru fereastra de luni.
+
+---
 ## Sesiunea 63 — 7 noiembrie 2026, ~12:00 (ora României), în cloud, FĂRĂ placă — oprire scurtă
 
 Pornită de programare. Nicio comandă nouă pentru cyber-gpu (ultimele: C-84 la OS, C-85/C-86 la Kronos), niciun jurnal nou de pe placă,
