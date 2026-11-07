@@ -41,6 +41,10 @@ impl RangeAllocator {
     pub fn used_bytes(&self) -> u64 {
         self.used.values().sum()
     }
+    /// C-87: the longest free run (what one contiguous allocation can get at most, before alignment).
+    pub fn largest_free(&self) -> u64 {
+        self.free.values().copied().max().unwrap_or(0)
+    }
 
     /// Allocate `size` bytes aligned to `align` (power of two). Returns the start.
     pub fn alloc(&mut self, size: u64, align: u64) -> GpuResult<u64> {

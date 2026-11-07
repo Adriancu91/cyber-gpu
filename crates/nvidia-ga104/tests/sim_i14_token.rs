@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::{Rig, get_bytes, gpu_runs, put_bytes, rig, span};
+use common::{Rig, get_bytes, gpu_runs, put_bytes, rig, rig_with_push, span};
 use gpu_compute::layer::Shape;
 use gpu_compute::model::{self, Caches};
 use gpu_core::error::GpuResult;
@@ -15,6 +15,9 @@ use gpu_sim::cmdproc::{
     q8_matvec_on_cpu, vadd_on_cpu,
 };
 use nvidia_ga104::gsp::golden::{GoldenMemory, Mapping};
+use nvidia_ga104::kronos_gen::{
+    self as kgen, GenPlan, Generation, Stop, TokenCheck, TokenOutput, TokenRunner, VramBudget,
+};
 use nvidia_ga104::kronos_layer::{self as kl, LayerVas, PROGRAMS, Prog, WeightVas};
 use nvidia_ga104::kronos_model::{self as km, ModelVas, OwnedModel};
 use nvidia_ga104::push::PushBuf;
@@ -127,6 +130,18 @@ fn upload(r: &mut Rig, m: &OwnedModel) -> Gpu {
 }
 
 fn token(r: &mut Rig, g: &Gpu, m: &OwnedModel, tok: usize, pos: usize) -> GpuResult<Vec<f32>> {
+    token_out(r, g, m, tok, pos, first(pos)).map(|o| o.logits)
+}
+
+/// One token with its records' times (board clock = the model's in SIMULARE); `first` = payload of record 0.
+fn token_out(
+    r: &mut Rig,
+    g: &Gpu,
+    m: &OwnedModel,
+    tok: usize,
+    pos: usize,
+    first: u32,
+) -> GpuResult<TokenOutput> {
     let list = km::token_launches(&m.shape, m.vocab, m.context, &g.vas, tok, pos)?;
     let va = |p: Prog| g.progs.iter().find(|(q, _)| *q == p).unwrap().1.va;
     let mut qmds = Vec::new();
@@ -143,9 +158,9 @@ fn token(r: &mut Rig, g: &Gpu, m: &OwnedModel, tok: usize, pos: usize) -> GpuRes
     put_bytes(w, g.records.pa, &vec![0; 16 * (g.n + 1)]);
     let mut words = vec![0u32; transfer::sequence_words(qmds.len())];
     let mut pb = PushBuf::new(&mut words);
-    transfer::encode_sequence(&mut pb, &qmds, g.records.va, first(pos))?;
+    transfer::encode_sequence(&mut pb, &qmds, g.records.va, first)?;
     let fence = g.records.va + 16 * g.n as u64;
-    let done = (first(pos) + g.n as u32) as u64;
+    let done = (first + g.n as u32) as u64;
     r.wq.submit_fenced(r.mem.writer_mut(), &words, fence, done)?;
     let programs: Vec<(&[u8], ProgramFn, Needs)> =
         MODELS.iter().map(|&(p, f, n)| (p.code(), f, n)).collect();
@@ -162,21 +177,27 @@ fn token(r: &mut Rig, g: &Gpu, m: &OwnedModel, tok: usize, pos: usize) -> GpuRes
     let cp: CommandProcessor = gpu_runs(r, &programs, &loads, &stores)?;
     assert_eq!(cp.timestamps.len(), g.n + 1);
     let rec = get_bytes(r.mem.writer_mut(), g.records.pa, 16 * (g.n as u64 + 1));
-    transfer::analyze_sequence(&rec, g.n, first(pos))?;
+    let durations = transfer::analyze_sequence(&rec, g.n, first)?;
     // The driver read the last record: its pushbuffer stretch can be reused.
     let fence = g.records.va + 16 * g.n as u64;
     let last = u32::from_le_bytes(rec[16 * g.n..16 * g.n + 4].try_into().unwrap()) as u64;
     assert!(r.wq.retire(fence, last)? >= 1);
     assert_eq!(r.wq.push_in_flight(), 0);
     let fin = g.out.last().unwrap();
-    Ok(get_bytes(
-        r.mem.writer_mut(),
-        fin.pa + 4 * m.shape.e as u64,
-        4 * m.vocab as u64,
-    )
-    .chunks(4)
-    .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
-    .collect())
+    let time = |k: usize| u64::from_le_bytes(rec[16 * k + 8..16 * k + 16].try_into().unwrap());
+    Ok(TokenOutput {
+        logits: get_bytes(
+            r.mem.writer_mut(),
+            fin.pa + 4 * m.shape.e as u64,
+            4 * m.vocab as u64,
+        )
+        .chunks(4)
+        .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+        .collect(),
+        start_ns: time(0),
+        end_ns: time(g.n),
+        busy_ns: durations.iter().sum(),
+    })
 }
 
 /// Prompt, then greedy tokens, on the GPU model and on the CPU engine side by side.
@@ -284,6 +305,196 @@ fn wrong_token_row_is_caught() {
         r.wq.submit_fenced(r.mem.writer_mut(), &[0], 0x10, same + 1)
             .is_err(),
         "in afara VA"
+    );
+}
+
+// ------------------------------------------------------------------ C-87 step 1: continuous generation, SIMULARE
+
+/// `kronos_gen::TokenRunner` over the simulated channel; payloads keep growing across positions (fence values).
+struct SimRunner<'a> {
+    r: Rig,
+    g: Gpu,
+    m: &'a OwnedModel,
+    calls: usize,
+    /// Before this position, the GELU program's code in VRAM is wiped (a fault the board could show).
+    break_at: Option<usize>,
+}
+
+impl TokenRunner for SimRunner<'_> {
+    fn run_token(&mut self, token: usize, pos: usize) -> GpuResult<TokenOutput> {
+        self.calls += 1;
+        if self.break_at == Some(pos) {
+            let (_, pm) = self.g.progs.iter().find(|(p, _)| *p == Prog::Gelu).unwrap();
+            put_bytes(self.r.mem.writer_mut(), pm.pa, &vec![0; pm.size as usize]);
+        }
+        token_out(&mut self.r, &self.g, self.m, token, pos, first(pos))
+    }
+}
+
+struct CpuCheck<'a> {
+    w: gpu_compute::model::ModelWeights<'a>,
+    c: Caches,
+}
+
+impl TokenCheck for CpuCheck<'_> {
+    fn cpu_logits(&mut self, token: usize, pos: usize) -> GpuResult<Vec<f32>> {
+        model::step_cpu(&self.w, &mut self.c, token, pos)
+    }
+}
+
+fn sim_runner(m: &OwnedModel, break_at: Option<usize>) -> SimRunner<'_> {
+    // Two positions in flight, as the OS sizes it (kronos_gen::push_bytes_with_copy).
+    let push = (2 * kgen::push_bytes_with_copy(m.layers.len()) as u64).next_multiple_of(0x1000);
+    let mut r = rig_with_push(push);
+    let g = upload(&mut r, m);
+    SimRunner {
+        r,
+        g,
+        m,
+        calls: 0,
+        break_at,
+    }
+}
+
+fn small(seed: u32, context: usize) -> OwnedModel {
+    km::test_model(
+        Shape {
+            e: 64,
+            heads: 2,
+            eps: 1e-5,
+        },
+        2,
+        256,
+        context,
+        seed,
+    )
+    .unwrap()
+}
+
+/// 40 greedy tokens in a row: the caches grow by one position each time, every position one fenced submission whose
+/// pushbuffer stretch is given back before the next; every logit vector judged against the CPU; the speed from the
+/// (model's) clock.
+#[test]
+fn continuous_generation_of_40_tokens() {
+    let m = small(7, 64);
+    let mut run = sim_runner(&m, None);
+    let mut check = CpuCheck {
+        w: m.weights(),
+        c: Caches::new(2, 64),
+    };
+    let mut gn = Generation::new(GenPlan::new(&[5, 17, 3], 40, m.vocab, m.context).unwrap());
+    let stop = gn.run(&mut run, Some(&mut check)).clone();
+    assert_eq!(stop, Stop::Gata, "{}", stop.line());
+    assert_eq!(gn.generated().len(), 40);
+    assert_eq!(run.calls, 42);
+    assert_eq!(run.r.wq.push_in_flight(), 0);
+    // The CPU alone, greedy, gives the same 43 tokens.
+    let w = m.weights();
+    let mut c = Caches::new(2, 64);
+    let mut cpu = vec![5, 17, 3];
+    for pos in 0..42 {
+        let l = model::step_cpu(&w, &mut c, cpu[pos], pos).unwrap();
+        if pos + 1 >= cpu.len() {
+            cpu.push(model::argmax(&l).unwrap());
+        }
+    }
+    assert_eq!(gn.seq, cpu);
+    let s = gn.stats();
+    eprintln!(
+        "{} (abaterea maxima {:e})",
+        s.line("SIMULARE"),
+        gn.worst_abs
+    );
+    assert_eq!(s.positions, 42);
+    // The model's clock: 35 launches of 250 µs + methods per position.
+    assert!(s.busy_ns >= 42 * 35 * 250_000 && s.span_ns >= s.busy_ns);
+    assert!(s.per_s_x100().unwrap() > 0);
+}
+
+/// A fault in the middle (a program wiped before position 5): the loop stops at that position, nothing more is
+/// submitted, the tokens made before are kept and are the CPU's. The stretch of the failed submission stays owned by
+/// the "GPU" (`push_in_flight` > 0): giving it back is the recovery's job (C-87 step 3), never a guess here.
+#[test]
+fn generation_stops_cleanly_at_a_fault() {
+    let m = small(7, 64);
+    let mut run = sim_runner(&m, Some(5));
+    let mut gn = Generation::new(GenPlan::new(&[5, 17, 3], 40, m.vocab, m.context).unwrap());
+    let stop = gn.run(&mut run, None).clone();
+    assert!(
+        matches!(stop, Stop::Eroare { pos: 5, .. }),
+        "{}",
+        stop.line()
+    );
+    assert_eq!(run.calls, 6, "nimic trimis dupa eroare");
+    assert_eq!(gn.generated().len(), 3);
+    assert_eq!(gn.next(), None);
+    assert!(run.r.wq.push_in_flight() > 0);
+    let (seq, _) = generate(&m, &[5, 17, 3], 3);
+    assert_eq!(gn.seq, seq);
+}
+
+/// The context is the limit: a 16-position model stops at 16 positions with "context plin", not with an error.
+#[test]
+fn generation_stops_at_a_full_context() {
+    let m = small(3, 16);
+    let mut run = sim_runner(&m, None);
+    let mut gn = Generation::new(GenPlan::new(&[1, 2], 100, m.vocab, m.context).unwrap());
+    assert_eq!(*gn.run(&mut run, None), Stop::ContextPlin);
+    assert_eq!(gn.stats().positions, 16);
+    assert_eq!(run.calls, 16);
+}
+
+/// C-87 step 4: the budget of the test model matches what the rig really mapped (an upper bound, page-rounded).
+#[test]
+fn the_vram_budget_covers_what_is_uploaded() {
+    let m = small(7, 64);
+    let b = VramBudget::of_model(&m).unwrap();
+    let mut r = rig();
+    let before = r.mem.vram_free().0;
+    let _g = upload(&mut r, &m);
+    let used = before - r.mem.vram_free().0;
+    eprintln!("{} ; rig-ul a folosit {} octeti", b.line(2), used);
+    assert!(
+        b.total() >= used,
+        "bugetul {} < folosit {}",
+        b.total(),
+        used
+    );
+    assert!(b.total() < 2 * used);
+    assert!(b.check(before, r.mem.vram_free().1 + used, 0).is_ok());
+}
+
+/// C-87 step 4: the 24-layer path (the 183M model's depth: `16·24 + 3 = 387` launches per position, one pushbuffer
+/// stretch of 15 512 B), narrow (E 128) so the simulation stays quick; 4 positions, every one judged against the CPU.
+/// The real width (768) is covered by `kronos_width_one_token` (1 layer) and the budget by `kronos_gen`'s tests.
+#[test]
+fn a_24_layer_model_on_the_work_channel() {
+    let m = km::test_model(
+        Shape {
+            e: 128,
+            heads: 4,
+            eps: 1e-5,
+        },
+        24,
+        512,
+        32,
+        24,
+    )
+    .unwrap();
+    assert_eq!(km::launches_per_token(24), 387);
+    let mut run = sim_runner(&m, None);
+    let mut check = CpuCheck {
+        w: m.weights(),
+        c: Caches::new(24, 128),
+    };
+    let mut gn = Generation::new(GenPlan::new(&[9, 99], 3, m.vocab, m.context).unwrap());
+    let stop = gn.run(&mut run, Some(&mut check)).clone();
+    assert_eq!(stop, Stop::Gata, "{}", stop.line());
+    assert_eq!(run.calls, 4);
+    eprintln!(
+        "24 straturi: {} (abaterea maxima {:e})",
+        gn.stats().line("SIMULARE"),
+        gn.worst_abs
     );
 }
 

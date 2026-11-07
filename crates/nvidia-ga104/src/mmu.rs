@@ -375,6 +375,12 @@ impl<W: VramWrite> GpuMemory<W> {
         Ok(())
     }
 
+    /// C-87: VRAM still free in the driver's zone, in total and in the longest run
+    /// (what `kronos_gen::VramBudget::check` needs before an upload).
+    pub fn vram_free(&self) -> (u64, u64) {
+        (self.vram.free_bytes(), self.vram.largest_free())
+    }
+
     /// Where a mapped VA lands, from the driver's own bookkeeping.
     pub fn lookup(&self, va: u64) -> Option<u64> {
         self.pages.get(&(va & !(PAGE - 1))).map(|p| p + (va % PAGE))

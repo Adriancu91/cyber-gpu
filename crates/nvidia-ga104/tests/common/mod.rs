@@ -113,6 +113,11 @@ pub struct Rig {
 
 /// Golden image → working client → work channel → compute setup submitted.
 pub fn rig() -> Rig {
+    rig_with_push(0x1000)
+}
+
+/// The rig with a pushbuffer area of `push_bytes` (C-87: 24 layers need 32 KiB for two positions in flight).
+pub fn rig_with_push(push_bytes: u64) -> Rig {
     let mut d = Direct(FakeRm::new());
     let vram = 8u64 << 30;
     let mut mem = GpuMemory::new(64 << 20, vram - (256 << 20), Sim(SimVram::new(vram))).unwrap();
@@ -121,7 +126,7 @@ pub fn rig() -> Rig {
     let cg = open_compute_group(&mut d, &u).unwrap();
     let w = open_work_channel_cleared(&mut d, &mut mem, &u, &cg, &g).unwrap();
     let root = d.0.page_directory(USER_CLIENT, u.vaspace).unwrap().0;
-    let push = mem.alloc_mapped(0x1000, 0x1000).unwrap();
+    let push = mem.alloc_mapped(push_bytes, 0x1000).unwrap();
     let mut wq = WorkQueue::new(&w, push).unwrap();
     let mut buf = [0u32; 16];
     let mut pb = PushBuf::new(&mut buf);
