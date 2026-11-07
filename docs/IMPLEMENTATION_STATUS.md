@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 64 — 7 noiembrie 2026, ~17:45–19:00 (ora României), în cloud, FĂRĂ placă — C-87: generare continuă, recuperare, modelul mare
+## Sesiunea 64 — 7 noiembrie 2026, ~17:45–18:15 (ora României), în cloud, FĂRĂ placă — C-87: generare continuă, recuperare, modelul mare
 
 Pornită de programare. **Comandă nouă: C-87** (Adrian, prin centrul de comandă: „mai mulți pași în simulare până luni”). **Nimic testat pe RTX 3070 Ti.**
 
