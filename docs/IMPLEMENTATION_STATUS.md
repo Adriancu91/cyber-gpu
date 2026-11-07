@@ -1,5 +1,23 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 65 — 7 noiembrie 2026, ~18:00–18:30 (ora României), în cloud, FĂRĂ placă — C-87 pasul 2: un singur program pe simbol
+
+Pornită manual (aceeași programare), cu C-87 ca sarcină. Pașii 1, 3, 4 erau gata din sesiunea 64. **Nimic testat pe RTX 3070 Ti.**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Unealta NAK | Mesa 25.0.7 reconstruit în cloud; `add64` recompilat identic (`a890b75c…`) | PASS |
+| Programul `token.comp` | toată lista unui simbol într-o lansare: G grupuri × 32 fire, barieră pe toată placa între operații; NAK: 43 232 B, 35 registre, 0 memorie locală | COMPILAT, NU RULAT |
+| Partea driverului | `kronos_token`: lista de lucru (256 B pe operație = bufferul constant al lansării separate + operația + grila), bufferul constant, QMD-ul, `groups_for` (SM-urile din GR info) | PASS (teste de unitate) |
+| Comparația cu lansările separate | `gpu-sim::token_on_cpu`; 12 poziții (E 64) și 2 poziții la E 768: logit-uri **bit cu bit** egale cu cele 35 de lansări; generare cu verificarea procesorului; listă stricată refuzată | PASS (SIMULARE — nu arată bariera pe placă) |
+| Compatibilitate OS | doar adăugări | PASS |
+
+Verificări (`sh tools/check.sh`): **415 teste PASS** (4 ignorate), clippy, format, build no_std.
+
+**C-87 (partea GPU) e gata în simulare.** Următorul pas: duminică seara (8 nov) lista exactă pentru fereastra de luni; „un singur program” abia după
+ce lansările separate trec pe placă.
+
+---
 ## Sesiunea 64 — 7 noiembrie 2026, ~17:45–18:15 (ora României), în cloud, FĂRĂ placă — C-87: generare continuă, recuperare, modelul mare
 
 Pornită de programare. **Comandă nouă: C-87** (Adrian, prin centrul de comandă: „mai mulți pași în simulare până luni”). **Nimic testat pe RTX 3070 Ti.**

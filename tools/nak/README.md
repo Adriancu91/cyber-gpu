@@ -151,3 +151,17 @@ Unitățile MUFU sunt aproximative și nedocumentate bit cu bit: stratul se jude
 | Program | Comandă | Ieșire | Operații | SHA-256 `.sm86.sass` |
 |---|---|---|---|---|
 | `embed.comp`: x = rândul simbolului + rândul poziției (ambele Q8_0); rând simbol 0x28, rând poziție 0x30, x 0x38, n 0x40; 256 fire | `build.sh kernel embed 32` | 55 instr., 880 B, 19 registre | `FFMA.FTZ(scara_s, q_s, FMUL.FTZ(scara_p, q_p))` (model bit cu bit: `gpu_compute::model::embed_gpu`) | `b7c4252a457bf9fe3f3708aa13b8d61717d47f4916663c7cf3bc324e55cd3cb0` |
+
+## C-87 pasul 2: `token.comp` — un singur program pe simbol (7 nov 2026, sesiunea 65, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh kernel token 20` (Mesa 25.0.7 reconstruit în cloud; `add64` a ieșit din nou identic, `a890b75c…`).
+
+| Ce | Valoare |
+|---|---|
+| Program | rulează toată lista de operații a unui simbol (195 pentru #513) într-o singură lansare: G grupuri de 32 de fire își împart blocurile fiecărei operații; barieră pe toată placa între operații (contor atomic) |
+| Ieșire | **43 232 octeți** (2 702 instrucțiuni), **35 de registre**, 0 memorie locală, fără `BAR.SYNC` (un singur warp pe grup) |
+| SHA-256 `token.sm86.sass` | `ac1768191f52cb7cbdb6678005b86e68fabf1dd405893fabd2808cf077d8a79c` |
+| Memorie | datele de lucru `coherent` → `ld/st.global.strong.sys` (ocolesc L1); greutățile prin `ld.global.constant`; bariera: `atom.add.strong.sys` + `membar.sc.gpu` |
+| Argumente | listă 0x28, contorul barierei 0x30, număr de operații 0x38 |
+
+**Ce NU e dovedit:** bariera pe toată placa (cere ca toate cele G grupuri să fie pe placă în același timp: G ≤ numărul de SM-uri, 48) și
+coerența memoriei pe RTX 3070 Ti. Modelul din `gpu-sim` execută lista în ordine, deci nu poate arăta o blocare la barieră.

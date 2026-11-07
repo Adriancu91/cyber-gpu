@@ -534,6 +534,211 @@ fn generation_stops_at_a_full_context() {
     assert_eq!(run.calls, 16);
 }
 
+// ------------------------------------------------------------------ C-87 step 2: one program per token, SIMULARE
+
+/// The token through ONE launch of `token.comp` (work list + barrier counter), on its own rig.
+struct OneProgram<'a> {
+    r: Rig,
+    g: Gpu,
+    m: &'a OwnedModel,
+    prog: Mapping,
+    list: Mapping,
+    launch: Mapping,
+    groups: u32,
+    launches_seen: usize,
+    /// Plants an unknown operation number in this entry of the list (after it is written).
+    tamper: Option<usize>,
+}
+
+fn one_program(m: &OwnedModel, groups: u32) -> OneProgram<'_> {
+    use nvidia_ga104::kronos_token as kt;
+    let mut r = rig();
+    let g = upload(&mut r, m);
+    let prog = r.mem.alloc_mapped(kt::TOKEN.len() as u64, 0x1000).unwrap();
+    put_bytes(r.mem.writer_mut(), prog.pa, kt::TOKEN);
+    let list = r
+        .mem
+        .alloc_mapped((kt::ENTRY * g.n) as u64, 0x1000)
+        .unwrap();
+    // cbuf (256) + QMD (256) + the barrier counter (16).
+    let launch = r.mem.alloc_mapped(0x1000, 0x1000).unwrap();
+    OneProgram {
+        r,
+        g,
+        m,
+        prog,
+        list,
+        launch,
+        groups,
+        launches_seen: 0,
+        tamper: None,
+    }
+}
+
+impl TokenRunner for OneProgram<'_> {
+    fn run_token(&mut self, tok: usize, pos: usize) -> GpuResult<TokenOutput> {
+        use gpu_sim::cmdproc::{TOKEN_NEEDS, token_on_cpu};
+        use nvidia_ga104::kronos_token as kt;
+        let (m, g) = (self.m, &self.g);
+        let list = km::token_launches(&m.shape, m.vocab, m.context, &g.vas, tok, pos)?;
+        let w = self.r.mem.writer_mut();
+        put_bytes(w, self.list.pa, &kt::work_list(&list)?);
+        if let Some(k) = self.tamper {
+            put_bytes(
+                w,
+                self.list.pa + (kt::ENTRY * k + kt::ENTRY_OP) as u64,
+                &[9, 0, 0, 0],
+            );
+        }
+        let (cb, qmd, sync) = (self.launch.va, self.launch.va + 256, self.launch.va + 512);
+        put_bytes(
+            w,
+            self.launch.pa,
+            &kt::token_cbuf(self.list.va, sync, list.len())?,
+        );
+        put_bytes(
+            w,
+            self.launch.pa + 256,
+            &kt::token_qmd(self.prog.va, cb, self.groups)?,
+        );
+        put_bytes(w, self.launch.pa + 512, &[0; 16]);
+        put_bytes(w, g.records.pa, &[0; 32]);
+        let first = first(pos);
+        let mut words = vec![0u32; transfer::sequence_words(1)];
+        let mut pb = PushBuf::new(&mut words);
+        transfer::encode_sequence(&mut pb, &[qmd], g.records.va, first)?;
+        let done = (first + 1) as u64;
+        self.r
+            .wq
+            .submit_fenced(self.r.mem.writer_mut(), &words, g.records.va + 16, done)?;
+        let mut programs: Vec<(&[u8], ProgramFn, Needs)> =
+            MODELS.iter().map(|&(p, f, n)| (p.code(), f, n)).collect();
+        programs.push((kt::TOKEN, token_on_cpu, TOKEN_NEEDS));
+        let loads: Vec<(u64, u64)> = g
+            .all
+            .iter()
+            .chain(&g.out)
+            .chain([&g.records, &self.prog, &self.list, &self.launch])
+            .map(span)
+            .collect();
+        let stores: Vec<(u64, u64)> = g
+            .out
+            .iter()
+            .chain([&g.records, &self.launch])
+            .map(span)
+            .collect();
+        let cp = gpu_runs(&mut self.r, &programs, &loads, &stores)?;
+        self.launches_seen += cp
+            .events
+            .iter()
+            .filter(|e| matches!(e, gpu_sim::cmdproc::Event::Launch { .. }))
+            .count();
+        let rec = get_bytes(self.r.mem.writer_mut(), g.records.pa, 32);
+        let d = transfer::analyze_sequence(&rec, 1, first)?;
+        let last = u32::from_le_bytes(rec[16..20].try_into().unwrap()) as u64;
+        self.r.wq.retire(g.records.va + 16, last)?;
+        // The barrier counter after the launch: (operations - 1) · G.
+        let c = get_bytes(self.r.mem.writer_mut(), self.launch.pa + 512, 4);
+        assert_eq!(
+            u32::from_le_bytes(c[..4].try_into().unwrap()),
+            (list.len() as u32 - 1) * self.groups
+        );
+        let fin = g.out.last().unwrap();
+        let time = |k: usize| u64::from_le_bytes(rec[16 * k + 8..16 * k + 16].try_into().unwrap());
+        Ok(TokenOutput {
+            logits: get_bytes(
+                self.r.mem.writer_mut(),
+                fin.pa + 4 * m.shape.e as u64,
+                4 * m.vocab as u64,
+            )
+            .chunks(4)
+            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+            .collect(),
+            start_ns: time(0),
+            end_ns: time(1),
+            busy_ns: d[0],
+        })
+    }
+}
+
+/// One launch per token gives, bit for bit, the logits of the 35 separate launches, position after position, and the
+/// same greedy tokens; the pushbuffer of a token shrinks from 35 launches to 1.
+#[test]
+fn one_program_per_token_equals_the_separate_launches() {
+    let m = small(7, 64);
+    let mut sep = sim_runner(&m, None);
+    let mut one = one_program(&m, 48);
+    let mut seq = vec![5usize, 17, 3];
+    for pos in 0..12 {
+        let a = sep.run_token(seq[pos], pos).unwrap();
+        let b = one.run_token(seq[pos], pos).unwrap();
+        assert!(
+            a.logits
+                .iter()
+                .zip(&b.logits)
+                .all(|(x, y)| x.to_bits() == y.to_bits()),
+            "pozitia {pos}: logit-urile difera"
+        );
+        if pos + 1 >= seq.len() {
+            seq.push(model::argmax(&b.logits).unwrap());
+        }
+    }
+    assert_eq!(one.launches_seen, 12, "o singura lansare pe simbol");
+    assert_eq!(km::launches_per_token(2), 35);
+    assert_eq!(transfer::sequence_words(1), 18);
+    // And as a generation with the CPU check.
+    let mut one = one_program(&m, 7);
+    let mut check = CpuCheck {
+        w: m.weights(),
+        c: Caches::new(2, 64),
+    };
+    let mut gn = Generation::new(GenPlan::new(&[5, 17, 3], 10, m.vocab, m.context).unwrap());
+    assert_eq!(*gn.run(&mut one, Some(&mut check)), Stop::Gata);
+    assert_eq!(gn.seq, seq);
+}
+
+/// The same at Kronos's width (E 768, 12 heads, 1 layer): the widest operations (3072 rows) spread over 48 groups.
+#[test]
+fn one_program_per_token_at_kronos_width() {
+    let m = km::test_model(
+        Shape {
+            e: 768,
+            heads: 12,
+            eps: 1e-5,
+        },
+        1,
+        512,
+        8,
+        9,
+    )
+    .unwrap();
+    let mut sep = sim_runner(&m, None);
+    let mut one = one_program(&m, 48);
+    for (pos, tok) in [42usize, 7].into_iter().enumerate() {
+        let a = sep.run_token(tok, pos).unwrap();
+        let b = one.run_token(tok, pos).unwrap();
+        assert!(
+            a.logits
+                .iter()
+                .zip(&b.logits)
+                .all(|(x, y)| x.to_bits() == y.to_bits())
+        );
+    }
+}
+
+/// A list the program cannot run is refused by the model; `work_list` refuses an empty one before anything is sent.
+#[test]
+fn one_program_refuses_a_bad_list() {
+    use nvidia_ga104::kronos_token as kt;
+    let m = small(7, 64);
+    let mut one = one_program(&m, 4);
+    assert!(one.run_token(5, 0).is_ok());
+    // An unknown operation number in entry 3: the model stops, the launch's record never comes, no logits.
+    one.tamper = Some(3);
+    assert!(one.run_token(17, 1).is_err());
+    assert!(kt::work_list(&[]).is_err());
+}
+
 /// C-87 step 4: the budget of the test model matches what the rig really mapped (an upper bound, page-rounded).
 #[test]
 fn the_vram_budget_covers_what_is_uploaded() {

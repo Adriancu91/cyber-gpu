@@ -1309,6 +1309,67 @@ pub fn embed_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// C-87 step 2: what `token.comp` (one program per token) needs: the attention's 2 176 B of shared memory.
+pub const TOKEN_NEEDS: Needs = Needs {
+    shared_bytes: 4 * (512 + 32),
+    barriers: 0,
+};
+
+/// C-87 step 2: `token.comp` — list 0x28, sync 0x30, n 0x38; G workgroups of 32. The model walks the work list (256 B
+/// per operation: operation at 0x20, grid at 0x24, arguments from 0x28) and runs each operation through the SAME model
+/// as its separate launch, with the separate launch's block size; between operations it adds G to the barrier
+/// counter, as the G workgroups would. It shows the list and its arguments are right; it does NOT model the grid
+/// barrier's timing or coherence on a real SM (one operation is finished before the next starts, by construction).
+pub fn token_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [32, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 || l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad("SIM: token cere blocuri de 32x1x1, grila 1D, baza 0"));
+    }
+    let (list, sync) = (
+        l.mem.read_u64(l.cbuf0 + 0x28)?,
+        l.mem.read_u64(l.cbuf0 + 0x30)?,
+    );
+    let n = l.mem.read_u32(l.cbuf0 + 0x38)? as u64;
+    if n == 0 {
+        return Err(bad("SIM: token fara operatii"));
+    }
+    if l.mem.read_u32(sync)? != 0 {
+        return Err(bad(
+            "SIM: token: contorul barierei nu a fost golit inainte de lansare",
+        ));
+    }
+    const OPS: [(ProgramFn, u32); 7] = [
+        (copy_b128_on_cpu, 256),
+        (q8_matvec_on_cpu, 32),
+        (vadd_on_cpu, 256),
+        (layernorm_on_cpu, 32),
+        (attention_on_cpu, 32),
+        (gelu_on_cpu, 256),
+        (embed_on_cpu, 256),
+    ];
+    let g = l.grid[0];
+    for k in 0..n {
+        let e = list + 256 * k;
+        let op = l.mem.read_u32(e + 0x20)? as usize;
+        let grid = l.mem.read_u32(e + 0x24)?;
+        let &(run, block) = OPS
+            .get(op)
+            .ok_or(bad("SIM: token: operatie necunoscuta in lista"))?;
+        if grid == 0 {
+            return Err(bad("SIM: token: operatie cu grila 0"));
+        }
+        run(&mut Launch {
+            mem: l.mem,
+            cbuf0: e,
+            grid: [grid, 1, 1],
+            block: [block, 1, 1],
+        })?;
+        if k + 1 < n {
+            l.mem.write_u32(sync, (k as u32 + 1) * g);
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

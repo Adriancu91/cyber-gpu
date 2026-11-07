@@ -1,0 +1,235 @@
+// C-87 step 2: "one program per token" — ONE launch runs the whole launch list of a token (embed, every layer, final
+// LayerNorm, logits: 16·layers + 3 operations), instead of one launch per operation.
+//
+// The list (written by the driver, 256 bytes per operation) is the same as the separate launches' constant buffers:
+// arguments from byte 0x28 in the same layout, plus at 0x20 the operation (0 copy, 1 q8_matvec, 2 vadd, 3 layernorm,
+// 4 attention, 5 gelu, 6 embed = `kronos_layer::PROGRAMS` order) and at 0x24 its grid (the blocks it had as a launch).
+// Every workgroup (32 threads, one warp) takes the operation's blocks vb = wg, wg + G, ... (G = workgroups of this
+// launch) and runs, for each, EXACTLY the body of the separate program with that block number; 256-thread programs
+// (copy, vadd, gelu, embed) do their 256 elements in 8 rounds of 32 — the same operation per element, so the results
+// are those of the separate launches.
+//
+// Between two operations: a grid barrier. Thread 0 of every workgroup adds 1 to the counter at `sync` (cleared by the
+// driver before the launch) and waits until it reaches k·G; the others wait at the workgroup barrier. This is only
+// correct if ALL G workgroups are on the GPU at once (G ≤ number of SMs: 48 on the RTX 3070 Ti, one 32-thread
+// workgroup with 2 176 B of shared memory each) — the driver chooses G. Data written by one workgroup and read by
+// another after the barrier goes through `coherent` buffers (L2, not the SM's L1).
+//
+// Push constants: list 0x28, sync 0x30, n (operations) 0x38.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Words { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) coherent buffer F { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) coherent buffer C { uvec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) coherent buffer Sync { uint v[]; };
+layout(push_constant) uniform Args { Words list; Sync sync; uint n; } args;
+
+shared float sc[512];
+shared float parts[32];
+
+uint E;        // word index of the current entry in the list
+uint w(uint k) { return args.list.v[E + k]; }
+uint64_t a(uint i) { return uint64_t(w(10u + 2u * i)) | (uint64_t(w(11u + 2u * i)) << 32); }
+// the first 32-bit argument after `na` addresses
+uint u(uint na, uint i) { return w(10u + 2u * na + i); }
+float f(uint na, uint i) { return uintBitsToFloat(u(na, i)); }
+
+float tree_sum(float v, uint t) {
+    parts[t] = v;
+    barrier();
+    for (uint s = 16u; s > 0u; s >>= 1u) {
+        if (t < s) {
+            parts[t] = parts[t] + parts[t + s];
+        }
+        barrier();
+    }
+    float r = parts[0];
+    barrier();
+    return r;
+}
+
+void op_copy(uint vb, uint t) {
+    C src = C(a(0u)); C dst = C(a(1u)); uint n = u(2u, 0u);
+    for (uint j = 0u; j < 8u; j++) {
+        uint i = vb * 256u + j * 32u + t;
+        if (i < n) dst.v[i] = src.v[i];
+    }
+}
+
+void op_q8_matvec(uint row, uint t) {
+    Words wt = Words(a(0u)); F x = F(a(1u)); F y = F(a(2u));
+    uint rows = u(3u, 0u), blocks = u(3u, 1u);
+    float part = 0.0;
+    if (row < rows) {
+        uint base = row * blocks * 9u;
+        for (uint b = t; b < blocks; b += 32u) {
+            uint wb = base + b * 9u;
+            float scale = uintBitsToFloat(wt.v[wb]);
+            float s = 0.0;
+            for (uint k = 0u; k < 8u; k++) {
+                int q4 = int(wt.v[wb + 1u + k]);
+                uint xi = b * 32u + k * 4u;
+                for (uint j = 0u; j < 4u; j++) {
+                    float q = float(bitfieldExtract(q4, int(8u * j), 8));
+                    s += q * x.v[xi + j];
+                }
+            }
+            part += scale * s;
+        }
+    }
+    parts[t] = part;
+    barrier();
+    for (uint stride = 16u; stride > 0u; stride >>= 1u) {
+        if (t < stride) {
+            parts[t] = parts[t] + parts[t + stride];
+        }
+        barrier();
+    }
+    if (t == 0u && row < rows) {
+        y.v[row] = parts[0];
+    }
+    barrier();
+}
+
+void op_vadd(uint vb, uint t) {
+    F pa = F(a(0u)); F pb = F(a(1u)); F pc = F(a(2u)); uint n = u(3u, 0u);
+    for (uint j = 0u; j < 8u; j++) {
+        uint i = vb * 256u + j * 32u + t;
+        if (i < n) pc.v[i] = pa.v[i] + pb.v[i];
+    }
+}
+
+void op_layernorm(uint t) {
+    F x = F(a(0u)); F g = F(a(1u)); F b = F(a(2u)); F y = F(a(3u));
+    uint n = u(4u, 0u); float inv_n = f(4u, 1u); float eps = f(4u, 2u);
+    float s = 0.0;
+    for (uint i = t; i < n; i += 32u) {
+        s += x.v[i];
+    }
+    float mean = tree_sum(s, t) * inv_n;
+    float q = 0.0;
+    for (uint i = t; i < n; i += 32u) {
+        float d = x.v[i] - mean;
+        q += d * d;
+    }
+    float inv = inversesqrt(tree_sum(q, t) * inv_n + eps);
+    for (uint i = t; i < n; i += 32u) {
+        y.v[i] = (x.v[i] - mean) * inv * g.v[i] + b.v[i];
+    }
+}
+
+void op_attention(uint h, uint t) {
+    F q = F(a(0u)); F kc = F(a(1u)); F vc = F(a(2u)); F o = F(a(3u));
+    uint n_pos = u(4u, 0u), n_emb = u(4u, 1u), d = u(4u, 2u); float scale = f(4u, 3u);
+    uint base = h * d;
+    float m = -3.402823466e38;
+    for (uint s = t; s < n_pos; s += 32u) {
+        float dot = 0.0;
+        for (uint c = 0u; c < d; c++) {
+            dot += q.v[base + c] * kc.v[s * n_emb + base + c];
+        }
+        float v = dot * scale;
+        sc[s] = v;
+        m = max(m, v);
+    }
+    parts[t] = m;
+    barrier();
+    for (uint st = 16u; st > 0u; st >>= 1u) {
+        if (t < st) {
+            parts[t] = max(parts[t], parts[t + st]);
+        }
+        barrier();
+    }
+    m = parts[0];
+    barrier();
+    float sum = 0.0;
+    for (uint s = t; s < n_pos; s += 32u) {
+        float e = exp(sc[s] - m);
+        sc[s] = e;
+        sum += e;
+    }
+    parts[t] = sum;
+    barrier();
+    for (uint st = 16u; st > 0u; st >>= 1u) {
+        if (t < st) {
+            parts[t] = parts[t] + parts[t + st];
+        }
+        barrier();
+    }
+    float inv = 1.0 / parts[0];
+    barrier();
+    for (uint c = t; c < d; c += 32u) {
+        float acc = 0.0;
+        for (uint s = 0u; s < n_pos; s++) {
+            acc += sc[s] * vc.v[s * n_emb + base + c];
+        }
+        o.v[base + c] = acc * inv;
+    }
+    barrier();
+}
+
+void op_gelu(uint vb, uint t) {
+    F px = F(a(0u)); F py = F(a(1u)); uint n = u(2u, 0u);
+    for (uint j = 0u; j < 8u; j++) {
+        uint i = vb * 256u + j * 32u + t;
+        if (i < n) {
+            float x = px.v[i];
+            float z = x * 0.70710678118654752;
+            float aa = abs(z);
+            float tt = 1.0 / (1.0 + 0.3275911 * aa);
+            float p = tt * (0.254829592 + tt * (-0.284496736 + tt * (1.421413741 + tt * (-1.453152027 + tt * 1.061405429))));
+            float e = 1.0 - p * exp(-aa * aa);
+            float erf = z < 0.0 ? -e : e;
+            py.v[i] = 0.5 * x * (1.0 + erf);
+        }
+    }
+}
+
+float q8_value(Words row, uint i) {
+    uint b = i / 32u, j = i % 32u;
+    float s = uintBitsToFloat(row.v[b * 9u]);
+    int q4 = int(row.v[b * 9u + 1u + j / 4u]);
+    return s * float(bitfieldExtract(q4, int(8u * (j % 4u)), 8));
+}
+
+void op_embed(uint vb, uint t) {
+    Words tok = Words(a(0u)); Words pos = Words(a(1u)); F x = F(a(2u)); uint n = u(3u, 0u);
+    for (uint j = 0u; j < 8u; j++) {
+        uint i = vb * 256u + j * 32u + t;
+        if (i < n) x.v[i] = q8_value(tok, i) + q8_value(pos, i);
+    }
+}
+
+void grid_sync(uint k, uint t) {
+    memoryBarrierBuffer();
+    barrier();
+    if (t == 0u) {
+        atomicAdd(args.sync.v[0], 1u);
+        uint target = k * gl_NumWorkGroups.x;
+        while (atomicAdd(args.sync.v[0], 0u) < target) {
+        }
+    }
+    barrier();
+    memoryBarrierBuffer();
+}
+
+void main() {
+    uint t = gl_LocalInvocationID.x;
+    uint g = gl_NumWorkGroups.x;
+    for (uint k = 0u; k < args.n; k++) {
+        E = k * 64u;
+        uint op = w(8u), grid = w(9u);
+        for (uint vb = gl_WorkGroupID.x; vb < grid; vb += g) {
+            if (op == 0u) op_copy(vb, t);
+            else if (op == 1u) op_q8_matvec(vb, t);
+            else if (op == 2u) op_vadd(vb, t);
+            else if (op == 3u) op_layernorm(t);
+            else if (op == 4u) op_attention(vb, t);
+            else if (op == 5u) op_gelu(vb, t);
+            else if (op == 6u) op_embed(vb, t);
+        }
+        if (k + 1u < args.n) grid_sync(k + 1u, t);
+    }
+}

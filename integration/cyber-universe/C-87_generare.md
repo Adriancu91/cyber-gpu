@@ -69,3 +69,11 @@ cu `FakeRm` + spațiu de configurare simulat, după defectul de la poziția 5: g
 
 Ce ar trebui în OS (decizia voastră): în `gpu lant`, la orice eroare după I10, `recover` înainte de pasul de curățenie;
 paginile din `Carantina` scoase din alocator până la repornire; un `gpu lant` nou refuzat după `DoarDupaRepornire`.
+
+# C-87 pasul 2 — un singur program pe simbol (pregătit, nu pentru fereastra de luni)
+
+**Doar SIMULARE + compilat cu NAK.** Adăugări: `kronos_token` (`TOKEN`, `work_list`, `token_cbuf`, `token_qmd`, `groups_for`), în `gpu-sim`
+`token_on_cpu` + `TOKEN_NEEDS`. O poziție = o singură lansare (18 cuvinte de pushbuffer în loc de 1 968 pentru #513); logit-urile ies **bit cu bit**
+ca la lansările separate (testat pe 12 poziții, E 64, și la lățimea lui Kronos, E 768). Pe placă: abia după ce lansările separate trec, cu
+recuperarea (pasul 3) gata — dacă `G` ar fi prea mare, bariera s-ar putea bloca. Driverul alege `G = groups_for(gr_info.shape, ...)` (48 pe 3070 Ti).
+Contorul barierei (un u32) trebuie golit înainte de fiecare lansare. Propunerea noastră: **luni NU**, întâi lansările separate.
