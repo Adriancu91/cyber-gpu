@@ -1,5 +1,18 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 66 — 7 noiembrie 2026, ~19:30 (ora României), în cloud, FĂRĂ placă — oprire scurtă
+
+Pornită de programare. C-87 (partea GPU) era gata din sesiunea 65; nicio comandă nouă pentru cyber-gpu (ultima nouă: C-88 la Kronos), niciun jurnal nou de pe placă,
+nicio întrebare nouă de la OS (`stare/cyber-universe.md`: „nimic nou de cerut acum”). CI verde pe `ed75615`. **Nimic testat pe RTX 3070 Ti.**
+Verificare locală (`sh tools/check.sh`, Rust 1.97.0): **415 teste PASS** (4 ignorate), clippy, format, build no_std PASS.
+
+| Pas | Rezultat |
+|---|---|
+| Lucru nou | NOT TESTED — nu există pas nou fără placă |
+
+**Următorul pas:** duminică seara (8 nov) lista exactă pentru fereastra de luni (C-83/C-87).
+
+---
 ## Sesiunea 65 — 7 noiembrie 2026, ~18:00–18:30 (ora României), în cloud, FĂRĂ placă — C-87 pasul 2: un singur program pe simbol
 
 Pornită manual (aceeași programare), cu C-87 ca sarcină. Pașii 1, 3, 4 erau gata din sesiunea 64. **Nimic testat pe RTX 3070 Ti.**
