@@ -1,5 +1,21 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 69 — 8 noiembrie 2026, ~13:30 (ora României), în cloud, FĂRĂ placă — oprire scurtă
+
+Pornită de programare. Nicio comandă nouă pentru cyber-gpu, niciun jurnal nou de pe placă; lista OS pentru luni (P6-63) se face abia diseară,
+deci lista finală GPU așteaptă. **Nimic testat pe RTX 3070 Ti.**
+CI GitHub: rularea pe `c186f79` repornită acum → pică iar în 3 s, fără niciun pas rulat și fără jurnal (joburile nu primesc mașină: `runner_id 0`).
+E o problemă a contului/GitHub, nu a codului (codul e același care a trecut pe `25566e5`). Motivul exact se vede doar pe pagina Actions a repo-ului.
+Verificare locală (`sh tools/check.sh`, Rust 1.97.0): format, clippy, **416 teste PASS** (4 ignorate), build no_std PASS.
+
+| Pas | Rezultat |
+|---|---|
+| Lucru nou | NOT TESTED — nu există pas nou fără placă și fără lista OS |
+| CI GitHub | BLOCKED (joburile nu pornesc; local PASS) |
+
+**Următorul pas:** diseară, după P6-63 al OS-ului — lista finală în hub (`stare/cyber-gpu.md`); luni, după fereastră: `verifica_jurnal_lant` pe jurnal.
+
+---
 ## Sesiunea 68 — 8 noiembrie 2026, ~07:30–08:00 (ora României), în cloud, FĂRĂ placă — C-83: verificarea jurnalului pentru fereastra de luni
 
 Pornită de programare. Nicio comandă nouă, niciun jurnal nou de pe placă. **Nimic testat pe RTX 3070 Ti.**
