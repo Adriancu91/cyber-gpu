@@ -1,6 +1,7 @@
 //! C-71: checks the stick journal of a whole `gpu lant` window
 //! (`WINDOW_CHAIN_FULL`: I6 → I7 → I8 → golden → I9 → I10 → launch cost →
-//! Bus Master back → tour), step by step. Host tool, reads text only, never
+//! Bus Master back → tour), step by step. C-83: a journal with I11–I14
+//! steps is checked against `WINDOW_CHAIN_C83` (chosen from the journal). Host tool, reads text only, never
 //! a board.
 //!
 //!   cargo run --release -p nvidia-ga104 --example verifica_jurnal_lant -- <gpu-jurnal.txt> <adresa_GspFwWprMeta> [apeluri_rm] [frts_start frts_end]
@@ -11,7 +12,10 @@
 //! Exit code: 0 = TRECE, 3 = stopped cleanly at a step (Bus Master put back),
 //! 2 = to analyse, 1 = usage / file error.
 
-use nvidia_ga104::chain_log::{ChainVerdict, check_chain_journal, step_ids};
+use nvidia_ga104::chain::WINDOW_CHAIN_C83;
+use nvidia_ga104::chain_log::{
+    ChainVerdict, chain_for_journal, check_chain_journal_for, step_ids_for,
+};
 
 fn hex(s: &str) -> Option<u64> {
     u64::from_str_radix(s.trim_start_matches("0x"), 16).ok()
@@ -52,13 +56,20 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let r = check_chain_journal(&text, frts, meta, rm_calls);
+    let chain = chain_for_journal(&text);
+    let r = check_chain_journal_for(chain, &text, frts, meta, rm_calls);
     println!("jurnal: {}", a[0]);
+    let name = if step_ids_for(chain) == step_ids_for(WINDOW_CHAIN_C83) {
+        "C-83 (I6 -> I14)"
+    } else {
+        "complet (I6 -> I10)"
+    };
+    println!("lantul: {name}, {} pasi", chain.len());
     println!(
         "FRTS asteptat: {:#x}..{:#x}; GspFwWprMeta: {meta:#x}",
         frts.0, frts.1
     );
-    for id in step_ids() {
+    for id in step_ids_for(chain) {
         match r.step(id) {
             None => println!("  {id}: nu e in jurnal"),
             Some(s) => {
@@ -100,7 +111,7 @@ fn main() {
             r.rm_doorbells
         ),
     }
-    match r.verdict() {
+    match r.verdict_for(chain) {
         ChainVerdict::Passed => println!("verdict: TRECE"),
         ChainVerdict::StoppedCleanly(at) => {
             println!("verdict: OPRIT CURAT la {at} (Bus Master pus la loc)");

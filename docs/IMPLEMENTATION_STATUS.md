@@ -1,5 +1,23 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 68 — 8 noiembrie 2026, ~07:30–08:00 (ora României), în cloud, FĂRĂ placă — C-83: verificarea jurnalului pentru fereastra de luni
+
+Pornită de programare. Nicio comandă nouă, niciun jurnal nou de pe placă. **Nimic testat pe RTX 3070 Ti.**
+Golul găsit: unealta `verifica_jurnal_lant` știa doar lanțul până la I10 (13 pași); luni OS-ul rulează lanțul C-83 (17 pași, cu I11–I14) → jurnalul
+de luni ar fi ieșit „DE ANALIZAT: pas necunoscut” fără să fie ceva greșit. CI: rularea pe `0e86d1a` picase în 2 s fără jurnal (mașina GitHub, nu codul) → repornită.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Verificarea jurnalului C-83 | `chain_log::check_chain_journal_for(lant, …)`, `ChainJournal::verdict_for(lant)`, `chain_for_journal(text)` (alege C-83 dacă jurnalul are pași I11–I14), `step_ids_for`; mesajul pentru o scriere străină numește pasul (nu mai spune „I10” la I11–I14) | PASS (T107, SIMULARE — text) |
+| Unealta | `verifica_jurnal_lant` tipărește „lantul: C-83 (I6 -> I14), 17 pasi” și judecă după lanțul ales; pe jurnalul real din 5 nov dă același verdict ca înainte | PASS |
+| Lista pentru luni (partea GPU) | `docs/FEREASTRA_C-83.md`: cei 17 pași, scrierile noi la fiecare, ce înseamnă „trece”, unealta de după | scris |
+| Compatibilitate OS | doar adăugări (`check_chain_journal`, `verdict`, `step_ids` neschimbate) | PASS |
+
+Verificări (`sh tools/check.sh`, Rust 1.97.0): format, clippy `-D warnings`, **416 teste PASS** (4 ignorate), build no_std PASS.
+
+**Următorul pas:** duminică seara — lista finală în hub (`stare/cyber-gpu.md`), după ce OS-ul o scrie pe a lui (P6-63); luni, după fereastră: `verifica_jurnal_lant` pe jurnal.
+
+---
 ## Sesiunea 67 — 8 noiembrie 2026, ~01:30 (ora României), în cloud, FĂRĂ placă — oprire scurtă
 
 Pornită de programare. Nicio comandă nouă pentru cyber-gpu (ultima: C-88 la Kronos), niciun jurnal nou de pe placă, nicio întrebare nouă de la OS

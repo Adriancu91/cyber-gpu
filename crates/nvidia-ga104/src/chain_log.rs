@@ -42,7 +42,7 @@ use alloc::vec::Vec;
 
 use gpu_core::diag::Event;
 
-use crate::chain::{ChainStep, WINDOW_CHAIN_FULL};
+use crate::chain::{ChainStep, WINDOW_CHAIN_C83, WINDOW_CHAIN_FULL};
 use crate::i6_log::{self, I6Summary};
 
 /// `NV_PGSP_QUEUE_HEAD(0)`: the GSP doorbell (570.144 `dev_gsp.h`, MIT).
@@ -126,7 +126,14 @@ impl ChainJournal {
         self.steps.iter().find(|s| s.id == id)
     }
 
+    /// The verdict against [`WINDOW_CHAIN_FULL`] (the chain until I10).
     pub fn verdict(&self) -> ChainVerdict {
+        self.verdict_for(WINDOW_CHAIN_FULL)
+    }
+
+    /// C-83: the verdict against `chain` — the chain the journal was checked
+    /// with ([`check_chain_journal_for`]), e.g. [`WINDOW_CHAIN_C83`].
+    pub fn verdict_for(&self, chain: &[ChainStep]) -> ChainVerdict {
         if let Some(p) = self.problems.first() {
             return ChainVerdict::ToAnalyse(p.clone());
         }
@@ -139,13 +146,13 @@ impl ChainJournal {
         }
         let failed: Vec<&StepLog> = self.steps.iter().filter(|s| !s.ok).collect();
         if failed.is_empty() {
-            return if self.steps.len() == WINDOW_CHAIN_FULL.len() {
+            return if self.steps.len() == chain.len() {
                 ChainVerdict::Passed
             } else {
                 ChainVerdict::ToAnalyse(format!(
                     "lipsesc pasi: {} din {} in jurnal",
                     self.steps.len(),
-                    WINDOW_CHAIN_FULL.len()
+                    chain.len()
                 ))
             };
         }
@@ -156,7 +163,7 @@ impl ChainJournal {
             .position(|s| s.id == first.id)
             .unwrap_or(0);
         for s in &self.steps[at + 1..] {
-            if !chain_step(&s.id).is_some_and(|c| c.cleanup) {
+            if !chain_step(chain, &s.id).is_some_and(|c| c.cleanup) {
                 return ChainVerdict::ToAnalyse(format!(
                     "pasul {} a rulat dupa oprirea de la {}",
                     s.id, first.id
@@ -176,8 +183,27 @@ impl ChainJournal {
     }
 }
 
-fn chain_step(id: &str) -> Option<&'static ChainStep> {
-    WINDOW_CHAIN_FULL.iter().find(|s| s.id == id)
+fn chain_step<'a>(chain: &'a [ChainStep], id: &str) -> Option<&'a ChainStep> {
+    chain.iter().find(|s| s.id == id)
+}
+
+/// C-83: the chain a stick journal comes from — [`WINDOW_CHAIN_C83`] if any
+/// of its `pas` lines is a step only that chain has (I11–I14), otherwise
+/// [`WINDOW_CHAIN_FULL`]. Order and completeness are still checked by
+/// [`check_chain_journal_for`] against the chain returned here.
+pub fn chain_for_journal(text: &str) -> &'static [ChainStep] {
+    let only_c83 = |id: &str| {
+        chain_step(WINDOW_CHAIN_C83, id).is_some() && chain_step(WINDOW_CHAIN_FULL, id).is_none()
+    };
+    if text
+        .lines()
+        .filter_map(parse_step)
+        .any(|(id, _)| only_c83(id))
+    {
+        WINDOW_CHAIN_C83
+    } else {
+        WINDOW_CHAIN_FULL
+    }
 }
 
 /// Checks a whole `gpu lant` stick journal. `frts` is the FRTS region the OS
@@ -185,6 +211,19 @@ fn chain_step(id: &str) -> Option<&'static ChainStep> {
 /// `rm_calls` the number of RM calls the OS printed for golden + I9, if known
 /// (then the doorbells must match it exactly). Pure text processing.
 pub fn check_chain_journal(
+    text: &str,
+    frts: (u64, u64),
+    wpr_meta_addr: u64,
+    rm_calls: Option<u32>,
+) -> ChainJournal {
+    check_chain_journal_for(WINDOW_CHAIN_FULL, text, frts, wpr_meta_addr, rm_calls)
+}
+
+/// C-83: [`check_chain_journal`] against any window chain (e.g.
+/// [`WINDOW_CHAIN_C83`], the window of 9 Nov with I11–I14); judge the result
+/// with [`ChainJournal::verdict_for`] and the same chain.
+pub fn check_chain_journal_for(
+    chain: &[ChainStep],
     text: &str,
     frts: (u64, u64),
     wpr_meta_addr: u64,
@@ -201,14 +240,14 @@ pub fn check_chain_journal(
     let mut seg: Vec<Event> = Vec::new();
     // Everything up to the current segment (for the WPR2 read-back).
     let mut all: Vec<Event> = Vec::new();
-    let mut next = 0usize; // index in WINDOW_CHAIN_FULL
+    let mut next = 0usize; // index in `chain`
     let mut command_before: Option<u32> = None;
     // The VRAM window register: (value before the first move, last value written).
     let mut window: Option<(u32, u32)> = None;
     for line in text.lines() {
         if let Some((id, ok)) = parse_step(line) {
-            let Some(pos) = WINDOW_CHAIN_FULL[next..].iter().position(|s| s.id == id) else {
-                out.problems.push(if chain_step(id).is_some() {
+            let Some(pos) = chain[next..].iter().position(|s| s.id == id) else {
+                out.problems.push(if chain_step(chain, id).is_some() {
                     format!("pasul {id} in alta ordine sau de doua ori")
                 } else {
                     format!("pas necunoscut in lant: {id}")
@@ -216,7 +255,7 @@ pub fn check_chain_journal(
                 seg.clear();
                 continue;
             };
-            let step = &WINDOW_CHAIN_FULL[next + pos];
+            let step = &chain[next + pos];
             next += pos + 1;
             let log = check_step(
                 step,
@@ -406,7 +445,7 @@ fn check_step(
             | "i14-simbol" => bar0
                 .iter()
                 .find(|&&(o, _)| o != WORK_DOORBELL && !is_vram_window(o))
-                .map(|&(o, _)| format!("scriere neasteptata in I10 la {o:#x}")),
+                .map(|&(o, _)| format!("scriere neasteptata in {} la {o:#x}", step.id)),
             _ => None,
         }
     };
@@ -513,6 +552,11 @@ fn rm_calls(ok: bool, bar0: &[(u64, u32)], bells: u32) -> Option<String> {
 /// The window chain's step ids, in order (for tools that print a table).
 pub fn step_ids() -> Vec<&'static str> {
     WINDOW_CHAIN_FULL.iter().map(|s| s.id).collect()
+}
+
+/// C-83: the step ids of `chain`, in order.
+pub fn step_ids_for(chain: &[ChainStep]) -> Vec<&'static str> {
+    chain.iter().map(|s| s.id).collect()
 }
 
 #[cfg(test)]

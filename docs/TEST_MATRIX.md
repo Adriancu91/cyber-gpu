@@ -1,5 +1,11 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 68 (8 nov 2026, cloud, fără placă) — C-83: verificarea jurnalului pentru fereastra de luni
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T107 | Jurnalul unei ferestre C-83 (I6 → I14, 17 pași; construit din fereastra simulată + accesele pe care le fac I11–I14: fereastra VRAM mutată și pusă la loc, soneria de lucru) citit cu `check_chain_journal_for(WINDOW_CHAIN_C83)`; lanțul ales singur din jurnal (`chain_for_journal`); greșeli: o scriere în `0x110040` la I12, I14 rulat după ce I13 a eșuat, oprire curată la I13 | `cargo test -p nvidia-ga104 --lib c83_window_journal` | TRECE pe jurnalul corect; verdictul vechi (până la I10) nu-l acceptă; scrierea străină numită cu pasul ei; „a rulat după oprirea”; „OPRIT CURAT la i13-strat” | conform | PASS (SIMULARE — text, nu placă) |
+
 ## Rezultate — sesiunea 58 (6 nov 2026, cloud, fără placă) — C-83: I13 (un strat Kronos întreg) și I14 (un simbol întreg)
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |

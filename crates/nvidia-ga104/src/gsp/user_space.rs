@@ -2265,6 +2265,103 @@ mod tests {
         assert!(why.contains("LibOS"), "{why}");
     }
 
+    /// C-83 (T107): the journal checker knows the window of 9 Nov. A stick
+    /// journal with I11–I14 (made here from the simulated full window: each
+    /// new step gets the accesses I11–I14 make on the board — VRAM window
+    /// moved and put back, work doorbell) is read against `WINDOW_CHAIN_C83`:
+    /// TRECE; the old verdict (chain until I10) would not accept it; a
+    /// register outside the list in I12, a step run after a failure and a
+    /// clean stop at I13 are each told apart. SIMULARE (text, not a board).
+    #[test]
+    fn c83_window_journal_checks_step_by_step() {
+        use crate::chain::{WINDOW_CHAIN_C83, WINDOW_CHAIN_FULL};
+        use crate::chain_log::{
+            ChainVerdict, chain_for_journal, check_chain_journal_for, step_ids_for,
+        };
+        use alloc::string::String;
+        let w = full_window(true);
+        assert!(w.report.all_passed(), "{}", w.report);
+        assert_eq!(
+            step_ids_for(chain_for_journal(&w.journal_text)),
+            step_ids_for(WINDOW_CHAIN_FULL)
+        );
+        let lines: Vec<&str> = w.journal_text.lines().collect();
+        let at = |id: &str| {
+            lines
+                .iter()
+                .position(|l| *l == alloc::format!("pas {id}: ok"))
+                .unwrap()
+        };
+        // What I11–I14 do on the board (as I10): move the VRAM window to
+        // write/read buffers, put it back, ring the work doorbell.
+        let body = [
+            "bar0 w 0x001700: 0x00000000 <- 0x01f40000 => 0x01f40000",
+            "bar0 w 0x001700: 0x01f40000 <- 0x00000000 => 0x00000000",
+            "bar0 w 0xbb0090: 0x00000000 <- 0x00000005 => 0x00000000",
+        ];
+        let cost = at("i10-cost-lansare");
+        // `marks` = the result line of each new step ("ok"/"ESEC"/None = absent).
+        let build = |marks: [Option<&str>; 4], extra: Option<&str>| {
+            let mut v: Vec<String> = lines[..=cost].iter().map(|l| (*l).into()).collect();
+            let ids = ["i11-copiere", "i12-q8-matvec", "i13-strat", "i14-simbol"];
+            for (id, m) in ids.iter().zip(marks) {
+                let Some(m) = m else { continue };
+                v.extend(body.iter().map(|l| String::from(*l)));
+                if *id == "i12-q8-matvec"
+                    && let Some(x) = extra
+                {
+                    v.push(x.into());
+                }
+                v.push(alloc::format!("pas {id}: {m}"));
+            }
+            v.extend(lines[cost + 1..].iter().map(|l| String::from(*l)));
+            v.join("\n")
+        };
+        let check = |t: &str| {
+            let c = chain_for_journal(t);
+            assert_eq!(step_ids_for(c), step_ids_for(WINDOW_CHAIN_C83));
+            check_chain_journal_for(c, t, w.frts, w.wpr_meta, Some(w.rpc_bells))
+        };
+        // 1. The whole C-83 window: every step conform, TRECE.
+        let ok = build([Some("ok"); 4], None);
+        let r = check(&ok);
+        assert_eq!(
+            r.verdict_for(WINDOW_CHAIN_C83),
+            ChainVerdict::Passed,
+            "{r:?}"
+        );
+        assert_eq!(r.steps.len(), WINDOW_CHAIN_C83.len());
+        assert_eq!(step_ids_for(WINDOW_CHAIN_C83).len(), 17);
+        assert!(r.step("i14-simbol").unwrap().work_doorbells > 0);
+        assert!(!matches!(r.verdict(), ChainVerdict::Passed));
+        // 2. A write outside the VRAM window / work doorbell in I12.
+        let bad = build(
+            [Some("ok"); 4],
+            Some("bar0 w 0x110040: 0x00000000 <- 0x00000001 => 0x00000001"),
+        );
+        match check(&bad).verdict_for(WINDOW_CHAIN_C83) {
+            ChainVerdict::ToAnalyse(why) => {
+                assert!(
+                    why.contains("i12-q8-matvec") && why.contains("0x110040"),
+                    "{why}"
+                )
+            }
+            v => panic!("{v:?}"),
+        }
+        // 3. I13 failed and I14 still ran: not a clean stop.
+        let t = build([Some("ok"), Some("ok"), Some("ESEC"), Some("ok")], None);
+        match check(&t).verdict_for(WINDOW_CHAIN_C83) {
+            ChainVerdict::ToAnalyse(why) => assert!(why.contains("dupa oprirea"), "{why}"),
+            v => panic!("{v:?}"),
+        }
+        // 4. I13 failed, I14 skipped, cleanup ran: stopped cleanly at I13.
+        let t = build([Some("ok"), Some("ok"), Some("ESEC"), None], None);
+        assert_eq!(
+            check(&t).verdict_for(WINDOW_CHAIN_C83),
+            ChainVerdict::StoppedCleanly("i13-strat".into())
+        );
+    }
+
     /// C-71 (T81): the stick journal of the simulated full window, read
     /// back with `chain_log`: every step conform, one GSP doorbell per RM
     /// call; planted mistakes in the text are all caught. SIMULARE.
