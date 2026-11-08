@@ -4,7 +4,7 @@
 
 Pornită de programare. Nicio comandă nouă, niciun jurnal nou de pe placă. **Nimic testat pe RTX 3070 Ti.**
 Golul găsit: unealta `verifica_jurnal_lant` știa doar lanțul până la I10 (13 pași); luni OS-ul rulează lanțul C-83 (17 pași, cu I11–I14) → jurnalul
-de luni ar fi ieșit „DE ANALIZAT: pas necunoscut” fără să fie ceva greșit. CI: rularea pe `0e86d1a` picase în 2 s fără jurnal (mașina GitHub, nu codul) → repornită.
+de luni ar fi ieșit „DE ANALIZAT: pas necunoscut” fără să fie ceva greșit. CI: rularea pe `0e86d1a` picase în 2 s fără jurnal (mașina GitHub, nu codul); repornită → la fel; și rularea pe `84d3685` pică la fel (joburile nu pornesc). Testele locale trec.
 
 | Pas | Ce s-a făcut | Rezultat |
 |---|---|---|
