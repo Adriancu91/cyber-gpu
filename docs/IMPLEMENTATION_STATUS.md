@@ -1,5 +1,23 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 70 — 8 noiembrie 2026, ~19:30 (ora României), în cloud, FĂRĂ placă — oprire scurtă
+
+Pornită de programare. Nicio comandă nouă pentru cyber-gpu, niciun jurnal nou de pe placă; lista OS pentru luni (P6-63) încă nu e scrisă
+(`stare/cyber-universe.md` 17:50: „P6-63 diseară”), deci lista finală GPU tot așteaptă. **Nimic testat pe RTX 3070 Ti.**
+**CI GitHub: din nou VERDE** — rularea pe `bf2a00d` (repornită la 15:08) a trecut; blocajul de ieri (joburi fără mașină) a dispărut.
+Verificat (doar citire) în `cyber-universe` `c86281c`: OS-ul e fixat pe cyber-gpu `34a9793` și rulează `WINDOW_CHAIN_C83` — aceiași 17 pași pe care îi
+știe `verifica_jurnal_lant` (sesiunea 68); `docs/FEREASTRA_C-83.md` rămâne valabil, nimic de schimbat.
+Verificare locală (`sh tools/check.sh`, Rust 1.97.0): format, clippy, **416 teste PASS** (4 ignorate), build no_std PASS.
+
+| Pas | Rezultat |
+|---|---|
+| Lucru nou | NOT TESTED — nu există pas nou fără placă și fără lista OS |
+| CI GitHub | PASS (pe `bf2a00d`) |
+| Lanțul din OS = lanțul verificat de unealtă | PASS (citire de cod, nu rulare) |
+
+**Următorul pas:** după P6-63 al OS-ului — lista finală în hub (`stare/cyber-gpu.md`); luni, după fereastră: `verifica_jurnal_lant` pe jurnal.
+
+---
 ## Sesiunea 69 — 8 noiembrie 2026, ~13:30 (ora României), în cloud, FĂRĂ placă — oprire scurtă
 
 Pornită de programare. Nicio comandă nouă pentru cyber-gpu, niciun jurnal nou de pe placă; lista OS pentru luni (P6-63) se face abia diseară,
