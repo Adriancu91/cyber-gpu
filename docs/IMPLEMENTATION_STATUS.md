@@ -1,5 +1,20 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 71 — 9 noiembrie 2026, ~00:00 (ora României), în cloud, FĂRĂ placă — lista de luni potrivită cu lista OS
+
+Pornită de programare. Nicio comandă nouă pentru cyber-gpu, niciun jurnal nou de pe placă. Lista OS pentru luni (P6-63, Release `os-275`) e scrisă
+(`stare/cyber-universe.md` 20:50) → recitită și potrivită cu `docs/FEREASTRA_C-83.md`. **Nimic testat pe RTX 3070 Ti.** CI GitHub verde pe `f6d9f57`.
+Verificare locală (`sh tools/check.sh`, Rust 1.97.0; ținta `x86_64-unknown-none` reinstalată în sesiunea nouă): format, clippy, **416 teste PASS** (4 ignorate), build no_std PASS.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Lista GPU = lista OS | aceiași pași și aceeași ordine; potrivite: 4 fișiere firmware (și `booter_unload`), #513 pe al doilea stick (`/usb2/kronos/`), pornire rece separată înainte de `kronos --gpu` | scris (`docs/FEREASTRA_C-83.md`) |
+| Jurnalul lui `kronos --gpu` | citit în OS (`gpu_i14.rs`): #513 rulează în pasul `i14-simbol` cu aceleași accese ca modelul de control (fereastra VRAM + soneria de lucru, fără apeluri RM) → `verifica_jurnal_lant` îl judecă corect; un eșec #513 nu face I14 „ESEC”, deci se citește și rândul `kronos --gpu:` | PASS (citire de cod, nu rulare) |
+| Cod | neschimbat (`34a9793` în OS rămâne bun) | — |
+
+**Următorul pas:** luni, după fereastră: `verifica_jurnal_lant` pe jurnalul din `rezultate/` + rândul `kronos --gpu:`.
+
+---
 ## Sesiunea 70 — 8 noiembrie 2026, ~19:30 (ora României), în cloud, FĂRĂ placă — oprire scurtă
 
 Pornită de programare. Nicio comandă nouă pentru cyber-gpu, niciun jurnal nou de pe placă; lista OS pentru luni (P6-63) încă nu e scrisă
