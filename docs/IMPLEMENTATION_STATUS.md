@@ -1,5 +1,20 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 74 — 9 noiembrie 2026, ~13:30 (ora României), în cloud, FĂRĂ placă — oprire scurtă (os-276 așteaptă testul)
+
+Pornită de programare. Nicio comandă nouă pentru cyber-gpu (C-92/C-93 sunt pentru Kronos); C-91 e gata la ambele proiecte: OS-ul e fixat pe `bbbdb2f`
+și a scos Release-ul **`os-276`**. Testul pe placă e **diseară la 20:00 sau mâine la 08:30** (C-93) — niciun jurnal nou de pe placă.
+**Nimic testat pe RTX 3070 Ti.** CI GitHub verde pe `7f162a5`.
+Verificare locală (`sh tools/check.sh`, Rust 1.97.0; ținta `x86_64-unknown-none` reinstalată): format, clippy, **417 teste PASS** (4 ignorate), build no_std PASS.
+
+| Pas | Rezultat |
+|---|---|
+| Lucru nou | NOT TESTED — nu există pas nou fără placă; reparația C-91 așteaptă proba pe placă |
+| CI GitHub | PASS (pe `7f162a5`) |
+
+**Următorul pas:** după testul `os-276`: `verifica_jurnal_lant` pe jurnalul din `rezultate/`; dacă I8 ajunge la `GSP_INIT_DONE`, urmărim primul pas care se oprește după el.
+
+---
 ## Sesiunea 73 — 9 noiembrie 2026, ~08:10–08:30 (ora României), în cloud, FĂRĂ placă — C-91 URGENT: I8 oprit de secvențiator
 
 Pornită de programare. Testul de azi (os-275) pe workstation: I6 + I7 TREC; **i8-gsp-init ESUAT** „secventiator: marime sau index in afara bufferului”.
