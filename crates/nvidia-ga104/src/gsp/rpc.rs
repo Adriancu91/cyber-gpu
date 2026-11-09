@@ -268,6 +268,12 @@ pub fn decode_sequencer(payload: &[u8]) -> GpuResult<SequencerHeader> {
     let words = (payload.len() - 40) / 4;
     let size = get_u32(payload, 0);
     let index = get_u32(payload, 4);
+    if size == 0 {
+        // NVIDIA's own driver refuses an empty capacity too.
+        return Err(GpuError::InvalidArgument(
+            "secventiator: capacitatea bufferului GSP e 0",
+        ));
+    }
     if index as usize > words {
         return Err(GpuError::InvalidArgument(
             "secventiator: cmdIndex mai mare decat cuvintele primite",
@@ -377,6 +383,8 @@ mod tests {
         // An empty request (nothing filled) is valid too.
         put_u32(&mut p, 4, 0);
         assert!(decode_sequencer(&p).unwrap().commands.is_empty());
+        put_u32(&mut p, 0, 0); // zero capacity: refused
+        assert!(decode_sequencer(&p).is_err());
     }
 
     #[test]

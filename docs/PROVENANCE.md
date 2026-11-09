@@ -146,3 +146,8 @@ sunt scrise de noi. Ordinea stratului e cea din formatul KGR1 al lui Kronos (hub
 test (după `format_greutati.md` din hub) și `tools/vectori-kgr1/pregateste.py` sunt scrise de noi. Vectorii înșiși (hub-ul nostru privat,
 `integrare/kronos/vectori/`, Kronos S39/C-24) **nu intră în acest repo public**: scriptul îi pregătește local, în `target/` (necomis), iar testele îi
 citesc din `KGR1_VECTORI`. Nimic străin.
+
+**Sesiunea 73 (9 nov), C-91 — câmpurile secvențiatorului:** `decode_sequencer` (`gsp/rpc.rs`) citește acum comenzile până la `cmdIndex`
+(cuvintele umplute), iar `bufferSizeDWord` e doar capacitatea bufferului GSP. Sens citit (ca specificație, fără cod copiat) în nouveau
+`r535_gsp_msg_run_cpu_sequencer` și tinygrad `run_cpu_seq` (MIT), plus diagnosticul sesiunii OS din hub
+(`idei/2026-11-09_C-91-cauza-secventiator.md`, care citează driverul public NVIDIA 570.144 `kgspExecuteSequencerBuffer_IMPL`, MIT). Cod scris de noi.

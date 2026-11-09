@@ -1,5 +1,23 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 73 — 9 noiembrie 2026, ~08:10–08:30 (ora României), în cloud, FĂRĂ placă — C-91 URGENT: I8 oprit de secvențiator
+
+Pornită de programare. Testul de azi (os-275) pe workstation: I6 + I7 TREC; **i8-gsp-init ESUAT** „secventiator: marime sau index in afara bufferului”.
+Cauza (găsită din cod; aceeași și în diagnosticul sesiunii OS): `decode_sequencer` lua `bufferSizeDWord` (capacitatea bufferului GSP) drept numărul de
+comenzi; GSP trimite doar `cmdIndex` cuvinte, deci pe placă capacitatea > cuvintele primite → refuz. Simularea punea capacitatea = cuvintele trimise.
+**Vestea bună:** mesajul a trecut de semnătură, versiune, lungime, sumă de control și numărul de secvență — adică primul mesaj real al GSP-RM a fost citit corect.
+Jurnalul complet (`gpu-jurnal-003.txt`) nu era încă în hub; valorile exacte nu sunt confirmate din jurnal.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Reparația | comenzile = `0..cmdIndex`; refuz la capacitate 0, `cmdIndex` > capacitate sau > cuvinte primite | PASS (SIMULARE) |
+| Teste | test nou cu forma de pe placă (capacitate 0x4000, mesaj scurt); testul de pornire până la `GSP_INIT_DONE` folosește aceeași formă | PASS (SIMULARE), 417 PASS, 4 ignorate |
+| Aceeași greșeală în I8–I14 | citit: `rpc::decode` (lungime/elemente — a trecut pe placă), răspunsurile RM (`device info`, `GR info`, `PROMOTE_CTX`: număr de intrări ≤ maximul din antet, lungime = structura trimisă), `RegStore` (index < 8). Niciun alt câmp „capacitate citită ca lungime” | PASS (citire de cod) |
+| Pe RTX 3070 Ti | — | NOT TESTED |
+
+**Următorul pas:** OS-ul (P6-68) leagă noul commit și scoate Release-ul; la reîncercare se urmărește dacă I8 ajunge la `GSP_INIT_DONE`. Nota: `integration/cyber-universe/C-91_secventiator.md`.
+
+---
 ## Sesiunea 72 — 9 noiembrie 2026, ~07:30 (ora României), în cloud, FĂRĂ placă — oprire scurtă (fereastra de luni începe ~08:50)
 
 Pornită de programare. Nicio comandă nouă pentru cyber-gpu (C-90 e pentru Kronos: nimic pe placă cât Adrian e la workstation), niciun jurnal nou de pe placă
