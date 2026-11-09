@@ -359,8 +359,11 @@ mod tests {
     };
 
     fn payload(cmds: &[u32]) -> Vec<u8> {
+        // Real GSP shape: capacity (bufferSizeDWord) far above the filled
+        // count (cmdIndex); only cmdIndex words are sent.
         let mut p = alloc::vec![0u8; 40];
-        p[0..4].copy_from_slice(&(cmds.len() as u32).to_le_bytes());
+        p[0..4].copy_from_slice(&0x4000u32.to_le_bytes());
+        p[4..8].copy_from_slice(&(cmds.len() as u32).to_le_bytes());
         for w in cmds {
             p.extend_from_slice(&w.to_le_bytes());
         }

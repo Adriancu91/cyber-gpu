@@ -241,12 +241,21 @@ pub fn decode(raw: &[u8]) -> GpuResult<Message> {
 }
 
 /// Header of `GSP_RUN_CPU_SEQUENCER` (`rpc_run_cpu_sequencer_v17_00`):
-/// buffer size in u32 words, current command index, 8 saved registers, then
-/// the command words. Decoding only: *executing* the commands means register
-/// writes and stays behind the hardware permit.
+/// `bufferSizeDWord` (the *capacity* of GSP-RM's own sequencer buffer),
+/// `cmdIndex` (how many u32 words of commands it actually filled), 8 saved
+/// registers, then the command words. Only `cmdIndex` words travel in the
+/// message: the capacity is usually far larger than the payload, so it must
+/// not be compared with the message length. (Board test 9 Nov 2026, os-275:
+/// the old check `bufferSizeDWord <= words` stopped I8 on the real GSP.)
+/// Semantics read in nouveau `r535_gsp_msg_run_cpu_sequencer` and tinygrad
+/// `run_cpu_seq` (both MIT, both loop up to `cmdIndex`) — re-written.
+/// Decoding only: *executing* the commands means register writes and stays
+/// behind the hardware permit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SequencerHeader {
+    /// GSP-side capacity in u32 words (informative only).
     pub buffer_size_dwords: u32,
+    /// Number of command words filled = `commands.len()`.
     pub cmd_index: u32,
     pub reg_save: [u32; 8],
     pub commands: Vec<u32>,
@@ -259,16 +268,21 @@ pub fn decode_sequencer(payload: &[u8]) -> GpuResult<SequencerHeader> {
     let words = (payload.len() - 40) / 4;
     let size = get_u32(payload, 0);
     let index = get_u32(payload, 4);
-    if size as usize > words || index > size {
+    if index as usize > words {
         return Err(GpuError::InvalidArgument(
-            "secventiator: marime sau index in afara bufferului",
+            "secventiator: cmdIndex mai mare decat cuvintele primite",
+        ));
+    }
+    if index > size {
+        return Err(GpuError::InvalidArgument(
+            "secventiator: cmdIndex mai mare decat capacitatea bufferului GSP",
         ));
     }
     let mut reg_save = [0u32; 8];
     for (i, r) in reg_save.iter_mut().enumerate() {
         *r = get_u32(payload, 8 + 4 * i);
     }
-    let commands = (0..size as usize)
+    let commands = (0..index as usize)
         .map(|i| get_u32(payload, 40 + 4 * i))
         .collect();
     Ok(SequencerHeader {
@@ -332,9 +346,10 @@ mod tests {
 
     #[test]
     fn sequencer_header_decodes_without_executing() {
+        // 6 words sent, 4 of them filled (cmdIndex = 4), capacity 0x1000.
         let mut p = alloc::vec![0u8; 40 + 4 * 6];
-        put_u32(&mut p, 0, 4);
-        put_u32(&mut p, 4, 0);
+        put_u32(&mut p, 0, 0x1000);
+        put_u32(&mut p, 4, 4);
         put_u32(&mut p, 8, 0xdead);
         for i in 0..6 {
             put_u32(&mut p, 40 + 4 * i, 100 + i as u32);
@@ -342,8 +357,26 @@ mod tests {
         let s = decode_sequencer(&p).unwrap();
         assert_eq!(s.commands, [100, 101, 102, 103]);
         assert_eq!(s.reg_save[0], 0xdead);
-        put_u32(&mut p, 0, 7); // more words than present
+        assert_eq!(s.buffer_size_dwords, 0x1000);
+        put_u32(&mut p, 4, 7); // more filled words than present
         assert!(decode_sequencer(&p).is_err());
+        put_u32(&mut p, 0, 3); // filled words above the capacity
+        put_u32(&mut p, 4, 4);
+        assert!(decode_sequencer(&p).is_err());
+    }
+
+    #[test]
+    fn sequencer_capacity_larger_than_message_is_accepted() {
+        // Shape seen on the real GSP (os-275, 9 Nov): the capacity field is
+        // much larger than the words carried; only cmdIndex words count.
+        let mut p = alloc::vec![0u8; 40 + 4 * 10];
+        put_u32(&mut p, 0, 0x4000);
+        put_u32(&mut p, 4, 10);
+        let s = decode_sequencer(&p).unwrap();
+        assert_eq!(s.commands.len(), 10);
+        // An empty request (nothing filled) is valid too.
+        put_u32(&mut p, 4, 0);
+        assert!(decode_sequencer(&p).unwrap().commands.is_empty());
     }
 
     #[test]
