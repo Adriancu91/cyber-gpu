@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 75 — 9 noiembrie 2026, ~21:30 (ora României), în cloud, FĂRĂ placă — oprire scurtă (testul os-276 mutat mâine 07:15)
+## Sesiunea 75 — 9 noiembrie 2026, ~19:30 (ora României), în cloud, FĂRĂ placă — oprire scurtă (testul os-276 mutat mâine 07:15)
 
 Pornită de programare. Nicio comandă nouă pentru cyber-gpu (C-94 e pentru Kronos): Adrian nu vine diseară, **testul `os-276` e mâine, 10 nov, la 07:15**.
 Niciun jurnal nou de pe placă. Codul neschimbat față de `bbbdb2f` (cel din `os-276`). **Nimic testat pe RTX 3070 Ti.** CI GitHub verde pe `8f2af33`.
