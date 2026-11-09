@@ -1,5 +1,19 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 72 — 9 noiembrie 2026, ~07:30 (ora României), în cloud, FĂRĂ placă — oprire scurtă (fereastra de luni începe ~08:50)
+
+Pornită de programare. Nicio comandă nouă pentru cyber-gpu (C-90 e pentru Kronos: nimic pe placă cât Adrian e la workstation), niciun jurnal nou de pe placă
+(fereastra n-a început). **Nimic testat pe RTX 3070 Ti.** CI GitHub verde pe `d2223d0`.
+Verificare locală (`sh tools/check.sh`, Rust 1.97.0): format, clippy, **416 teste PASS** (4 ignorate), build no_std PASS.
+
+| Pas | Rezultat |
+|---|---|
+| Lucru nou | NOT TESTED — nu există pas nou fără placă; lista `docs/FEREASTRA_C-83.md` rămâne valabilă |
+| CI GitHub | PASS (pe `d2223d0`) |
+
+**Următorul pas:** după fereastră: `verifica_jurnal_lant` pe jurnalul din `rezultate/` + rândul `kronos --gpu:`.
+
+---
 ## Sesiunea 71 — 9 noiembrie 2026, ~00:00 (ora României), în cloud, FĂRĂ placă — lista de luni potrivită cu lista OS
 
 Pornită de programare. Nicio comandă nouă pentru cyber-gpu, niciun jurnal nou de pe placă. Lista OS pentru luni (P6-63, Release `os-275`) e scrisă
