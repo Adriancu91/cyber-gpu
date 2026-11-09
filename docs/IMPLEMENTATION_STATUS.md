@@ -6,7 +6,7 @@ Pornită de programare. Testul de azi (os-275) pe workstation: I6 + I7 TREC; **i
 Cauza (găsită din cod; aceeași și în diagnosticul sesiunii OS): `decode_sequencer` lua `bufferSizeDWord` (capacitatea bufferului GSP) drept numărul de
 comenzi; GSP trimite doar `cmdIndex` cuvinte, deci pe placă capacitatea > cuvintele primite → refuz. Simularea punea capacitatea = cuvintele trimise.
 **Vestea bună:** mesajul a trecut de semnătură, versiune, lungime, sumă de control și numărul de secvență — adică primul mesaj real al GSP-RM a fost citit corect.
-Jurnalul complet (`gpu-jurnal-003.txt`) nu era încă în hub; valorile exacte nu sunt confirmate din jurnal.
+Jurnalul complet (`gpu-jurnal-003.txt`, urcat la 08:30) confirmă: în I8 singura scriere a fost soneria GSP (`0x110c00`), apoi ~1,8 s mai târziu oprirea, fără nicio comandă de secvențiator executată — GSP-RM a răspuns, noi am refuzat mesajul. Valorile `bufferSizeDWord`/`cmdIndex` nu sunt scrise în jurnal (doar textul erorii).
 
 | Pas | Ce s-a făcut | Rezultat |
 |---|---|---|
