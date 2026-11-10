@@ -1,5 +1,22 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 79 — 10 noiembrie 2026, ~13:30 (ora României), în cloud, FĂRĂ placă — oprire scurtă (os-277 așteaptă testul pe placă)
+
+Pornită de programare. Nicio comandă nouă pentru cyber-gpu: C-96 e gata la ambele proiecte (OS-ul e pe `2d66deb`, Release **`os-277`** publicat la 12:20);
+C-97 e pentru Kronos (placa liberă pentru antrenare de la 19:00 dacă Adrian nu revine). Niciun jurnal nou de pe placă (ultimul dosar: `rezultate/2026-11-10-workstation-os276/`).
+Codul neschimbat față de `2d66deb`. **Nimic testat pe RTX 3070 Ti.** CI GitHub verde pe `329a3f4` (rularea de la 11:12).
+Verificare locală (`sh tools/check.sh`, Rust 1.97.0; ținta `x86_64-unknown-none` reinstalată): format, clippy, **420 teste PASS** (4 ignorate), build no_std PASS.
+
+| Pas | Rezultat |
+|---|---|
+| Lucru nou | NOT TESTED — nu există pas nou fără placă; reparația C-96 așteaptă proba cu `os-277` |
+| `verifica_jurnal_lant` pe jurnalul real `gpu-jurnal-004.txt` (os-276, WprMeta `0x9c66000`) | PASS — verdict „OPRIT CURAT la i8-gsp-init (Bus Master pus la loc)”, cod 3; I6/I7 conforme (720/723 scrieri), I8: 4 scrieri + 1 sonerie; aceeași citire ca în sesiunea 78 (`0x110040` era `0x80000000`, scris `0`) |
+| CI GitHub | PASS (pe `329a3f4`) |
+
+**Următorul pas:** după testul cu `os-277`: `verifica_jurnal_lant` pe jurnalul din `rezultate/`; se urmăresc rândurile `secv #…` de la I8 și, după `CORE_RESET`,
+fie `GSP_INIT_DONE`, fie prima eroare la pasul următor (`CORE_WAIT_FOR_HALT`, `CORE_RESUME`). Niciun pas nou fără jurnal.
+
+---
 ## Sesiunea 78 — 10 noiembrie 2026, ~10:50–11:15 (ora României), în cloud, FĂRĂ placă — C-96 URGENT: I8 „eroare hardware 0xbadf5620”
 
 Pornită de programare. Comandă nouă în hub: **C-96** (10:48, urgent, Adrian la workstation). Testul `os-276` de azi: I6+I7 TREC, secvențiatorul
