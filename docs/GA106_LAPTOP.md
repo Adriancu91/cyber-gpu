@@ -1,7 +1,9 @@
 # C-95 — Laptopul ASUS TUF F15 (RTX 3060 Laptop, GA106) ca al doilea calculator de test
 
-*Scris 10 nov 2026, sesiunea 77 (cloud, FĂRĂ placă). Nimic de aici nu e citit de pe laptop: e cercetare din surse publice + cod
-testat doar în SIMULARE. Pasul 3 din C-95 (scrieri pe placa laptopului) NU începe fără „DA”-ul separat al lui Adrian.*
+> **PARCAT de Adrian (10 nov 07:28):** „rămânem pe workstation cu Cyber Universe, pentru că avem deja setări pentru placa aia video”.
+> Documentul rămâne doar ca **notiță**; **niciun cod pentru GA106** în proiect. Workstation-ul (GA104) e singura țintă.
+
+*Scris 10 nov 2026, sesiunea 77 (cloud, FĂRĂ placă). Nimic de aici nu e citit de pe laptop: e cercetare din surse publice.*
 
 ## Pe scurt (pentru Adrian)
 
@@ -14,8 +16,7 @@ testat doar în SIMULARE. Pasul 3 din C-95 (scrieri pe placa laptopului) NU înc
   mai puține unități de calcul. Programele GPU (SASS sm_86) sunt aceleași.
 - **Riscurile reale sunt de laptop, nu de cip:** placa poate fi oprită de Windows/ASUS („Eco mode”), alimentarea e controlată de ACPI,
   iar la unele laptopuri VBIOS-ul se citește altfel. Toate se văd la primul test **doar de citire**.
-- **Codul de azi (SIMULARE):** cyber-gpu recunoaște acum GA106 **doar pentru citire**; lanțul cu scrieri (I5g și după) refuză în continuare
-  orice altă placă decât GA104.
+- **Cod:** niciunul în proiect (C-95 parcat). Driverul refuză în continuare orice placă în afară de GA104, încă de la identificare.
 
 ## 1. Identitatea cipului
 
@@ -71,23 +72,16 @@ Familia din driverul public NVIDIA 570.144 (`g_kernel_gsp_nvoc.c`, MIT, citit ca
 5. **Memoria:** 6 GB (192 biți). Regula din proiect: sub ~5,5 GB pentru Kronos pe laptop.
 6. **Laptopul e mai scump de reparat decât o placă desktop.** De aceea pasul 3 (scrieri) se discută separat, după jurnalul de citire.
 
-## 4. Ce face codul acum (10 nov, SIMULARE)
+## 4. Cod (retras)
 
-Toate adăugate, nimic redenumit (interfața veche rămâne la fel):
+În aceeași sesiune s-a scris o recunoaștere GA106 doar pentru citire (`level0_ampere`, `run_tour_ampere`, profil `gpu-sim` GA106, 6 teste
+SIMULARE, CI verde) — commit `256a1f2`. Parcarea lui Adrian a apărut în hub cu 3 minute înainte, nevăzută la timp; codul a fost
+**retras imediat** printr-un commit de anulare (istoria nu se rescrie). Dacă C-95 se reia, punctul de plecare e `256a1f2`
+(adăugări, nimic redenumit). Până atunci: `probe::level0`, `run_tour` și lanțul refuză laptopul, ca înainte.
 
-| Ce | Unde |
-|---|---|
-| `boot::CHIP_GA106 = 0x176` | `nvidia-ga104/src/boot.rs` |
-| `ids::GA106_MODELS`, `ids::lookup_ga106`, `ids::lookup_ampere`, `ids::Family` (`writes_allowed()` = doar GA104) | `nvidia-ga104/src/ids.rs` |
-| `probe::probe_config_ampere`, `probe::probe_mmio_family`, `probe::level0_ampere` (aceleași citiri ca `level0`, 0 scrieri) | `nvidia-ga104/src/probe.rs` |
-| `read_tour::run_tour_ampere` — turul de citire C-54 pentru GA104 sau GA106; la GA106 adaugă `chip.familie = GA106` și `chip.scrieri = interzise …` | `nvidia-ga104/src/read_tour.rs` |
-| Profilul SIMULARE GA106: `SimConfig::ga106_laptop_sim()` (ID `10de:2560`, ASUS, x8), `SimMmio::ga106_bar0()` (BOOT_0 `0x176…`) | `gpu-sim/src/pci.rs`, `mmio.rs` |
+## 5. Dacă se reia: ce ar trebui să scrie jurnalul de citire de pe laptop
 
-`probe::level0`, `run_tour` și tot lanțul I5g+ rămân **doar GA104**: laptopul e refuzat acolo (testat).
-
-## 5. Ce trebuie să scrie jurnalul de citire de pe laptop (pentru OS, C-95 pct. 2)
-
-`gpu tur` cu `run_tour_ampere` dă deja aproape tot: ID-ul PCI și subsistemul, starea D0/D3, BAR-urile și legătura PCIe, BOOT_0/BOOT_42,
+`gpu tur` cu `run_tour_ampere` (din `256a1f2`) ar da aproape tot: ID-ul PCI și subsistemul, starea D0/D3, BAR-urile și legătura PCIe, BOOT_0/BOOT_42,
 starea GFW, imaginile VBIOS (tipuri, mărimi, ID-uri), jetoanele BIT, descriptorul FWSEC și semnăturile, siguranța, mărimea VRAM, WPR2.
 În plus ar ajuta (partea OS): modelul laptopului din SMBIOS (`hw lista`), prezența plăcii Intel, și dacă există placa NVIDIA pe magistrală
 (dacă lipsește → modul „Eco”).

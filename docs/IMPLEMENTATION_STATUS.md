@@ -1,5 +1,25 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 77 — 10 noiembrie 2026, ~07:25–07:50 (ora României), în cloud, FĂRĂ placă — C-95 (laptopul GA106): cercetare, apoi PARCAT
+
+Pornită de programare. Comandă nouă în hub: **C-95** (07:25) — laptopul ASUS TUF F15 (RTX 3060 Laptop, GA106) ca al doilea calculator de test, întâi doar citire.
+Am preluat-o și am făcut pasul 1 (cercetarea) + recunoașterea GA106 doar pentru citire (commit `256a1f2`, 423 PASS, CI verde).
+**Adrian a parcat C-95 la 07:28** („rămânem pe workstation”; notiță în `docs/` da, cod nou pentru GA106 nu) — nota a apărut în hub înainte de commit-ul
+meu, dar am văzut-o abia după push. **Codul GA106 a fost retras** printr-un commit de anulare (istoria nu se rescrie); codul e acum identic cu `7c14c7e`/`bbbdb2f`.
+Rămâne doar notița `docs/GA106_LAPTOP.md` (firmware-ul e același: `ga106/gsp -> ga102/gsp`; NVIDIA tratează GA106 ca GA104 la pornire; riscurile de laptop).
+Testul `os-276` de azi 07:15: niciun jurnal în hub la ~07:50. **Nimic testat pe RTX 3070 Ti.**
+Verificare locală după retragere (`sh tools/check.sh`, Rust 1.97.0; ținta `x86_64-unknown-none` reinstalată): format, clippy, **417 teste PASS** (4 ignorate), build no_std PASS.
+
+| Pas | Rezultat |
+|---|---|
+| C-95 pasul 1 (cercetare GA106) | scris ca notiță (`docs/GA106_LAPTOP.md`) — surse publice, nimic citit de pe laptop |
+| Cod GA106 doar citire | PASS (SIMULARE) în `256a1f2`, apoi **retras** (C-95 parcat) |
+| CI GitHub | PASS (pe `256a1f2`); de verificat pe commit-ul de retragere |
+| Pe RTX 3070 Ti / pe laptop | NOT TESTED |
+
+**Următorul pas:** după testul `os-276`: `verifica_jurnal_lant` pe jurnalul din `rezultate/`; dacă I8 ajunge la `GSP_INIT_DONE`, urmărim primul pas care se oprește după el.
+
+---
 ## Sesiunea 76 — 10 noiembrie 2026, ~01:30 (ora României), în cloud, FĂRĂ placă — oprire scurtă (testul os-276 azi la 07:15)
 
 Pornită de programare. Nicio comandă nouă în hub (ultima e C-94, pentru Kronos), niciun jurnal nou de pe placă (ultimul dosar: `rezultate/2026-11-09-workstation-os275/`).

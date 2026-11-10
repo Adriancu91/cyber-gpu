@@ -343,6 +343,3 @@ identificator, hardware/configurație, commit, comanda, așteptat, obținut, cod
 | `chain` (6) | oprire la I7 blocat; eșec I6 → Bus Master pus la loc; modul automat nu rulează pași care scriu; pas doar-citire care scrie = eșec | PASS (SIMULARE) |
 | `gpu tur` pe placă | rulat de bucla automată; raportul comparat cu `compara_raport` | NOT TESTED (comanda OS nu există încă) |
 | `gpu lant` pe placă | doar cu Adrian de față | NOT TESTED |
-| `ids` + `probe` GA106 (4) | tabelul GA106 separat; `level0_ampere` pe modelul laptopului: 0 scrieri, GA106 fără drept de scriere; `level0` (GA104) refuză laptopul; ID GA106 cu BOOT_0 de alt cip → refuz; placa în D3 → refuz fără citiri BAR0 | PASS (SIMULARE) |
-| `read_tour` GA106 (2) | `run_tour_ampere` pe modelul laptopului: doar citiri, `chip.familie`/`chip.scrieri`; pe workstation = același tur + familia | PASS (SIMULARE) |
-| C-95 pe laptopul real | doar citire, după ce OS-ul leagă `run_tour_ampere` (C-95 pct. 2) | NOT TESTED |

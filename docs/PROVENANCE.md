@@ -152,8 +152,6 @@ citesc din `KGR1_VECTORI`. Nimic străin.
 `r535_gsp_msg_run_cpu_sequencer` și tinygrad `run_cpu_seq` (MIT), plus diagnosticul sesiunii OS din hub
 (`idei/2026-11-09_C-91-cauza-secventiator.md`, care citează driverul public NVIDIA 570.144 `kgspExecuteSequencerBuffer_IMPL`, MIT). Cod scris de noi.
 
-**Sesiunea 77 (10 nov), C-95 — GA106 (laptopul) doar citire:** numărul cipului `0x176` din open-gpu-kernel-modules@570.144
-`g_chips2halspec_nvoc.c` (MIT); ID-urile PCI GA106 din `README.md`-ul aceluiași repo (MIT) + atribuirea la GA106 din pci.ids (citat);
-faptul că GA106 folosește aceleași funcții GSP/Booter/HS/siguranță ca GA104: `g_kernel_gsp_nvoc.c` (MIT, citit ca specificație);
-fișierele firmware comune: `WHENCE` din linux-firmware (`nvidia/ga106/gsp -> ../ga102/gsp`), niciun fișier firmware descărcat.
-Cod scris de noi. Detalii: `docs/GA106_LAPTOP.md`.
+**Sesiunea 77 (10 nov), C-95 — notiță GA106 (parcat, fără cod):** `docs/GA106_LAPTOP.md` citează open-gpu-kernel-modules@570.144
+(`README.md`, `g_chips2halspec_nvoc.c`, `g_kernel_gsp_nvoc.c`, MIT, citite ca specificație), `WHENCE` din linux-firmware
+(`nvidia/ga106/gsp -> ../ga102/gsp`; niciun fișier firmware descărcat) și pci.ids (citat). Codul GA106 scris în `256a1f2` a fost retras.
