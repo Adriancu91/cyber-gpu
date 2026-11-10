@@ -108,7 +108,22 @@ pub enum SimFault {
     DmaQueueFull,
     /// The falcon DMA engine never reports idle.
     DmaNeverIdle,
+    /// C-96: after a GSP engine reset the falcon registers keep answering
+    /// with the priv error of the board (`0xbadf5620`) for good.
+    PrivErrorStuck,
 }
+
+/// C-96, OBSERVAT on the board (10 Nov 2026, os-276, `gpu-jurnal-004.txt`):
+/// the first HWCFG2 read after `NV_PGSP_FALCON_ENGINE` RESET 1 → 0 on the
+/// GSP that was running GSP-RM returned this PRI error (ringstation code
+/// `FECS_PRI_CLIENT_ERR`, `dev_pri_ringstation_sys.h`, MIT). On an idle GSP
+/// (I6, I7) the same reset answered normally.
+pub const PRIV_ERROR_AFTER_RESET: u32 = 0xbadf_5620;
+
+/// SIM: how many falcon-register reads after such a reset answer with the
+/// priv error before the falcon is reachable again (the board's real
+/// duration is DEDUS; RM polls it away, nouveau waits up to 20 ms).
+pub const PRIV_ERROR_READS: u32 = 4;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct Falcon {
@@ -120,6 +135,8 @@ struct Falcon {
     halted: bool,
     loaded: Option<SimUcode>,
     core_riscv: bool,
+    /// C-96: falcon-register reads left that answer `PRIV_ERROR_AFTER_RESET`.
+    priv_err_left: u32,
 }
 
 /// SIM: a sparse 16 MiB BAR0 with two falcons behind it.
@@ -420,6 +437,17 @@ impl FakeGsp {
 
     fn read_falcon(&mut self, base: u32, rel: u32) -> u32 {
         let fault = self.fault;
+        // C-96: the falcon core (everything but the engine reset register)
+        // is unreachable for a while after a reset of a running GSP-RM.
+        if rel != 0x3c0 {
+            let f = self.falcon_mut(base);
+            if f.priv_err_left > 0 {
+                if fault != SimFault::PrivErrorStuck {
+                    f.priv_err_left -= 1;
+                }
+                return PRIV_ERROR_AFTER_RESET;
+            }
+        }
         match rel {
             fv4::NV_PFALCON_FALCON_HWCFG2 => {
                 let f = self.falcon_mut(base);
@@ -550,10 +578,19 @@ impl FakeGsp {
             0x3c0 => {
                 // NV_P{GSP,SEC}_FALCON_ENGINE: RESET bit 0.
                 let fault = self.fault;
+                // C-96 (board, 10 Nov 2026): resetting the GSP while GSP-RM
+                // runs on its RISC-V core leaves the falcon registers
+                // answering a priv error for a while after the release.
+                let from_gsp_rm = base == GSP_BASE && self.riscv_active;
                 let f = self.falcon_mut(base);
                 if v & 1 == 1 {
                     *f = Falcon {
                         in_reset: true,
+                        priv_err_left: if from_gsp_rm || fault == SimFault::PrivErrorStuck {
+                            PRIV_ERROR_READS
+                        } else {
+                            0
+                        },
                         ..Falcon::default()
                     };
                 } else if f.in_reset {

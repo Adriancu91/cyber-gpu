@@ -1,5 +1,37 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 78 — 10 noiembrie 2026, ~10:50–11:15 (ora României), în cloud, FĂRĂ placă — C-96 URGENT: I8 „eroare hardware 0xbadf5620”
+
+Pornită de programare. Comandă nouă în hub: **C-96** (10:48, urgent, Adrian la workstation). Testul `os-276` de azi: I6+I7 TREC, secvențiatorul
+nu mai cade la parsare (C-91 a mers), **I8 ESUAT: „eroare hardware 0xbadf5620”**. Preluat la 10:52; jurnalul `gpu-jurnal-004.txt` citit la 10:55.
+
+**Cauza (din jurnal + driverul public NVIDIA 570.144, MIT):** prima cerere a secvențiatorului GSP-RM a fost `WRITE 0x110040 ← 0`, apoi
+`CORE_RESET` = resetul falcon-ului GSP (`0x1103c0 ← 1`, `← 0`). **Prima citire a lui `HWCFG2` după eliberarea resetului a întors
+`0xbadf5620`** (cod PRI `FECS_PRI_CLIENT_ERR`): falcon-ul care tocmai rula GSP-RM nu răspunde încă. Noi tratam orice `0xbadf…` ca defect și opream
+pe loc; RM (`kflcnWaitForResetToFinish_GA102`) și nouveau citesc în buclă până la „scrubbing gata”, fără să se oprească la `0xbadf…`. La I6/I7
+același reset mersese fiindcă GSP-ul era liber. Al doilea gol găsit citind RM: `CORE_RESUME` nu reseta GSP-ul în RISC-V înainte de cutiile LibOS
+(RM `kflcnResetIntoRiscv`, nouveau `gsp->func->reset`) — ar fi căzut la testul următor.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Modelul plăcii | `gpu-sim::fake_gsp`: după resetul unui GSP care rula GSP-RM, primele citiri ale registrelor falcon răspund `0xbadf5620` (OBSERVAT; durata DEDUS); `SimFault::PrivErrorStuck` | PASS (SIMULARE) |
+| Dovada | driverul vechi (`24dc19c`) pe modelul nou pică cu `HardwareFault 0xbadf5620` — exact eroarea plăcii | reprodus |
+| Reparația 1 | `falcon::poll` + polurile secvențiatorului: `0xbadf…` = „încă nu”, bucla continuă; registru inaccesibil până la expirare → eroarea poartă valoarea citită; citirile simple rămân stricte | PASS (SIMULARE) |
+| Reparația 2 | `falcon::reset` ca RM `kgspResetHw`: 10 citiri de propagare după fiecare scriere ENGINE; așteptarea scrubbing cu limita RM (4 s); note separate „RESET_READY nu a venit” / „HWCFG2 inaccesibil înainte de reset” | PASS (SIMULARE) |
+| Reparația 3 | `CORE_RESET` + `switch_to_falcon` (RM `kflcnSwitchToFalcon_GA102`: BCR → falcon dacă nu e deja, așteaptă VALID; un `0xbadf` la citirea BCR = „nu e falcon”, ca RM) | PASS (SIMULARE) |
+| Reparația 4 | `CORE_RESUME` începe cu `gsp_reset_into_riscv` (ordinea RM/nouveau) | PASS (SIMULARE) |
+| Jurnal | cererea secvențiatorului întreagă **înainte** de execuție (`secv #i OP arg…`, eveniment nou `Event::SeqCmd`, OS-ul compilează neschimbat); comanda oprită e numită după `ESEC` | PASS (T109, T110) |
+| Aceeași clasă în I8–I14 | toate buclele de așteptare (`select_falcon_core`, `run_to_halt`, `wait_riscv_active`, `gsp_reset_into_riscv`) trec prin `poll` → tolerante; citirile simple (mailbox, WPR2, FBIF) rămân stricte, corect | PASS (citire de cod) |
+| Compatibilitate OS | doar adăugări (`switch_to_falcon`, `RESET_PROPAGATION_READS`, `SeqCmd::event`, `Event::SeqCmd`, `SimFault::PrivErrorStuck`); `SCRUB_US` 20 ms → 4 s (valoare, nu nume) | PASS |
+| Pe RTX 3070 Ti | — | NOT TESTED |
+
+Verificări (`sh tools/check.sh`, Rust 1.97.0; ținta `x86_64-unknown-none` reinstalată): format, clippy `-D warnings`, **420 teste PASS** (4 ignorate), build no_std PASS.
+Nota pentru OS: `integration/cyber-universe/C-96_reset-gsp.md`. Referințe RM în `docs/PROVENANCE.md`.
+
+**Următorul pas:** OS-ul (C-96 partea 2) leagă noul commit și scoate Release-ul; la rulare se urmăresc rândurile `secv #…` și, după `CORE_RESET`, fie
+`GSP_INIT_DONE`, fie prima eroare la pasul următor (`CORE_WAIT_FOR_HALT`, `CORE_RESUME`: cutia SEC2, RISC-V activ).
+
+---
 ## Sesiunea 77 — 10 noiembrie 2026, ~07:25–07:50 (ora României), în cloud, FĂRĂ placă — C-95 (laptopul GA106): cercetare, apoi PARCAT
 
 Pornită de programare. Comandă nouă în hub: **C-95** (07:25) — laptopul ASUS TUF F15 (RTX 3060 Laptop, GA106) ca al doilea calculator de test, întâi doar citire.

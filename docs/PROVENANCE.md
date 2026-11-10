@@ -155,3 +155,14 @@ citesc din `KGR1_VECTORI`. Nimic străin.
 **Sesiunea 77 (10 nov), C-95 — notiță GA106 (parcat, fără cod):** `docs/GA106_LAPTOP.md` citează open-gpu-kernel-modules@570.144
 (`README.md`, `g_chips2halspec_nvoc.c`, `g_kernel_gsp_nvoc.c`, MIT, citite ca specificație), `WHENCE` din linux-firmware
 (`nvidia/ga106/gsp -> ../ga102/gsp`; niciun fișier firmware descărcat) și pci.ids (citat). Codul GA106 scris în `256a1f2` a fost retras.
+
+**Sesiunea 78 (10 nov), C-96 — resetul GSP în secvențiator:** open-gpu-kernel-modules@570.144 (`8ec351ae`, MIT), citite ca
+specificație: `kernel/gpu/gsp/kernel_gsp.c` (`kgspExecuteSequencerBuffer_IMPL`: `GPU_REG_RD32` în bucle, fără oprire la `0xbadf…`),
+`gsp/arch/ampere/kernel_gsp_ga102.c` (`kgspExecuteSequencerCommand_GA102`: CORE_RESUME = `kflcnResetIntoRiscv` → LibOS → SEC2),
+`gsp/arch/turing/kernel_gsp_tu102.c` (`kgspResetHw_TU102`: citiri de propagare), `falcon/arch/turing/kernel_falcon_tu102.c`
+(`kflcnReset_TU102`, `kflcnDisableCtxReq_TU102`), `falcon/arch/ampere/kernel_falcon_ga102.c` (`kflcnPreResetWait_GA102`,
+`kflcnWaitForResetToFinish_GA102`, `kflcnSwitchToFalcon_GA102`, `kflcnIsRiscvSelected_GA102`: „BCR_CTRL poate fi blocat la citire”),
+`inc/kernel/gpu/falcon/falcon_common.h` (`FLCN_RESET_PROPAGATION_DELAY_COUNT` = 10), `swref/published/maxwell/gm107/dev_pri_ringstation_sys.h`
+(codurile `NV_PPRIV_SYS_PRI_ERROR_CODE_*`: `0xBADF50` = `FECS_PRI_CLIENT_ERR`). Nouveau (`r535_gsp_msg_run_cpu_sequencer`, `ga102_gsp_reset`)
+din cunoaștere generală, doar pentru comparație. Cod scris de noi (`falcon::poll`, `engine_reset_pulse`, `switch_to_falcon`, `sequencer::poll_reg`,
+`SeqCmd::event`); modelul `gpu-sim::fake_gsp` (`PRIV_ERROR_AFTER_RESET`) scris de noi din jurnalul plăcii (`gpu-jurnal-004.txt`).

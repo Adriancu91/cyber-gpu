@@ -138,7 +138,66 @@ pub const POLL_DEFAULT_US: u64 = 4_000_000;
 /// Upper bound for one DELAY_US, so a corrupt value cannot stall the boot.
 pub const MAX_DELAY_US: u32 = 1_000_000;
 
-/// Runs the commands in order; stops at the first error.
+impl SeqCmd {
+    /// The command as a journal event (C-96: every request is journaled in
+    /// full before it runs, so the board's log shows what GSP-RM asked).
+    pub fn event(self, index: u32) -> Event {
+        let (op, n, args): (&'static str, u8, [u32; 5]) = match self {
+            SeqCmd::RegWrite { addr, val } => ("WRITE", 2, [addr, val, 0, 0, 0]),
+            SeqCmd::RegModify { addr, mask, val } => ("MODIFY", 3, [addr, mask, val, 0, 0]),
+            SeqCmd::RegPoll {
+                addr,
+                mask,
+                val,
+                timeout_us,
+                error,
+            } => ("POLL", 5, [addr, mask, val, timeout_us, error]),
+            SeqCmd::DelayUs(us) => ("DELAY_US", 1, [us, 0, 0, 0, 0]),
+            SeqCmd::RegStore { addr, index } => ("STORE", 2, [addr, index, 0, 0, 0]),
+            SeqCmd::CoreReset => ("CORE_RESET", 0, [0; 5]),
+            SeqCmd::CoreStart => ("CORE_START", 0, [0; 5]),
+            SeqCmd::CoreWaitForHalt => ("CORE_WAIT_FOR_HALT", 0, [0; 5]),
+            SeqCmd::CoreResume => ("CORE_RESUME", 0, [0; 5]),
+        };
+        Event::SeqCmd { index, op, n, args }
+    }
+}
+
+/// C-96: a register poll in RM's sense — a priv error (`0xbadf....`) is
+/// "not yet" and the loop goes on; when the time is up with the register
+/// still unreadable, the error carries that value. Other errors stop.
+fn poll_reg<M: Mmio + ?Sized, C: Clock + ?Sized>(
+    bar: &mut GuardedBar0<'_, M>,
+    clock: &mut C,
+    timeout_us: u64,
+    mut read: impl FnMut(&mut GuardedBar0<'_, M>) -> GpuResult<bool>,
+) -> GpuResult<()> {
+    let mut err = None;
+    let mut last_priv = None;
+    let r = gpu_core::hal::poll_until(clock, timeout_us, 10, || match read(bar) {
+        Ok(true) => Some(()),
+        Ok(false) => {
+            last_priv = None;
+            None
+        }
+        Err(GpuError::HardwareFault { code }) if crate::regs::is_priv_error(code) => {
+            last_priv = Some(code);
+            None
+        }
+        Err(e) => {
+            err = Some(e);
+            Some(())
+        }
+    });
+    match (err, r, last_priv) {
+        (Some(e), _, _) => Err(e),
+        (None, Err(GpuError::Timeout { .. }), Some(code)) => Err(GpuError::HardwareFault { code }),
+        (None, r, _) => r,
+    }
+}
+
+/// Runs the commands in order; stops at the first error. The failing
+/// command is journaled again (`secv #i ...` after `pas ...: ESEC`).
 pub fn execute<M: Mmio + ?Sized, C: Clock + ?Sized>(
     bar: &mut GuardedBar0<'_, M>,
     clock: &mut C,
@@ -146,127 +205,123 @@ pub fn execute<M: Mmio + ?Sized, C: Clock + ?Sized>(
     reg_save: &mut [u32; 8],
     ctx: SeqContext,
 ) -> GpuResult<()> {
+    for (i, &c) in cmds.iter().enumerate() {
+        if let Err(e) = execute_one(bar, clock, c, reg_save, ctx) {
+            bar.journal().push(Event::Step {
+                name: "I8 secventiator: comanda de mai jos s-a oprit",
+                ok: false,
+            });
+            bar.journal().push(c.event(i as u32));
+            return Err(e);
+        }
+    }
+    Ok(())
+}
+
+fn execute_one<M: Mmio + ?Sized, C: Clock + ?Sized>(
+    bar: &mut GuardedBar0<'_, M>,
+    clock: &mut C,
+    c: SeqCmd,
+    reg_save: &mut [u32; 8],
+    ctx: SeqContext,
+) -> GpuResult<()> {
     let gsp = Engine::Gsp.base();
-    for &c in cmds {
-        match c {
-            SeqCmd::RegWrite { addr, val } => bar.write(addr, val)?,
-            SeqCmd::RegModify { addr, mask, val } => {
-                let v = bar.read(addr)?;
-                bar.write(addr, (v & !mask) | val)?; // as nvkm_mask()
-            }
-            SeqCmd::RegPoll {
-                addr,
-                mask,
-                val,
-                timeout_us,
-                error,
-            } => {
-                let t = if timeout_us == 0 {
-                    POLL_DEFAULT_US
-                } else {
-                    u64::from(timeout_us)
-                };
-                let mut err = None;
-                let r = gpu_core::hal::poll_until(clock, t, 10, || match bar.read(addr) {
-                    Ok(v) if v & mask == val => Some(()),
-                    Ok(_) => None,
-                    Err(e) => {
-                        err = Some(e);
-                        Some(())
-                    }
-                });
-                if let Some(e) = err {
-                    return Err(e);
-                }
-                if r.is_err() {
+    match c {
+        SeqCmd::RegWrite { addr, val } => bar.write(addr, val)?,
+        SeqCmd::RegModify { addr, mask, val } => {
+            let v = bar.read(addr)?;
+            bar.write(addr, (v & !mask) | val)?; // as nvkm_mask()
+        }
+        SeqCmd::RegPoll {
+            addr,
+            mask,
+            val,
+            timeout_us,
+            error,
+        } => {
+            let t = if timeout_us == 0 {
+                POLL_DEFAULT_US
+            } else {
+                u64::from(timeout_us)
+            };
+            // RM: a poll that runs out of time reports GSP's own error code;
+            // a register unreadable the whole time reports the priv error.
+            match poll_reg(bar, clock, t, |b| Ok(b.read(addr)? & mask == val)) {
+                Ok(()) => {}
+                Err(GpuError::Timeout { .. }) => {
                     return Err(GpuError::HardwareFault { code: error });
                 }
+                Err(e) => return Err(e),
             }
-            SeqCmd::DelayUs(us) => {
-                if us > MAX_DELAY_US {
-                    return Err(GpuError::InvalidArgument("secventiator: pauza prea lunga"));
-                }
-                clock.delay_us(us);
+        }
+        SeqCmd::DelayUs(us) => {
+            if us > MAX_DELAY_US {
+                return Err(GpuError::InvalidArgument("secventiator: pauza prea lunga"));
             }
-            SeqCmd::RegStore { addr, index } => {
-                let slot = reg_save
-                    .get_mut(index as usize)
-                    .ok_or(GpuError::InvalidArgument(
-                        "secventiator: index de salvare in afara celor 8",
-                    ))?;
-                *slot = bar.read(addr)?;
+            clock.delay_us(us);
+        }
+        SeqCmd::RegStore { addr, index } => {
+            let slot = reg_save
+                .get_mut(index as usize)
+                .ok_or(GpuError::InvalidArgument(
+                    "secventiator: index de salvare in afara celor 8",
+                ))?;
+            *slot = bar.read(addr)?;
+        }
+        SeqCmd::CoreReset => {
+            // RM 570.144 `kflcnReset` (TU102, used on GA10x): pre-reset wait,
+            // reset pulse, wait scrubbing, switch the core to falcon; then
+            // `kflcnDisableCtxReq`: FBIF_CTL |= ALLOW_PHYS_NO_CTX, DMACTL = 0
+            // (nouveau does the same without the core switch). C-96: the
+            // board answered 0xbadf5620 right after the release; the waits
+            // now poll through it.
+            falcon::reset(bar, clock, Engine::Gsp)?;
+            falcon::switch_to_falcon(bar, clock, Engine::Gsp)?;
+            let ctl = gspa::NV_PGSP_FBIF_BASE + fbif::NV_PFALCON_FBIF_CTL;
+            let v = bar.read(ctl)?;
+            bar.write(ctl, fbif::NV_PFALCON_FBIF_CTL_ALLOW_PHYS_NO_CTX.set(v, 1))?;
+            bar.write(gsp + fv4::NV_PFALCON_FALCON_DMACTL, 0)?;
+        }
+        SeqCmd::CoreStart => {
+            let cpuctl = bar.read(gsp + fv4::NV_PFALCON_FALCON_CPUCTL)?;
+            let start = fv4::NV_PFALCON_FALCON_CPUCTL_STARTCPU.set(0, 1);
+            let r = if fv4::NV_PFALCON_FALCON_CPUCTL_ALIAS_EN.get(cpuctl) == 1 {
+                fv4::NV_PFALCON_FALCON_CPUCTL_ALIAS
+            } else {
+                fv4::NV_PFALCON_FALCON_CPUCTL
+            };
+            bar.write(gsp + r, start)?;
+        }
+        SeqCmd::CoreWaitForHalt => {
+            poll_reg(bar, clock, falcon::HALT_US, |b| {
+                let v = b.read(gsp + fv4::NV_PFALCON_FALCON_CPUCTL)?;
+                Ok(fv4::NV_PFALCON_FALCON_CPUCTL_HALTED.get(v) == 1)
+            })?;
+        }
+        SeqCmd::CoreResume => {
+            // RM 570.144 `kgspExecuteSequencerCommand_GA102` / nouveau
+            // CORE_RESUME: GSP reset into RISC-V first (C-96: this step was
+            // missing), GSP mailboxes = LibOS args, start SEC2, wait the
+            // stage-3 hand-off, SEC2 mailbox 0 must be 0, GSP OS = app
+            // version, GSP RISC-V must be active.
+            let sec2 = Engine::Sec2.base();
+            falcon::gsp_reset_into_riscv(bar, clock)?;
+            bar.write(gsp + fv4::NV_PFALCON_FALCON_MAILBOX0, ctx.libos_addr as u32)?;
+            bar.write(
+                gsp + fv4::NV_PFALCON_FALCON_MAILBOX1,
+                (ctx.libos_addr >> 32) as u32,
+            )?;
+            bar.write(
+                sec2 + fv4::NV_PFALCON_FALCON_CPUCTL,
+                fv4::NV_PFALCON_FALCON_CPUCTL_STARTCPU.set(0, 1),
+            )?;
+            poll_reg(bar, clock, falcon::HALT_US, falcon::stage3_handoff_done)?;
+            let mb0 = bar.read(sec2 + fv4::NV_PFALCON_FALCON_MAILBOX0)?;
+            if mb0 != 0 {
+                return Err(GpuError::HardwareFault { code: mb0 });
             }
-            SeqCmd::CoreReset => {
-                falcon::reset(bar, clock, Engine::Gsp)?;
-                // nouveau: FBIF_CTL |= ALLOW_PHYS_NO_CTX, DMACTL = 0.
-                let ctl = gspa::NV_PGSP_FBIF_BASE + fbif::NV_PFALCON_FBIF_CTL;
-                let v = bar.read(ctl)?;
-                bar.write(ctl, fbif::NV_PFALCON_FBIF_CTL_ALLOW_PHYS_NO_CTX.set(v, 1))?;
-                bar.write(gsp + fv4::NV_PFALCON_FALCON_DMACTL, 0)?;
-            }
-            SeqCmd::CoreStart => {
-                let cpuctl = bar.read(gsp + fv4::NV_PFALCON_FALCON_CPUCTL)?;
-                let start = fv4::NV_PFALCON_FALCON_CPUCTL_STARTCPU.set(0, 1);
-                let r = if fv4::NV_PFALCON_FALCON_CPUCTL_ALIAS_EN.get(cpuctl) == 1 {
-                    fv4::NV_PFALCON_FALCON_CPUCTL_ALIAS
-                } else {
-                    fv4::NV_PFALCON_FALCON_CPUCTL
-                };
-                bar.write(gsp + r, start)?;
-            }
-            SeqCmd::CoreWaitForHalt => {
-                let mut err = None;
-                let r = gpu_core::hal::poll_until(clock, falcon::HALT_US, 10, || {
-                    match bar.read(gsp + fv4::NV_PFALCON_FALCON_CPUCTL) {
-                        Ok(v) if fv4::NV_PFALCON_FALCON_CPUCTL_HALTED.get(v) == 1 => Some(()),
-                        Ok(_) => None,
-                        Err(e) => {
-                            err = Some(e);
-                            Some(())
-                        }
-                    }
-                });
-                if let Some(e) = err {
-                    return Err(e);
-                }
-                r?;
-            }
-            SeqCmd::CoreResume => {
-                // nouveau: GSP mailboxes = LibOS args, start SEC2, wait the
-                // stage-3 hand-off, SEC2 mailbox 0 must be 0, GSP OS = app
-                // version, GSP RISC-V must be active.
-                let sec2 = Engine::Sec2.base();
-                bar.write(gsp + fv4::NV_PFALCON_FALCON_MAILBOX0, ctx.libos_addr as u32)?;
-                bar.write(
-                    gsp + fv4::NV_PFALCON_FALCON_MAILBOX1,
-                    (ctx.libos_addr >> 32) as u32,
-                )?;
-                bar.write(
-                    sec2 + fv4::NV_PFALCON_FALCON_CPUCTL,
-                    fv4::NV_PFALCON_FALCON_CPUCTL_STARTCPU.set(0, 1),
-                )?;
-                let mut err = None;
-                let r = gpu_core::hal::poll_until(clock, falcon::HALT_US, 10, || {
-                    match falcon::stage3_handoff_done(bar) {
-                        Ok(true) => Some(()),
-                        Ok(false) => None,
-                        Err(e) => {
-                            err = Some(e);
-                            Some(())
-                        }
-                    }
-                });
-                if let Some(e) = err {
-                    return Err(e);
-                }
-                r?;
-                let mb0 = bar.read(sec2 + fv4::NV_PFALCON_FALCON_MAILBOX0)?;
-                if mb0 != 0 {
-                    return Err(GpuError::HardwareFault { code: mb0 });
-                }
-                bar.write(gsp + fv4::NV_PFALCON_FALCON_OS, ctx.app_version)?;
-                falcon::wait_riscv_active(bar, clock)?;
-            }
+            bar.write(gsp + fv4::NV_PFALCON_FALCON_OS, ctx.app_version)?;
+            falcon::wait_riscv_active(bar, clock)?;
         }
     }
     Ok(())
@@ -313,6 +368,14 @@ pub fn wait_init_done<M: Mmio + ?Sized, C: Clock + ?Sized>(
             Some(m) if m.function == event::GSP_RUN_CPU_SEQUENCER => {
                 let h = rpc::decode_sequencer(&m.payload)?;
                 let cmds = parse(&h.commands)?;
+                // C-96: the whole request goes to the journal before any
+                // command runs (what GSP-RM asked, even if a command stops).
+                bar.journal().push(Event::Note(
+                    "I8 secventiator: cererea GSP-RM, comenzile urmeaza",
+                ));
+                for (i, c) in cmds.iter().enumerate() {
+                    bar.journal().push(c.event(i as u32));
+                }
                 let mut save = h.reg_save;
                 execute(bar, clock, &cmds, &mut save, ctx)?;
                 log.sequencer_runs += 1;
@@ -513,6 +576,119 @@ mod tests {
         assert!(g.riscv_active());
         assert!(g.writes.contains(&(0x110084, 0xc0de)));
         assert!(g.writes.contains(&(0x110080, 570_144)));
+    }
+
+    /// C-96 (T109): the board's I8 of 10 Nov 2026 — GSP-RM runs, the
+    /// request is `WRITE MAILBOX0 0`, `CORE_RESET`, … — now gets past the
+    /// reset (the first HWCFG2 read answers 0xbadf5620 in the model, as on
+    /// the board); the whole request is journaled before any command runs;
+    /// CORE_RESUME resets the GSP into RISC-V before the mailboxes (RM and
+    /// nouveau order; the step was missing). SIMULARE.
+    #[test]
+    fn board_request_of_10_nov_runs_and_is_journaled() {
+        let (mut g, mut j, mut c) = booted();
+        assert!(g.riscv_active());
+        let l = QueueLayout::standard();
+        let mut mem = alloc::vec![0u8; l.total_size];
+        let pages: Vec<u64> = (0..l.page_table_entries as u64)
+            .map(|i| 0x0500_0000 + i * 0x1000)
+            .collect();
+        let mut q = CpuQueues::init(&mut mem, l, &pages).unwrap();
+        let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+        falcon::ring_doorbell(&mut b).unwrap();
+        let mut peer = SimGsp::start(&mut mem, l.cmd_queue_offset, l.stat_queue_offset);
+        q.link_rx(&mem).unwrap();
+        let seq = payload(&[W, 0x110040, 0, RESET, START, HALT, RESUME]);
+        let mut step = 0;
+        let n_before = b.journal().len();
+        let log = wait_init_done(&mut q, &mut mem, &mut b, &mut c, CTX, INIT_DONE_US, |m| {
+            step += 1;
+            match step {
+                1 => peer.post(m, event::GSP_RUN_CPU_SEQUENCER, 0, &seq),
+                2 => peer.post(m, event::GSP_INIT_DONE, 0, &[]),
+                _ => {}
+            }
+        })
+        .unwrap();
+        assert_eq!((log.sequencer_runs, log.sequencer_commands), (1, 5));
+        // The request, in order, before the first command's write.
+        let events: Vec<&Event> = b.journal().events().skip(n_before).collect();
+        let first_cmd = events
+            .iter()
+            .position(|e| matches!(e, Event::SeqCmd { index: 0, .. }))
+            .unwrap();
+        let first_write = events
+            .iter()
+            .position(|e| {
+                matches!(
+                    e,
+                    Event::MmioWrite {
+                        offset: 0x110040,
+                        ..
+                    }
+                )
+            })
+            .unwrap();
+        assert!(first_cmd < first_write);
+        let ops: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::SeqCmd { op, .. } => Some(*op),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            ops,
+            [
+                "WRITE",
+                "CORE_RESET",
+                "CORE_START",
+                "CORE_WAIT_FOR_HALT",
+                "CORE_RESUME"
+            ]
+        );
+        assert_eq!(
+            alloc::format!("{}", events[first_cmd]),
+            "secv #0 WRITE 0x110040 0x0"
+        );
+        let _ = b;
+        // CORE_RESET ended with the falcon core selected; CORE_RESUME put the
+        // RISC-V core back (BCR 0x111) and GSP-RM is active again.
+        let bcrs: Vec<u32> = g
+            .writes
+            .iter()
+            .filter(|&&(o, _)| o == 0x111668)
+            .map(|&(_, v)| v)
+            .collect();
+        assert!(bcrs.ends_with(&[0x0, 0x111]), "{bcrs:x?}");
+        assert!(g.riscv_active());
+        assert!(g.writes.contains(&(0x110080, 570_144)));
+    }
+
+    /// C-96 (T110): a command that stops is journaled again after the
+    /// `ESEC` step, so the board's log names it; a poll on a register that
+    /// stays unreadable reports the priv error value, not GSP's code.
+    #[test]
+    fn the_failing_command_is_named_in_the_journal() {
+        let (mut g, mut j, mut c) = booted();
+        g.fault = gpu_sim::fake_gsp::SimFault::PrivErrorStuck;
+        let mut save = [0u32; 8];
+        let cmds = parse(&[W, 0x110040, 0, RESET]).unwrap();
+        {
+            let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+            assert_eq!(
+                execute(&mut b, &mut c, &cmds, &mut save, CTX),
+                Err(GpuError::HardwareFault {
+                    code: gpu_sim::fake_gsp::PRIV_ERROR_AFTER_RESET
+                })
+            );
+        }
+        let tail: Vec<alloc::string::String> = j.events().map(|e| alloc::format!("{e}")).collect();
+        let k = tail
+            .iter()
+            .position(|t| t.contains("comanda de mai jos s-a oprit"))
+            .unwrap();
+        assert_eq!(tail[k + 1], "secv #1 CORE_RESET");
     }
 
     #[test]

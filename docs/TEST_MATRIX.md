@@ -1,5 +1,16 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 78 (10 nov 2026, cloud, fără placă) — C-96: I8 „eroare hardware 0xbadf5620”
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T108 | Resetul GSP-ului care rulează GSP-RM (modelul răspunde `0xbadf5620` la primele citiri `HWCFG2` după eliberare, ca placa pe 10 nov): `reset` + `switch_to_falcon` trec, nucleul ajunge „falcon”, RISC-V oprit; cu `PrivErrorStuck` (eroarea nu se mai curăță) eroarea e `HardwareFault 0xbadf5620` după toată limita RM (4 s), nu timeout mut | `cargo test -p nvidia-ga104 --lib reset_of_a_running_gsp_rm` | trece; BCR final = falcon; greșeala persistentă raportată cu valoarea plăcii | conform | PASS (SIMULARE) |
+| T109 | Cererea plăcii din 10 nov (`WRITE 0x110040 0`, `CORE_RESET`, `CORE_START`, `CORE_WAIT_FOR_HALT`, `CORE_RESUME`) până la `GSP_INIT_DONE`; toate comenzile în jurnal (`secv #i …`) **înainte** de prima scriere; `CORE_RESUME` resetează GSP-ul în RISC-V (BCR `0x0` la CORE_RESET, apoi `0x111`) și GSP-RM e activ la final | `cargo test -p nvidia-ga104 --lib board_request_of_10_nov` | 1 rulare, 5 comenzi; ordinea evenimentelor; `secv #0 WRITE 0x110040 0x0` | conform | PASS (SIMULARE) |
+| T110 | Comanda care se oprește e numită în jurnal după `ESEC` (`secv #1 CORE_RESET`); eroarea poartă valoarea citită | `cargo test -p nvidia-ga104 --lib the_failing_command_is_named` | conform | conform | PASS (SIMULARE) |
+| — | Driverul **vechi** (`24dc19c`) pe modelul nou: `boot_to_init_done_with_a_sequencer_request_simulated` pică cu `HardwareFault { code: 0xbadf5620 }` — exact eroarea plăcii | rulat o dată, apoi codul nou | — | reprodus | greșeală plantată prinsă |
+
+Toate: `sh tools/check.sh` → format, clippy `-D warnings`, **420 teste PASS** (4 ignorate), build no_std PASS. **Nimic pe RTX 3070 Ti.**
+
 ## Rezultate — sesiunea 68 (8 nov 2026, cloud, fără placă) — C-83: verificarea jurnalului pentru fereastra de luni
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |

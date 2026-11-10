@@ -35,6 +35,15 @@ pub enum Event {
         ok: bool,
     },
     Note(&'static str),
+    /// C-96: one GSP-RM sequencer command, journaled before it runs
+    /// (`index` within its request; `args` are the command's words in
+    /// order, `n` of them meaningful).
+    SeqCmd {
+        index: u32,
+        op: &'static str,
+        n: u8,
+        args: [u32; 5],
+    },
 }
 
 impl fmt::Display for Event {
@@ -71,6 +80,13 @@ impl fmt::Display for Event {
             }
             Event::Step { name, ok } => write!(f, "pas {name}: {}", if ok { "ok" } else { "ESEC" }),
             Event::Note(n) => write!(f, "nota: {n}"),
+            Event::SeqCmd { index, op, n, args } => {
+                write!(f, "secv #{index} {op}")?;
+                for a in args.iter().take(usize::from(n)) {
+                    write!(f, " {a:#x}")?;
+                }
+                Ok(())
+            }
         }
     }
 }

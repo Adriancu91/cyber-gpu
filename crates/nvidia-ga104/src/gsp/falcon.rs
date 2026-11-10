@@ -156,13 +156,24 @@ impl Engine {
 
 /// Timeouts (DEDUS: nouveau/nova use the same orders of magnitude).
 pub const RESET_READY_US: u64 = 150;
-pub const SCRUB_US: u64 = 20_000;
+/// C-96: RM 570.144 waits for scrubbing with its default GPU timeout
+/// (`GPU_TIMEOUT_DEFAULT`, 4 s on silicon; nouveau: 20 ms). The board
+/// (10 Nov 2026) answered priv errors right after a reset of a running
+/// GSP-RM, so the wait is RM's; it ends as soon as scrubbing reads DONE.
+pub const SCRUB_US: u64 = 4_000_000;
 pub const CORE_SELECT_US: u64 = 10_000;
 pub const HALT_US: u64 = 2_000_000;
 pub const RISCV_ACTIVE_US: u64 = 2_000_000;
 const STEP_US: u32 = 10;
 
-fn poll<M: Mmio + ?Sized, C: Clock + ?Sized>(
+/// C-96: a poll loop in the RM 570.144 / nouveau sense. A read that answers
+/// a priv error (`0xbadf....`) is "not there yet", not a fault: both drivers
+/// keep polling through it (RM `kflcnWaitForResetToFinish_GA102`,
+/// `kflcnSwitchToFalcon_GA102`; nouveau `nvkm_msec` loops read the raw
+/// value). If the register still answers a priv error when the time is up,
+/// the error is reported with that value (not as a plain timeout), so the
+/// journal shows what the board said. Any other error stops at once.
+pub(crate) fn poll<M: Mmio + ?Sized, C: Clock + ?Sized>(
     bar: &mut GuardedBar0<'_, M>,
     clock: &mut C,
     timeout_us: u64,
@@ -170,44 +181,111 @@ fn poll<M: Mmio + ?Sized, C: Clock + ?Sized>(
     mut ok: impl FnMut(u32) -> bool,
 ) -> GpuResult<u32> {
     let mut err = None;
+    let mut last_priv = None;
     let r = poll_until(clock, timeout_us, STEP_US, || match bar.read(off) {
         Ok(v) if ok(v) => Some(v),
-        Ok(_) => None,
+        Ok(_) => {
+            last_priv = None;
+            None
+        }
+        Err(GpuError::HardwareFault { code }) if is_priv_error(code) => {
+            last_priv = Some(code);
+            None
+        }
         Err(e) => {
             err = Some(e);
             Some(0)
         }
     });
-    match err {
-        Some(e) => Err(e),
-        None => r,
+    match (err, r, last_priv) {
+        (Some(e), _, _) => Err(e),
+        (None, Err(GpuError::Timeout { .. }), Some(code)) => Err(GpuError::HardwareFault { code }),
+        (None, r, _) => r,
     }
+}
+
+/// RM 570.144 `FLCN_RESET_PROPAGATION_DELAY_COUNT` (`falcon_common.h`, MIT):
+/// register reads of `NV_P*_FALCON_ENGINE` after each write of it, so the
+/// reset signal propagates before the next access.
+pub const RESET_PROPAGATION_READS: u32 = 10;
+
+/// C-96: RM's `kgspResetHw_TU102` order for the engine reset register:
+/// RESET=1, propagation reads, RESET=0, propagation reads. The reads' values
+/// are not used (a priv error while in reset is expected).
+fn engine_reset_pulse<M: Mmio + ?Sized, C: Clock + ?Sized>(
+    bar: &mut GuardedBar0<'_, M>,
+    clock: &mut C,
+    e: Engine,
+) -> GpuResult<()> {
+    bar.write(e.engine_reg(), 1)?;
+    for _ in 0..RESET_PROPAGATION_READS {
+        let _ = bar.read(e.engine_reg());
+    }
+    clock.delay_us(10);
+    bar.write(e.engine_reg(), 0)?;
+    for _ in 0..RESET_PROPAGATION_READS {
+        let _ = bar.read(e.engine_reg());
+    }
+    Ok(())
 }
 
 /// Engine reset + wait for memory scrubbing (nouveau `ga102_flcn_reset_eng`
 /// order: wait RESET_READY (not fatal), RESET=1, RESET=0, wait scrubbing).
+///
+/// C-96 (board, 10 Nov 2026): on a GSP that was running GSP-RM the first
+/// HWCFG2 read after the release answered `0xbadf5620`; the scrub wait now
+/// polls through priv errors (as RM and nouveau do) and the wait is RM's
+/// default bound ([`SCRUB_US`]) instead of nouveau's 20 ms. The two notes
+/// tell apart "RESET_READY never set" (RM: expected sometimes) from
+/// "HWCFG2 unreadable before the reset".
 pub fn reset<M: Mmio + ?Sized, C: Clock + ?Sized>(
     bar: &mut GuardedBar0<'_, M>,
     clock: &mut C,
     e: Engine,
 ) -> GpuResult<()> {
     let hwcfg2 = e.base() + fv4::NV_PFALCON_FALCON_HWCFG2;
-    if poll(bar, clock, RESET_READY_US, hwcfg2, |v| {
+    match poll(bar, clock, RESET_READY_US, hwcfg2, |v| {
         fv4a::NV_PFALCON_FALCON_HWCFG2_RESET_READY.get(v) == 1
-    })
-    .is_err()
-    {
-        bar.journal()
-            .push(Event::Note("falcon: RESET_READY nu a venit; continui"));
+    }) {
+        Ok(_) => {}
+        Err(GpuError::HardwareFault { .. }) => bar.journal().push(Event::Note(
+            "falcon: HWCFG2 inaccesibil (0xbadf....) inainte de reset; continui",
+        )),
+        Err(_) => bar
+            .journal()
+            .push(Event::Note("falcon: RESET_READY nu a venit; continui")),
     }
-    bar.write(e.engine_reg(), 1)?;
-    clock.delay_us(10);
-    bar.write(e.engine_reg(), 0)?;
+    engine_reset_pulse(bar, clock, e)?;
     poll(bar, clock, SCRUB_US, hwcfg2, |v| {
         fv4::NV_PFALCON_FALCON_HWCFG2_MEM_SCRUBBING.get(v)
             == fv4::NV_PFALCON_FALCON_HWCFG2_MEM_SCRUBBING_DONE
     })?;
     Ok(())
+}
+
+/// C-96: RM 570.144 `kflcnSwitchToFalcon_GA102` — after a reset, if the
+/// engine's `BCR_CTRL` does not already say CORE_SELECT = FALCON (a priv
+/// error counts as "not falcon": RM reads it the same way), select the
+/// falcon core and wait for VALID. RM's comment: this also releases the
+/// RISC-V priv lockdown. Part of RM's `kflcnReset` (sequencer CORE_RESET).
+pub fn switch_to_falcon<M: Mmio + ?Sized, C: Clock + ?Sized>(
+    bar: &mut GuardedBar0<'_, M>,
+    clock: &mut C,
+    e: Engine,
+) -> GpuResult<()> {
+    let bcr = e.riscv_base() + riscv::NV_PRISCV_RISCV_BCR_CTRL;
+    let already_falcon = match bar.read(bcr) {
+        Ok(v) => {
+            riscv::NV_PRISCV_RISCV_BCR_CTRL_CORE_SELECT.get(v)
+                == riscv::NV_PRISCV_RISCV_BCR_CTRL_CORE_SELECT_FALCON
+        }
+        Err(GpuError::HardwareFault { code }) if is_priv_error(code) => false,
+        Err(e) => return Err(e),
+    };
+    if already_falcon {
+        return Ok(());
+    }
+    select_falcon_core(bar, clock, e)
 }
 
 /// Selects the falcon core (not RISC-V) for a signed HS program.
@@ -1239,6 +1317,62 @@ mod tests {
             Err(GpuError::Timeout { .. })
         ));
         assert!(run(SimFault::None).is_ok());
+    }
+
+    /// C-96 (T108), from the board (10 Nov 2026, os-276): after I7 the GSP
+    /// runs GSP-RM; the sequencer's CORE_RESET resets it and the first
+    /// HWCFG2 read answers `0xbadf5620`. Before the fix the first such read
+    /// stopped I8 ("eroare hardware 0xbadf5620"); now the scrub wait polls
+    /// through it as RM/nouveau do, the reset finishes and the core switch
+    /// to falcon follows. A priv error that never clears is still reported,
+    /// with the board's value, not as a bare timeout. SIMULARE.
+    #[test]
+    fn reset_of_a_running_gsp_rm_polls_through_the_priv_error() {
+        let (mut g, _j, _c) = tests_support::booted();
+        assert!(g.riscv_active());
+        // The model answers the board's value right after the release.
+        g.write32_raw(0x1103c0, 1);
+        g.write32_raw(0x1103c0, 0);
+        assert_eq!(
+            g.read32_raw(0x1100f4),
+            gpu_sim::fake_gsp::PRIV_ERROR_AFTER_RESET
+        );
+        // Fresh booted model: the whole reset, as CORE_RESET runs it.
+        let (mut g, mut j2, mut c2) = tests_support::booted();
+        let n = j2.len();
+        {
+            let mut b = GuardedBar0::new(&mut g, &mut j2, None).unwrap();
+            reset(&mut b, &mut c2, Engine::Gsp).unwrap();
+            switch_to_falcon(&mut b, &mut c2, Engine::Gsp).unwrap();
+        }
+        assert!(!g.riscv_active());
+        // SIM: RESET_READY is always set and HWCFG2 is readable before the
+        // reset, so no pre-reset note is expected here (on the board either
+        // note may appear; both are journaled, never silent). No step failed.
+        assert!(
+            j2.events()
+                .skip(n)
+                .all(|e| !matches!(e, Event::Step { ok: false, .. }))
+        );
+        let bcr = g
+            .writes
+            .iter()
+            .rev()
+            .find(|&&(o, _)| o == 0x111668)
+            .unwrap();
+        assert_eq!(bcr.1 & 0x10, 0, "core switched to falcon: {bcr:x?}");
+        // Priv error that never clears: the board's value comes back.
+        let (mut g, mut j3, mut c3) = tests_support::booted();
+        g.fault = SimFault::PrivErrorStuck;
+        let mut b = GuardedBar0::new(&mut g, &mut j3, None).unwrap();
+        let t0 = c3.now;
+        assert_eq!(
+            reset(&mut b, &mut c3, Engine::Gsp),
+            Err(GpuError::HardwareFault {
+                code: gpu_sim::fake_gsp::PRIV_ERROR_AFTER_RESET
+            })
+        );
+        assert!(c3.now - t0 >= SCRUB_US, "waited the whole RM bound");
     }
 
     #[test]
