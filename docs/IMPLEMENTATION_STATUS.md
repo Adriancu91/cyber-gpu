@@ -1,5 +1,37 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 80 — 10 noiembrie 2026, ~17:15–17:45 (ora României), în cloud, FĂRĂ placă — C-99 URGENT: I8 „timeout după 2 s” la CORE_RESUME
+
+Pornită de programare. Comandă nouă în hub: **C-99** (16:44, urgent, Adrian la workstation). Testul `os-277` de azi 16:43: I6+I7 TREC (a 4-a oară),
+**toate cele 420 de comenzi ale secvențiatorului GSP-RM au mers** (C-96 a funcționat), **I8 ESUAT la ultima, `secv #419 CORE_RESUME`: „timeout după 2000003 µs”**
+(1776 scrieri față de 1455 la os-276). Preluat 17:16; jurnalul `gpu-jurnal-005.txt` (2272 rânduri) citit 17:20.
+
+**Cauza (din jurnal + driverul public NVIDIA 570.144, MIT):** la `CORE_RESUME`, după resetul GSP-ului în RISC-V (`0x111668 ← 0x111`) și cutiile LibOS
+(`0x110040 ← 0x09c7a000`, `0x110044 ← 0`), driverul a scris pornirea SEC2 (Booter) în `CPUCTL`: **`0x840100: 0x50 <- 0x2 => 0x50`**. Registrul arăta `0x50`
+= HALTED | **ALIAS_EN** și scrierea nu s-a prins (citit înapoi neschimbat) — SEC2 n-a pornit, „predarea etapei 3” (`0x1180f8` bit 26) n-a venit, timeout.
+La I7 același registru arăta `0x10` (ALIAS_EN = 0, `0x840100: 0x10 <- 0x2 => 0x0`) și pornirea a mers: după ce rulează un program HS (Booter), `CPUCTL`
+rămâne în spatele aliasului. RM (`kflcnStartCpu_TU102`) și nouveau (`nvkm_falcon_v1_start`) verifică bitul 6 și scriu atunci în `CPUCTL_ALIAS` (`0x840130`);
+`CORE_START` și `run_to_halt` ale noastre făceau asta, `CORE_RESUME` nu. **Nu era „prea puțin timp”.**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Modelul plăcii | `gpu-sim::fake_gsp`: după ce Booter se oprește pe SEC2, `CPUCTL` citește `0x50` (ALIAS_EN) și o scriere în `CPUCTL` e ignorată; `CPUCTL_ALIAS` pornește (OBSERVAT; de ce programul HS lasă bitul pus: DEDUS); resetul motorului îl șterge | PASS (SIMULARE) |
+| Dovada | driverul vechi (`632178f^^` = `9959b94`) pe modelul nou: `Timeout { waited_us: 2000000 }` la CORE_RESUME — exact eroarea plăcii (2 000 003 µs) | reprodus |
+| Reparația (`3fe11f9`) | `falcon::start_cpu` (nou): STARTCPU prin `CPUCTL_ALIAS` când ALIAS_EN e pus; folosit de `run_to_halt`, `CORE_START` și acum `CORE_RESUME` | PASS (SIMULARE, T111) |
+| Ideea lui Adrian (`3aed5eb`, aprobată 17:16) | așteptările I8 de după sonerie (`CORE_WAIT_FOR_HALT`, `CORE_RESUME`: SEC2 gata / RISC-V activ, `GSP_INIT_DONE`) au limita `sequencer::LONG_WAIT_US` = 60 s (`INIT_DONE_US` 10 s → 60 s); jurnalul scrie după cât a venit răspunsul (`Event::Waited`: `asteptat CORE_RESUME: SEC2 (Booter) gata: raspuns dupa N us`); oprire manuală: `Clock::abort_requested` (metodă implicită, `false`) întrebată în `poll_until` și `wait_init_done` → `GpuError::Aborted { waited_us }` („oprit manual dupa N us”); Esc și rândul de pe ecran le face OS-ul în `TscClock` | PASS (SIMULARE, T112) |
+| `verifica_jurnal_lant` pe `gpu-jurnal-005.txt` (WprMeta `0x9c6a000`) | „OPRIT CURAT la i8-gsp-init (Bus Master pus la loc)”; I6 720 / I7 723 scrieri conforme; I8: 325 scrieri + 1 sonerie; rândurile noi `asteptat …` sunt ignorate de parser (verificat) | PASS |
+| Compatibilitate OS | doar adăugări (`start_cpu`, `wait_riscv_active_for`, `LONG_WAIT_US`, `Clock::abort_requested` cu implementare implicită, `GpuError::Aborted`, `Event::Waited`, `SimClock::abort_at`); `INIT_DONE_US` (valoare, nu nume); OS-ul folosește `_ =>` la evenimente și `Display` la erori | PASS |
+| CI GitHub | rulările pe `3fe11f9` (17:29) și `3aed5eb` (17:36) | PASS |
+| Pe RTX 3070 Ti | — | NOT TESTED |
+
+Verificări (`sh tools/check.sh`, Rust 1.97.0; ținta `x86_64-unknown-none` reinstalată): format, clippy `-D warnings`, **423 teste PASS** (4 ignorate), build no_std PASS.
+Nota pentru OS: `integration/cyber-universe/C-99_core-resume-alias.md`. Referințe RM în `docs/PROVENANCE.md`. Hub: `stare/cyber-gpu.md`, `jurnal/cyber-gpu.md`, C-99 `gata` (partea GPU).
+
+**Următorul pas:** OS-ul (C-99 partea 2) leagă `3aed5eb`, implementează `TscClock::abort_requested` (Esc) + rândul „aștept GSP… N s”, scoate Release-ul;
+la rulare se urmăresc, după `secv #419 CORE_RESUME`: `bar0 w 0x840130`, rândurile `asteptat …`, apoi `GSP_INIT_DONE` sau prima eroare după el
+(primele RPC-uri RM: `GSP_GET_GSP_STATIC_INFO`, golden/I9). Niciun pas nou fără jurnal.
+
+---
 ## Sesiunea 79 — 10 noiembrie 2026, ~13:30 (ora României), în cloud, FĂRĂ placă — oprire scurtă (os-277 așteaptă testul pe placă)
 
 Pornită de programare. Nicio comandă nouă pentru cyber-gpu: C-96 e gata la ambele proiecte (OS-ul e pe `2d66deb`, Release **`os-277`** publicat la 12:20);
