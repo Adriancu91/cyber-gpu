@@ -10,8 +10,8 @@ use gpu_core::hal::{ConfigSpace, Mmio};
 use gpu_core::ids::{CLASS_DISPLAY, PciAddress};
 use gpu_pci::{BarKind, DeviceReport};
 
-use crate::boot::{Boot0, Boot42, CHIP_GA104, chip_name};
-use crate::ids;
+use crate::boot::{Boot0, Boot42, chip_name};
+use crate::ids::{self, Family};
 use crate::regs::{NV_PMC_BOOT_0, NV_PMC_BOOT_42, PROBE_WINDOW, ReadOnlyBar0};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,6 +33,27 @@ pub fn probe_config<C: ConfigSpace + ?Sized>(
         vendor: id.vendor,
         device: id.device,
     })?;
+    check_candidate(report, model.name)
+}
+
+/// Stage 1 for GA104 **or** GA106 (C-95). Reads exactly what
+/// [`probe_config`] reads; only the id table is wider.
+pub fn probe_config_ampere<C: ConfigSpace + ?Sized>(
+    cfg: &mut C,
+    addr: Option<PciAddress>,
+) -> GpuResult<(Candidate, Family)> {
+    let report = DeviceReport::read(cfg, addr)?;
+    let id = report.id;
+    let (family, model) =
+        ids::lookup_ampere(id.vendor, id.device).ok_or(GpuError::Unsupported {
+            vendor: id.vendor,
+            device: id.device,
+        })?;
+    Ok((check_candidate(report, model.name)?, family))
+}
+
+fn check_candidate(report: DeviceReport, model: &'static str) -> GpuResult<Candidate> {
+    let id = report.id;
     if id.class != CLASS_DISPLAY {
         return Err(GpuError::Unsupported {
             vendor: id.vendor,
@@ -54,7 +75,7 @@ pub fn probe_config<C: ConfigSpace + ?Sized>(
     }
     Ok(Candidate {
         report,
-        model: model.name,
+        model,
         bar0,
     })
 }
@@ -73,6 +94,16 @@ pub fn probe_mmio<M: Mmio + ?Sized>(
     bar0: &mut M,
     journal: &mut Journal,
 ) -> GpuResult<ChipIdentity> {
+    probe_mmio_family(bar0, journal, Family::Ga104)
+}
+
+/// Stage 2 for the family chosen by the PCI id: BOOT_0 must report that
+/// family's chip id. Same two reads as [`probe_mmio`].
+pub fn probe_mmio_family<M: Mmio + ?Sized>(
+    bar0: &mut M,
+    journal: &mut Journal,
+    family: Family,
+) -> GpuResult<ChipIdentity> {
     if bar0.len() < PROBE_WINDOW {
         return Err(GpuError::InvalidArgument("fereastra BAR0 prea mica"));
     }
@@ -86,8 +117,11 @@ pub fn probe_mmio<M: Mmio + ?Sized>(
     let raw42 = ReadOnlyBar0::new(bar0, journal).read(NV_PMC_BOOT_42)?;
     let boot0 = Boot0::decode(raw0);
     let boot42 = Boot42::decode(raw42);
-    if boot0.chip_id() != CHIP_GA104 {
-        return Err(GpuError::Blocked("BOOT_0 nu indica GA104 (0x174)"));
+    if boot0.chip_id() != family.chip_id() {
+        return Err(GpuError::Blocked(match family {
+            Family::Ga104 => "BOOT_0 nu indica GA104 (0x174)",
+            Family::Ga106 => "BOOT_0 nu indica GA106 (0x176)",
+        }));
     }
     Ok(ChipIdentity {
         boot0,
@@ -154,6 +188,41 @@ pub fn level0<C: ConfigSpace + ?Sized, M: Mmio + ?Sized>(
         candidate,
         chip: chip?,
     })
+}
+
+/// Level 0 for GA104 or GA106 (C-95). Read-only, like [`level0`]; the
+/// family says whether later (writing) steps may run: see
+/// [`Family::writes_allowed`]. [`level0`] stays GA104-only and remains the
+/// gate of the writing chain.
+pub fn level0_ampere<C: ConfigSpace + ?Sized, M: Mmio + ?Sized>(
+    cfg: &mut C,
+    addr: Option<PciAddress>,
+    bar0: &mut M,
+    journal: &mut Journal,
+) -> GpuResult<(Level0, Family)> {
+    let candidate = probe_config_ampere(cfg, addr);
+    journal.push(Event::Step {
+        name: "nivel0: configuratie",
+        ok: candidate.is_ok(),
+    });
+    let (candidate, family) = candidate?;
+    if family == Family::Ga106 {
+        journal.push(Event::Note(
+            "GA106 (C-95): doar citire; lantul cu scrieri ramane doar pentru GA104",
+        ));
+    }
+    let chip = probe_mmio_family(bar0, journal, family);
+    journal.push(Event::Step {
+        name: "nivel0: BOOT_0/BOOT_42",
+        ok: chip.is_ok(),
+    });
+    Ok((
+        Level0 {
+            candidate,
+            chip: chip?,
+        },
+        family,
+    ))
 }
 
 #[cfg(test)]
@@ -269,5 +338,64 @@ mod tests {
         let mut inconsistent = SimMmio::ga104_bar0();
         inconsistent.set(0xa00, 0x1720_0000);
         assert!(!probe_mmio(&mut inconsistent, &mut j).unwrap().consistent);
+    }
+
+    // C-95. All SIMULARE: a GA106 laptop profile built from public facts
+    // (chip id, PCI ids); nothing measured on Adrian's laptop.
+    #[test]
+    fn ga106_laptop_level0_is_read_only_simulare() {
+        let mut cfg = SimConfig::ga106_laptop_sim();
+        let mut bar0 = SimMmio::ga106_bar0();
+        bar0.set(0xa00, (0x176 << 20) | (0xa << 16) | (0x1 << 12));
+        let mut j = Journal::new(64);
+        let (l0, fam) = level0_ampere(&mut cfg, None, &mut bar0, &mut j).unwrap();
+        assert_eq!(fam, Family::Ga106);
+        assert!(!fam.writes_allowed());
+        assert_eq!(chip_name(l0.chip.boot0.chip_id()), "GA106");
+        assert!(l0.chip.consistent);
+        assert_eq!(l0.candidate.model, "GeForce RTX 3060 Laptop");
+        assert_eq!(j.writes(), 0);
+        assert_eq!(cfg.writes, 0);
+        assert!(bar0.writes.is_empty());
+        // The GA104-only gate still refuses the laptop.
+        let mut j = Journal::new(64);
+        assert!(matches!(
+            level0(&mut cfg, None, &mut bar0, &mut j),
+            Err(GpuError::Unsupported { .. })
+        ));
+    }
+
+    #[test]
+    fn ampere_level0_still_accepts_the_workstation() {
+        let mut cfg = SimConfig::ga104_rtx3070ti();
+        let mut bar0 = sim_bar0();
+        let mut j = Journal::new(64);
+        let (l0, fam) = level0_ampere(&mut cfg, None, &mut bar0, &mut j).unwrap();
+        assert_eq!(fam, Family::Ga104);
+        assert_eq!(
+            l0,
+            level0(&mut cfg, None, &mut bar0, &mut Journal::new(64)).unwrap()
+        );
+    }
+
+    #[test]
+    fn ga106_pci_id_with_other_chip_is_refused() {
+        // A "3060 Laptop" PCI id but BOOT_0 says GA104: refuse, do not guess.
+        let mut cfg = SimConfig::ga106_laptop_sim();
+        let mut bar0 = sim_bar0();
+        let mut j = Journal::new(64);
+        assert_eq!(
+            level0_ampere(&mut cfg, None, &mut bar0, &mut j),
+            Err(GpuError::Blocked("BOOT_0 nu indica GA106 (0x176)"))
+        );
+        // Laptop dGPU powered down (D3): refused before any BAR0 read.
+        let mut cfg = SimConfig::ga106_laptop_sim();
+        cfg.set_power_state(3);
+        let mut bar0 = SimMmio::ga106_bar0();
+        assert!(matches!(
+            level0_ampere(&mut cfg, None, &mut bar0, &mut Journal::new(64)),
+            Err(GpuError::Blocked(_))
+        ));
+        assert!(bar0.reads.is_empty());
     }
 }

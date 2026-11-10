@@ -102,6 +102,113 @@ pub const GA104_MODELS: &[Model] = &[
     },
 ];
 
+/// GA106 PCI device ids (C-95, the ASUS TUF F15 laptop: "RTX 3060 Laptop").
+///
+/// Source: NVIDIA open-gpu-kernel-modules@570.144 README (MIT), table of
+/// supported GPUs; the GA106 attribution of 0x25xx below 0x2580 follows
+/// pci.ids (cited, not copied). Note: the README also lists "RTX 3060
+/// Laptop GPU" names on GA104 (0x249c, 0x24a0) and GA107 (0x25a0, 0x25a2)
+/// ids, so the name proves nothing: the chip is confirmed from BOOT_0.
+/// GA106 is recognised for READ-ONLY steps only (identification, GFW
+/// status, VBIOS, firmware file check); the writing chain stays GA104-only.
+pub const GA106_MODELS: &[Model] = &[
+    Model {
+        device: 0x2503,
+        name: "GeForce RTX 3060",
+    },
+    Model {
+        device: 0x2504,
+        name: "GeForce RTX 3060 LHR",
+    },
+    Model {
+        device: 0x2507,
+        name: "GeForce RTX 3050",
+    },
+    Model {
+        device: 0x2508,
+        name: "GeForce RTX 3050 OEM",
+    },
+    Model {
+        device: 0x2520,
+        name: "GeForce RTX 3060 Laptop",
+    },
+    Model {
+        device: 0x2521,
+        name: "GeForce RTX 3060 Laptop",
+    },
+    Model {
+        device: 0x2523,
+        name: "GeForce RTX 3050 Ti Laptop",
+    },
+    Model {
+        device: 0x2531,
+        name: "RTX A2000",
+    },
+    Model {
+        device: 0x2544,
+        name: "GeForce RTX 3060",
+    },
+    Model {
+        device: 0x2560,
+        name: "GeForce RTX 3060 Laptop",
+    },
+    Model {
+        device: 0x2563,
+        name: "GeForce RTX 3050 Ti Laptop",
+    },
+    Model {
+        device: 0x2571,
+        name: "RTX A2000 12GB",
+    },
+];
+
+/// Which Ampere chip a PCI id is a candidate for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Family {
+    /// The workstation board; the only chip the writing chain accepts.
+    Ga104,
+    /// C-95: read-only recognition.
+    Ga106,
+}
+
+impl Family {
+    /// The chip id BOOT_0 must report for this family.
+    pub fn chip_id(self) -> u16 {
+        match self {
+            Family::Ga104 => crate::boot::CHIP_GA104,
+            Family::Ga106 => crate::boot::CHIP_GA106,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Family::Ga104 => "GA104",
+            Family::Ga106 => "GA106",
+        }
+    }
+
+    /// Whether any step that writes to the board may run on this family.
+    /// Only GA104 (the workstation); GA106 needs Adrian's separate "DA" (C-95 pct. 3).
+    pub fn writes_allowed(self) -> bool {
+        matches!(self, Family::Ga104)
+    }
+}
+
+/// GA106 table lookup (read-only recognition, C-95).
+pub fn lookup_ga106(vendor: u16, device: u16) -> Option<&'static Model> {
+    if vendor != VENDOR_NVIDIA {
+        return None;
+    }
+    GA106_MODELS.iter().find(|m| m.device == device)
+}
+
+/// GA104 or GA106 candidate. [`lookup`] stays GA104-only.
+pub fn lookup_ampere(vendor: u16, device: u16) -> Option<(Family, &'static Model)> {
+    lookup(vendor, device)
+        .map(|m| (Family::Ga104, m))
+        .or_else(|| lookup_ga106(vendor, device).map(|m| (Family::Ga106, m)))
+}
+
 /// The board this project targets.
 pub const TARGET_DEVICE: u16 = 0x2482;
 
@@ -132,5 +239,31 @@ mod tests {
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), GA104_MODELS.len(), "no duplicates");
+    }
+
+    #[test]
+    fn ga106_table_is_separate_and_read_only() {
+        assert!(lookup(0x10de, 0x2560).is_none(), "GA104 lookup unchanged");
+        assert_eq!(
+            lookup_ga106(0x10de, 0x2560).unwrap().name,
+            "GeForce RTX 3060 Laptop"
+        );
+        assert!(lookup_ga106(0x1002, 0x2560).is_none(), "vendor checked");
+        assert_eq!(lookup_ampere(0x10de, 0x2482).unwrap().0, Family::Ga104);
+        assert_eq!(lookup_ampere(0x10de, 0x2520).unwrap().0, Family::Ga106);
+        assert!(
+            lookup_ampere(0x10de, 0x25a0).is_none(),
+            "GA107 not recognised"
+        );
+        assert!(!Family::Ga106.writes_allowed());
+        assert!(Family::Ga104.writes_allowed());
+        assert_eq!(Family::Ga106.chip_id(), 0x176);
+        for m in GA106_MODELS {
+            assert!(lookup(0x10de, m.device).is_none(), "no id in both tables");
+        }
+        let mut ids: alloc::vec::Vec<u16> = GA106_MODELS.iter().map(|m| m.device).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), GA106_MODELS.len(), "no duplicates");
     }
 }

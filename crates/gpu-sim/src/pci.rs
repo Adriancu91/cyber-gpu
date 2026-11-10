@@ -126,6 +126,20 @@ impl SimConfig {
         self.regs[0x200 / 4] = 0x1001_0015; // ReBAR -> AER (backwards)
     }
 
+    /// SIMULARE (C-95): an RTX 3060 Laptop (GA106) shaped like the GA104
+    /// model. ALL values are SIM: device id 0x2560 is one of the GA106
+    /// "RTX 3060 Laptop" ids (open-gpu-kernel-modules@570.144 README), the
+    /// subsystem 1043:0000 only says "ASUS"; BARs and link are not measured.
+    /// Adrian's laptop has not been read yet; its real ids replace these.
+    pub fn ga106_laptop_sim() -> Self {
+        let mut s = Self::ga104_rtx3070ti();
+        s.set_device_id(0x2560);
+        s.regs[0x2c / 4] = 0x0000_1043; // subsystem vendor ASUS, device SIM
+        s.regs[0x84 / 4] = 0x0000_0084; // LinkCap: 16 GT/s x8 (SIM)
+        s.regs[0x88 / 4] = 0x0084_0000; // LinkSta: 16 GT/s x8 (SIM)
+        s
+    }
+
     pub fn set_device_id(&mut self, device: u16) {
         self.regs[0] = ((device as u32) << 16) | (self.regs[0] & 0xffff);
     }
