@@ -1,5 +1,24 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 81 — 10 noiembrie 2026, ~19:25–19:45 (ora României), în cloud, FĂRĂ placă — oprire scurtă (os-278 așteaptă testul pe placă)
+
+Pornită de programare. Nicio comandă nouă pentru cyber-gpu: C-99 e gata la ambele proiecte (OS-ul e pe `3aed5eb`, commit `de63f32`, Release **`os-278`** publicat la 18:27,
+cu Esc + rândul „astept raspunsul placii (GSP)... N s”). C-100 e pentru Kronos: Adrian a plecat ~18:00, placa e la Kronos de la 19:00 până la 07:00 → **testul cu `os-278` nu e în seara asta**.
+Niciun jurnal nou de pe placă (ultimul dosar: `rezultate/2026-11-10-workstation-os277/`, analizat în sesiunea 80). Codul neschimbat față de `3aed5eb`. **Nimic testat pe RTX 3070 Ti.**
+CI GitHub verde pe `3aed5eb`, `632178f`, `d1c0fea`, `03cbc1a` (rulările de la 17:36–17:40).
+Verificare locală (`sh tools/check.sh`, Rust 1.97.0; ținta `x86_64-unknown-none` reinstalată): format, clippy `-D warnings`, **423 teste PASS** (4 ignorate), build no_std PASS.
+
+| Pas | Rezultat |
+|---|---|
+| Lucru nou | NOT TESTED — nu există pas nou fără placă; reparația C-99 așteaptă proba cu `os-278` |
+| Copia din hub (C-34) | PASS — era rămasă la `bbbdb2f` (9 nov; sesiunile 78 și 80 au urcat fără s-o reîmprospăteze); refăcută din clona completă (`git fetch --unshallow`, 185 commit-uri), `git bundle verify` „complete history”, clonă de probă cu același arbore ca `origin/g0-g2-fundatie`, fără fișiere de firmware; OS-ul citește acum și direct de pe GitHub, copia rămâne rezerva |
+| CI GitHub | PASS (pe `03cbc1a`) |
+
+**Următorul pas:** după testul cu `os-278` (fereastra următoare a lui Adrian, cel mai devreme mâine): `verifica_jurnal_lant` pe jurnalul din `rezultate/`; se urmăresc,
+după `secv #419 CORE_RESUME`: `bar0 w 0x840130`, rândurile `asteptat … raspuns dupa N us`, apoi `GSP_INIT_DONE` sau prima eroare după el. Niciun pas nou fără jurnal.
+**Regula 8:** sesiunile 79 și 81 n-au avut pas de cod, sesiunea 80 a avut (C-99) — oprirea de siguranță nu se aplică.
+
+---
 ## Sesiunea 80 — 10 noiembrie 2026, ~17:15–17:45 (ora României), în cloud, FĂRĂ placă — C-99 URGENT: I8 „timeout după 2 s” la CORE_RESUME
 
 Pornită de programare. Comandă nouă în hub: **C-99** (16:44, urgent, Adrian la workstation). Testul `os-277` de azi 16:43: I6+I7 TREC (a 4-a oară),
