@@ -1,5 +1,25 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 82 — 11 noiembrie 2026, ~01:25–01:40 (ora României), în cloud, FĂRĂ placă — oprire scurtă (os-278 așteaptă testul pe placă)
+
+Pornită de programare. Nicio comandă nouă pentru cyber-gpu (ultima din hub e C-100, pentru Kronos: placa e la Kronos până la 07:00; Kronos rulează la noapte S100 pe placă,
+liberă cel târziu 05:30). OS-ul e tot pe `os-278` (`de63f32`, cu `3aed5eb`), stare rescrisă la 23:45 fără schimbări. Niciun jurnal nou de pe placă
+(ultimul dosar: `rezultate/2026-11-10-workstation-os277/`, analizat în sesiunea 80). Codul neschimbat față de `3aed5eb`. **Nimic testat pe RTX 3070 Ti.**
+CI GitHub verde pe `ec23e4d` (rularea de la 19:31, 39 s). Copia din hub (C-34) e la `ec23e4d` = `origin/g0-g2-fundatie` (verificat cu `git bundle list-heads`).
+Verificare locală (`sh tools/check.sh`, Rust 1.97.0; ținta `x86_64-unknown-none` reinstalată): format, clippy `-D warnings`, **423 teste PASS** (4 ignorate), build no_std PASS.
+
+| Pas | Rezultat |
+|---|---|
+| Lucru nou | NOT TESTED — nu există pas nou fără placă; reparația C-99 așteaptă proba cu `os-278` |
+| Copia din hub (C-34) | PASS — la zi (`ec23e4d`); după commit-ul acesta (doar document) se reîmprospătează |
+| CI GitHub | PASS (pe `ec23e4d`) |
+
+**Următorul pas:** după testul cu `os-278` (fereastra următoare a lui Adrian, cel mai devreme 11 nov dimineața): `verifica_jurnal_lant` pe jurnalul din `rezultate/`; se urmăresc,
+după `secv #419 CORE_RESUME`: `bar0 w 0x840130`, rândurile `asteptat … raspuns dupa N us`, apoi `GSP_INIT_DONE` sau prima eroare după el. Niciun pas nou fără jurnal.
+**Regula 8:** sesiunile 81 și 82 n-au avut pas de cod, sesiunea 80 a avut (C-99) — oprirea de siguranță nu se aplică încă. Dacă sesiunea 83 nu găsește nici jurnal, nici comandă nouă,
+se aplică oprirea de siguranță („OPRIT: necesită analiza lui Adrian”) — fără a inventa lucru.
+
+---
 ## Sesiunea 81 — 10 noiembrie 2026, ~19:25–19:45 (ora României), în cloud, FĂRĂ placă — oprire scurtă (os-278 așteaptă testul pe placă)
 
 Pornită de programare. Nicio comandă nouă pentru cyber-gpu: C-99 e gata la ambele proiecte (OS-ul e pe `3aed5eb`, commit `de63f32`, Release **`os-278`** publicat la 18:27,
