@@ -23,6 +23,7 @@ același reset mersese fiindcă GSP-ul era liber. Al doilea gol găsit citind RM
 | Jurnal | cererea secvențiatorului întreagă **înainte** de execuție (`secv #i OP arg…`, eveniment nou `Event::SeqCmd`, OS-ul compilează neschimbat); comanda oprită e numită după `ESEC` | PASS (T109, T110) |
 | Aceeași clasă în I8–I14 | toate buclele de așteptare (`select_falcon_core`, `run_to_halt`, `wait_riscv_active`, `gsp_reset_into_riscv`) trec prin `poll` → tolerante; citirile simple (mailbox, WPR2, FBIF) rămân stricte, corect | PASS (citire de cod) |
 | Compatibilitate OS | doar adăugări (`switch_to_falcon`, `RESET_PROPAGATION_READS`, `SeqCmd::event`, `Event::SeqCmd`, `SimFault::PrivErrorStuck`); `SCRUB_US` 20 ms → 4 s (valoare, nu nume) | PASS |
+| CI GitHub | rularea 149 pe `2d66deb` | PASS |
 | Pe RTX 3070 Ti | — | NOT TESTED |
 
 Verificări (`sh tools/check.sh`, Rust 1.97.0; ținta `x86_64-unknown-none` reinstalată): format, clippy `-D warnings`, **420 teste PASS** (4 ignorate), build no_std PASS.
