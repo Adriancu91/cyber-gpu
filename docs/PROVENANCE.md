@@ -166,3 +166,11 @@ specificație: `kernel/gpu/gsp/kernel_gsp.c` (`kgspExecuteSequencerBuffer_IMPL`:
 (codurile `NV_PPRIV_SYS_PRI_ERROR_CODE_*`: `0xBADF50` = `FECS_PRI_CLIENT_ERR`). Nouveau (`r535_gsp_msg_run_cpu_sequencer`, `ga102_gsp_reset`)
 din cunoaștere generală, doar pentru comparație. Cod scris de noi (`falcon::poll`, `engine_reset_pulse`, `switch_to_falcon`, `sequencer::poll_reg`,
 `SeqCmd::event`); modelul `gpu-sim::fake_gsp` (`PRIV_ERROR_AFTER_RESET`) scris de noi din jurnalul plăcii (`gpu-jurnal-004.txt`).
+
+**Sesiunea 80 (10 nov), C-99 — pornirea SEC2 prin `CPUCTL_ALIAS` la CORE_RESUME:** open-gpu-kernel-modules@570.144 (`8ec351ae`, MIT),
+citite ca specificație: `falcon/arch/turing/kernel_falcon_tu102.c` (`kflcnStartCpu_TU102`: dacă `CPUCTL.ALIAS_EN` e pus, `STARTCPU` se scrie
+în `NV_PFALCON_FALCON_CPUCTL_ALIAS`), `gsp/arch/ampere/kernel_gsp_ga102.c` (`kgspExecuteSequencerCommand_GA102`, CORE_RESUME: `kflcnStartCpu_HAL`
+pe falcon-ul SEC2). Nouveau (`nvkm_falcon_v1_start`: același test al bitului 6) din cunoaștere generală, doar pentru comparație. Faptul de pe placă
+(`gpu-jurnal-005.txt`: `0x840100: 0x50 <- 0x2 => 0x50` după Booter) e OBSERVAT; de ce programul HS lasă `ALIAS_EN` pus e DEDUS. Cod scris de noi
+(`falcon::start_cpu`, `wait_riscv_active_for`, `sequencer::LONG_WAIT_US`, `Clock::abort_requested`, `GpuError::Aborted`, `Event::Waited`); modelul
+`gpu-sim::fake_gsp` (`Falcon::alias_en`) scris de noi din jurnalul plăcii.
