@@ -137,6 +137,13 @@ struct Falcon {
     core_riscv: bool,
     /// C-96: falcon-register reads left that answer `PRIV_ERROR_AFTER_RESET`.
     priv_err_left: u32,
+    /// C-99, OBSERVAT on the board (10 Nov 2026, os-277, `gpu-jurnal-005.txt`):
+    /// after Booter halted on SEC2, `CPUCTL` read `0x50` = HALTED |
+    /// ALIAS_EN, and a `STARTCPU` written to `CPUCTL` did not stick
+    /// (`0x840100: 0x50 <- 0x2 => 0x50`); only `CPUCTL_ALIAS` starts the core
+    /// then (RM `kflcnStartCpu_TU102`, nouveau `nvkm_falcon_v1_start`). Set
+    /// when a HS program halts on the falcon, cleared by an engine reset.
+    alias_en: bool,
 }
 
 /// SIM: a sparse 16 MiB BAR0 with two falcons behind it.
@@ -474,8 +481,9 @@ impl FakeGsp {
                 if halt_now {
                     self.halt_effects(base);
                 }
-                let halted = self.falcon_mut(base).halted;
-                fv4::NV_PFALCON_FALCON_CPUCTL_HALTED.set(0, u32::from(halted))
+                let f = *self.falcon_mut(base);
+                fv4::NV_PFALCON_FALCON_CPUCTL_HALTED.set(0, u32::from(f.halted))
+                    | fv4::NV_PFALCON_FALCON_CPUCTL_ALIAS_EN.set(0, u32::from(f.alias_en))
             }
             fv4::NV_PFALCON_FALCON_HWCFG => {
                 fv4::NV_PFALCON_FALCON_HWCFG_IMEM_SIZE.set(0, (SIM_MEM / 256) as u32)
@@ -530,6 +538,10 @@ impl FakeGsp {
                 }
             },
             (SEC2_BASE, Some(SimUcode::BooterLoad), true) => {
+                // C-99: the HS program leaves CPUCTL behind its alias (board:
+                // 0x50 after Booter). Whether FWSEC does the same on the GSP
+                // falcon is DEDUS (I7 resets the GSP first anyway).
+                self.sec2.alias_en = true;
                 let wpr2 = self.raw(fb::NV_PFB_PRI_MMU_WPR2_ADDR_HI) != 0;
                 let mut arg = u64::from(self.raw(mb0))
                     | u64::from(self.raw(base + fv4::NV_PFALCON_FALCON_MAILBOX1)) << 32;
@@ -618,8 +630,12 @@ impl FakeGsp {
                 self.regs.insert(base + rel, v);
             }
             fv4::NV_PFALCON_FALCON_CPUCTL | fv4::NV_PFALCON_FALCON_CPUCTL_ALIAS => {
-                let start = fv4::NV_PFALCON_FALCON_CPUCTL_STARTCPU.get(v) == 1
-                    && !self.falcon_mut(base).in_reset;
+                let f = *self.falcon_mut(base);
+                // C-99 (board, 10 Nov 2026): with ALIAS_EN set, a write to
+                // CPUCTL is dropped (read back unchanged); CPUCTL_ALIAS works.
+                let reachable = rel == fv4::NV_PFALCON_FALCON_CPUCTL_ALIAS || !f.alias_en;
+                let start =
+                    fv4::NV_PFALCON_FALCON_CPUCTL_STARTCPU.get(v) == 1 && !f.in_reset && reachable;
                 if start {
                     if self.falcon_mut(base).loaded.is_none() {
                         let accepted = self.brom_check(base);

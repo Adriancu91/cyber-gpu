@@ -282,16 +282,7 @@ fn execute_one<M: Mmio + ?Sized, C: Clock + ?Sized>(
             bar.write(ctl, fbif::NV_PFALCON_FBIF_CTL_ALLOW_PHYS_NO_CTX.set(v, 1))?;
             bar.write(gsp + fv4::NV_PFALCON_FALCON_DMACTL, 0)?;
         }
-        SeqCmd::CoreStart => {
-            let cpuctl = bar.read(gsp + fv4::NV_PFALCON_FALCON_CPUCTL)?;
-            let start = fv4::NV_PFALCON_FALCON_CPUCTL_STARTCPU.set(0, 1);
-            let r = if fv4::NV_PFALCON_FALCON_CPUCTL_ALIAS_EN.get(cpuctl) == 1 {
-                fv4::NV_PFALCON_FALCON_CPUCTL_ALIAS
-            } else {
-                fv4::NV_PFALCON_FALCON_CPUCTL
-            };
-            bar.write(gsp + r, start)?;
-        }
+        SeqCmd::CoreStart => falcon::start_cpu(bar, Engine::Gsp)?,
         SeqCmd::CoreWaitForHalt => {
             poll_reg(bar, clock, falcon::HALT_US, |b| {
                 let v = b.read(gsp + fv4::NV_PFALCON_FALCON_CPUCTL)?;
@@ -301,7 +292,9 @@ fn execute_one<M: Mmio + ?Sized, C: Clock + ?Sized>(
         SeqCmd::CoreResume => {
             // RM 570.144 `kgspExecuteSequencerCommand_GA102` / nouveau
             // CORE_RESUME: GSP reset into RISC-V first (C-96: this step was
-            // missing), GSP mailboxes = LibOS args, start SEC2, wait the
+            // missing), GSP mailboxes = LibOS args, start SEC2 (C-99: through
+            // CPUCTL_ALIAS when ALIAS_EN is set — RM `kflcnStartCpu`; the
+            // board dropped the plain CPUCTL write after Booter), wait the
             // stage-3 hand-off, SEC2 mailbox 0 must be 0, GSP OS = app
             // version, GSP RISC-V must be active.
             let sec2 = Engine::Sec2.base();
@@ -311,10 +304,7 @@ fn execute_one<M: Mmio + ?Sized, C: Clock + ?Sized>(
                 gsp + fv4::NV_PFALCON_FALCON_MAILBOX1,
                 (ctx.libos_addr >> 32) as u32,
             )?;
-            bar.write(
-                sec2 + fv4::NV_PFALCON_FALCON_CPUCTL,
-                fv4::NV_PFALCON_FALCON_CPUCTL_STARTCPU.set(0, 1),
-            )?;
+            falcon::start_cpu(bar, Engine::Sec2)?;
             poll_reg(bar, clock, falcon::HALT_US, falcon::stage3_handoff_done)?;
             let mb0 = bar.read(sec2 + fv4::NV_PFALCON_FALCON_MAILBOX0)?;
             if mb0 != 0 {
@@ -689,6 +679,45 @@ mod tests {
             .position(|t| t.contains("comanda de mai jos s-a oprit"))
             .unwrap();
         assert_eq!(tail[k + 1], "secv #1 CORE_RESET");
+    }
+
+    /// C-99 (T111): the board's CORE_RESUME of 10 Nov 2026 (os-277,
+    /// `gpu-jurnal-005.txt`) — after Booter, SEC2's CPUCTL reads `0x50`
+    /// (HALTED | ALIAS_EN) and the plain `0x840100 <- 2` was dropped (read
+    /// back `0x50`), so the stage-3 hand-off never came: timeout after 2 s.
+    /// The model reproduces it; the driver now starts SEC2 through
+    /// `CPUCTL_ALIAS` (0x840130), as RM `kflcnStartCpu` does. SIMULARE.
+    #[test]
+    fn core_resume_starts_sec2_through_the_alias_after_booter() {
+        let (mut g, mut j, mut c) = booted();
+        let before = g.writes.len();
+        let cmds = parse(&[RESUME]).unwrap();
+        let mut save = [0u32; 8];
+        {
+            let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+            // The board's reading after Booter.
+            assert_eq!(b.read(0x840100).unwrap(), 0x50);
+            execute(&mut b, &mut c, &cmds, &mut save, CTX).unwrap();
+        }
+        let sec2: Vec<(u32, u32)> = g.writes[before..]
+            .iter()
+            .copied()
+            .filter(|&(o, _)| o == 0x840100 || o == 0x840130)
+            .collect();
+        assert_eq!(sec2, [(0x840130, 2)]);
+        assert!(g.riscv_active());
+        // The old driver's write, on the same model: the board's 2 s timeout.
+        let (mut g, mut j, mut c) = booted();
+        let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+        falcon::gsp_reset_into_riscv(&mut b, &mut c).unwrap();
+        b.write(0x840100, 2).unwrap();
+        assert_eq!(b.read(0x840100).unwrap(), 0x50);
+        assert_eq!(
+            poll_reg(&mut b, &mut c, falcon::HALT_US, falcon::stage3_handoff_done),
+            Err(GpuError::Timeout {
+                waited_us: 2_000_000
+            })
+        );
     }
 
     #[test]

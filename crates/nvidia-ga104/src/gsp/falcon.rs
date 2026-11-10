@@ -306,6 +306,23 @@ pub fn select_falcon_core<M: Mmio + ?Sized, C: Clock + ?Sized>(
     Ok(())
 }
 
+/// `STARTCPU` the way RM (`kflcnStartCpu_TU102`) and nouveau
+/// (`nvkm_falcon_v1_start`) do it: through `CPUCTL_ALIAS` when
+/// `CPUCTL.ALIAS_EN` is set, else through `CPUCTL`. C-99 (board, 10 Nov
+/// 2026): after Booter halted, SEC2's CPUCTL read `0x50` (HALTED |
+/// ALIAS_EN) and a start written to CPUCTL was dropped — the sequencer's
+/// CORE_RESUME waited 2 s for a SEC2 that never ran.
+pub fn start_cpu<M: Mmio + ?Sized>(bar: &mut GuardedBar0<'_, M>, e: Engine) -> GpuResult<()> {
+    let b = e.base();
+    let cpuctl = bar.read(b + fv4::NV_PFALCON_FALCON_CPUCTL)?;
+    let start = fv4::NV_PFALCON_FALCON_CPUCTL_STARTCPU.set(0, 1);
+    if fv4::NV_PFALCON_FALCON_CPUCTL_ALIAS_EN.get(cpuctl) == 1 {
+        bar.write(b + fv4::NV_PFALCON_FALCON_CPUCTL_ALIAS, start)
+    } else {
+        bar.write(b + fv4::NV_PFALCON_FALCON_CPUCTL, start)
+    }
+}
+
 /// Writes the two mailboxes, starts the CPU, waits for HALTED and returns
 /// the mailboxes as the program left them.
 pub fn run_to_halt<M: Mmio + ?Sized, C: Clock + ?Sized>(
@@ -317,13 +334,7 @@ pub fn run_to_halt<M: Mmio + ?Sized, C: Clock + ?Sized>(
     let b = e.base();
     bar.write(b + fv4::NV_PFALCON_FALCON_MAILBOX0, mailbox.0)?;
     bar.write(b + fv4::NV_PFALCON_FALCON_MAILBOX1, mailbox.1)?;
-    let cpuctl = bar.read(b + fv4::NV_PFALCON_FALCON_CPUCTL)?;
-    let start = fv4::NV_PFALCON_FALCON_CPUCTL_STARTCPU.set(0, 1);
-    if fv4::NV_PFALCON_FALCON_CPUCTL_ALIAS_EN.get(cpuctl) == 1 {
-        bar.write(b + fv4::NV_PFALCON_FALCON_CPUCTL_ALIAS, start)?;
-    } else {
-        bar.write(b + fv4::NV_PFALCON_FALCON_CPUCTL, start)?;
-    }
+    start_cpu(bar, e)?;
     poll(
         bar,
         clock,
