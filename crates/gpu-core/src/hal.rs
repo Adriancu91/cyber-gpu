@@ -77,6 +77,12 @@ pub fn checked_write32<M: Mmio + ?Sized>(m: &mut M, offset: u64, value: u32) -> 
 pub trait Clock {
     fn now_us(&mut self) -> u64;
     fn delay_us(&mut self, us: u32);
+    /// C-99 (Adrian, 10 Nov 2026): a long wait may be cut short by hand
+    /// (the OS: the Esc key). Asked on every turn of `poll_until`; `true`
+    /// ends the wait with `GpuError::Aborted`. Default: never.
+    fn abort_requested(&mut self) -> bool {
+        false
+    }
 }
 
 /// Poll `cond` until it returns `Some`, or fail with `Timeout` after
@@ -95,6 +101,9 @@ pub fn poll_until<C: Clock + ?Sized, T>(
         let waited = clock.now_us().saturating_sub(start);
         if waited >= timeout_us {
             return Err(GpuError::Timeout { waited_us: waited });
+        }
+        if clock.abort_requested() {
+            return Err(GpuError::Aborted { waited_us: waited });
         }
         clock.delay_us(step_us.max(1));
     }
@@ -145,6 +154,32 @@ mod tests {
         ));
         checked_write32(&mut w, 4, 9).unwrap();
         assert_eq!(w.0[1], 9);
+    }
+
+    struct AbortAfter(FakeClock, u32);
+    impl Clock for AbortAfter {
+        fn now_us(&mut self) -> u64 {
+            self.0.now_us()
+        }
+        fn delay_us(&mut self, us: u32) {
+            self.0.delay_us(us)
+        }
+        fn abort_requested(&mut self) -> bool {
+            self.1 = self.1.saturating_sub(1);
+            self.1 == 0
+        }
+    }
+
+    /// C-99: a clock that asks to stop ends the wait with `Aborted` and the
+    /// time waited, before the bound.
+    #[test]
+    fn poll_until_stops_when_the_clock_asks() {
+        let mut c = AbortAfter(FakeClock(0), 3);
+        let r: GpuResult<()> = poll_until(&mut c, 1_000_000, 10, || None);
+        assert_eq!(r, Err(GpuError::Aborted { waited_us: 20 }));
+        let mut c = FakeClock(0);
+        let r: GpuResult<()> = poll_until(&mut c, 100, 10, || None);
+        assert_eq!(r, Err(GpuError::Timeout { waited_us: 100 }));
     }
 
     #[test]

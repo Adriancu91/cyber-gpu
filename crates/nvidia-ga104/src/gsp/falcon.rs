@@ -812,10 +812,20 @@ pub fn wait_riscv_active<M: Mmio + ?Sized, C: Clock + ?Sized>(
     bar: &mut GuardedBar0<'_, M>,
     clock: &mut C,
 ) -> GpuResult<()> {
+    wait_riscv_active_for(bar, clock, RISCV_ACTIVE_US)
+}
+
+/// `wait_riscv_active` with a caller-chosen bound (C-99: the sequencer's
+/// CORE_RESUME waits long, see `sequencer::LONG_WAIT_US`).
+pub fn wait_riscv_active_for<M: Mmio + ?Sized, C: Clock + ?Sized>(
+    bar: &mut GuardedBar0<'_, M>,
+    clock: &mut C,
+    timeout_us: u64,
+) -> GpuResult<()> {
     poll(
         bar,
         clock,
-        RISCV_ACTIVE_US,
+        timeout_us,
         f2::NV_FALCON2_GSP_BASE + riscv::NV_PRISCV_RISCV_CPUCTL,
         |v| {
             riscv::NV_PRISCV_RISCV_CPUCTL_ACTIVE_STAT.get(v)

@@ -135,6 +135,14 @@ pub struct SeqContext {
 
 /// Default bound for REG_POLL when GSP-RM sends a timeout of 0 (DEDUS).
 pub const POLL_DEFAULT_US: u64 = 4_000_000;
+/// C-99 (Adrian, 10 Nov 2026, os-277: "why not wait longer, until the
+/// answer comes?"): the waits after the doorbell that depend on GSP-RM —
+/// CORE_WAIT_FOR_HALT, CORE_RESUME (SEC2 done, RISC-V active) and
+/// GSP_INIT_DONE — are bounded by this (nouveau: 2 s, RM: 4 s). A slow
+/// first start then shows in the journal as `asteptat …: raspuns dupa N us`
+/// instead of a timeout; the OS can cut a wait short by hand
+/// (`Clock::abort_requested` → `GpuError::Aborted`).
+pub const LONG_WAIT_US: u64 = 60_000_000;
 /// Upper bound for one DELAY_US, so a corrupt value cannot stall the boot.
 pub const MAX_DELAY_US: u32 = 1_000_000;
 
@@ -284,10 +292,12 @@ fn execute_one<M: Mmio + ?Sized, C: Clock + ?Sized>(
         }
         SeqCmd::CoreStart => falcon::start_cpu(bar, Engine::Gsp)?,
         SeqCmd::CoreWaitForHalt => {
-            poll_reg(bar, clock, falcon::HALT_US, |b| {
+            let t0 = clock.now_us();
+            poll_reg(bar, clock, LONG_WAIT_US, |b| {
                 let v = b.read(gsp + fv4::NV_PFALCON_FALCON_CPUCTL)?;
                 Ok(fv4::NV_PFALCON_FALCON_CPUCTL_HALTED.get(v) == 1)
             })?;
+            waited(bar, clock, "CORE_WAIT_FOR_HALT (falconul GSP oprit)", t0);
         }
         SeqCmd::CoreResume => {
             // RM 570.144 `kgspExecuteSequencerCommand_GA102` / nouveau
@@ -305,16 +315,31 @@ fn execute_one<M: Mmio + ?Sized, C: Clock + ?Sized>(
                 (ctx.libos_addr >> 32) as u32,
             )?;
             falcon::start_cpu(bar, Engine::Sec2)?;
-            poll_reg(bar, clock, falcon::HALT_US, falcon::stage3_handoff_done)?;
+            let t0 = clock.now_us();
+            poll_reg(bar, clock, LONG_WAIT_US, falcon::stage3_handoff_done)?;
+            waited(bar, clock, "CORE_RESUME: SEC2 (Booter) gata", t0);
             let mb0 = bar.read(sec2 + fv4::NV_PFALCON_FALCON_MAILBOX0)?;
             if mb0 != 0 {
                 return Err(GpuError::HardwareFault { code: mb0 });
             }
             bar.write(gsp + fv4::NV_PFALCON_FALCON_OS, ctx.app_version)?;
-            falcon::wait_riscv_active(bar, clock)?;
+            let t0 = clock.now_us();
+            falcon::wait_riscv_active_for(bar, clock, LONG_WAIT_US)?;
+            waited(bar, clock, "CORE_RESUME: GSP RISC-V activ", t0);
         }
     }
     Ok(())
+}
+
+/// C-99: journals how long an answer took (`asteptat …: raspuns dupa N us`).
+fn waited<M: Mmio + ?Sized, C: Clock + ?Sized>(
+    bar: &mut GuardedBar0<'_, M>,
+    clock: &mut C,
+    what: &'static str,
+    t0: u64,
+) {
+    let waited_us = clock.now_us().saturating_sub(t0);
+    bar.journal().push(Event::Waited { what, waited_us });
 }
 
 /// What happened while waiting for `GSP_INIT_DONE`.
@@ -326,8 +351,9 @@ pub struct InitLog {
     pub other_events: Vec<u32>,
 }
 
-/// Bound for the whole wait (DEDUS; nouveau waits seconds).
-pub const INIT_DONE_US: u64 = 10_000_000;
+/// Bound for the whole wait (DEDUS; nouveau waits seconds). C-99: raised
+/// from 10 s to `LONG_WAIT_US` — the OS passes it unchanged.
+pub const INIT_DONE_US: u64 = LONG_WAIT_US;
 
 /// Reads the status queue until `GSP_INIT_DONE`, running every sequencer
 /// request on the way. `poll_gsp` lets a simulation advance its model
@@ -349,6 +375,7 @@ pub fn wait_init_done<M: Mmio + ?Sized, C: Clock + ?Sized>(
                 if m.rpc_result != 0 {
                     return Err(GpuError::HardwareFault { code: m.rpc_result });
                 }
+                waited(bar, clock, "GSP_INIT_DONE (de la sonerie)", start);
                 bar.journal().push(Event::Step {
                     name: "I8 GSP_INIT_DONE",
                     ok: true,
@@ -373,10 +400,12 @@ pub fn wait_init_done<M: Mmio + ?Sized, C: Clock + ?Sized>(
             }
             Some(m) => log.other_events.push(m.function),
             None => {
-                if clock.now_us().saturating_sub(start) >= timeout_us {
-                    return Err(GpuError::Timeout {
-                        waited_us: clock.now_us() - start,
-                    });
+                let waited_us = clock.now_us().saturating_sub(start);
+                if waited_us >= timeout_us {
+                    return Err(GpuError::Timeout { waited_us });
+                }
+                if clock.abort_requested() {
+                    return Err(GpuError::Aborted { waited_us });
                 }
                 clock.delay_us(100);
                 poll_gsp(mem);
@@ -718,6 +747,52 @@ mod tests {
                 waited_us: 2_000_000
             })
         );
+    }
+
+    /// C-99 (T112, Adrian's idea): the waits after the doorbell are long
+    /// (`LONG_WAIT_US`), the journal says how long each answer took, and a
+    /// clock that asks to stop (the OS: Esc) ends the wait with `Aborted`
+    /// and the time waited — not with a timeout. SIMULARE.
+    #[test]
+    fn long_waits_are_journaled_and_can_be_stopped_by_hand() {
+        // 1. A good CORE_RESUME: two `asteptat` lines with the time taken.
+        let (mut g, mut j, mut c) = booted();
+        let cmds = parse(&[RESUME]).unwrap();
+        let mut save = [0u32; 8];
+        {
+            let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+            execute(&mut b, &mut c, &cmds, &mut save, CTX).unwrap();
+        }
+        let lines: Vec<alloc::string::String> = j
+            .events()
+            .filter(|e| matches!(e, Event::Waited { .. }))
+            .map(|e| alloc::format!("{e}"))
+            .collect();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].starts_with("asteptat CORE_RESUME: SEC2 (Booter) gata: raspuns dupa "));
+        assert!(lines[1].starts_with("asteptat CORE_RESUME: GSP RISC-V activ: raspuns dupa "));
+        assert!(lines.iter().all(|l| l.ends_with(" us")));
+        // 2. A SEC2 that never answers, Esc at 5 s: stopped by hand (the wait
+        //    itself began a little after the reset, so it counts slightly
+        //    less), well before the 60 s bound; the command is named in the
+        //    journal.
+        let (mut g, mut j, mut c) = booted();
+        g.fault = gpu_sim::fake_gsp::SimFault::NeverHalts;
+        c.abort_at = Some(c.now + 5_000_000);
+        let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+        let r = execute(&mut b, &mut c, &cmds, &mut save, CTX);
+        assert!(
+            matches!(r, Err(GpuError::Aborted { waited_us }) if (4_900_000..=5_000_000).contains(&waited_us)),
+            "{r:?}"
+        );
+        assert!(alloc::format!("{}", r.unwrap_err()).starts_with("oprit manual dupa 49"));
+        let _ = b;
+        let tail: Vec<alloc::string::String> = j.events().map(|e| alloc::format!("{e}")).collect();
+        let k = tail
+            .iter()
+            .position(|t| t.contains("comanda de mai jos s-a oprit"))
+            .unwrap();
+        assert_eq!(tail[k + 1], "secv #0 CORE_RESUME");
     }
 
     #[test]

@@ -44,6 +44,12 @@ pub enum Event {
         n: u8,
         args: [u32; 5],
     },
+    /// C-99: a long wait that ended well — `what` was awaited, the answer
+    /// came after `waited_us` (so the board's log says how long GSP-RM took).
+    Waited {
+        what: &'static str,
+        waited_us: u64,
+    },
 }
 
 impl fmt::Display for Event {
@@ -86,6 +92,9 @@ impl fmt::Display for Event {
                     write!(f, " {a:#x}")?;
                 }
                 Ok(())
+            }
+            Event::Waited { what, waited_us } => {
+                write!(f, "asteptat {what}: raspuns dupa {waited_us} us")
             }
         }
     }

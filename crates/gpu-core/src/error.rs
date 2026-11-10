@@ -36,6 +36,9 @@ pub enum GpuError {
     },
     /// A bounded wait expired.
     Timeout { waited_us: u64 },
+    /// C-99: a wait cut short by hand (`Clock::abort_requested`), before
+    /// its bound; `waited_us` says how long the answer had been awaited.
+    Aborted { waited_us: u64 },
     /// The safety policy refused the operation (e.g. a write to a register
     /// that is not on the allow-list, or a risky probe without a permit).
     NotPermitted(&'static str),
@@ -74,6 +77,7 @@ impl fmt::Display for GpuError {
                 write!(f, "stare gresita: asteptat {expected:?}, actual {actual:?}")
             }
             GpuError::Timeout { waited_us } => write!(f, "timeout dupa {waited_us} us"),
+            GpuError::Aborted { waited_us } => write!(f, "oprit manual dupa {waited_us} us"),
             GpuError::NotPermitted(w) => write!(f, "nepermis de politica de siguranta: {w}"),
             GpuError::HardwareFault { code } => write!(f, "eroare hardware {code:#x}"),
             GpuError::VerifyFailed {
