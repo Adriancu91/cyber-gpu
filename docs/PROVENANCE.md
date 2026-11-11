@@ -225,3 +225,21 @@ regiunile LibOS, `init_wpr_meta`, `rpc_set_gsp_system_info` cu `bIsPassthru=1` �
 `docs/os-280_ANALIZA_0x59.md` §3. Faptele din `gpu-jurnal-008.txt` (844 ASSERT, toate înainte de secvențiator, adrese diferite crescătoare, linia 0, stiva goală,
 `rpc_result 0x59`) sunt OBSERVATE; că `bDmemStack = 0` e cauza lui 0x59 e **DEDUS** (singura diferență față de toate cele patru drivere), de probat la os-282.
 Schimbarea de cod: un octet în `gsp::libos::encode_gsp_args` (`B_DMEM_STACK_OFF` = 48, verificat cu bindgen în `tests/rm570_crosscheck.rs`).
+
+**După os-283 (sesiunea 88, 11 noiembrie 2026) — ordinea RPC-urilor de pornire; variantele C-108.** Citite ca specificație din open-gpu-kernel-modules@570.144
+(`8ec351a`, MIT, clonă parțială în sesiune): `kernel/gpu/gsp/kernel_gsp.c` (`kgspQueueAsyncInitRpcs_IMPL` + comentariul „process in early boot before OBJGPU is
+created”; `kgspInitRm_IMPL`: mesajele puse înainte de `_kgspBootGspRm` → `kgspBootstrap_HAL`; `_kgspRpcSendMessage` → `kgspSetCmdQueueHead_HAL` la fiecare
+trimitere; `kgspExecuteSequencerBuffer_IMPL`), `kernel_gsp_gh100.c` (`_kgspEstablishSpdmSession`: „GSP-RM may skip these RPCs if not sent in time”),
+`arch/ampere/kernel_gsp_ga102.c` (`kgspExecuteSequencerCommand_GA102`, CORE_RESUME), `kernel/vgpu/rpc.c` (`rpcGspSetSystemInfo_v17_00`: `hostPageSize =
+osGetPageSize()`, toate câmpurile), `arch/nvalloc/unix/src/osinit.c` (`nv_encode_pci_info` → `gpuEncodeDomainBusDevice`), `kernel_gsp_tu102.c`
+(`GSP_FW_FLAGS_CLOCK_BOOST`, `bBootGspRmWithBoostClocks`), `gsp_fw_wpr_meta.h` (`GSP_FW_FLAGS_*`), `platform/chipset/chipset_pcie.c` și celelalte locuri cu
+`NV_ERR_OPERATING_SYSTEM` (doar pentru a vedea că sunt căi de pe CPU), `gsp_static_config.h` (`GspSystemInfo`, `bIsPassthru` la 840 — verificat cu bindgen).
+tinygrad `e51dc1d` (MIT, clonă parțială): `runtime/support/nv/ip.py` (`GSP.init_sw`: „Prefill cmd queue with info for gsp to start”; `rpc_set_gsp_system_info`:
+`bIsPassthru=1`, fără `bIsPrimary`/`hostPageSize`; `rpc_set_registry_table`: 2 chei; `NVRpcQueue._send_rpc_record`: `NV_PGSP_QUEUE_HEAD[0].write(0)` la fiecare
+trimitere; `Falcon.init_hw`: FRTS, Booter, `FALCON_OS = 0`). Linux `067c5c2` (GPL, **doar citite**, clonă parțială): nouveau `nvkm/subdev/gsp/rm/r535/gsp.c`
+(`r535_gsp_oneinit`: `set_system_info` + `r535_gsp_rpc_set_registry` înainte de pornire; `r535_gsp_init`: `FALCON_OS`, poll `GSP_INIT_DONE`), `rm/r535/rpc.c`
+(`0xc00 ← 0` la push), `rm/r570/gsp.c` (`r570_gsp_set_system_info`: fără `hostPageSize`, `bIsPrimary` după VGA), `tu102.c` (`tu102_gsp_init`: Booter apoi
+`r535_gsp_init`); nova-core `gsp/boot.rs` (`Gsp::boot`: `SetSystemInfo`, `SetRegistry` înainte de `hal.boot`), `gsp/cmdq.rs` (`NV_PGSP_QUEUE_HEAD`),
+`gsp/fw/commands.rs` (`bIsPrimary: 0`, fără `hostPageSize`), `gsp/commands.rs` (3 chei de registru). Nimic copiat; valorile și ordinea sunt în
+`gsp/variants.rs` cu sursa lângă fiecare variantă; tabelul în `docs/os-283_ANALIZA_ORDINE_RPC.md`. Faptele din `gpu-jurnal-009.txt` (identic cu 008) sunt
+OBSERVATE; că ordinea e cauza lui 0x59 e **DEDUS** (din comentariile RM), de probat joi. Modelul `SimGsp::start_early_boot` e scris de noi după acele comentarii.

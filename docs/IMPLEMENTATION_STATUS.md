@@ -1,5 +1,42 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 88 — 11 noiembrie 2026, ~17:30–18:20 (ora României), în cloud, FĂRĂ placă — os-283: `bDmemStack` nu era cauza; ordinea RPC-urilor de pornire; C-108 (10 variante pentru joi)
+
+Pornită de programare. În hub: rezultatul **os-283** (`rezultate/2026-11-11-workstation-os283/REZULTAT.md`, jurnalul `gpu-jurnal-009.txt`, 2438 rânduri) și
+comanda nouă **C-108** (17:33, urgent pentru joi 12 nov ~07:00: 5–10 variante de setări I8 pe același stick, `gpu lant --varianta N`; OS-ul a preluat partea lui, P6-78).
+**Nimic testat pe RTX 3070 Ti.**
+
+**Ce spune jurnalul (OBSERVAT):** `gpu-jurnal-009.txt` (cyber-gpu `2bbd0b3`, `bDmemStack = 1`) e **identic** cu `gpu-jurnal-008.txt` (os-280) în afara marcajelor
+de timp: aceleași 844 de asserturi, aceleași adrese, `GSP_INIT_DONE 0x59`. → `bDmemStack` **nu** era cauza. Soneria I8 (`0x110c00 ← 0`) vine la `100.284`,
+Booter pornise GSP-RM la `99.908` → `SetSystemInfo` + `SetRegistry` intrau în coadă **≈ 0,3–0,4 s după pornirea GSP-RM**.
+
+**Ce fac cele patru drivere (SPECIFICAȚIE, surse citite din clone parțiale în sesiune):** RM 570.144 (`kgspQueueAsyncInitRpcs`: „RPCs … that GSP-RM will process in
+early boot **before OBJGPU is created**”; `kernel_gsp_gh100.c`: „GSP-RM **may skip these RPCs if not sent in time**”), nouveau (`r535_gsp_oneinit`), tinygrad
+(`init_sw`: „Prefill cmd queue with info for gsp to start”), nova-core (`Gsp::boot`) — **toate pun cele două RPC-uri și soneria în coadă ÎNAINTE de Booter**.
+**DEDUS:** GSP-RM citește coada o dată, la pornirea timpurie; fără `SetSystemInfo` își face OBJGPU fără BAR-uri/ID-uri → asserturile în lanț, apoi
+`NV_ERR_OPERATING_SYSTEM`; mesajele noastre sosesc prea târziu. Se potrivește cu jurnalul identic de la os-278 la os-283 indiferent de conținut.
+Studiul: `docs/os-283_ANALIZA_ORDINE_RPC.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| **C-108**: `gsp::variants` (nou) | `Settings` (ordinea RPC-urilor, `sysinfo::Options`, `RMDevidCheckIgnore`, `GspFwWprMeta.flags`, `bDmemStack`) + **10 variante** numerotate, cu nume, „ce schimbă” (ro) și sursa: 1 `rpc-inainte` (doar ordinea, cea mai probabilă); 2 +set nova; 3 +set tinygrad; 4 +set nouveau; 5 +CLOCK_BOOST; 6 +bIsPassthru; 7 +RMDevidCheckIgnore; 8 +stiva LibOS; 9–10 ordinea veche + seturile tinygrad/nova. `list`, `get`, `settings`, `encode_*`, `queue_init_rpcs`, `init_rpcs_ready_for_i8`, `journal` (valorile trimise, în jurnal) | PASS (T121 a–d) |
+| Încodatoarele | `sysinfo::Options` + `encode_with` (`bIsPassthru` la 840, verificat cu bindgen), `registry::boot_entries_with`, `wpr_meta::encode_with_flags`, `libos::encode_gsp_args_with`, `CpuQueues::rpcs_sent` — doar adăugări, funcțiile vechi dau exact ce dădeau | PASS |
+| Modelul pornirii timpurii (SIMULARE) | `SimGsp::start_early_boot` consumă ce e în coadă când „pornește” GSP-RM; `init_done_result` = 0x59 dacă lipsesc cele două RPC-uri. **T122:** ordinea os-283 → `GSP_INIT_DONE 0x59` ca pe placă; varianta 1 → 0; 1–8 trec, 9–10 nu | PASS (SIMULARE; modelul e după sursele RM, nu după placă) |
+| Lanțul complet de test | rulează în ordinea variantei 1 (RPC-urile + soneria la I7, înainte de resetul GSP); `i6_log::check_i7_libos` acceptă soneria ca prima scriere a I7 (deci și `verifica_jurnal_lant` pe jurnalul de joi) | PASS |
+| Nota pentru OS | `integration/cyber-universe/C-108_variante-i8.md`: funcțiile, schimbările în `gpu_i7`/`gpu_i8`, `gpu variante`, procedura | scris |
+| Compatibilitate OS | doar adăugări; `encode`/`boot_entries`/`encode_gsp_args` neschimbate ca semnătură și valori | PASS |
+| Conținutul celor 2 `UCODE_LIBOS_PRINT` | deja în jurnal din `d3c5351` (os-283 rula `2bbd0b3`, fără; os-284+ îl are) | — |
+| Pe RTX 3070 Ti | — | NOT TESTED |
+
+Verificări (`sh tools/check.sh`, Rust 1.97.0; ținta `x86_64-unknown-none` reinstalată): format, clippy `-D warnings`, **445 teste PASS** (4 ignorate), build no_std PASS.
+Commit-uri: `20830f5` (cod), + documentele. Surse în `docs/PROVENANCE.md`; riscuri în `docs/RISKS.md` (2 rânduri); `docs/COMPATIBILITATE_FIRMWARE.md` rândul I8g.
+
+**Următorul pas:** (1) OS-ul leagă `20830f5` (sau mai nou), face `gpu variante` + `gpu lant --varianta N` (P6-78, nota de mai sus) → Release înainte de joi 06:00.
+(2) Joi: Adrian încearcă variantele în ordine, de la 1; reușita = `rpc_result = 0x00000000` și lanțul trece la I8e. (3) Jurnalele vin în hub; `verifica_jurnal_lant`
+pe fiecare. Dacă varianta 1 trece, variantele 2–10 nu mai sunt necesare; dacă nu trece niciuna, următoarea comparație e starea plăcii/memoriei (adresele DMA reale),
+nu conținutul mesajelor. Regula 8: sesiunile 86, 87, 88 au avut pași — nu se aplică.
+
+---
 ## Sesiunea 87 — 11 noiembrie 2026, ~14:25–15:20 (ora României), în cloud, FĂRĂ placă — jurnalul os-280 citit; comparația „trei surse” (C-107); `bDmemStack = 1` = candidatul pentru 0x59
 
 Pornită de programare. În hub: jurnalul testului **os-280** (`rezultate/os-automat/2026-11-11/gpu-jurnal-008.txt`, 2438 rânduri, trimis singur de OS cu `trimite`;

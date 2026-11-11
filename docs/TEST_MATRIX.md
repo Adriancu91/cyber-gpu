@@ -1,5 +1,17 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 88 (11 nov 2026, cloud, fără placă) — după os-283: ordinea RPC-urilor de pornire + variantele C-108
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T121 | `gsp::variants`: 10 variante numerotate 1..=10, nume ASCII ≤ 32, propoziție + sursă la fiecare, `get(0)`/`get(11)` = `None`, `settings(None)` = `OS_283`, varianta 1 = `OS_283` + doar ordinea, 1–8 pun RPC-urile înainte de Booter, 9–10 nu, oricare două variante diferă | `cargo test -p nvidia-ga104 --release --lib t121` | tot adevărat | tot adevărat | PASS (SIMULARE) |
+| T121b | Fiecare variantă schimbă în `GspSystemInfo` **doar** `bIsPassthru`, `bIsPrimary`, `hostPageSize` (față de os-283); registrul are 2 sau 3 chei (a 3-a `RMDevidCheckIgnore`); `bDmemStack` după variantă; seturile tinygrad/nova/nouveau = tabelul C-107 | idem | octeții din afara celor trei câmpuri identici cu `sysinfo::encode` | identici | PASS (SIMULARE) |
+| T121c | `Settings::journal`: rândurile `valoare varianta I8 (C-108): numarul`, `text varianta I8: numele`, apoi câte un rând `valoare varianta: …` pentru ordine, bIsPassthru, bIsPrimary (2 = după VGA), hostPageSize, chei, flags, bDmemStack | idem | rândurile exacte pentru varianta 3 și pentru os-283 | exacte | PASS |
+| T121d | `init_rpcs_ready_for_i8`: coada goală → varianta 1 refuză, os-283 trimite; după `queue_init_rpcs` (secvențele 0, 1) → varianta 1 merge, os-283 refuză | idem | `Err`/`Ok(false)`/`Ok(true)`/`Err` | la fel | PASS |
+| T122 | Modelul pornirii timpurii (`SimGsp::start_early_boot`: consumă ce e în coadă când GSP-RM pornește; `init_done_result` = 0x59 dacă lipsesc `SET_SYSTEM_INFO` + `SET_REGISTRY`) cu `wait_init_done` real: ordinea os-283 (RPC-urile la I8) → `GSP_INIT_DONE 0x59` ca pe placă; varianta 1 (RPC-urile + soneria la I7, înainte de Booter) → `rpc_result 0`; variantele 1–8 trec, 9–10 nu | `cargo test -p nvidia-ga104 --release --lib t122` | `HardwareFault 0x59` / `Ok` | la fel | PASS (SIMULARE — modelul e scris după sursele RM, nu după placă) |
+| T78/T79/T86 (actualizate) | Lanțul complet de test rulează acum în ordinea variantei 1: soneria + 5 scrieri GSP înainte de Booter (+1 după), 2 sonerii înainte de RM (I7, I8); `check_i7_libos` acceptă soneria ca prima scriere | `cargo test -p nvidia-ga104 --release --lib user_space` | toți pașii trec, verdictul jurnalului `Passed` | la fel | PASS (SIMULARE) |
+| Suita | `sh tools/check.sh` (Rust 1.97.0): format, clippy `-D warnings`, teste, build no_std | — | tot verde | **445 PASS** (4 ignorate) | PASS |
+
 ## Rezultate — sesiunea 86 (11 nov 2026, cloud, fără placă) — pregătirea analizei jurnalului os-280
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |
