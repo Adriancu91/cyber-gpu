@@ -314,12 +314,26 @@ fn execute_one<M: Mmio + ?Sized, C: Clock + ?Sized>(
                 gsp + fv4::NV_PFALCON_FALCON_MAILBOX1,
                 (ctx.libos_addr >> 32) as u32,
             )?;
+            // C-102: the state before SEC2 starts (reads only) — on 11 Nov
+            // the hand-off flag answered after 2 µs, too fast for Booter:
+            // these rows show whether it was already set.
+            bar.journal().push(Event::Note(
+                "I8 CORE_RESUME: starea inainte de pornirea SEC2",
+            ));
+            falcon::journal_resume_state(bar);
             falcon::start_cpu(bar, Engine::Sec2)?;
             let t0 = clock.now_us();
             poll_reg(bar, clock, LONG_WAIT_US, falcon::stage3_handoff_done)?;
             waited(bar, clock, "CORE_RESUME: SEC2 (Booter) gata", t0);
+            bar.journal()
+                .push(Event::Note("I8 CORE_RESUME: starea dupa predarea etapei 3"));
+            falcon::journal_resume_state(bar);
             let mb0 = bar.read(sec2 + fv4::NV_PFALCON_FALCON_MAILBOX0)?;
             if mb0 != 0 {
+                bar.journal().push(Event::Value {
+                    what: "CORE_RESUME: SEC2 MAILBOX0 (Booter a dat eroare)",
+                    value: mb0,
+                });
                 return Err(GpuError::HardwareFault { code: mb0 });
             }
             bar.write(gsp + fv4::NV_PFALCON_FALCON_OS, ctx.app_version)?;
@@ -370,9 +384,38 @@ pub fn wait_init_done<M: Mmio + ?Sized, C: Clock + ?Sized>(
     let mut log = InitLog::default();
     let start = clock.now_us();
     loop {
-        match q.recv_rpc(mem)? {
+        let next = match q.recv_rpc(mem) {
+            Ok(n) => n,
+            Err(e) => {
+                // C-102: an error from the queue itself is named — the board
+                // showed a bare "eroare hardware 0x59" with no row saying
+                // whether it was a queue pointer or a GSP-RM result.
+                if let GpuError::HardwareFault { code } = e {
+                    bar.journal().push(Event::Value {
+                        what: "I8 coada de stare: pointer in afara cozii (0..62)",
+                        value: code,
+                    });
+                }
+                bar.journal()
+                    .push(Event::Note("I8: eroarea vine din coada de stare"));
+                falcon::journal_resume_state(bar);
+                return Err(e);
+            }
+        };
+        match next {
             Some(m) if m.function == event::GSP_INIT_DONE => {
+                bar.journal().push(Event::Value {
+                    what: "GSP_INIT_DONE: rpc_result (0 = bine; altfel cod NV_STATUS)",
+                    value: m.rpc_result,
+                });
                 if m.rpc_result != 0 {
+                    bar.journal().push(Event::Value {
+                        what: "GSP_INIT_DONE: rpc_result_private",
+                        value: m.rpc_result_private,
+                    });
+                    bar.journal()
+                        .push(Event::Note("I8: eroarea vine din GSP_INIT_DONE"));
+                    falcon::journal_resume_state(bar);
                     return Err(GpuError::HardwareFault { code: m.rpc_result });
                 }
                 waited(bar, clock, "GSP_INIT_DONE (de la sonerie)", start);
@@ -398,13 +441,34 @@ pub fn wait_init_done<M: Mmio + ?Sized, C: Clock + ?Sized>(
                 log.sequencer_runs += 1;
                 log.sequencer_commands += cmds.len() as u32;
             }
-            Some(m) => log.other_events.push(m.function),
+            Some(m) => {
+                // C-102: every other message is named in the journal (its
+                // function number and rpc_result), so the board's log shows
+                // what GSP-RM said on the way to INIT_DONE.
+                bar.journal().push(Event::Value {
+                    what: "I8 mesaj GSP-RM sarit (functia)",
+                    value: m.function,
+                });
+                if m.rpc_result != 0 {
+                    bar.journal().push(Event::Value {
+                        what: "I8 mesaj GSP-RM sarit: rpc_result",
+                        value: m.rpc_result,
+                    });
+                }
+                log.other_events.push(m.function);
+            }
             None => {
                 let waited_us = clock.now_us().saturating_sub(start);
                 if waited_us >= timeout_us {
+                    bar.journal()
+                        .push(Event::Note("I8: GSP_INIT_DONE nu a venit (timp expirat)"));
+                    falcon::journal_resume_state(bar);
                     return Err(GpuError::Timeout { waited_us });
                 }
                 if clock.abort_requested() {
+                    bar.journal()
+                        .push(Event::Note("I8: oprit manual in asteptarea GSP_INIT_DONE"));
+                    falcon::journal_resume_state(bar);
                     return Err(GpuError::Aborted { waited_us });
                 }
                 clock.delay_us(100);
@@ -811,5 +875,122 @@ mod tests {
         let r = wait_init_done(&mut q, &mut mem, &mut b, &mut c, CTX, 50_000, |_| {});
         assert!(matches!(r, Err(GpuError::Timeout { .. })));
         assert!(c.now - t0 >= 50_000 && c.now - t0 < 51_000);
+        let rows: Vec<String> = j.events().map(|e| alloc::format!("{e}")).collect();
+        assert!(
+            rows.iter()
+                .any(|r| r == "nota: I8: GSP_INIT_DONE nu a venit (timp expirat)")
+        );
+        assert!(
+            rows.iter()
+                .any(|r| r.starts_with("valoare GSP MAILBOX0 = "))
+        );
+    }
+
+    fn queues_after_i7() -> (QueueLayout, Vec<u8>, CpuQueues) {
+        let l = QueueLayout::standard();
+        let mut mem = alloc::vec![0u8; l.total_size];
+        let pages: Vec<u64> = (0..l.page_table_entries as u64)
+            .map(|i| 0x0500_0000 + i * 0x1000)
+            .collect();
+        let q = CpuQueues::init(&mut mem, l, &pages).unwrap();
+        (l, mem, q)
+    }
+
+    /// C-102 (T113): the board of 11 Nov 2026 said only "eroare hardware
+    /// 0x59". If GSP-RM's `GSP_INIT_DONE` carries `rpc_result` 0x59
+    /// (NV_ERR_OPERATING_SYSTEM), the journal now names it and the
+    /// registers around it — and the error is still an error (SIMULATION).
+    #[test]
+    fn init_done_with_an_error_code_is_named_in_the_journal() {
+        let (mut g, mut j, mut c) = booted();
+        let (l, mut mem, mut q) = queues_after_i7();
+        let mut peer = SimGsp::start(&mut mem, l.cmd_queue_offset, l.stat_queue_offset);
+        q.link_rx(&mem).unwrap();
+        let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+        let mut step = 0;
+        let r = wait_init_done(&mut q, &mut mem, &mut b, &mut c, CTX, INIT_DONE_US, |m| {
+            step += 1;
+            match step {
+                1 => peer.post(m, event::OS_ERROR_LOG, 0, b"log"),
+                2 => peer.post(m, event::GSP_INIT_DONE, 0x59, &[]),
+                _ => {}
+            }
+        });
+        assert!(matches!(r, Err(GpuError::HardwareFault { code: 0x59 })));
+        let _ = b;
+        let rows: Vec<String> = j.events().map(|e| alloc::format!("{e}")).collect();
+        let k = rows
+            .iter()
+            .position(|r| r == "valoare I8 mesaj GSP-RM sarit (functia) = 0x00001006")
+            .expect("the skipped event is named");
+        assert_eq!(
+            rows[k + 1],
+            "valoare GSP_INIT_DONE: rpc_result (0 = bine; altfel cod NV_STATUS) = 0x00000059"
+        );
+        assert_eq!(
+            rows[k + 2],
+            "valoare GSP_INIT_DONE: rpc_result_private = 0x00000000"
+        );
+        assert_eq!(rows[k + 3], "nota: I8: eroarea vine din GSP_INIT_DONE");
+        assert!(rows[k + 4].starts_with("valoare PGC6 SCRATCH_14 (bit 26 = predarea etapei 3) = "));
+        assert!(rows[k + 10].starts_with("valoare GSP MAILBOX1 = "));
+        assert_eq!(rows.len(), k + 11);
+    }
+
+    /// C-102 (T114): the other way 0x59 can appear — the status queue's
+    /// write pointer read as 89, outside 0..62. The error is the same
+    /// `HardwareFault { 0x59 }`; the journal now says it came from the queue.
+    #[test]
+    fn a_queue_pointer_out_of_range_is_named_in_the_journal() {
+        let (mut g, mut j, mut c) = booted();
+        let (l, mut mem, mut q) = queues_after_i7();
+        let _peer = SimGsp::start(&mut mem, l.cmd_queue_offset, l.stat_queue_offset);
+        q.link_rx(&mem).unwrap();
+        // GSP's tx header of the status queue: write pointer = 89.
+        let wp = l.stat_queue_offset + crate::gsp::msgq::qoff::WRITE_PTR;
+        mem[wp..wp + 4].copy_from_slice(&89u32.to_le_bytes());
+        let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+        let r = wait_init_done(&mut q, &mut mem, &mut b, &mut c, CTX, INIT_DONE_US, |_| {});
+        assert!(matches!(r, Err(GpuError::HardwareFault { code: 0x59 })));
+        let _ = b;
+        let rows: Vec<String> = j.events().map(|e| alloc::format!("{e}")).collect();
+        let k = rows
+            .iter()
+            .position(|r| {
+                r == "valoare I8 coada de stare: pointer in afara cozii (0..62) = 0x00000059"
+            })
+            .expect("the queue pointer is named");
+        assert_eq!(rows[k + 1], "nota: I8: eroarea vine din coada de stare");
+        assert!(rows[k + 2].starts_with("valoare PGC6 SCRATCH_14"));
+    }
+
+    /// C-102 (T115): CORE_RESUME journals the state before SEC2 starts and
+    /// after the stage-3 hand-off (reads only), in this order.
+    #[test]
+    fn core_resume_journals_the_state_before_and_after_sec2() {
+        let (mut g, mut j, mut c) = booted();
+        let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+        let mut save = [0u32; 8];
+        execute(&mut b, &mut c, &[SeqCmd::CoreResume], &mut save, CTX).unwrap();
+        let _ = b;
+        let rows: Vec<String> = j.events().map(|e| alloc::format!("{e}")).collect();
+        let before = rows
+            .iter()
+            .position(|r| r == "nota: I8 CORE_RESUME: starea inainte de pornirea SEC2")
+            .unwrap();
+        let after = rows
+            .iter()
+            .position(|r| r == "nota: I8 CORE_RESUME: starea dupa predarea etapei 3")
+            .unwrap();
+        assert!(before < after);
+        assert!(rows[before + 1].starts_with("valoare PGC6 SCRATCH_14"));
+        assert!(rows[before + 2].starts_with("valoare SEC2 CPUCTL = "));
+        let alias = rows
+            .iter()
+            .position(|r| r.starts_with("bar0 w 0x840130"))
+            .expect("SEC2 started through CPUCTL_ALIAS");
+        assert!(before < alias && alias < after);
+        // the reads are reads: no new write besides the sequence's own
+        assert!(!g.writes.iter().any(|&(o, _)| o == 0x1180f8));
     }
 }

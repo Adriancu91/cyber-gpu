@@ -950,6 +950,56 @@ pub fn ring_doorbell<M: Mmio + ?Sized>(bar: &mut GuardedBar0<'_, M>) -> GpuResul
     bar.write(gsp::NV_PGSP_QUEUE_HEAD(0), 0)
 }
 
+/// C-102: the registers that tell where I8 stands, read (reads only) and
+/// journaled by name as `valoare … = 0x…` — before and after SEC2 is
+/// started at CORE_RESUME, and when the wait for `GSP_INIT_DONE` fails.
+/// On the board of 11 Nov 2026 the journal showed only the writes, so the
+/// error 0x59 could not be placed; these rows place the next one.
+pub const RESUME_STATE_READS: [(&str, u32); 7] = [
+    (
+        "PGC6 SCRATCH_14 (bit 26 = predarea etapei 3)",
+        gc6::NV_PGC6_BSI_SECURE_SCRATCH_14,
+    ),
+    (
+        "SEC2 CPUCTL",
+        sec::NV_PSEC.lo + fv4::NV_PFALCON_FALCON_CPUCTL,
+    ),
+    (
+        "SEC2 MAILBOX0",
+        sec::NV_PSEC.lo + fv4::NV_PFALCON_FALCON_MAILBOX0,
+    ),
+    (
+        "SEC2 MAILBOX1",
+        sec::NV_PSEC.lo + fv4::NV_PFALCON_FALCON_MAILBOX1,
+    ),
+    (
+        "GSP RISCV_CPUCTL (bit 7 = activ)",
+        f2::NV_FALCON2_GSP_BASE + riscv::NV_PRISCV_RISCV_CPUCTL,
+    ),
+    (
+        "GSP MAILBOX0",
+        gsp::NV_PGSP.lo + fv4::NV_PFALCON_FALCON_MAILBOX0,
+    ),
+    (
+        "GSP MAILBOX1",
+        gsp::NV_PGSP.lo + fv4::NV_PFALCON_FALCON_MAILBOX1,
+    ),
+];
+
+/// C-102: reads [`RESUME_STATE_READS`] and journals each as `Event::Value`;
+/// a register that cannot be read is journaled with its priv error and
+/// skipped (diagnosis never stops the step).
+pub fn journal_resume_state<M: Mmio + ?Sized>(bar: &mut GuardedBar0<'_, M>) {
+    for &(what, off) in RESUME_STATE_READS.iter() {
+        let value = match bar.read(off) {
+            Ok(v) => v,
+            Err(GpuError::HardwareFault { code }) => code,
+            Err(_) => continue,
+        };
+        bar.journal().push(Event::Value { what, value });
+    }
+}
+
 /// Boot stage 3 hand-off flag (`NV_PGC6_BSI_SECURE_SCRATCH_14[26]`), used by
 /// the sequencer's CORE_RESUME.
 pub fn stage3_handoff_done<M: Mmio + ?Sized>(bar: &mut GuardedBar0<'_, M>) -> GpuResult<bool> {

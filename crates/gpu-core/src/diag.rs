@@ -50,6 +50,12 @@ pub enum Event {
         what: &'static str,
         waited_us: u64,
     },
+    /// C-102: a value read for diagnosis (a register or a field of a GSP
+    /// message), named — so the board's log says where an error came from.
+    Value {
+        what: &'static str,
+        value: u32,
+    },
 }
 
 impl fmt::Display for Event {
@@ -96,6 +102,7 @@ impl fmt::Display for Event {
             Event::Waited { what, waited_us } => {
                 write!(f, "asteptat {what}: raspuns dupa {waited_us} us")
             }
+            Event::Value { what, value } => write!(f, "valoare {what} = {value:#010x}"),
         }
     }
 }
