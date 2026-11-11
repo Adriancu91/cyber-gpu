@@ -20,9 +20,11 @@ Nu spune nimic ce nu e în jurnal; nicio presupunere despre cauza lui `0x59`.
 | T120b | formatul vechi (843 × `0x1020`, 2 × `0x100c`) numărat; jurnal fără I8 → „niciun rand” | PASS |
 | `verifica_jurnal_lant` | tipărește rezumatul când există rânduri; pe `gpu-jurnal-007.txt` (os-279): același verdict „OPRIT CURAT la i8-gsp-init” + „843 mesaje 0x1020 … nedecodate / rpc_result 0x59 / eroarea vine din GSP_INIT_DONE” | PASS |
 | Compatibilitate OS | doar adăugări (modul nou + unealta de pe gazdă); codul driverului neschimbat, nicio scriere nouă în registre; OS-ul nu are nimic de legat | PASS |
+| CI GitHub | rularea 169 pe `a669387` (13:40, 55 s) | PASS |
 | Pe RTX 3070 Ti | — | NOT TESTED |
 
 Verificări (`sh tools/check.sh`, Rust 1.97.0; ținta `x86_64-unknown-none` reinstalată): format, clippy `-D warnings`, **440 teste PASS** (4 ignorate), build no_std PASS.
+Hub: `stare/cyber-gpu.md`, `jurnal/cyber-gpu.md`; copia C-34 reîmprospătată la `a669387` (clonă completă, 198 commit-uri, `git bundle verify` OK, fără firmware).
 
 **Următorul pas:** neschimbat față de sesiunea 85 — (1) OS-ul leagă `364ece2` (sau mai nou), Release `os-280`, `gpu lant` cu Adrian de față; jurnalul în `rezultate/`;
 `verifica_jurnal_lant <jurnal> 0x9c66000` dă acum direct rezumatul NOCAT → de acolo se vede ce îi lipsește lui GSP-RM și se repară. (2) C-103 pe placă (`gpu recupereaza`, OS).
