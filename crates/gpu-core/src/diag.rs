@@ -56,6 +56,37 @@ pub enum Event {
         what: &'static str,
         value: u32,
     },
+    /// 11 Nov 2026 (after os-279): a short text read from a GSP message or
+    /// a name looked up for a number (an `NV_STATUS` name, a message name,
+    /// the `source` of a NOCAT record). `bytes[..len]` is the text; anything
+    /// not printable ASCII is shown as `.`.
+    Text {
+        what: &'static str,
+        len: u8,
+        bytes: [u8; TEXT_LEN],
+    },
+}
+
+/// Longest text an [`Event::Text`] carries (longer texts are cut).
+pub const TEXT_LEN: usize = 32;
+
+impl Event {
+    /// An [`Event::Text`] from any bytes: cut at [`TEXT_LEN`] and at the
+    /// first NUL (C strings), the rest filled with zeros.
+    pub fn text(what: &'static str, s: &[u8]) -> Event {
+        let end = s
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(s.len())
+            .min(TEXT_LEN);
+        let mut bytes = [0u8; TEXT_LEN];
+        bytes[..end].copy_from_slice(&s[..end]);
+        Event::Text {
+            what,
+            len: end as u8,
+            bytes,
+        }
+    }
 }
 
 impl fmt::Display for Event {
@@ -103,6 +134,22 @@ impl fmt::Display for Event {
                 write!(f, "asteptat {what}: raspuns dupa {waited_us} us")
             }
             Event::Value { what, value } => write!(f, "valoare {what} = {value:#010x}"),
+            Event::Text {
+                what,
+                len,
+                ref bytes,
+            } => {
+                write!(f, "text {what} = \"")?;
+                for &b in bytes.iter().take(usize::from(len).min(TEXT_LEN)) {
+                    let c = if (0x20..0x7f).contains(&b) && b != b'"' {
+                        b as char
+                    } else {
+                        '.'
+                    };
+                    write!(f, "{c}")?;
+                }
+                write!(f, "\"")
+            }
         }
     }
 }
@@ -181,6 +228,21 @@ mod tests {
         j.push(Event::Note("c"));
         assert_eq!(SEEN.load(Ordering::Relaxed), 3);
         assert_eq!((j.len(), j.dropped()), (1, 2));
+    }
+
+    #[test]
+    fn text_events_are_cut_and_printable() {
+        let e = Event::text("sursa NOCAT", b"GSP\0garbage after the NUL");
+        assert_eq!(e.to_string(), "text sursa NOCAT = \"GSP\"");
+        let long: Vec<u8> = (0..60u8).map(|i| b'a' + i % 26).collect();
+        let e = Event::text("lung", &long);
+        assert_eq!(
+            e.to_string(),
+            "text lung = \"abcdefghijklmnopqrstuvwxyzabcdef\""
+        );
+        let e = Event::text("ciudat", &[b'o', b'k', 0x01, 0xff, b'"', b' ', b'x']);
+        assert_eq!(e.to_string(), "text ciudat = \"ok... x\"");
+        assert_eq!(Event::text("gol", b"").to_string(), "text gol = \"\"");
     }
 
     #[test]

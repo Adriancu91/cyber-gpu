@@ -15,6 +15,9 @@
 //! - [`msgq`]: the shared memory with the command/status queues (I5, I8);
 //! - [`registry`]: the `SET_REGISTRY` table (`PACKED_REGISTRY_TABLE`);
 //! - [`sysinfo`]: the `GSP_SET_SYSTEM_INFO` payload (`GspSystemInfo`, I8c');
+//! - [`nocat`]: the diagnostic records (`GSP_POST_NOCAT_RECORD`) and the
+//!   forwarded microcode logs (`UCODE_LIBOS_PRINT`) GSP-RM sent on the board
+//!   before refusing to initialise (os-279), decoded for the journal;
 //! - [`rpc`]: one queue element = element header + RPC header + payload, with
 //!   the XOR checksum and sequence numbers (I8);
 //! - [`rmapi`]: the `GSP_RM_ALLOC` / `GSP_RM_CONTROL` messages and their
@@ -49,6 +52,7 @@ pub mod golden;
 pub mod hs_load;
 pub mod libos;
 pub mod msgq;
+pub mod nocat;
 pub mod registry;
 pub mod rmapi;
 pub mod rpc;

@@ -62,6 +62,16 @@ pub mod event {
     pub const OS_ERROR_LOG: u32 = 0x1006;
     pub const UCODE_LIBOS_PRINT: u32 = 0x100c;
     pub const GSP_LOCKDOWN_NOTICE: u32 = 0x101c;
+    /// A diagnostic record RM on the GSP posts to the CPU side's journal
+    /// (843 of them on the board before `GSP_INIT_DONE` failed, os-279).
+    pub const GSP_POST_NOCAT_RECORD: u32 = 0x1020;
+}
+
+/// The name of a function or event number (`rpc_global_enums.h`, generated
+/// table in `nvidia-rm570`), for the journal; `None` if 570.144 has no such
+/// number.
+pub fn name(function: u32) -> Option<&'static str> {
+    nvidia_rm570::rpc_name(function)
 }
 
 mod off {

@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Regenerates crates/nvidia-rm570/src/{regs,structs,sysinfo,rmapi}.rs from NVIDIA's MIT headers.
+# Regenerates crates/nvidia-rm570/src/{regs,names,structs,sysinfo,rmapi}.rs from NVIDIA's MIT headers.
 # Host-only. Pinned: open-gpu-kernel-modules tag 570.144 (commit below), bindgen-cli 0.71.1.
 # Second source (methods C56F/C7C0, QMD V03_00): NVIDIA open-gpu-doc, commit below.
 #   tools/gen-rm570/generate.sh <dir-for-the-checkout> <dir-for-open-gpu-doc>
@@ -38,6 +38,8 @@ test "$(git -C "$src" rev-parse HEAD)" = "$COMMIT" || { echo "wrong commit (want
 bindgen --version | grep -q " $BINDGEN_VERSION\$" || { echo "need bindgen-cli $BINDGEN_VERSION"; exit 1; }
 
 python3 -I "$here/gen_regs.py" "$src" "$doc" "$repo/crates/nvidia-rm570/src/regs.rs"
+# 11 Nov 2026 (after os-279): NV_STATUS codes + RPC function/event names, so the journal can name numbers.
+python3 -I "$here/gen_names.py" "$src" "$repo/crates/nvidia-rm570/src/names.rs"
 
 out="$repo/crates/nvidia-rm570/src/structs.rs"
 {
@@ -102,4 +104,4 @@ rmout="$repo/crates/nvidia-rm570/src/rmapi.rs"
     -- $RMFLAGS
 } > "$rmout"
 echo "rmapi: $(grep -c '^pub struct\|^pub union' "$rmout") types -> $rmout"
-rustfmt --edition 2024 "$repo/crates/nvidia-rm570/src/regs.rs" "$out" "$sysout" "$rmout"
+rustfmt --edition 2024 "$repo/crates/nvidia-rm570/src/regs.rs" "$repo/crates/nvidia-rm570/src/names.rs" "$out" "$sysout" "$rmout"

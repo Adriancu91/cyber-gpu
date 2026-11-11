@@ -22,6 +22,7 @@ use nvidia_rm570::structs as s;
 
 use super::falcon::{self, Engine, GuardedBar0};
 use super::msgq::{CpuQueues, SharedMem};
+use super::nocat;
 use super::rpc::{self, event};
 
 /// One decoded sequencer command.
@@ -363,6 +364,107 @@ pub struct InitLog {
     pub sequencer_commands: u32,
     /// Other events seen and skipped (function numbers), in order.
     pub other_events: Vec<u32>,
+    /// os-279: `GSP_POST_NOCAT_RECORD` messages received (843 on the board).
+    pub nocat_records: u32,
+    /// The distinct complaints among them (`NocatRecord::kind`), in order of
+    /// first appearance; at most [`NOCAT_KINDS_MAX`] are kept.
+    pub nocat_kinds: Vec<(u8, u64, u32)>,
+    /// os-279: `UCODE_LIBOS_PRINT` messages received (2 on the board).
+    pub libos_prints: u32,
+}
+
+/// The first NOCAT records are journaled in full whatever they say…
+pub const NOCAT_FULL_FIRST: u32 = 4;
+/// …after that only a record of a kind not seen before is, up to this many
+/// kinds; the rest are counted (843 records × 10 rows would bury the log).
+pub const NOCAT_KINDS_MAX: usize = 16;
+/// `UCODE_LIBOS_PRINT` messages journaled with their fields; the rest counted.
+pub const LIBOS_PRINTS_FULL: u32 = 8;
+
+/// os-279: the count of what GSP-RM sent besides the sequencer request and
+/// `GSP_INIT_DONE`, written at every end of the wait (good or bad).
+fn journal_skipped_summary<M: Mmio + ?Sized>(bar: &mut GuardedBar0<'_, M>, log: &InitLog) {
+    bar.journal().push(Event::Value {
+        what: "I8 mesaje GSP-RM sarite in asteptarea GSP_INIT_DONE: total",
+        value: log.other_events.len() as u32,
+    });
+    if log.nocat_records != 0 {
+        bar.journal().push(Event::Value {
+            what: "I8 NOCAT (0x1020): inregistrari de diagnostic primite",
+            value: log.nocat_records,
+        });
+        bar.journal().push(Event::Value {
+            what: "I8 NOCAT: feluri distincte (recType, errorCode, subsystem)",
+            value: log.nocat_kinds.len() as u32,
+        });
+    }
+    if log.libos_prints != 0 {
+        bar.journal().push(Event::Value {
+            what: "I8 UCODE_LIBOS_PRINT (0x100c): jurnale de microcod primite",
+            value: log.libos_prints,
+        });
+    }
+}
+
+/// os-279: one skipped message — named, and the two kinds the board sent
+/// decoded (NOCAT records, LibOS prints); the rest get their number and name.
+fn journal_skipped<M: Mmio + ?Sized>(
+    bar: &mut GuardedBar0<'_, M>,
+    log: &mut InitLog,
+    m: &rpc::Message,
+) {
+    log.other_events.push(m.function);
+    match m.function {
+        event::GSP_POST_NOCAT_RECORD => {
+            log.nocat_records += 1;
+            let Some(r) = nocat::NocatRecord::decode(&m.payload) else {
+                bar.journal().push(Event::Value {
+                    what: "I8 NOCAT: mesaj mai scurt decat inregistrarea (octeti)",
+                    value: m.payload.len() as u32,
+                });
+                return;
+            };
+            let kind = r.kind();
+            let new_kind = !log.nocat_kinds.contains(&kind);
+            if new_kind && log.nocat_kinds.len() < NOCAT_KINDS_MAX {
+                log.nocat_kinds.push(kind);
+            }
+            if log.nocat_records <= NOCAT_FULL_FIRST || new_kind {
+                r.journal(bar.journal(), log.nocat_records);
+            }
+        }
+        event::UCODE_LIBOS_PRINT => {
+            log.libos_prints += 1;
+            if log.libos_prints <= LIBOS_PRINTS_FULL {
+                match nocat::LibosPrint::decode(&m.payload) {
+                    Some(l) => l.journal(bar.journal()),
+                    None => bar.journal().push(Event::Value {
+                        what: "I8 UCODE_LIBOS_PRINT: mesaj trunchiat (octeti)",
+                        value: m.payload.len() as u32,
+                    }),
+                }
+            }
+        }
+        _ => {
+            // C-102: every other message is named in the journal (its
+            // function number, name and rpc_result), so the board's log
+            // shows what GSP-RM said on the way to INIT_DONE.
+            bar.journal().push(Event::Value {
+                what: "I8 mesaj GSP-RM sarit (functia)",
+                value: m.function,
+            });
+            if let Some(n) = rpc::name(m.function) {
+                bar.journal()
+                    .push(Event::text("I8 mesaj GSP-RM sarit (numele)", n.as_bytes()));
+            }
+            if m.rpc_result != 0 {
+                bar.journal().push(Event::Value {
+                    what: "I8 mesaj GSP-RM sarit: rpc_result",
+                    value: m.rpc_result,
+                });
+            }
+        }
+    }
 }
 
 /// Bound for the whole wait (DEDUS; nouveau waits seconds). C-99: raised
@@ -398,6 +500,7 @@ pub fn wait_init_done<M: Mmio + ?Sized, C: Clock + ?Sized>(
                 }
                 bar.journal()
                     .push(Event::Note("I8: eroarea vine din coada de stare"));
+                journal_skipped_summary(bar, &log);
                 falcon::journal_resume_state(bar);
                 return Err(e);
             }
@@ -413,12 +516,22 @@ pub fn wait_init_done<M: Mmio + ?Sized, C: Clock + ?Sized>(
                         what: "GSP_INIT_DONE: rpc_result_private",
                         value: m.rpc_result_private,
                     });
+                    // os-279: the code's name from nvstatuscodes.h (0x59 =
+                    // NV_ERR_OPERATING_SYSTEM), so the log reads itself.
+                    if let Some(n) = nvidia_rm570::status_name(m.rpc_result) {
+                        bar.journal().push(Event::text(
+                            "GSP_INIT_DONE: rpc_result (nume NV_STATUS)",
+                            n.as_bytes(),
+                        ));
+                    }
                     bar.journal()
                         .push(Event::Note("I8: eroarea vine din GSP_INIT_DONE"));
+                    journal_skipped_summary(bar, &log);
                     falcon::journal_resume_state(bar);
                     return Err(GpuError::HardwareFault { code: m.rpc_result });
                 }
                 waited(bar, clock, "GSP_INIT_DONE (de la sonerie)", start);
+                journal_skipped_summary(bar, &log);
                 bar.journal().push(Event::Step {
                     name: "I8 GSP_INIT_DONE",
                     ok: true,
@@ -441,33 +554,20 @@ pub fn wait_init_done<M: Mmio + ?Sized, C: Clock + ?Sized>(
                 log.sequencer_runs += 1;
                 log.sequencer_commands += cmds.len() as u32;
             }
-            Some(m) => {
-                // C-102: every other message is named in the journal (its
-                // function number and rpc_result), so the board's log shows
-                // what GSP-RM said on the way to INIT_DONE.
-                bar.journal().push(Event::Value {
-                    what: "I8 mesaj GSP-RM sarit (functia)",
-                    value: m.function,
-                });
-                if m.rpc_result != 0 {
-                    bar.journal().push(Event::Value {
-                        what: "I8 mesaj GSP-RM sarit: rpc_result",
-                        value: m.rpc_result,
-                    });
-                }
-                log.other_events.push(m.function);
-            }
+            Some(m) => journal_skipped(bar, &mut log, &m),
             None => {
                 let waited_us = clock.now_us().saturating_sub(start);
                 if waited_us >= timeout_us {
                     bar.journal()
                         .push(Event::Note("I8: GSP_INIT_DONE nu a venit (timp expirat)"));
+                    journal_skipped_summary(bar, &log);
                     falcon::journal_resume_state(bar);
                     return Err(GpuError::Timeout { waited_us });
                 }
                 if clock.abort_requested() {
                     bar.journal()
                         .push(Event::Note("I8: oprit manual in asteptarea GSP_INIT_DONE"));
+                    journal_skipped_summary(bar, &log);
                     falcon::journal_resume_state(bar);
                     return Err(GpuError::Aborted { waited_us });
                 }
@@ -923,18 +1023,150 @@ mod tests {
             .iter()
             .position(|r| r == "valoare I8 mesaj GSP-RM sarit (functia) = 0x00001006")
             .expect("the skipped event is named");
+        // os-279: the number's name from rpc_global_enums.h follows it
         assert_eq!(
             rows[k + 1],
-            "valoare GSP_INIT_DONE: rpc_result (0 = bine; altfel cod NV_STATUS) = 0x00000059"
+            "text I8 mesaj GSP-RM sarit (numele) = \"OS_ERROR_LOG\""
         );
         assert_eq!(
             rows[k + 2],
+            "valoare GSP_INIT_DONE: rpc_result (0 = bine; altfel cod NV_STATUS) = 0x00000059"
+        );
+        assert_eq!(
+            rows[k + 3],
             "valoare GSP_INIT_DONE: rpc_result_private = 0x00000000"
         );
-        assert_eq!(rows[k + 3], "nota: I8: eroarea vine din GSP_INIT_DONE");
-        assert!(rows[k + 4].starts_with("valoare PGC6 SCRATCH_14 (bit 26 = predarea etapei 3) = "));
-        assert!(rows[k + 10].starts_with("valoare GSP MAILBOX1 = "));
-        assert_eq!(rows.len(), k + 11);
+        assert_eq!(
+            rows[k + 4],
+            "text GSP_INIT_DONE: rpc_result (nume NV_STATUS) = \"NV_ERR_OPERATING_SYSTEM\""
+        );
+        assert_eq!(rows[k + 5], "nota: I8: eroarea vine din GSP_INIT_DONE");
+        assert_eq!(
+            rows[k + 6],
+            "valoare I8 mesaje GSP-RM sarite in asteptarea GSP_INIT_DONE: total = 0x00000001"
+        );
+        assert!(rows[k + 7].starts_with("valoare PGC6 SCRATCH_14 (bit 26 = predarea etapei 3) = "));
+        assert!(rows[k + 13].starts_with("valoare GSP MAILBOX1 = "));
+        assert_eq!(rows.len(), k + 14);
+    }
+
+    /// os-279 (T116): what the board sent on 11 Nov 2026 — many
+    /// `GSP_POST_NOCAT_RECORD` messages, two `UCODE_LIBOS_PRINT`, then
+    /// `GSP_INIT_DONE` with 0x59. The journal decodes the records (the first
+    /// four and each new kind), counts the rest, names the error code, and
+    /// the error is still an error (SIMULATION).
+    #[test]
+    fn nocat_records_and_libos_prints_are_decoded_not_just_counted() {
+        use crate::gsp::nocat::tests::record;
+        let (mut g, mut j, mut c) = booted();
+        let (l, mut mem, mut q) = queues_after_i7();
+        let mut peer = SimGsp::start(&mut mem, l.cmd_queue_offset, l.stat_queue_offset);
+        q.link_rx(&mem).unwrap();
+        let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+        let mut step = 0;
+        let r = wait_init_done(&mut q, &mut mem, &mut b, &mut c, CTX, INIT_DONE_US, |m| {
+            step += 1;
+            match step {
+                // 30 records of one kind (ASSERT, NV_ERR_INVALID_STATE 0x40,
+                // subsystem 5): the first four in full, then counted
+                1..=30 => peer.post(
+                    m,
+                    event::GSP_POST_NOCAT_RECORD,
+                    0,
+                    &record(5, 0x40, 5, b"GSP-RM"),
+                ),
+                // a new kind (RC, NV_ERR_TIMEOUT 0x65): in full, once
+                31 => peer.post(
+                    m,
+                    event::GSP_POST_NOCAT_RECORD,
+                    0,
+                    &record(4, 0x65, 9, b"GSP-RM"),
+                ),
+                32 => peer.post(
+                    m,
+                    event::GSP_POST_NOCAT_RECORD,
+                    0,
+                    &record(4, 0x65, 9, b"GSP-RM"),
+                ),
+                // a record shorter than the struct: noted, not decoded
+                33 => peer.post(m, event::GSP_POST_NOCAT_RECORD, 0, &[0u8; 100]),
+                34 | 35 => {
+                    let mut p = alloc::vec![0u8; 8 + 64];
+                    p[0..4].copy_from_slice(&0x1234u32.to_le_bytes());
+                    p[4..8].copy_from_slice(&64u32.to_le_bytes());
+                    peer.post(m, event::UCODE_LIBOS_PRINT, 0, &p)
+                }
+                36 => peer.post(m, event::GSP_INIT_DONE, 0x59, &[]),
+                _ => {}
+            }
+        });
+        assert!(matches!(r, Err(GpuError::HardwareFault { code: 0x59 })));
+        let _ = b;
+        let rows: Vec<String> = j.events().map(|e| alloc::format!("{e}")).collect();
+        let count = |needle: &str| rows.iter().filter(|r| r.contains(needle)).count();
+        // 4 (first) + 1 (new kind) = 5 records in full; the other 27 counted
+        assert_eq!(count("valoare NOCAT: inregistrarea nr. = "), 5);
+        assert!(rows.contains(&String::from(
+            "valoare NOCAT: inregistrarea nr. = 0x00000004"
+        )));
+        assert!(rows.contains(&String::from(
+            "valoare NOCAT: inregistrarea nr. = 0x0000001f"
+        )));
+        assert!(!rows.contains(&String::from(
+            "valoare NOCAT: inregistrarea nr. = 0x00000005"
+        )));
+        assert_eq!(
+            count("text NOCAT: errorCode (nume NV_STATUS) = \"NV_ERR_INVALID_STATE\""),
+            4
+        );
+        assert_eq!(
+            count("text NOCAT: errorCode (nume NV_STATUS) = \"NV_ERR_TIMEOUT\""),
+            1
+        );
+        assert_eq!(count("text NOCAT: recType = \"RC\""), 1);
+        assert_eq!(count("text NOCAT: source = \"GSP-RM\""), 5);
+        assert_eq!(
+            count("I8 NOCAT: mesaj mai scurt decat inregistrarea (octeti) = 0x00000064"),
+            1
+        );
+        assert_eq!(count("UCODE_LIBOS_PRINT: ucodeEngDesc"), 2);
+        assert_eq!(
+            count(
+                "UCODE_LIBOS_PRINT: libosPrintBufSize (jurnal LibOS binar, nedecodat) = 0x00000040"
+            ),
+            2
+        );
+        // no bare "sarit (functia)" rows for the decoded kinds
+        assert_eq!(count("mesaj GSP-RM sarit (functia)"), 0);
+        // the summary after the error, before the registers
+        let e = rows
+            .iter()
+            .position(|r| r == "nota: I8: eroarea vine din GSP_INIT_DONE")
+            .unwrap();
+        assert_eq!(
+            rows[e - 1],
+            "text GSP_INIT_DONE: rpc_result (nume NV_STATUS) = \"NV_ERR_OPERATING_SYSTEM\""
+        );
+        assert_eq!(
+            rows[e + 1],
+            "valoare I8 mesaje GSP-RM sarite in asteptarea GSP_INIT_DONE: total = 0x00000023"
+        );
+        assert_eq!(
+            rows[e + 2],
+            "valoare I8 NOCAT (0x1020): inregistrari de diagnostic primite = 0x00000021"
+        );
+        assert_eq!(
+            rows[e + 3],
+            "valoare I8 NOCAT: feluri distincte (recType, errorCode, subsystem) = 0x00000002"
+        );
+        assert_eq!(
+            rows[e + 4],
+            "valoare I8 UCODE_LIBOS_PRINT (0x100c): jurnale de microcod primite = 0x00000002"
+        );
+        assert!(rows[e + 5].starts_with("valoare PGC6 SCRATCH_14"));
+        // the first NOCAT record comes right after the doorbell-less start:
+        // nothing was written to the board for any of this
+        assert!(!g.writes.iter().any(|&(o, _)| o == 0x110c00));
     }
 
     /// C-102 (T114): the other way 0x59 can appear — the status queue's
@@ -961,7 +1193,11 @@ mod tests {
             })
             .expect("the queue pointer is named");
         assert_eq!(rows[k + 1], "nota: I8: eroarea vine din coada de stare");
-        assert!(rows[k + 2].starts_with("valoare PGC6 SCRATCH_14"));
+        assert_eq!(
+            rows[k + 2],
+            "valoare I8 mesaje GSP-RM sarite in asteptarea GSP_INIT_DONE: total = 0x00000000"
+        );
+        assert!(rows[k + 3].starts_with("valoare PGC6 SCRATCH_14"));
     }
 
     /// C-102 (T115): CORE_RESUME journals the state before SEC2 starts and
