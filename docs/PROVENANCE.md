@@ -182,3 +182,19 @@ SCRATCH_14 — de aceea nici noi), `nvstatuscodes.h` (`0x59` = `NV_ERR_OPERATING
 `r535_gsp_msgq_wait`: pointerul de scriere nu e verificat) din cunoaștere generală, pentru comparație. Faptele de pe placă (`gpu-jurnal-006.txt`:
 „2 µs” la predarea etapei 3 și la RISC-V activ, apoi `0x59` după ~150 ms) sunt OBSERVATE; cele două surse posibile ale lui `0x59` sunt DEDUSE din codul
 nostru. Cod scris de noi (`Event::Value`, `falcon::{RESUME_STATE_READS, journal_resume_state}`, rândurile din `sequencer`); doar citiri, nicio scriere nouă.
+
+**După os-279 (sesiunea 85, 11 noiembrie 2026).** Citite ca specificație din open-gpu-kernel-modules@570.144 (MIT): `kernel/gpu/gsp/kernel_gsp.c`
+(`_kgspRpcGspPostNocatRecord`: payload-ul lui `GSP_POST_NOCAT_RECORD` citit ca `NV2080CtrlNocatJournalInsertRecord`; `_kgspRpcUcodeLibosPrint`:
+`ucodeEngDesc`/`libosPrintBuf`, buffer PMU dat lui `kpmuLogBuf`; `kgspWaitForRmInitDone_IMPL`: `rpc_result` al lui `GSP_INIT_DONE` e un `NV_STATUS`),
+`kernel/diagnostics/journal.c` (`_rcdbNocatReportAssert`: la ASSERT `source = "ASSERT"`, `errorCode` = adresa − `loadAddress` | linia << 32, `diagBuffer` =
+`RM_NOCAT_ASSERT_DIAG_BUFFER`; `rcdbNocatInsertNocatError`: „RC Error”; `rcdbNocatInsertEngineError`/`TDRError`), `generated/g_journal_nvoc.h`
+(`ASSERT_CALL_STACK_SIZE` = 10, `RM_NOCAT_ASSERT_DIAG_BUFFER`), `sdk/nvidia/inc/ctrl/ctrl2080/ctrl2080nvd.h` (`NV2080CtrlNocatJournalInsertRecord`,
+`NV2080_NOCAT_JOURNAL_REC_TYPE_*`, `MAX_STR_LEN` 65, `MAX_DIAG_BUFFER` 1024), `generated/g_rpc-structures.h` (`rpc_gsp_post_nocat_record_v01_00`,
+`rpc_ucode_libos_print_v1E_08`). **Generate** (C-20 B, unealtă nouă `tools/gen-rm570/gen_names.py`, doar biblioteca standard Python) din
+`nvstatuscodes.h` și `inc/kernel/vgpu/rpc_global_enums.h` → `crates/nvidia-rm570/src/names.rs` (143 coduri `NV_STATUS` cu descrierea NVIDIA, 228 funcții
+RPC, 36 evenimente; cu notificarea MIT NVIDIA). Offset-urile înregistrării NOCAT scrise de mână în `gsp/nocat.rs` au fost verificate cu `offsetof()` într-un
+program C de probă (în afara repo-ului). Faptele de pe placă (`gpu-jurnal-007.txt`: 843 × `0x1020`, 2 × `0x100c`, `rpc_result 0x59`, SCRATCH_14 pus abia după
+`0x840130 ← 2`) sunt OBSERVATE; că cele 843 sunt plângeri ale RM-ului de pe GSP în timpul inițializării e DEDUS din rolul mesajului în RM. Cod scris de noi
+(`gsp::nocat`, `Event::Text`, `sequencer::{journal_skipped, journal_skipped_summary}`, `nvidia_rm570::{status_name, status_text, rpc_name}`); doar citiri
+din mesaje primite, nicio scriere nouă. Conținutul `libosPrintBuf` și al `diagBuffer` (altul decât stiva asserturilor) nu se decodează: ar cere simbolurile
+firmware-ului.

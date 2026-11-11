@@ -1,5 +1,43 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 85 — 11 noiembrie 2026, ~12:28–13:10 (ora României), în cloud, FĂRĂ placă — după os-279: GSP-RM pornește, dar refuză inițializarea (0x59)
+
+Pornită de programare. În hub a apărut jurnalul testului cu `os-279` (`rezultate/2026-11-11-workstation-os279/`, `gpu-jurnal-007.txt`, 3145 rânduri, 12:20) —
+exact ce aștepta sesiunea 84. Nicio comandă nouă pentru cyber-gpu (C-102 e `gata` la ambele proiecte); lucrul de aici e **continuarea C-102** cerută de
+„Următorul pas” al sesiunii 84 („abia atunci se poate repara ce e 0x59”).
+
+**Ce spune jurnalul (OBSERVAT):** I6 + I7 trec (a 6-a oară), toate cele 420 de comenzi ale secvențiatorului trec; la `#419 CORE_RESUME` rândurile noi `valoare …`
+arată că Booter-ul **a rulat de-adevăratelea** (SCRATCH_14 `0x13100000` → `0x17100000`, bitul 26 pus abia după `0x840130 ← 2`; SEC2 MAILBOX0 = 0), GSP RISC-V
+activ (`0x80`). Apoi: **„I8: eroarea vine din GSP_INIT_DONE”, `rpc_result = 0x59` = `NV_ERR_OPERATING_SYSTEM`** — GSP-RM a pornit și a răspuns, dar spune că
+inițializarea lui a eșuat (driverul NVIDIA citește același câmp la fel, `kgspWaitForRmInitDone_IMPL`). Înainte: **843 de mesaje `0x1020`** (cele mai multe
+înainte de secvențiator) și **2 × `0x100c`**, pe care jurnalul le număra, dar nu le citea. Varianta „pointer în afara cozii” (T114) e **exclusă**.
+
+**Ce sunt mesajele (DEDUS din antetele MIT 570.144):** `0x1020` = `GSP_POST_NOCAT_RECORD` — o înregistrare de diagnostic pe care RM-ul de pe GSP o trimite
+driverului (`recType` BUGCHECK/ENGINE/TDR/RC/ASSERT, `source`, `subsystem`, `errorCode`, `faultingEngine`, `diagBuffer`; la ASSERT: adresa + linia și stiva de
+apeluri, `journal.c`); 843 de astfel de înregistrări = RM-ul de pe GSP s-a plâns de 843 de ori în timpul propriei inițializări. `0x100c` = `UCODE_LIBOS_PRINT`
+— jurnalul PMU-ului în format LibOS binar (nu-l decodăm: ar cere simbolurile firmware-ului). **Cauza lui 0x59 nu se poate spune încă**: e în conținutul
+celor 843 de înregistrări, pe care jurnalul vechi nu l-a scris. O „reparație” a parametrilor acum ar fi inventată.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `nvidia-rm570::names` (generat, `tools/gen-rm570/gen_names.py`) | 143 coduri `NV_STATUS` cu descrierea NVIDIA, 228 funcții RPC, 36 evenimente, din `nvstatuscodes.h` + `rpc_global_enums.h` (MIT); `status_name`, `status_text`, `rpc_name` | PASS |
+| `Event::Text` (nou, `gpu-core`) | rând `text <nume> = "..."` (≤ 32 de octeți, tăiat la NUL, neafișabilele → `.`); adăugare compatibilă | PASS |
+| `gsp::nocat` (nou) | `NocatRecord` (offset-urile `ctrl2080nvd.h`, verificate cu `offsetof()` în C), ASSERT ca în `journal.c` (adresă + linie, stiva de 10 apeluri, `count`), `LibosPrint` | PASS (T117) |
+| `wait_init_done` | fiecare `GSP_POST_NOCAT_RECORD` decodat: primele 4 + fiecare fel nou (≤ 16) în jurnal, restul numărate (felurile peste limită numărate separat); `UCODE_LIBOS_PRINT`: descriptor + mărime; orice alt mesaj: număr **și nume**; `rpc_result` cu numele `NV_STATUS`; rezumat la orice sfârșit (total, NOCAT, feluri, LibOS) | PASS (SIMULARE, T116; T113/T114 actualizate) |
+| `verifica_jurnal_lant` | pe `gpu-jurnal-007.txt` (WprMeta `0x9c66000`): „OPRIT CURAT la i8-gsp-init”, I8 326 scrieri + 1 sonerie; cu rândurile noi adăugate artificial: același verdict | PASS |
+| Compatibilitate OS | doar adăugări (`Event::Text`, `TEXT_LEN`, `nvidia_rm570::names` + 3 funcții, `gsp::nocat`, `event::GSP_POST_NOCAT_RECORD`, `rpc::name`, câmpuri noi în `InitLog`); nicio scriere nouă în registre | PASS |
+| CI GitHub | rulările pe `93d530c` (10:48 UTC, 56 s) și `d84e331` | PASS; `5cfe523` de verificat |
+| Pe RTX 3070 Ti | — | NOT TESTED |
+
+Verificări (`sh tools/check.sh`, Rust 1.97.0; ținta `x86_64-unknown-none` reinstalată): format, clippy `-D warnings`, **433 teste PASS** (4 ignorate), build no_std PASS.
+Nota pentru OS: `integration/cyber-universe/os-279_nocat-decodat.md`. Surse în `docs/PROVENANCE.md`; riscuri noi în `docs/RISKS.md`. Hub: `stare/cyber-gpu.md`, `jurnal/cyber-gpu.md`, C-102 (completare).
+
+**Următorul pas:** OS-ul leagă `5cfe523` (sau mai nou), Release `os-280`, `gpu lant` cu Adrian de față (I8 se va opri probabil tot la 0x59 — important e jurnalul).
+În jurnal se citesc rândurile `NOCAT` (mai ales `text NOCAT: source`, `recType`, adresa + linia asserturilor sau `errorCode` cu numele `NV_STATUS`, `subsystem`)
+și rezumatul de la final; abia atunci se vede ce îi lipsește lui GSP-RM (`GSP_SET_SYSTEM_INFO`, registrul, argumentele de pornire, memoria) și se repară.
+Niciun pas nou fără jurnal.
+
+---
 ## Sesiunea 84 — 11 noiembrie 2026, ~10:28–10:52 (ora României), în cloud, FĂRĂ placă — C-102 URGENT: I8 „eroare hardware 0x59” la os-278
 
 Pornită de programare. **Oprirea de siguranță (regula 8) s-a ridicat**: în hub au apărut și jurnalul testului cu `os-278` (`rezultate/2026-11-11-workstation-os278/`,

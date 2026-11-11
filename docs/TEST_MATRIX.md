@@ -1,5 +1,16 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 85 (11 nov 2026, cloud, fără placă) — după os-279: mesajele GSP-RM de dinaintea erorii 0x59, decodate
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T116 | Ce a trimis placa pe 11 nov (os-279): multe `GSP_POST_NOCAT_RECORD`, două `UCODE_LIBOS_PRINT`, apoi `GSP_INIT_DONE` cu `rpc_result = 0x59`. Primele 4 înregistrări și fiecare fel nou (recType, errorCode, subsystem) sunt decodate în jurnal (`text NOCAT: source`, numele `NV_STATUS`…), restul numărate; o înregistrare prea scurtă e notată; `UCODE_LIBOS_PRINT`: descriptorul motorului și mărimea; rezumatul (total, NOCAT, feluri, LibOS) înainte de cele 7 registre; `text GSP_INIT_DONE: rpc_result (nume NV_STATUS) = "NV_ERR_OPERATING_SYSTEM"`; eroarea rămâne `HardwareFault 0x59`; 40 de feluri → 16 păstrate, 24 numărate ca „peste limită”, `GSP_INIT_DONE` bun → Ok; nicio sonerie, nicio scriere | `cargo test -p nvidia-ga104 --lib nocat_records_and_libos_prints` | conform | conform | PASS (SIMULARE) |
+| T117 | Decodarea `NV2080CtrlNocatJournalInsertRecord` (offset-urile = cele calculate de compilatorul C pentru `ctrl2080nvd.h`: 0, 8, 16, 20, 24, 92, 96, 104, 172, 176, 180; 1208 B); înregistrare ENGINE cu `NV_STATUS` numit; ASSERT ca în RM `journal.c` (adresă + linie, stiva de apeluri 5 adrese, `count`), fără nume `NV_STATUS` pentru o adresă; `UCODE_LIBOS_PRINT` cu buffer trunchiat; `Event::Text` tăiat la 32 de octeți și la NUL, caracterele neafișabile → `.`; tabelele generate (`nvidia-rm570::names`): `0x59` → `NV_ERR_OPERATING_SYSTEM`, `0x1020` → `GSP_POST_NOCAT_RECORD`, `0x100c` → `UCODE_LIBOS_PRINT`, 65 → `GET_GSP_STATIC_INFO`, sortate, fără dubluri | `cargo test -p nvidia-ga104 --lib gsp::nocat` · `cargo test -p gpu-core text_events` · `cargo test -p nvidia-rm570 names_from_the_headers` | conform | conform | PASS |
+| T113 (actualizat) | ca înainte, plus rândul cu numele mesajului sărit (`OS_ERROR_LOG`), numele codului (`NV_ERR_OPERATING_SYSTEM`) și rezumatul (total = 1) între notă și registre | `cargo test -p nvidia-ga104 --lib init_done_with_an_error_code` | conform | conform | PASS (SIMULARE) |
+
+Verificare pe jurnalul real: `verifica_jurnal_lant gpu-jurnal-007.txt 0x9c66000` → „OPRIT CURAT la i8-gsp-init (Bus Master pus la loc)”, I6 720 / I7 723 scrieri conforme,
+I8 326 scrieri + 1 sonerie; cu rândurile noi (`text …`, rezumatul) adăugate artificial: același verdict (parserul le ignoră).
+
 ## Rezultate — sesiunea 78 (10 nov 2026, cloud, fără placă) — C-96: I8 „eroare hardware 0xbadf5620”
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |
