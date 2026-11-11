@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 84 — 11 noiembrie 2026, ~10:28–11:05 (ora României), în cloud, FĂRĂ placă — C-102 URGENT: I8 „eroare hardware 0x59” la os-278
+## Sesiunea 84 — 11 noiembrie 2026, ~10:28–10:52 (ora României), în cloud, FĂRĂ placă — C-102 URGENT: I8 „eroare hardware 0x59” la os-278
 
 Pornită de programare. **Oprirea de siguranță (regula 8) s-a ridicat**: în hub au apărut și jurnalul testului cu `os-278` (`rezultate/2026-11-11-workstation-os278/`,
 `gpu-jurnal-006.txt`, 2274 rânduri), și o comandă nouă, **C-102** (10:22, urgent, Adrian la workstation până ~12:15–12:30). Preluat 10:30.
