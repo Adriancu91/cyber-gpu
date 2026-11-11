@@ -808,6 +808,92 @@ fn booter_load_with<M: Mmio + ?Sized, C: Clock + ?Sized>(
     Ok(())
 }
 
+/// C-103: the mailbox arguments of a normal (non-suspend, non-GC6) Booter
+/// Unload — RM `kgspExecuteBooterUnloadIfNeeded_TU102` (570.144, MIT).
+pub const BOOTER_UNLOAD_MAILBOX: (u32, u32) = (0xff, 0xff);
+
+/// C-103: what [`booter_unload`] found and did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unloaded {
+    /// WPR2 was not up: nothing to tear down, Booter Unload not run (as RM).
+    Wpr2NuEraRidicat,
+    /// Booter Unload ran, halted with mailbox 0 = 0, and WPR2 reads 0 now.
+    Wpr2Coborat,
+}
+
+/// C-103: brings the board back to the state I6 expects **without a reset of
+/// the computer** — WPR2 torn down by NVIDIA's signed `booter_unload` on
+/// SEC2, the same program the NVIDIA driver runs at unload and nouveau at
+/// `fini`. Order read in RM 570.144 (MIT, `kgspTeardown_TU102` +
+/// `kgspExecuteBooterUnloadIfNeeded_TU102`): GSP falcon reset (GSP-RM, in
+/// whatever state it is, stops), SEC2 reset, Booter Unload with mailboxes
+/// (0xFF, 0xFF), mailbox 0 must come back 0, then `WPR2_ADDR_HI` must read 0.
+/// RM also runs FWSEC-SB before it ("put back PreOsApps", display-related);
+/// we do not — nothing of ours depends on the pre-OS apps, and running a
+/// second signed program with no need widens the surface. If WPR2 is not up
+/// the program is not run at all (RM does the same). GSP/SEC2 windows only,
+/// through the write policy. SIMULARE: never run on the board.
+pub fn booter_unload<M: Mmio + ?Sized, C: Clock + ?Sized>(
+    bar: &mut GuardedBar0<'_, M>,
+    clock: &mut C,
+    load: impl FnOnce(&mut GuardedBar0<'_, M>, &mut C, Engine) -> GpuResult<()>,
+) -> GpuResult<Unloaded> {
+    let Some(w) = read_wpr2(bar)? else {
+        bar.journal().push(Event::Note(
+            "C-103 Booter Unload: WPR2 nu e ridicat, nimic de coborat (sarit, ca RM)",
+        ));
+        return Ok(Unloaded::Wpr2NuEraRidicat);
+    };
+    bar.journal().push(Event::Value {
+        what: "C-103 Booter Unload: WPR2 inainte (inceput >> 12)",
+        value: (w.start >> 12) as u32,
+    });
+    bar.journal().push(Event::Value {
+        what: "C-103 Booter Unload: WPR2 inainte (capat >> 12)",
+        value: (w.end >> 12) as u32,
+    });
+    // GSP-RM (or what is left of it) stops first: RM resets the GSP falcon
+    // before the teardown programs run.
+    reset(bar, clock, Engine::Gsp)?;
+    reset(bar, clock, Engine::Sec2)?;
+    select_falcon_core(bar, clock, Engine::Sec2)?;
+    load(bar, clock, Engine::Sec2)?;
+    let (mb0, _) = run_to_halt(bar, clock, Engine::Sec2, BOOTER_UNLOAD_MAILBOX)?;
+    if mb0 != 0 {
+        bar.journal().push(Event::Value {
+            what: "C-103 Booter Unload: MAILBOX0 (Booter a dat eroare)",
+            value: mb0,
+        });
+        return Err(GpuError::HardwareFault { code: mb0 });
+    }
+    if let Some(still) = read_wpr2(bar)? {
+        bar.journal().push(Event::Value {
+            what: "C-103 Booter Unload: WPR2 inca ridicat dupa Booter (capat >> 12)",
+            value: (still.end >> 12) as u32,
+        });
+        return Err(GpuError::InvalidArgument(
+            "C-103 Booter Unload: WPR2 e inca ridicat dupa Booter Unload",
+        ));
+    }
+    bar.journal().push(Event::Step {
+        name: "C-103 Booter Unload: WPR2 coborat",
+        ok: true,
+    });
+    Ok(Unloaded::Wpr2Coborat)
+}
+
+/// C-103 with the real loader: `booter_unload` from `image` over DMA.
+pub fn booter_unload_dma<M: Mmio + ?Sized, C: Clock + ?Sized>(
+    bar: &mut GuardedBar0<'_, M>,
+    clock: &mut C,
+    ucode: &super::hs_load::HsUcode,
+    image: &super::hs_load::DmaImage,
+) -> GpuResult<Unloaded> {
+    booter_unload(bar, clock, |b, c, e| {
+        super::hs_load::dma_load(b, c, e, ucode, image)
+    })
+}
+
 pub fn wait_riscv_active<M: Mmio + ?Sized, C: Clock + ?Sized>(
     bar: &mut GuardedBar0<'_, M>,
     clock: &mut C,
@@ -1036,6 +1122,130 @@ pub(crate) mod tests_support {
             booter_load(&mut b, &mut c, load, 0x1_0000_0000).unwrap();
         }
         (g, j, c)
+    }
+}
+
+#[cfg(test)]
+mod tests_c103 {
+    //! C-103 (T118): Booter Unload in SIMULARE.
+    use super::tests_support::booted;
+    use super::*;
+    use gpu_core::diag::Journal;
+    use gpu_sim::clock::SimClock;
+    use gpu_sim::fake_gsp::{FakeGsp, SimFault, SimUcode};
+
+    fn load_unload(b: &mut GuardedBar0<'_, FakeGsp>, _: &mut SimClock, e: Engine) -> GpuResult<()> {
+        assert_eq!(e, Engine::Sec2);
+        b.model().sim_load(e.base(), SimUcode::BooterUnload);
+        Ok(())
+    }
+
+    #[test]
+    fn booter_unload_tears_wpr2_down_after_a_full_boot() {
+        // After I6 + I7 (WPR2 up, GSP-RM "running"): unload → WPR2 reads 0,
+        // RISC-V no longer active, and I6 could run again.
+        let (mut g, mut j, mut c) = booted();
+        assert!(g.riscv_active());
+        let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+        assert!(read_wpr2(&mut b).unwrap().is_some());
+        let r = booter_unload(&mut b, &mut c, load_unload).unwrap();
+        assert_eq!(r, Unloaded::Wpr2Coborat);
+        assert!(read_wpr2(&mut b).unwrap().is_none());
+        let _ = b;
+        assert!(!g.riscv_active());
+        let rows: Vec<String> = j.events().map(|e| alloc::format!("{e}")).collect();
+        let k = rows
+            .iter()
+            .position(|r| {
+                r.starts_with("valoare C-103 Booter Unload: WPR2 inainte (inceput >> 12) = ")
+            })
+            .unwrap();
+        assert!(
+            rows[k + 1].starts_with("valoare C-103 Booter Unload: WPR2 inainte (capat >> 12) = ")
+        );
+        assert!(rows.contains(&String::from("pas C-103 Booter Unload: WPR2 coborat: ok")));
+        // the mailboxes carried RM's normal-unload arguments
+        assert!(
+            rows.iter()
+                .any(|r| r.starts_with("bar0 w 0x840040: ") && r.contains("<- 0x000000ff"))
+        );
+        assert!(
+            rows.iter()
+                .any(|r| r.starts_with("bar0 w 0x840044: ") && r.contains("<- 0x000000ff"))
+        );
+        // only GSP/SEC2 windows were written (the policy), WPR2 registers never
+        assert!(
+            !g.writes
+                .iter()
+                .any(|&(o, _)| o == 0x1fa824 || o == 0x1fa828)
+        );
+        // and I6 can run again on the same "power-on"
+        let frts = g.frts;
+        let load = |b: &mut GuardedBar0<'_, FakeGsp>, e: Engine| {
+            b.model().sim_load(e.base(), SimUcode::FwsecFrts);
+            assert_eq!(e, Engine::Gsp);
+            Ok(())
+        };
+        let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+        fwsec_frts(&mut b, &mut c, load, frts).unwrap();
+        assert!(read_wpr2(&mut b).unwrap().is_some());
+    }
+
+    #[test]
+    fn booter_unload_is_skipped_when_wpr2_is_down() {
+        let mut g = FakeGsp::new();
+        let mut j = Journal::new(64);
+        let mut c = SimClock::default();
+        let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+        let r = booter_unload(&mut b, &mut c, |_, _, _| {
+            panic!("no program must be loaded")
+        })
+        .unwrap();
+        assert_eq!(r, Unloaded::Wpr2NuEraRidicat);
+        let _ = b;
+        assert_eq!(g.writes.len(), 0);
+        assert!(
+            j.events()
+                .any(|e| alloc::format!("{e}").contains("WPR2 nu e ridicat"))
+        );
+    }
+
+    #[test]
+    fn booter_unload_errors_are_errors() {
+        // Booter halts with an error code in mailbox 0.
+        let (mut g, mut j, mut c) = booted();
+        let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+        let wrong = |b: &mut GuardedBar0<'_, FakeGsp>, _: &mut SimClock, e: Engine| {
+            // a program for the other falcon: the SIM "boot ROM" halts it
+            // with its error code (0xdead), never 0
+            b.model().sim_load(e.base(), SimUcode::FwsecFrts);
+            Ok(())
+        };
+        let r = booter_unload(&mut b, &mut c, wrong);
+        assert!(
+            matches!(r, Err(GpuError::HardwareFault { code: 0xdead })),
+            "{r:?}"
+        );
+        let _ = b;
+        assert!(
+            j.events()
+                .any(|e| alloc::format!("{e}").contains("MAILBOX0 (Booter a dat eroare)"))
+        );
+        // WPR2 stays up after a Booter that said "ok": refused, named.
+        let (mut g, mut j, mut c) = booted();
+        g.fault = SimFault::Wpr2Stuck;
+        let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+        let r = booter_unload(&mut b, &mut c, load_unload);
+        assert!(
+            matches!(r, Err(GpuError::InvalidArgument(m)) if m.contains("inca ridicat")),
+            "{r:?}"
+        );
+        assert!(read_wpr2(&mut b).unwrap().is_some());
+        let _ = b;
+        assert!(
+            j.events()
+                .any(|e| alloc::format!("{e}").contains("WPR2 inca ridicat dupa Booter"))
+        );
     }
 }
 

@@ -128,6 +128,59 @@ pub fn power_state<C: ConfigSpace + ?Sized>(cfg: &mut C) -> Option<u8> {
     Some((cfg.read16(p + 4) & 0x3) as u8)
 }
 
+/// C-103 (reads only): what the device's own configuration space says about
+/// the ways it can be reset without a power cycle. PCIe Base Spec: Device
+/// Capabilities bit 28 = Function Level Reset capable (§7.5.3.3), Device
+/// Control bit 15 = Initiate FLR (§7.5.3.4; **never written here**); PCI PM:
+/// PMCSR bit 3 = `No_Soft_Reset` (D3hot → D0 does *not* reset the function
+/// when set), PMC bits 25/26 = PME from D3hot/D3cold (informative). A
+/// Secondary Bus Reset lives in the *parent bridge's* Bridge Control (bit 6),
+/// not here. Decided by the OS, in the window, with Adrian — this only reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResetCapabilities {
+    /// PCIe Device Capabilities bit 28.
+    pub flr_capable: bool,
+    /// PCIe Device Control bit 15 as read (should be 0; set only while an FLR runs).
+    pub flr_initiated: bool,
+    /// PMCSR bit 3: when set, D3hot→D0 keeps the device's state (no internal reset).
+    pub pm_no_soft_reset: Option<bool>,
+    /// PMCSR bits 1:0 as read (0 = D0 … 3 = D3hot).
+    pub power_state: Option<u8>,
+    /// PMC `PME_Support` for D3cold (bit 31): the platform can wake it from D3cold.
+    pub pme_from_d3cold: Option<bool>,
+}
+
+impl ResetCapabilities {
+    /// One line for a report / the journal.
+    pub fn summary(&self) -> alloc::string::String {
+        alloc::format!(
+            "FLR {}; D3hot->D0 {}; stare D{}",
+            if self.flr_capable { "da" } else { "NU" },
+            match self.pm_no_soft_reset {
+                Some(true) => "pastreaza starea (No_Soft_Reset=1, nu reseteaza)",
+                Some(false) => "reseteaza functia (No_Soft_Reset=0)",
+                None => "fara capabilitate PM",
+            },
+            self.power_state.unwrap_or(0),
+        )
+    }
+}
+
+/// Reads [`ResetCapabilities`]; `None` without a PCIe capability.
+pub fn reset_capabilities<C: ConfigSpace + ?Sized>(cfg: &mut C) -> Option<ResetCapabilities> {
+    let p = find(cfg, CAP_PCIE)?;
+    let devcap = cfg.read32(p + 0x04);
+    let devctl = cfg.read16(p + 0x08);
+    let pm = find(cfg, CAP_PM).map(|q| (cfg.read32(q), cfg.read16(q + 4)));
+    Some(ResetCapabilities {
+        flr_capable: devcap & (1 << 28) != 0,
+        flr_initiated: devctl & (1 << 15) != 0,
+        pm_no_soft_reset: pm.map(|(_, csr)| csr & (1 << 3) != 0),
+        power_state: pm.map(|(_, csr)| (csr & 3) as u8),
+        pme_from_d3cold: pm.map(|(pmc, _)| pmc & (1 << 31) != 0),
+    })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResizableBar {
     pub bar_index: u8,
@@ -191,6 +244,42 @@ mod tests {
         assert_eq!(rb[0].bar_index, 1);
         assert_eq!(rb[0].current_bytes(), 256 << 20);
         assert_eq!(rb[0].max_bytes(), Some(8 << 30));
+    }
+
+    #[test]
+    fn reset_capabilities_are_read_not_written() {
+        // The SIM board: DevCap = 0 → no FLR; PMCSR = 0 → No_Soft_Reset = 0, D0.
+        let mut cfg = SimConfig::ga104_rtx3070ti();
+        let r = reset_capabilities(&mut cfg).unwrap();
+        assert_eq!(
+            r,
+            ResetCapabilities {
+                flr_capable: false,
+                flr_initiated: false,
+                pm_no_soft_reset: Some(false),
+                power_state: Some(0),
+                pme_from_d3cold: Some(false),
+            }
+        );
+        assert_eq!(cfg.writes, 0);
+        assert_eq!(
+            r.summary(),
+            "FLR NU; D3hot->D0 reseteaza functia (No_Soft_Reset=0); stare D0"
+        );
+        // A board that advertises FLR and keeps state over D3hot (what most
+        // GPUs report): DevCap bit 28, PMCSR bit 3, PMC PME_D3cold.
+        let mut cfg = SimConfig::ga104_rtx3070ti();
+        cfg.write_raw(0x7c, 1 << 28);
+        cfg.write_raw(0x64, 1 << 3);
+        cfg.write_raw(0x60, 0x0003_6801 | 1 << 31);
+        let r = reset_capabilities(&mut cfg).unwrap();
+        assert!(
+            r.flr_capable && r.pm_no_soft_reset == Some(true) && r.pme_from_d3cold == Some(true)
+        );
+        assert!(
+            r.summary()
+                .starts_with("FLR da; D3hot->D0 pastreaza starea")
+        );
     }
 
     #[test]

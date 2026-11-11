@@ -45,6 +45,8 @@ pub enum SimUcode {
     FwsecFrts,
     /// `booter_load` (I7), on SEC2.
     BooterLoad,
+    /// `booter_unload` (C-103: tears WPR2 down without a reset), on SEC2.
+    BooterUnload,
 }
 
 /// SIM: what the "boot ROM" expects to find in a falcon before it accepts a
@@ -111,6 +113,9 @@ pub enum SimFault {
     /// C-96: after a GSP engine reset the falcon registers keep answering
     /// with the priv error of the board (`0xbadf5620`) for good.
     PrivErrorStuck,
+    /// C-103: Booter Unload halts without error but WPR2 stays up (what RM
+    /// reports as "WPR2 is still up").
+    Wpr2Stuck,
 }
 
 /// C-96, OBSERVAT on the board (10 Nov 2026, os-276, `gpu-jurnal-004.txt`):
@@ -578,6 +583,29 @@ impl FakeGsp {
                     let v = self.raw(h) | 1 << 26; // BOOT_STAGE_3_HANDOFF
                     self.regs.insert(h, v);
                 }
+            }
+            (SEC2_BASE, Some(SimUcode::BooterUnload), true) => {
+                // C-103, SIM after RM `kgspExecuteBooterUnloadIfNeeded_TU102`
+                // (MIT, 570.144): Booter Unload on SEC2 with mailboxes
+                // (0xFF, 0xFF) tears WPR2 down; the driver then checks
+                // WPR2_ADDR_HI == 0. What the signed program does inside is
+                // not modelled (and not ours to open): only its visible
+                // effects — WPR2 registers back to 0, GSP-RM gone.
+                self.sec2.alias_en = true;
+                let mb1 = self.raw(base + fv4::NV_PFALCON_FALCON_MAILBOX1);
+                if (self.raw(mb0), mb1) != (0xff, 0xff) {
+                    // SIM error code: not the normal-unload arguments.
+                    self.regs.insert(mb0, 0xbad3);
+                    return;
+                }
+                if self.fault != SimFault::Wpr2Stuck {
+                    self.regs.insert(fb::NV_PFB_PRI_MMU_WPR2_ADDR_LO, 0);
+                    self.regs.insert(fb::NV_PFB_PRI_MMU_WPR2_ADDR_HI, 0);
+                    self.riscv_active = false;
+                    self.booter_arg = None;
+                    self.libos_at_booter = None;
+                }
+                self.regs.insert(mb0, 0);
             }
             _ => {
                 self.regs.insert(mb0, 0xdead);
