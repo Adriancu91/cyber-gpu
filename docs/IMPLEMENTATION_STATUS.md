@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 90 — 12 noiembrie 2026, ~01:25–01:45 (ora României), în cloud, FĂRĂ placă — rularea de rezervă „GPU 01:25” din C-108: oprire scurtă, totul e pregătit pentru testul de la 07:00
+
+Pornită de programare (rezerva „GPU 01:25” din C-108). În hub, de la sesiunea 89: **nicio comandă nouă pentru cyber-gpu, niciun jurnal nou de pe placă**
+(ultimul rămâne `gpu-jurnal-009.txt`, os-283). OS-ul a terminat partea lui: **Release `os-289`** (variantele, C-108, P6-78) și `os-290` (= os-289 + C-109, ceasul de pornire
+pe ASUS TUF); P6-80 (mouse USB) stă pe `wip/P6-80` ca stick-ul de test să nu se schimbe înainte de joi. **Nimic testat pe RTX 3070 Ti.**
+
+**Fără pas nou pe driver** (regula: fără jurnal nou de pe placă nu se inventează lucru). Doar verificări, toate PASS:
+
+| Verificare | Rezultat |
+|---|---|
+| `sh tools/check.sh` pe `b1d91a0` (Rust 1.97.0, ținta `x86_64-unknown-none` reinstalată) | format, clippy `-D warnings`, **451 teste PASS** (4 ignorate), build no_std PASS |
+| CI GitHub pe `b1d91a0` | VERDE (rularea 177, 43071432423) |
+| Legarea OS (`cyber-universe` `39c7de9`, `kernel/Cargo.toml`) | toate cele 5 crate-uri la `rev = "49e6685"`; `49e6685` conține `20830f5` (variantele) — Release `os-289`/`os-290` are cele 10 variante |
+| `compara_variante 0x9c66000 gpu-jurnal-009.txt 008 007` dintr-un checkout proaspăt | merge: 009 vs 008 — 2 rânduri (`SEC2 CPUCTL`, `GSP MAILBOX0`); 007 (format vechi) 47/3; „nicio varianta nu a trecut de I8 (din 3 jurnale)”; cod de ieșire 0 |
+| Pe RTX 3070 Ti | NOT TESTED |
+
+Niciun commit de cod; doar acest document. Copia din hub (C-34) rămâne la `b1d91a0` (nimic nou de copiat) — se reface după commit-ul acestui document.
+
+**Următorul pas:** neschimbat față de sesiunea 89 — joi ~07:00 Adrian încearcă variantele de la 1 (o pornire rece fiecare, `trimite` după fiecare); după jurnale:
+`compara_variante 0x9c66000 gpu-jurnal-009.txt <jurnalele noi>` → varianta care trece / ce diferă. Dacă varianta 1 trece → I8e (golden) e primul apel RM pe placă.
+Dacă niciuna din 10 → comparația **stării plăcii** (`SEC2 CPUCTL`, `GSP MAILBOX0`, adresele DMA reale), nu a conținutului mesajelor. Regula 8: sesiunile 88, 89 au avut pași;
+sesiunea 90 e oprire scurtă fără lucru de făcut — nu se aplică.
+
+---
 ## Sesiunea 89 — 11 noiembrie 2026, ~19:25–19:55 (ora României), în cloud, FĂRĂ placă — rularea de 19:25 din C-108: partea GPU era gata; pregătirea citirii jurnalelor de joi (`compara_variante`)
 
 Pornită de programare (rularea „GPU 19:25” din C-108). În hub: **nicio comandă nouă pentru cyber-gpu** (C-107, C-108 partea GPU `gata`; C-109 e pentru OS: laptopul
