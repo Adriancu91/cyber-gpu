@@ -279,27 +279,63 @@ const ASSERT_STACK_WHAT: [&str; ASSERT_STACK_JOURNALED] = [
     "NOCAT ASSERT: apel #4 (adresa fata de inceputul GSP-RM)",
 ];
 
-/// `rpc_ucode_libos_print_v1E_08`, the two fixed fields.
+/// `rpc_ucode_libos_print_v1E_08`, the two fixed fields and the buffer bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LibosPrint {
+pub struct LibosPrint<'a> {
     pub ucode_eng_desc: u32,
     pub print_buf_size: u32,
     /// Bytes of `libosPrintBuf` actually present in the payload.
     pub present: u32,
+    /// The first `min(present, print_buf_size)` bytes of `libosPrintBuf`,
+    /// exactly as received (LibOS binary log format; not decoded).
+    pub buf: &'a [u8],
 }
 
-impl LibosPrint {
-    pub fn decode(payload: &[u8]) -> Option<Self> {
+/// How many bytes of `libosPrintBuf` are journaled (session 87, after
+/// os-280: the two PMU prints were 16 and 24 bytes): 16 words of 4 bytes.
+pub const LIBOS_PRINT_JOURNALED: usize = 64;
+
+/// Row names for the journaled words (`Event::Value` wants `&'static str`).
+const LIBOS_PRINT_WHAT: [&str; LIBOS_PRINT_JOURNALED / 4] = [
+    "UCODE_LIBOS_PRINT: continut, octetii 0..3 (asa cum au venit, LE)",
+    "UCODE_LIBOS_PRINT: continut, octetii 4..7 (LE)",
+    "UCODE_LIBOS_PRINT: continut, octetii 8..11 (LE)",
+    "UCODE_LIBOS_PRINT: continut, octetii 12..15 (LE)",
+    "UCODE_LIBOS_PRINT: continut, octetii 16..19 (LE)",
+    "UCODE_LIBOS_PRINT: continut, octetii 20..23 (LE)",
+    "UCODE_LIBOS_PRINT: continut, octetii 24..27 (LE)",
+    "UCODE_LIBOS_PRINT: continut, octetii 28..31 (LE)",
+    "UCODE_LIBOS_PRINT: continut, octetii 32..35 (LE)",
+    "UCODE_LIBOS_PRINT: continut, octetii 36..39 (LE)",
+    "UCODE_LIBOS_PRINT: continut, octetii 40..43 (LE)",
+    "UCODE_LIBOS_PRINT: continut, octetii 44..47 (LE)",
+    "UCODE_LIBOS_PRINT: continut, octetii 48..51 (LE)",
+    "UCODE_LIBOS_PRINT: continut, octetii 52..55 (LE)",
+    "UCODE_LIBOS_PRINT: continut, octetii 56..59 (LE)",
+    "UCODE_LIBOS_PRINT: continut, octetii 60..63 (LE)",
+];
+
+impl<'a> LibosPrint<'a> {
+    pub fn decode(payload: &'a [u8]) -> Option<Self> {
         if payload.len() < 8 {
             return None;
         }
+        let present = payload.len() - 8;
+        let size = get_u32(payload, 4);
+        let n = present.min(size as usize);
         Some(LibosPrint {
             ucode_eng_desc: get_u32(payload, 0),
-            print_buf_size: get_u32(payload, 4),
-            present: (payload.len() - 8) as u32,
+            print_buf_size: size,
+            present: present as u32,
+            buf: &payload[8..8 + n],
         })
     }
 
+    /// Journals the two fields and the buffer's first
+    /// [`LIBOS_PRINT_JOURNALED`] bytes as little-endian words, **as received**
+    /// (the board's log then holds the bytes; nothing is interpreted — that
+    /// would need the microcode's own symbol tables, which we do not open).
+    /// A tail shorter than 4 bytes is padded with zeros and its length noted.
     pub fn journal(&self, j: &mut Journal) {
         j.push(Event::Value {
             what: "UCODE_LIBOS_PRINT: ucodeEngDesc (descriptorul motorului, RM: ENG_PMU)",
@@ -313,6 +349,27 @@ impl LibosPrint {
             j.push(Event::Value {
                 what: "UCODE_LIBOS_PRINT: octeti prezenti in mesaj",
                 value: self.present,
+            });
+        }
+        let shown = &self.buf[..self.buf.len().min(LIBOS_PRINT_JOURNALED)];
+        for (i, chunk) in shown.chunks(4).enumerate() {
+            let mut w = [0u8; 4];
+            w[..chunk.len()].copy_from_slice(chunk);
+            j.push(Event::Value {
+                what: LIBOS_PRINT_WHAT[i],
+                value: u32::from_le_bytes(w),
+            });
+        }
+        if !shown.len().is_multiple_of(4) {
+            j.push(Event::Value {
+                what: "UCODE_LIBOS_PRINT: octeti valizi in ultimul cuvant",
+                value: (shown.len() % 4) as u32,
+            });
+        }
+        if self.buf.len() > LIBOS_PRINT_JOURNALED {
+            j.push(Event::Value {
+                what: "UCODE_LIBOS_PRINT: octeti nejurnalizati (peste 64)",
+                value: (self.buf.len() - LIBOS_PRINT_JOURNALED) as u32,
             });
         }
     }
@@ -503,22 +560,53 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn libos_print_fields() {
+    fn libos_print_fields_and_content_words() {
         let mut p = alloc::vec![0u8; 8 + 100];
         super::super::put_u32(&mut p, 0, 0x0000_1234);
         super::super::put_u32(&mut p, 4, 100);
+        for (i, b) in p[8..].iter_mut().enumerate() {
+            *b = i as u8;
+        }
         let l = LibosPrint::decode(&p).unwrap();
         assert_eq!(
-            (l.ucode_eng_desc, l.print_buf_size, l.present),
-            (0x1234, 100, 100)
+            (l.ucode_eng_desc, l.print_buf_size, l.present, l.buf.len()),
+            (0x1234, 100, 100, 100)
         );
-        let mut j = Journal::new(8);
+        let mut j = Journal::new(64);
         l.journal(&mut j);
-        assert_eq!(j.len(), 2);
+        // 2 fields + 16 words + "36 bytes not journaled".
+        assert_eq!(j.len(), 2 + 16 + 1);
+        let rows: Vec<String> = j.events().map(|e| alloc::format!("{e}")).collect();
+        assert!(rows.contains(&String::from(
+            "valoare UCODE_LIBOS_PRINT: continut, octetii 0..3 (asa cum au venit, LE) = 0x03020100"
+        )));
+        assert!(rows.contains(&String::from(
+            "valoare UCODE_LIBOS_PRINT: continut, octetii 60..63 (LE) = 0x3f3e3d3c"
+        )));
+        assert!(rows.contains(&String::from(
+            "valoare UCODE_LIBOS_PRINT: octeti nejurnalizati (peste 64) = 0x00000024"
+        )));
         assert!(LibosPrint::decode(&p[..7]).is_none());
-        let l = LibosPrint::decode(&p[..50]).unwrap();
-        let mut j = Journal::new(8);
+        // Truncated message: only the present bytes, and the fact is noted.
+        let l = LibosPrint::decode(&p[..8 + 42]).unwrap();
+        assert_eq!((l.present, l.buf.len()), (42, 42));
+        let mut j = Journal::new(64);
         l.journal(&mut j);
-        assert_eq!(j.len(), 3);
+        // 2 fields + "present" + 11 words (10 full + 1 partial) + "2 valid bytes in the last".
+        assert_eq!(j.len(), 3 + 11 + 1);
+        let rows: Vec<String> = j.events().map(|e| alloc::format!("{e}")).collect();
+        assert!(rows.contains(&String::from(
+            "valoare UCODE_LIBOS_PRINT: continut, octetii 40..43 (LE) = 0x00002928"
+        )));
+        assert!(rows.contains(&String::from(
+            "valoare UCODE_LIBOS_PRINT: octeti valizi in ultimul cuvant = 0x00000002"
+        )));
+        // The os-280 shape: 16 and 24 bytes -> 4 and 6 words, nothing else.
+        let mut p = alloc::vec![0x5au8; 8 + 24];
+        super::super::put_u32(&mut p, 0, 0xf3d7_2200);
+        super::super::put_u32(&mut p, 4, 24);
+        let mut j = Journal::new(64);
+        LibosPrint::decode(&p).unwrap().journal(&mut j);
+        assert_eq!(j.len(), 2 + 6);
     }
 }

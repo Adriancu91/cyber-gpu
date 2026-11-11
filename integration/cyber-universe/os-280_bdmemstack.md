@@ -14,6 +14,13 @@ generic al stratului LibOS al GSP-RM. **DEDUS, neprobat**: se vede la `gpu lant`
 
 De reținut: nouveau **ignoră implicit** înregistrările NOCAT (handler gol) → ele apar și pe porniri bune; nu sunt neapărat cauza.
 
+## În plus (cerut 15:00, „C-102 continuare 2”): conținutul celor 2 jurnale PMU ajunge pe stick
+
+Mesajele `UCODE_LIBOS_PRINT` (de la `ENG_PMU`, 16 și 24 de octeți la os-280) se jurnalizează acum și ca conținut, **exact cum au venit**, cuvinte de 4 octeți LE
+(până la 64 de octeți): rânduri `valoare UCODE_LIBOS_PRINT: continut, octetii 0..3 (asa cum au venit, LE) = 0x........` etc. Nu se interpretează (format binar LibOS;
+ar cere simbolurile microcodului — nu se deschid). `verifica_jurnal_lant` le tipărește sub „jurnale LibOS jurnalizate”. Tip de rând deja existent (`Event::Value`) → nimic
+de schimbat în OS.
+
 ## Ce se urmărește în jurnal la os-282
 
 - Reușită: `valoare GSP_INIT_DONE: rpc_result (0 = bine; altfel cod NV_STATUS) = 0x00000000`, apoi pasul **I8e (golden)** începe — primul apel RM pe placă.

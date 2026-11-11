@@ -74,6 +74,9 @@ pub struct NocatDigest {
     pub short_records: u32,
     /// `UCODE_LIBOS_PRINT: libosPrintBufSize` rows (one per journaled print).
     pub libos_sizes: Vec<u32>,
+    /// The content words of each journaled print (session 87), in order:
+    /// `libos_words[i]` belongs to `libos_sizes[i]`. Raw, not decoded.
+    pub libos_words: Vec<Vec<u32>>,
     /// The summary rows at the end of the wait (`None` = row not in journal).
     pub summary_received: Option<u32>,
     pub summary_kinds: Option<u32>,
@@ -124,6 +127,7 @@ const WHAT_SUM_DROPPED: &str = "I8 NOCAT: inregistrari de feluri noi peste limit
 const WHAT_SUM_LIBOS: &str = "I8 UCODE_LIBOS_PRINT (0x100c): jurnale de microcod primite";
 const WHAT_SUM_SKIPPED: &str = "I8 mesaje GSP-RM sarite in asteptarea GSP_INIT_DONE: total";
 const WHAT_LIBOS_SIZE: &str = "UCODE_LIBOS_PRINT: libosPrintBufSize";
+const WHAT_LIBOS_WORD: &str = "UCODE_LIBOS_PRINT: continut, octetii ";
 const WHAT_SKIPPED_FN: &str = "I8 mesaj GSP-RM sarit (functia)";
 const WHAT_INIT_DONE: &str = "GSP_INIT_DONE: rpc_result (0 = bine";
 const TEXT_REC_TYPE: &str = "NOCAT: recType";
@@ -186,6 +190,11 @@ pub fn digest(text: &str) -> NocatDigest {
             d.summary_skipped_total = Some(v);
         } else if what.starts_with(WHAT_LIBOS_SIZE) {
             d.libos_sizes.push(v);
+            d.libos_words.push(Vec::new());
+        } else if what.starts_with(WHAT_LIBOS_WORD) {
+            if let Some(w) = d.libos_words.last_mut() {
+                w.push(v);
+            }
         } else if what == WHAT_SKIPPED_FN {
             match v {
                 event::GSP_POST_NOCAT_RECORD => d.named_only_nocat += 1,
@@ -352,6 +361,16 @@ impl fmt::Display for NocatDigest {
                 write!(f, " {s}")?;
             }
             writeln!(f, " octeti; continut binar, nedecodat)")?;
+            for (i, w) in self.libos_words.iter().enumerate() {
+                if w.is_empty() {
+                    continue;
+                }
+                write!(f, "    continut #{} (cuvinte LE, asa cum au venit):", i + 1)?;
+                for x in w {
+                    write!(f, " {x:08x}")?;
+                }
+                writeln!(f)?;
+            }
         }
         match self.init_done_result {
             Some(0) => writeln!(f, "GSP_INIT_DONE: rpc_result 0 (bine)")?,

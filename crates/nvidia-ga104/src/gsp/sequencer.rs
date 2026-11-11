@@ -1265,6 +1265,9 @@ mod tests {
                     let mut p = alloc::vec![0u8; 8 + 16];
                     p[0..4].copy_from_slice(&0x1234u32.to_le_bytes());
                     p[4..8].copy_from_slice(&16u32.to_le_bytes());
+                    // Session 87: the content words travel to the stick too.
+                    p[8..12].copy_from_slice(&0xdead_beefu32.to_le_bytes());
+                    p[20..24].copy_from_slice(&0x0102_0304u32.to_le_bytes());
                     peer.post(m, event::UCODE_LIBOS_PRINT, 0, &p)
                 }
                 12 => peer.post(m, event::GSP_INIT_DONE, 0x59, &[]),
@@ -1294,6 +1297,10 @@ mod tests {
         assert_eq!(d.init_done_name.as_deref(), Some("NV_ERR_OPERATING_SYSTEM"));
         assert_eq!(d.error_origin.as_deref(), Some("GSP_INIT_DONE"));
         assert_eq!(d.libos_sizes, [16]);
+        assert_eq!(d.libos_words, [alloc::vec![0xdead_beef, 0, 0, 0x0102_0304]]);
+        assert!(alloc::format!("{d}").contains(
+            "continut #1 (cuvinte LE, asa cum au venit): deadbeef 00000000 00000000 01020304"
+        ));
         assert_eq!(
             (d.named_only_nocat, d.named_only_libos, d.short_records),
             (0, 0, 0)
