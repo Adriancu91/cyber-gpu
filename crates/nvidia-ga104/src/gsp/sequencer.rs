@@ -1067,13 +1067,13 @@ mod tests {
         let r = wait_init_done(&mut q, &mut mem, &mut b, &mut c, CTX, INIT_DONE_US, |m| {
             step += 1;
             match step {
-                // 30 records of one kind (ASSERT, NV_ERR_INVALID_STATE 0x40,
+                // 30 records of one kind (ENGINE, NV_ERR_INVALID_STATE 0x40,
                 // subsystem 5): the first four in full, then counted
                 1..=30 => peer.post(
                     m,
                     event::GSP_POST_NOCAT_RECORD,
                     0,
-                    &record(5, 0x40, 5, b"GSP-RM"),
+                    &record(2, 0x40, 5, b"GSP-RM"),
                 ),
                 // a new kind (RC, NV_ERR_TIMEOUT 0x65): in full, once
                 31 => peer.post(
