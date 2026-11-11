@@ -84,6 +84,7 @@ pub mod recovery;
 pub mod regs;
 pub mod sha256;
 pub mod transfer;
+pub mod variant_log;
 pub mod vbios;
 pub mod vbios_diag;
 pub mod vram_window;
