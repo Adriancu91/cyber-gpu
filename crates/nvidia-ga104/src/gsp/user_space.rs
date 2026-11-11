@@ -1981,6 +1981,8 @@ mod tests {
         let mut launch = None;
         let mut median = None;
         let mut j = Journal::new(1 << 16);
+        // As the OS does (P6-78): the variant rows at the top of the stick journal.
+        SETTINGS.journal(Some(1), &mut j);
         let fail = |w: &'static str| GpuError::InvalidArgument(w);
         let report = run_chain_ready(WINDOW_CHAIN_FULL, READY_FOR_WINDOW, true, &mut j, |s, j| {
             // One RM call: the doorbell after each message (or never), the
@@ -2378,6 +2380,100 @@ mod tests {
         assert_eq!(
             check(&t).verdict_for(WINDOW_CHAIN_C83),
             ChainVerdict::StoppedCleanly("i13-strat".into())
+        );
+    }
+
+    /// C-108 (T123, session 89): the stick journal of the simulated full
+    /// window (variant 1), written with the OS prefix and read back with
+    /// `variant_log` as Thursday's journals will be: variant 1 `rpc-inainte`,
+    /// its seven settings, I8 passed, no NOCAT rows; identical to itself;
+    /// against the same run with I8 refused (the os-283 shape) the tool
+    /// names the variant and the differing rows. SIMULARE.
+    #[test]
+    fn variant_journal_of_the_simulated_window_is_read_back() {
+        use crate::variant_log::{self, Outcome};
+        let w = full_window(true);
+        let os_text: alloc::string::String = w
+            .journal_text
+            .lines()
+            .enumerate()
+            .map(|(i, l)| {
+                alloc::format!(
+                    "[  {}.{:06}] gpu: {l}\n",
+                    66 + i / 100,
+                    (i * 8231) % 1_000_000
+                )
+            })
+            .collect();
+        let text =
+            alloc::format!("# jurnal gpu P6-40, cyber-gpu c234aaf, comanda: gpu lant\n{os_text}");
+        let r = variant_log::read(&text);
+        assert_eq!(r.variant, Some(1));
+        assert_eq!(r.variant_name.as_deref(), Some("rpc-inainte"));
+        assert_eq!(r.cyber_gpu_rev.as_deref(), Some("c234aaf"));
+        assert_eq!(r.settings.len(), 7);
+        assert_eq!(
+            r.settings[0].1, 1,
+            "init RPCs before Booter: {:?}",
+            r.settings
+        );
+        assert_eq!(r.outcome(), Outcome::PassedI8);
+        assert!(r.nocat.records.is_empty());
+        assert_eq!(r.last_step().unwrap().0, "tur-dupa");
+        assert!(variant_log::compare(&text, &text).is_identical());
+        // The os-283 shape: I8 refused with 0x59, nothing after it but the cleanup.
+        let i8 = text.find("pas i8-gsp-init: ok").unwrap();
+        let cleanup = text.find("pas bus-master-oprit: ok").unwrap();
+        let refused = alloc::format!(
+            "{}valoare GSP_INIT_DONE: rpc_result (0 = bine; altfel cod NV_STATUS) = 0x00000059\ntext GSP_INIT_DONE: rpc_result (nume NV_STATUS) = \"NV_ERR_OPERATING_SYSTEM\"\npas i8-gsp-init: ESEC\n{}",
+            &text[..i8],
+            &text[text[..cleanup].rfind('\n').map_or(cleanup, |p| p + 1)..]
+        )
+        .replace("numarul = 0x00000001", "numarul = 0x00000000");
+        let old = variant_log::read(&refused);
+        assert_eq!(old.variant, Some(0));
+        assert_eq!(
+            old.outcome(),
+            Outcome::RefusedAtI8(Some((
+                0x59,
+                alloc::string::String::from("NV_ERR_OPERATING_SYSTEM")
+            )))
+        );
+        let d = variant_log::compare(&refused, &text);
+        assert!(!d.is_identical());
+        let only_run: Vec<&str> = d.only_run.iter().map(|(s, _)| s.as_str()).collect();
+        assert!(only_run.contains(&"pas i8-gsp-init: ok"), "{only_run:?}");
+        assert!(only_run.contains(&"pas i8e-golden: ok"), "{only_run:?}");
+        let only_ref: Vec<&str> = d.only_reference.iter().map(|(s, _)| s.as_str()).collect();
+        assert_eq!(
+            only_ref,
+            [
+                "valoare GSP_INIT_DONE: rpc_result (0 = bine; altfel cod NV_STATUS) = 0x00000059",
+                "text GSP_INIT_DONE: rpc_result (nume NV_STATUS) = \"NV_ERR_OPERATING_SYSTEM\"",
+                "pas i8-gsp-init: ESEC",
+            ]
+        );
+        let rows = [
+            variant_log::TableRow {
+                label: alloc::string::String::from("ref.txt"),
+                run: old,
+                difference: None,
+            },
+            variant_log::TableRow {
+                label: alloc::string::String::from("v1.txt"),
+                run: r,
+                difference: Some(d),
+            },
+        ];
+        let t = variant_log::Table {
+            rows: &rows,
+            max_diff_rows: 5,
+        };
+        let s = alloc::format!("{t}");
+        assert!(s.contains("v1.txt: varianta 1 (rpc-inainte)"), "{s}");
+        assert!(
+            s.ends_with("concluzie: au trecut de I8: varianta 1 (rpc-inainte) [v1.txt]\n"),
+            "{s}"
         );
     }
 
