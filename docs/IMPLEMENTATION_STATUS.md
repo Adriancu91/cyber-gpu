@@ -36,6 +36,11 @@ Commit-uri: `20830f5` (cod), + documentele. Surse în `docs/PROVENANCE.md`; risc
 pe fiecare. Dacă varianta 1 trece, variantele 2–10 nu mai sunt necesare; dacă nu trece niciuna, următoarea comparație e starea plăcii/memoriei (adresele DMA reale),
 nu conținutul mesajelor. Regula 8: sesiunile 86, 87, 88 au avut pași — nu se aplică.
 
+**18:25 (ora României), a doua trecere a sesiunii 88 (pornită manual din centrul de comandă, cu rezultatul os-283 ca mesaj):** cererea — comparația „trei surse” pe tot ce
+primește GSP-RM la prima pornire, ordinea RPC-urilor, hex-ul celor 2 `UCODE_LIBOS_PRINT`, valorile trimise în jurnal — e acoperită de lucrul de mai sus (`gsp::variants`,
+`Settings::journal`, conținutul jurnalelor PMU din `d3c5351`). În hub nu e nimic nou pentru cyber-gpu (C-109 e pentru OS: laptopul ASUS blocat după MADT). Niciun pas nou;
+CI verde pe `6611c27` (rularea 175). Se așteaptă legarea în OS (P6-78) și jurnalele de joi.
+
 ---
 ## Sesiunea 87 — 11 noiembrie 2026, ~14:25–15:20 (ora României), în cloud, FĂRĂ placă — jurnalul os-280 citit; comparația „trei surse” (C-107); `bDmemStack = 1` = candidatul pentru 0x59
 
