@@ -1,5 +1,34 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 86 — 11 noiembrie 2026, ~13:26–13:45 (ora României), în cloud, FĂRĂ placă — pregătirea analizei jurnalului os-280 (rezumatul NOCAT)
+
+Pornită de programare, la 13:26, imediat după sesiunea 85. **Nimic nou în hub pentru cyber-gpu:** nicio comandă nouă (C-103 `gata` partea GPU; C-104 e pentru OS),
+niciun jurnal nou de pe placă (ultimul: `os-279`, analizat în sesiunea 85), Release-ul `os-280` încă nu există (ultimul: `os-279`, 11:48) — sesiunea OS nu a trecut
+încă de la 11:58. Codul sesiunii 85 verificat: `sh tools/check.sh` pe `bcc314e` → 437 PASS, CI GitHub verde (rulările 165–168). **Nimic testat pe RTX 3070 Ti.**
+
+**Ce s-a făcut (un pas mic, pe calea critică „se citesc rândurile NOCAT”):** jurnalul `os-280` va avea până la 20 de blocuri NOCAT de ~10 rânduri fiecare, printre ~3000
+de rânduri. Ca analiza să fie imediată când apare, unealta de pe gazdă `verifica_jurnal_lant` tipărește acum și un **rezumat NOCAT** (modul nou `gsp::nocat_log`, doar text,
+nu atinge placa): câte înregistrări a primit driverul, câte feluri, câte jurnale LibOS; înregistrările jurnalizate în întregime grupate pe fel (asserturi cu adresă + linie + stivă +
+`count`, erori cu codul și numele `NV_STATUS`, sursă, subsistem, motor), cele mai dese întâi, și dacă au venit **înainte sau după cererea secvențiatorului**; rezultatul
+`GSP_INIT_DONE` cu numele codului și rândul „eroarea vine din …”. Citește și formatul vechi (os-279: mesaje „numite, dar nedecodate”), ca cele două rulări să se poată compara.
+Nu spune nimic ce nu e în jurnal; nicio presupunere despre cauza lui `0x59`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `gsp::nocat_log` (nou) | `digest(text)` → `NocatDigest` (`records`, `kinds()`, `before_after_sequencer()`, rezumatul, `init_done_result`/`init_done_name`, `error_origin`) + `Display` în română | PASS |
+| T120 | jurnalul produs de driver în SIMULARE (asserturi + ENGINE înainte/după secvențiator, LibOS, `INIT_DONE 0x59`), tipărit cu prefixul OS-ului și citit înapoi: toate cifrele și textele regăsite | PASS (SIMULARE) |
+| T120b | formatul vechi (843 × `0x1020`, 2 × `0x100c`) numărat; jurnal fără I8 → „niciun rand” | PASS |
+| `verifica_jurnal_lant` | tipărește rezumatul când există rânduri; pe `gpu-jurnal-007.txt` (os-279): același verdict „OPRIT CURAT la i8-gsp-init” + „843 mesaje 0x1020 … nedecodate / rpc_result 0x59 / eroarea vine din GSP_INIT_DONE” | PASS |
+| Compatibilitate OS | doar adăugări (modul nou + unealta de pe gazdă); codul driverului neschimbat, nicio scriere nouă în registre; OS-ul nu are nimic de legat | PASS |
+| Pe RTX 3070 Ti | — | NOT TESTED |
+
+Verificări (`sh tools/check.sh`, Rust 1.97.0; ținta `x86_64-unknown-none` reinstalată): format, clippy `-D warnings`, **440 teste PASS** (4 ignorate), build no_std PASS.
+
+**Următorul pas:** neschimbat față de sesiunea 85 — (1) OS-ul leagă `364ece2` (sau mai nou), Release `os-280`, `gpu lant` cu Adrian de față; jurnalul în `rezultate/`;
+`verifica_jurnal_lant <jurnal> 0x9c66000` dă acum direct rezumatul NOCAT → de acolo se vede ce îi lipsește lui GSP-RM și se repară. (2) C-103 pe placă (`gpu recupereaza`, OS).
+Fără jurnal nou, niciun pas nou pe driver. Regula 8: sesiunile 84, 85, 86 au avut pași — nu se aplică.
+
+---
 ## Sesiunea 85 — 11 noiembrie 2026, ~12:28–13:30 (ora României), în cloud, FĂRĂ placă — după os-279: GSP-RM pornește, dar refuză inițializarea (0x59); C-103 (WPR2 coborât fără repornire) în SIMULARE
 
 Pornită de programare. În hub a apărut jurnalul testului cu `os-279` (`rezultate/2026-11-11-workstation-os279/`, `gpu-jurnal-007.txt`, 3145 rânduri, 12:20) —

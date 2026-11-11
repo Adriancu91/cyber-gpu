@@ -1,5 +1,17 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 86 (11 nov 2026, cloud, fără placă) — pregătirea analizei jurnalului os-280
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T120 | Jurnalul pe care îl va scrie rularea următoare, produs de driver în SIMULARE (6 asserturi într-un loc + 1 în alt loc **înainte** de cererea secvențiatorului, 2 înregistrări ENGINE `NV_ERR_INVALID_STATE` **după**, 1 `UCODE_LIBOS_PRINT`, `GSP_INIT_DONE` cu `0x59`), tipărit rând cu rând cu prefixul OS-ului (`[ timp] gpu: `) și citit înapoi de `nocat_log::digest`: 9 primite / 3 feluri / 1 LibOS / 10 sărite; jurnalizate în întregime nr. 1–4, 7, 8 (5 înainte, 1 după secvențiator); assert: adresă `0x12340`, linia 321, stiva `[0x10, 0x20]`, `count 3` la al doilea; ENGINE: `0x40` = `NV_ERR_INVALID_STATE`, subsystem 5; felurile ordonate după frecvență (primul acoperă 4); `rpc_result 0x59 (NV_ERR_OPERATING_SYSTEM)`, „eroarea vine din GSP_INIT_DONE”; textul rezumatului conține exact aceste cifre | `cargo test -p nvidia-ga104 --lib the_stick_journal_rows` | conform | conform | PASS (SIMULARE) |
+| T120b | Formatul vechi (os-279): 843 rânduri `sarit (functia) = 0x1020` + 2 × `0x100c` → numărate ca „numite, dar nedecodate”, `rpc_result 0x59` fără nume (jurnalul vechi nu-l scria), total sărite 845; un jurnal oprit înainte de I8 → „niciun rand despre mesajele GSP-RM” | `cargo test -p nvidia-ga104 --lib nocat_log` | conform | conform | PASS |
+
+Verificare pe jurnalul real: `verifica_jurnal_lant gpu-jurnal-007.txt 0x9c66000` → același verdict ca în sesiunea 85 („OPRIT CURAT la i8-gsp-init”), plus rezumatul nou:
+„NOCAT (format vechi, ca os-279): 843 mesaje 0x1020 … si 2 mesaje 0x100c … numite, dar nedecodate / GSP_INIT_DONE: rpc_result 0x59 / I8: eroarea vine din GSP_INIT_DONE”.
+
+Toate: `sh tools/check.sh` → format, clippy `-D warnings`, **440 teste PASS** (4 ignorate), build no_std PASS. **Nimic pe RTX 3070 Ti.**
+
 ## Rezultate — sesiunea 85 (11 nov 2026, cloud, fără placă) — după os-279: mesajele GSP-RM de dinaintea erorii 0x59, decodate
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |

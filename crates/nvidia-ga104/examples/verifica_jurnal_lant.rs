@@ -9,6 +9,9 @@
 //! `apeluri_rm` = the number of RM calls the OS printed for golden + I9
 //! (then the GSP doorbells must match it: one per message); `-` = unknown.
 //! FRTS defaults to the board's region (3–4 Nov 2026: 0x1ffe00000..0x1fff00000).
+//! Since os-280 it also prints a digest of what GSP-RM said before
+//! `GSP_INIT_DONE` (NOCAT records, LibOS prints, the result), when the journal
+//! has such rows.
 //! Exit code: 0 = TRECE, 3 = stopped cleanly at a step (Bus Master put back),
 //! 2 = to analyse, 1 = usage / file error.
 
@@ -16,6 +19,7 @@ use nvidia_ga104::chain::WINDOW_CHAIN_C83;
 use nvidia_ga104::chain_log::{
     ChainVerdict, chain_for_journal, check_chain_journal_for, step_ids_for,
 };
+use nvidia_ga104::gsp::nocat_log;
 
 fn hex(s: &str) -> Option<u64> {
     u64::from_str_radix(s.trim_start_matches("0x"), 16).ok()
@@ -100,6 +104,12 @@ fn main() {
     }
     if let Some(s) = &r.i7 {
         println!("I7: {} scrieri, sectiuni {:?}", s.writes, s.sections);
+    }
+    // os-280 preparation: what GSP-RM said before GSP_INIT_DONE (NOCAT
+    // records, LibOS prints, the result), from the rows the driver journaled.
+    let nocat = nocat_log::digest(&text);
+    if !nocat.is_empty() {
+        print!("{nocat}");
     }
     match rm_calls {
         Some(n) => println!(

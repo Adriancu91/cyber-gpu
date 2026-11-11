@@ -18,6 +18,8 @@
 //! - [`nocat`]: the diagnostic records (`GSP_POST_NOCAT_RECORD`) and the
 //!   forwarded microcode logs (`UCODE_LIBOS_PRINT`) GSP-RM sent on the board
 //!   before refusing to initialise (os-279), decoded for the journal;
+//! - [`nocat_log`]: the digest of those rows read back from the stick journal
+//!   (host tool `verifica_jurnal_lant`), for the os-280 analysis;
 //! - [`rpc`]: one queue element = element header + RPC header + payload, with
 //!   the XOR checksum and sequence numbers (I8);
 //! - [`rmapi`]: the `GSP_RM_ALLOC` / `GSP_RM_CONTROL` messages and their
@@ -53,6 +55,7 @@ pub mod hs_load;
 pub mod libos;
 pub mod msgq;
 pub mod nocat;
+pub mod nocat_log;
 pub mod registry;
 pub mod rmapi;
 pub mod rpc;

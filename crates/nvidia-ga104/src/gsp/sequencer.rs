@@ -1221,6 +1221,125 @@ mod tests {
         assert!(rows.contains(&String::from("pas I8 GSP_INIT_DONE: ok")));
     }
 
+    /// os-280 preparation (T120): the journal the next run will write — NOCAT
+    /// records (asserts and an engine error) before and after the sequencer
+    /// request, LibOS prints, then `GSP_INIT_DONE` with 0x59 — printed as
+    /// the OS prints it on the stick, read back by [`nocat_log::digest`]:
+    /// the digest says exactly what the driver journaled, nothing more
+    /// (SIMULATION; the board's records will say something else).
+    #[test]
+    fn the_stick_journal_rows_are_read_back_into_a_digest() {
+        use crate::gsp::nocat::tests::{assert_record, record};
+        use crate::gsp::nocat_log;
+        let (mut g, mut j, mut c) = booted();
+        let l = QueueLayout::standard();
+        let mut mem = alloc::vec![0u8; l.total_size];
+        let pages: Vec<u64> = (0..l.page_table_entries as u64)
+            .map(|i| 0x0500_0000 + i * 0x1000)
+            .collect();
+        let mut q = CpuQueues::init(&mut mem, l, &pages).unwrap();
+        let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+        falcon::ring_doorbell(&mut b).unwrap();
+        let mut peer = SimGsp::start(&mut mem, l.cmd_queue_offset, l.stat_queue_offset);
+        q.link_rx(&mem).unwrap();
+        let seq = payload(&[W, 0x110040, 0, RESET, START, HALT, RESUME]);
+        let a = assert_record(0x0001_2340, 321, &[0x10, 0x20], 1);
+        let b2 = assert_record(0x0005_6780, 99, &[0x30], 3);
+        let mut step = 0;
+        let r = wait_init_done(&mut q, &mut mem, &mut b, &mut c, CTX, INIT_DONE_US, |m| {
+            step += 1;
+            match step {
+                // six asserts at one place: the first four in full, two counted
+                1..=6 => peer.post(m, event::GSP_POST_NOCAT_RECORD, 0, &a),
+                // a second assert place: new kind, in full
+                7 => peer.post(m, event::GSP_POST_NOCAT_RECORD, 0, &b2),
+                8 => peer.post(m, event::GSP_RUN_CPU_SEQUENCER, 0, &seq),
+                // after the sequencer: an ENGINE record (new kind) twice
+                9 | 10 => peer.post(
+                    m,
+                    event::GSP_POST_NOCAT_RECORD,
+                    0,
+                    &record(2, 0x40, 5, b"GSP-RM"),
+                ),
+                11 => {
+                    let mut p = alloc::vec![0u8; 8 + 16];
+                    p[0..4].copy_from_slice(&0x1234u32.to_le_bytes());
+                    p[4..8].copy_from_slice(&16u32.to_le_bytes());
+                    peer.post(m, event::UCODE_LIBOS_PRINT, 0, &p)
+                }
+                12 => peer.post(m, event::GSP_INIT_DONE, 0x59, &[]),
+                _ => {}
+            }
+        });
+        assert!(matches!(r, Err(GpuError::HardwareFault { code: 0x59 })));
+        let _ = b;
+        // the stick file: one row per event, with the OS's log prefix
+        let mut text = String::from("# jurnal gpu P6-40, cyber-gpu test, comanda: gpu lant\n");
+        for (i, e) in j.events().enumerate() {
+            text.push_str(&alloc::format!(
+                "[   {}.{:06}] gpu: {e}\n",
+                60 + i / 50,
+                i * 20_000
+            ));
+        }
+        let d = nocat_log::digest(&text);
+        assert!(!d.is_empty());
+        assert!(d.sequencer_seen);
+        assert_eq!(d.summary_received, Some(9));
+        assert_eq!(d.summary_kinds, Some(3));
+        assert_eq!(d.summary_kinds_dropped, None);
+        assert_eq!(d.summary_libos, Some(1));
+        assert_eq!(d.summary_skipped_total, Some(10));
+        assert_eq!(d.init_done_result, Some(0x59));
+        assert_eq!(d.init_done_name.as_deref(), Some("NV_ERR_OPERATING_SYSTEM"));
+        assert_eq!(d.error_origin.as_deref(), Some("GSP_INIT_DONE"));
+        assert_eq!(d.libos_sizes, [16]);
+        assert_eq!(
+            (d.named_only_nocat, d.named_only_libos, d.short_records),
+            (0, 0, 0)
+        );
+        // journaled in full: records 1–4 (first four), 7 (new kind), 8 (new kind)
+        let idx: Vec<u32> = d.records.iter().map(|r| r.index).collect();
+        assert_eq!(idx, [1, 2, 3, 4, 7, 8]);
+        assert_eq!(d.before_after_sequencer(), (5, 1));
+        let r1 = &d.records[0];
+        assert_eq!(r1.rec_type.as_deref(), Some("ASSERT"));
+        assert_eq!(r1.source.as_deref(), Some("ASSERT"));
+        assert_eq!(
+            (r1.assert_addr, r1.assert_line),
+            (Some(0x0001_2340), Some(321))
+        );
+        assert_eq!(r1.stack, [0x10, 0x20]);
+        assert_eq!(r1.count, None);
+        assert_eq!(r1.error_code, None);
+        assert_eq!(r1.faulting_engine.as_deref(), Some("GSP"));
+        let r7 = &d.records[4];
+        assert_eq!(
+            (r7.assert_addr, r7.assert_line, r7.count),
+            (Some(0x0005_6780), Some(99), Some(3))
+        );
+        let r8 = &d.records[5];
+        assert_eq!(r8.rec_type.as_deref(), Some("ENGINE"));
+        assert_eq!(r8.error_code, Some(0x40));
+        assert_eq!(r8.error_name.as_deref(), Some("NV_ERR_INVALID_STATE"));
+        assert_eq!(r8.subsystem, Some(5));
+        assert!(r8.after_sequencer);
+        // kinds: the first assert place covers 4 journaled records
+        let kinds = d.kinds();
+        assert_eq!(kinds.len(), 3);
+        assert_eq!((kinds[0].0.index, kinds[0].1), (1, 4));
+        assert_eq!(kinds[1].1, 1);
+        let s = alloc::format!("{d}");
+        assert!(s.contains("NOCAT: 9 inregistrari de diagnostic primite de la GSP-RM, 3 feluri distincte; 1 jurnale de microcod"));
+        assert!(s.contains("jurnalizate in intregime: 6 (inainte de secventiator: 5, dupa: 1)"));
+        assert!(s.contains("x4   ASSERT   adresa 0x00012340 linia 321 source \"ASSERT\" subsystem 0x0 motor \"GSP\" stiva [0x10, 0x20] (prima: nr. 1)"));
+        assert!(s.contains("count 3"));
+        assert!(s.contains(
+            "ENGINE   errorCode 0x40 NV_ERR_INVALID_STATE source \"GSP-RM\" subsystem 0x5"
+        ));
+        assert!(s.contains("GSP_INIT_DONE: rpc_result 0x59 (NV_ERR_OPERATING_SYSTEM)\nI8: eroarea vine din GSP_INIT_DONE\n"));
+    }
+
     /// C-102 (T114): the other way 0x59 can appear — the status queue's
     /// write pointer read as 89, outside 0..62. The error is the same
     /// `HardwareFault { 0x59 }`; the journal now says it came from the queue.
