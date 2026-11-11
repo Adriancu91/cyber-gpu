@@ -1,5 +1,38 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 89 — 11 noiembrie 2026, ~19:25–19:55 (ora României), în cloud, FĂRĂ placă — rularea de 19:25 din C-108: partea GPU era gata; pregătirea citirii jurnalelor de joi (`compara_variante`)
+
+Pornită de programare (rularea „GPU 19:25” din C-108). În hub: **nicio comandă nouă pentru cyber-gpu** (C-107, C-108 partea GPU `gata`; C-109 e pentru OS: laptopul
+ASUS blocat după MADT; Lenovo i5 pornește, `gpu lant` refuză corect fără NVIDIA — zero scrieri). **OS-ul a legat deja variantele:** `cyber-universe` `028369a` (P6-78,
+cyber-gpu `49e6685`, 13/13 scenarii), CI 43068236106 pornit 19:26 (ora RO), încă în lucru la 19:45 (pasul apt pe mașinile GitHub e lent azi; Release-ul vine din el).
+**Nimic testat pe RTX 3070 Ti.**
+
+**Verificarea legării din OS (citire de cod, `028369a`):** `gpu_i7::prepare` primește `Settings` + `SystemInfoInput`, folosește `encode_wpr_meta`/`encode_gsp_args`,
+pune RPC-urile în coadă după `CpuQueues::init` când `init_rpcs_before_booter`; `booter` sună soneria înainte de `booter_load_dma_libos`; `gpu_i8::init` întreabă
+`init_rpcs_ready_for_i8`; `chain(variant)` scrie `settings.journal(variant, &mut j)` imediat după deschiderea jurnalului de pe stick → rândurile variantei sunt
+**primele** din `gpu-jurnal-NNN.txt`. Totul ca în nota `C-108_variante-i8.md`; nicio observație de trimis OS-ului.
+
+**Ce s-a făcut (un pas mic pe calea critică „joi vin 5–10 jurnale”):** modulul `nvidia_ga104::variant_log` + unealta de pe gazdă `compara_variante` — citește
+jurnalele variantelor și le pune într-un singur tabel față de referința os-283 (comparația pe care sesiunile 87–88 au făcut-o de mână cu `diff`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `variant_log` (nou, text, fără placă) | `read` (varianta, numele, commit-ul, setările, pașii, NOCAT prin `nocat_log`), `Outcome` (`PassedI8` doar cu `pas i8-gsp-init: ok`), `strip_prefix`, `is_noise`, `compare` (multiset de rânduri cu sens: doar în referință / doar aici, cu `xN`), `Table` (ordonat după variantă, concluzia) | PASS (T123 a–d) |
+| `compara_variante` (exemplu) | `<GspFwWprMeta> <referinta> <jurnale>...` → tabelul + verdictele lanțului (`check_chain_journal_for`) + cod de ieșire 0/3/2 | PASS |
+| Pe jurnalele reale (os-279, os-280, os-283) | 008 față de 009: **2 rânduri diferite** — `SEC2 CPUCTL` 0x10 vs 0x20 și `GSP MAILBOX0` 0xcb vs 0 (citiri ale stării plăcii la același moment; sesiunea 88 scrisese „identic” — diff-ul de mână le omisese; nu schimbă concluzia: același 0x59, aceleași 844/16); 007 (format vechi): 48/4 rânduri | OBSERVAT (text) |
+| T123d | jurnalul ferestrei complete SIMULATE (varianta 1) poartă acum rândurile variantei la început, ca în OS; cu prefixul OS-ului e citit înapoi: varianta 1, 7 setări, I8 trecut; față de forma os-283 doar cele 3 rânduri ale refuzului | PASS (SIMULARE) |
+| Compatibilitate OS | doar adăugări (modul + exemplu); codul driverului neschimbat, nicio scriere nouă în registre | PASS |
+| Pe RTX 3070 Ti | — | NOT TESTED |
+
+Verificări (`sh tools/check.sh`, Rust 1.97.0; ținta `x86_64-unknown-none` reinstalată): format, clippy `-D warnings`, **451 teste PASS** (4 ignorate), build no_std PASS.
+Commit-uri: `c234aaf` (modul + unealtă), `96a3a68` (T123d), + documentele. Nota pentru joi în `integration/cyber-universe/C-108_variante-i8.md` (secțiunea de la final).
+
+**Următorul pas:** (1) CI-ul OS 43068236106 verde → Release (OS-ul scrie procedura în `stare/cyber-universe.md`); dacă CI-ul pică/atârnă, re-rularea e a sesiunii OS.
+(2) Joi ~07:00: Adrian încearcă variantele de la 1; după `trimite`: `compara_variante 0x9c66000 gpu-jurnal-009.txt <noile jurnale>` → varianta care trece / ce diferă.
+(3) Dacă varianta 1 trece: I8e (golden) e primul apel RM pe placă — se citește jurnalul lui. Dacă niciuna: următoarea comparație e **starea plăcii** (adresele DMA
+reale, `SEC2 CPUCTL`/`MAILBOX0` de mai sus), nu conținutul mesajelor. Regula 8: sesiunile 87, 88, 89 au avut pași — nu se aplică.
+
+---
 ## Sesiunea 88 — 11 noiembrie 2026, ~17:30–18:20 (ora României), în cloud, FĂRĂ placă — os-283: `bDmemStack` nu era cauza; ordinea RPC-urilor de pornire; C-108 (10 variante pentru joi)
 
 Pornită de programare. În hub: rezultatul **os-283** (`rezultate/2026-11-11-workstation-os283/REZULTAT.md`, jurnalul `gpu-jurnal-009.txt`, 2438 rânduri) și

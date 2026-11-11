@@ -57,3 +57,17 @@ Fiecare variantă = o pornire rece: oprire → cablu 30 s → F8 stick de test �
 Reușita: `valoare GSP_INIT_DONE: rpc_result … = 0x00000000` și lanțul trece la `i8e-golden`. Se oprește la prima variantă care trece de I8.
 
 Ordinea și valorile: numai din surse publice (`docs/PROVENANCE.md`); nicio scriere într-un registru pe care os-283 nu-l scria deja.
+
+## După jurnalele de joi (sesiunea Cyber-GPU 89, 11 nov 19:45) — pentru sesiunea Cyber-GPU, nimic de făcut în OS
+
+Jurnalele variantelor (`trimite` → hub `rezultate/os-automat/<data>/gpu-jurnal-NNN.txt`) se compară toate deodată cu referința os-283:
+
+```
+cargo run --release -p nvidia-ga104 --example compara_variante -- 0x9c66000 <os-283: gpu-jurnal-009.txt> <jurnalele de joi>...
+```
+
+Pentru fiecare jurnal: varianta (numărul + numele, din rândurile `valoare varianta I8 (C-108): numarul` / `text varianta I8: numele` pe care OS-ul le scrie
+la începutul jurnalului), commit-ul din antet, rezultatul I8 (`I8 TRECUT` doar cu `pas i8-gsp-init: ok`; altfel `rpc_result` + numele), NOCAT primite / adrese de
+assert, setările pe scurt și **rândurile care diferă de referință** (fără prefixul `[ timp]`, antet, marcaje de timp NOCAT, `asteptat …` și rândurile variantei).
+Concluzia: varianta care a trecut sau „nicio varianta nu a trecut de I8”. Codul de ieșire: 0 = una a trecut, 3 = niciuna, 2 = un jurnal încalcă o regulă a lanțului.
+Nu înlocuiește `verifica_jurnal_lant` (verdictul pas cu pas e tipărit și aici, la final); nu spune nimic ce nu e în jurnale.

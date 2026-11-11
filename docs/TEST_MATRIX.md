@@ -1,5 +1,16 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 89 (11 nov 2026, cloud, fără placă) — pregătirea pentru jurnalele de joi (C-108): `variant_log` + `compara_variante`
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T123 | `variant_log::read`: numărul și numele variantei, commit-ul din antet, rândurile `valoare varianta: …`, pașii, rezultatul (`PassedI8` doar cu `pas i8-gsp-init: ok`; `RefusedAtI8(0x59, nume)`; `StoppedBefore`; `Unknown`); `strip_prefix` scoate `[ timp] gpu: `; zgomot = antet, marcaje de timp NOCAT, `asteptat …`, rândurile variantei | `cargo test -p nvidia-ga104 --release --lib variant_log` | toate citite exact | exact | PASS |
+| T123b | `variant_log::compare`: aceeași rulare pe altă pornire rece (alt commit, alte marcaje de timp, alt prefix) = IDENTIC, 21 rânduri cu sens; o adresă de assert + o cifră schimbate = 2 rânduri doar în referință, 2 doar aici; varianta 1 (rânduri în plus la I7, I8 trecut) = doar adăugările/lipsurile reale, soneria (mutată de la I8 la I7) nu e diferență; un rând repetat → surplusul `(xN)` | idem | cum e descris | la fel | PASS |
+| T123c | `variant_log::Table`: ordonare referință → varianta 0, 1, 2, 3; „IDENTIC”, „I8 TRECUT”, „I8 refuzat: rpc_result 0x59 (NV_ERR_OPERATING_SYSTEM)”, „oprit inainte de I8, la i6-fwsec-frts”, NOCAT 844/1/1, setările pe scurt, `… inca N randuri`; concluzia numește varianta trecută sau „nicio varianta nu a trecut de I8” | idem | textul exact | exact | PASS |
+| T123d | Jurnalul ferestrei complete SIMULATE (varianta 1, rândurile variantei la început ca în OS P6-78), cu prefixul OS-ului: `read` → varianta 1 `rpc-inainte`, 7 setări (ordinea = 1), `PassedI8`, fără NOCAT; identic cu el însuși; față de aceeași rulare cu I8 refuzat (forma os-283): doar în referință exact cele 3 rânduri ale refuzului, doar aici `pas i8-gsp-init: ok` + `i8e-golden`; tabelul: „au trecut de I8: varianta 1” | `cargo test -p nvidia-ga104 --release --lib variant_journal_of_the_simulated` | cum e descris | la fel | PASS (SIMULARE) |
+| T123e | Unealta `compara_variante 0x9c66000 gpu-jurnal-009.txt gpu-jurnal-008.txt gpu-jurnal-007.txt` pe jurnalele reale din hub (os-283, os-280, os-279): toate „driver dinainte de C-108”, „I8 refuzat 0x59”, 844 NOCAT / 16 adrese; 008 față de 009: **2 rânduri** (`SEC2 CPUCTL` 0x10 vs 0x20, `GSP MAILBOX0` 0xcb vs 0 — citiri ale stării plăcii, nescoase de diff-ul de mână din sesiunea 88); 007 (format vechi): 48/4 rânduri (`0x1020` ×843); verdictele lanțului ca `verifica_jurnal_lant`; cod de ieșire 3 | `cargo run --release -p nvidia-ga104 --example compara_variante -- …` | cifrele din sesiunile 85–88 | regăsite | PASS (OBSERVAT: jurnale reale, citite pe gazdă) |
+| Suita | `sh tools/check.sh` (Rust 1.97.0): format, clippy `-D warnings`, teste, build no_std | — | tot verde | **451 PASS** (4 ignorate) | PASS |
+
 ## Rezultate — sesiunea 88 (11 nov 2026, cloud, fără placă) — după os-283: ordinea RPC-urilor de pornire + variantele C-108
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |
