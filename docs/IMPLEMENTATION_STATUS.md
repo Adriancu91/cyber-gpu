@@ -1,5 +1,38 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 84 — 11 noiembrie 2026, ~10:28–11:05 (ora României), în cloud, FĂRĂ placă — C-102 URGENT: I8 „eroare hardware 0x59” la os-278
+
+Pornită de programare. **Oprirea de siguranță (regula 8) s-a ridicat**: în hub au apărut și jurnalul testului cu `os-278` (`rezultate/2026-11-11-workstation-os278/`,
+`gpu-jurnal-006.txt`, 2274 rânduri), și o comandă nouă, **C-102** (10:22, urgent, Adrian la workstation până ~12:15–12:30). Preluat 10:30.
+
+**Ce spune jurnalul (OBSERVAT):** I6 + I7 trec (a 5-a oară); **toate cele 420 de comenzi ale secvențiatorului trec**, inclusiv `#419 CORE_RESUME` pe calea C-99:
+`0x840130 ← 2` (SEC2 prin CPUCTL_ALIAS) → „SEC2 (Booter) gata: răspuns după 2 µs” → `0x110080 ← 0x0008b320` → „GSP RISC-V activ: răspuns după 2 µs”; nu există rândul
+„I8 secventiator: comanda de mai jos s-a oprit”, deci eroarea **nu e din secvențiator**. ~150 ms mai târziu: „eroare hardware 0x59”. 1777 scrieri (1776 + alias).
+
+**Analiza (DEDUS din codul nostru + sursele publice MIT):** după secvențiator, `0x59` poate veni din exact două locuri: (1) `GSP_INIT_DONE` cu `rpc_result = 0x59` —
+în `nvstatuscodes.h` 570.144 `0x59` = **`NV_ERR_OPERATING_SYSTEM`** („Generic operating system error”; nouveau tratează și el `rpc_result ≠ 0` ca eroare); (2) pointerul de
+scriere al cozii de stare citit **89** (= 0x59), în afara cozii de 63 de elemente (memorie stricată după resume). Jurnalul vechi nu scria nicio citire în I8 → **nu se poate
+spune care**; o „reparație” fără acest răspuns ar fi inventată. Separat: „2 µs” pentru Booter e prea puțin — posibil bitul 26 din `NV_PGC6_BSI_SECURE_SCRATCH_14` era deja pus
+de la I7. Driverul NVIDIA (`kernel_gsp_ga102.c`, CORE_RESUME, citit în sesiune) **nu scrie și nu șterge** acest registru și face exact pașii noștri → nu scriem nici noi în el.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `Event::Value` (nou, `gpu-core`) | rând de jurnal `valoare <nume> = 0x........`; adăugare compatibilă (OS-ul folosește `_ =>` + `Display`) | PASS |
+| `falcon::journal_resume_state` (nou) | 7 citiri numite: SCRATCH_14, SEC2 CPUCTL/MAILBOX0/MAILBOX1, GSP RISCV_CPUCTL, GSP MAILBOX0/1; un registru necitibil e notat cu codul lui și sărit | PASS |
+| `CORE_RESUME` | starea **înainte** de `0x840130 ← 2` și **după** predarea etapei 3; SEC2 MAILBOX0 ≠ 0 e numit | PASS (SIMULARE, T115) |
+| `wait_init_done` | fiecare mesaj GSP-RM sărit e numit (funcția, `rpc_result` dacă ≠ 0); `GSP_INIT_DONE`: `rpc_result` scris mereu, la eroare + `rpc_result_private` + „eroarea vine din GSP_INIT_DONE” + cele 7 registre; eroare din coadă: „pointer in afara cozii (0..62)” + „eroarea vine din coada de stare” + registrele; timp expirat / Esc: notă + registrele | PASS (SIMULARE, T113, T114) |
+| `verifica_jurnal_lant` | pe `gpu-jurnal-006.txt` (WprMeta `0x9c66000`): „OPRIT CURAT la i8-gsp-init”, I8 326 scrieri + 1 sonerie; cu rândurile noi adăugate artificial: același verdict (parserul le ignoră) | PASS |
+| Compatibilitate OS | doar adăugări (`Event::Value`, `RESUME_STATE_READS`, `journal_resume_state`); nicio scriere nouă în registre | PASS |
+| CI GitHub | rularea 160 pe `d31ad8d` (10:47, 53 s) | PASS |
+| Pe RTX 3070 Ti | — | NOT TESTED |
+
+Verificări (`sh tools/check.sh`, Rust stable; ținta `x86_64-unknown-none` reinstalată): format, clippy `-D warnings`, **426 teste PASS** (4 ignorate), build no_std PASS.
+Nota pentru OS: `integration/cyber-universe/C-102_i8-0x59-diagnostic.md`. Surse în `docs/PROVENANCE.md`. Hub: `stare/cyber-gpu.md`, `jurnal/cyber-gpu.md`, C-102.
+
+**Următorul pas:** OS-ul leagă `d31ad8d`, Release `os-279`, `gpu lant` cu Adrian de față; în jurnal se citesc, după `secv #419 CORE_RESUME`: valorile dinainte de pornirea SEC2
+(SCRATCH_14 cu bitul 26 deja `0x04000000` = bit vechi de la I7), apoi rândul „I8: eroarea vine din …” — abia atunci se poate repara ce e `0x59`. Niciun pas nou fără jurnal.
+
+---
 ## Sesiunea 83 — 11 noiembrie 2026, ~07:20–07:40 (ora României), în cloud, FĂRĂ placă — **OPRIT: necesită analiza lui Adrian** (regula 8)
 
 Pornită de programare. **Nicio comandă nouă pentru cyber-gpu** în hub (ultima e C-100, pentru Kronos, închisă la 02:15: placa a fost la Kronos noaptea, S99/S100,

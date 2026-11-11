@@ -174,3 +174,11 @@ pe falcon-ul SEC2). Nouveau (`nvkm_falcon_v1_start`: același test al bitului 6)
 (`gpu-jurnal-005.txt`: `0x840100: 0x50 <- 0x2 => 0x50` după Booter) e OBSERVAT; de ce programul HS lasă `ALIAS_EN` pus e DEDUS. Cod scris de noi
 (`falcon::start_cpu`, `wait_riscv_active_for`, `sequencer::LONG_WAIT_US`, `Clock::abort_requested`, `GpuError::Aborted`, `Event::Waited`); modelul
 `gpu-sim::fake_gsp` (`Falcon::alias_en`) scris de noi din jurnalul plăcii.
+
+**C-102 (sesiunea 84, 11 noiembrie 2026).** Citite ca specificație din open-gpu-kernel-modules@570.144 (MIT): `gsp/arch/ampere/kernel_gsp_ga102.c`
+(`kgspExecuteSequencerCommand_GA102`, CORE_RESUME: ordinea reset-în-RISC-V → argumentele LibOS → `kflcnStartCpu` SEC2 → `_kgspIsReloadCompleted`
+(doar citirea `NV_PGC6_BSI_SECURE_SCRATCH_14`, bit `BOOT_STAGE_3_HANDOFF`) → SEC2 MAILBOX0 → `FALCON_OS` → RISC-V activ; fișierul nu scrie și nu șterge
+SCRATCH_14 — de aceea nici noi), `nvstatuscodes.h` (`0x59` = `NV_ERR_OPERATING_SYSTEM`). Nouveau (`r535_gsp_msg_recv`: orice `rpc_result ≠ 0` e eroare,
+`r535_gsp_msgq_wait`: pointerul de scriere nu e verificat) din cunoaștere generală, pentru comparație. Faptele de pe placă (`gpu-jurnal-006.txt`:
+„2 µs” la predarea etapei 3 și la RISC-V activ, apoi `0x59` după ~150 ms) sunt OBSERVATE; cele două surse posibile ale lui `0x59` sunt DEDUSE din codul
+nostru. Cod scris de noi (`Event::Value`, `falcon::{RESUME_STATE_READS, journal_resume_state}`, rândurile din `sequencer`); doar citiri, nicio scriere nouă.
