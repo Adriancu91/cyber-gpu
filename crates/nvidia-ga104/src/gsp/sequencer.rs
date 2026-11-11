@@ -369,6 +369,9 @@ pub struct InitLog {
     /// The distinct complaints among them (`NocatRecord::kind`), in order of
     /// first appearance; at most [`NOCAT_KINDS_MAX`] are kept.
     pub nocat_kinds: Vec<(u8, u64, u32)>,
+    /// Records of a kind not seen before that arrived after `nocat_kinds`
+    /// was full (counted, not journaled).
+    pub nocat_kinds_dropped: u32,
     /// os-279: `UCODE_LIBOS_PRINT` messages received (2 on the board).
     pub libos_prints: u32,
 }
@@ -397,6 +400,12 @@ fn journal_skipped_summary<M: Mmio + ?Sized>(bar: &mut GuardedBar0<'_, M>, log: 
             what: "I8 NOCAT: feluri distincte (recType, errorCode, subsystem)",
             value: log.nocat_kinds.len() as u32,
         });
+        if log.nocat_kinds_dropped != 0 {
+            bar.journal().push(Event::Value {
+                what: "I8 NOCAT: inregistrari de feluri noi peste limita de 16 (nejurnalizate)",
+                value: log.nocat_kinds_dropped,
+            });
+        }
     }
     if log.libos_prints != 0 {
         bar.journal().push(Event::Value {
@@ -425,9 +434,14 @@ fn journal_skipped<M: Mmio + ?Sized>(
                 return;
             };
             let kind = r.kind();
-            let new_kind = !log.nocat_kinds.contains(&kind);
-            if new_kind && log.nocat_kinds.len() < NOCAT_KINDS_MAX {
-                log.nocat_kinds.push(kind);
+            let mut new_kind = !log.nocat_kinds.contains(&kind);
+            if new_kind {
+                if log.nocat_kinds.len() < NOCAT_KINDS_MAX {
+                    log.nocat_kinds.push(kind);
+                } else {
+                    log.nocat_kinds_dropped += 1;
+                    new_kind = false;
+                }
             }
             if log.nocat_records <= NOCAT_FULL_FIRST || new_kind {
                 r.journal(bar.journal(), log.nocat_records);
@@ -1167,6 +1181,44 @@ mod tests {
         // the first NOCAT record comes right after the doorbell-less start:
         // nothing was written to the board for any of this
         assert!(!g.writes.iter().any(|&(o, _)| o == 0x110c00));
+
+        // 40 records, each of a new kind: 16 kinds kept (the first 4 are
+        // among them), 24 counted as dropped kinds, INIT_DONE fine → Ok
+        let (mut g, mut j, mut c) = booted();
+        let (l, mut mem, mut q) = queues_after_i7();
+        let mut peer = SimGsp::start(&mut mem, l.cmd_queue_offset, l.stat_queue_offset);
+        q.link_rx(&mem).unwrap();
+        let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+        let mut step = 0u32;
+        let r = wait_init_done(&mut q, &mut mem, &mut b, &mut c, CTX, INIT_DONE_US, |m| {
+            step += 1;
+            match step {
+                1..=40 => peer.post(
+                    m,
+                    event::GSP_POST_NOCAT_RECORD,
+                    0,
+                    &record(2, 0x100 + u64::from(step), 1, b"GSP-RM"),
+                ),
+                41 => peer.post(m, event::GSP_INIT_DONE, 0, &[]),
+                _ => {}
+            }
+        })
+        .unwrap();
+        assert_eq!(r.nocat_records, 40);
+        assert_eq!(r.nocat_kinds.len(), NOCAT_KINDS_MAX);
+        assert_eq!(r.nocat_kinds_dropped, 24);
+        assert_eq!(r.other_events.len(), 40);
+        let _ = b;
+        let rows: Vec<String> = j.events().map(|e| alloc::format!("{e}")).collect();
+        let count = |needle: &str| rows.iter().filter(|r| r.contains(needle)).count();
+        assert_eq!(
+            count("valoare NOCAT: inregistrarea nr. = "),
+            NOCAT_KINDS_MAX
+        );
+        assert!(rows.contains(&String::from(
+            "valoare I8 NOCAT: inregistrari de feluri noi peste limita de 16 (nejurnalizate) = 0x00000018"
+        )));
+        assert!(rows.contains(&String::from("pas I8 GSP_INIT_DONE: ok")));
     }
 
     /// C-102 (T114): the other way 0x59 can appear — the status queue's
