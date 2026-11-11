@@ -102,6 +102,11 @@ fn queue_header_matches_the_header() {
 #[test]
 fn gsp_arguments_size_matches_the_header() {
     assert_eq!(libos::GSP_ARGS_SIZE, size_of::<GSP_ARGUMENTS_CACHED>());
+    // Session 87: the byte we now set to 1 is really `bDmemStack`.
+    assert_eq!(
+        libos::B_DMEM_STACK_OFF,
+        core::mem::offset_of!(GSP_ARGUMENTS_CACHED, bDmemStack)
+    );
 }
 
 /// The two GFW_BOOT registers of I2 were taken from nouveau in session 2; the
