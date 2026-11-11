@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 85 — 11 noiembrie 2026, ~12:28–13:10 (ora României), în cloud, FĂRĂ placă — după os-279: GSP-RM pornește, dar refuză inițializarea (0x59)
+## Sesiunea 85 — 11 noiembrie 2026, ~12:28–13:30 (ora României), în cloud, FĂRĂ placă — după os-279: GSP-RM pornește, dar refuză inițializarea (0x59); C-103 (WPR2 coborât fără repornire) în SIMULARE
 
 Pornită de programare. În hub a apărut jurnalul testului cu `os-279` (`rezultate/2026-11-11-workstation-os279/`, `gpu-jurnal-007.txt`, 3145 rânduri, 12:20) —
 exact ce aștepta sesiunea 84. Nicio comandă nouă pentru cyber-gpu (C-102 e `gata` la ambele proiecte); lucrul de aici e **continuarea C-102** cerută de
@@ -26,16 +26,20 @@ celor 843 de înregistrări, pe care jurnalul vechi nu l-a scris. O „reparați
 | `wait_init_done` | fiecare `GSP_POST_NOCAT_RECORD` decodat: primele 4 + fiecare fel nou (≤ 16) în jurnal, restul numărate (felurile peste limită numărate separat); `UCODE_LIBOS_PRINT`: descriptor + mărime; orice alt mesaj: număr **și nume**; `rpc_result` cu numele `NV_STATUS`; rezumat la orice sfârșit (total, NOCAT, feluri, LibOS) | PASS (SIMULARE, T116; T113/T114 actualizate) |
 | `verifica_jurnal_lant` | pe `gpu-jurnal-007.txt` (WprMeta `0x9c66000`): „OPRIT CURAT la i8-gsp-init”, I8 326 scrieri + 1 sonerie; cu rândurile noi adăugate artificial: același verdict | PASS |
 | Compatibilitate OS | doar adăugări (`Event::Text`, `TEXT_LEN`, `nvidia_rm570::names` + 3 funcții, `gsp::nocat`, `event::GSP_POST_NOCAT_RECORD`, `rpc::name`, câmpuri noi în `InitLog`); nicio scriere nouă în registre | PASS |
-| CI GitHub | rulările pe `93d530c` (10:48 UTC, 56 s) și `d84e331` | PASS; `5cfe523` de verificat |
+| CI GitHub | rulările pe `93d530c` (10:48 UTC, 56 s), `d84e331`, `5cfe523` | PASS |
+| **C-103** (nou în hub la 12:35, preluat 13:20): studiu `docs/C-103_RESET_PLACA.md` | calea publică de a coborî WPR2 fără repornire = **Booter Unload** (RM `kgspExecuteBooterUnloadIfNeeded_TU102`: reset SEC2, mailbox 0xFF/0xFF, mailbox0 = 0, WPR2 HI = 0); fișierul `booter_unload-570.144.bin` e deja pe stick; FLR probabil neanunțat (se citește), SBR pe root-port = rezervă (OS), D3hot nu resetează dacă `No_Soft_Reset` = 1 | scris |
+| C-103 pasul 2: `falcon::booter_unload[_dma]` + `gpu-sim` (`SimUcode::BooterUnload`, `SimFault::Wpr2Stuck`) | reset GSP → reset SEC2 → Booter Unload → mailbox0 → WPR2 citit 0; apoi **I6 rulează din nou în aceeași „pornire”**; WPR2 jos → sărit (ca RM); erori numite | PASS (SIMULARE, T118) |
+| C-103 pasul 1 cod: `gpu_pci::caps::reset_capabilities` | FLR / `No_Soft_Reset` / D-state / PME D3cold, doar citiri, `summary()` pentru `raport` | PASS (T119) |
 | Pe RTX 3070 Ti | — | NOT TESTED |
 
-Verificări (`sh tools/check.sh`, Rust 1.97.0; ținta `x86_64-unknown-none` reinstalată): format, clippy `-D warnings`, **433 teste PASS** (4 ignorate), build no_std PASS.
-Nota pentru OS: `integration/cyber-universe/os-279_nocat-decodat.md`. Surse în `docs/PROVENANCE.md`; riscuri noi în `docs/RISKS.md`. Hub: `stare/cyber-gpu.md`, `jurnal/cyber-gpu.md`, C-102 (completare).
+Verificări (`sh tools/check.sh`, Rust 1.97.0; ținta `x86_64-unknown-none` reinstalată): format, clippy `-D warnings`, **437 teste PASS** (4 ignorate), build no_std PASS.
+Note pentru OS: `integration/cyber-universe/os-279_nocat-decodat.md` (0x59), `integration/cyber-universe/C-103_gpu-recupereaza.md`. Surse în `docs/PROVENANCE.md`;
+riscuri în `docs/RISKS.md` (B10 + 2 rânduri). Hub: `stare/cyber-gpu.md`, `jurnal/cyber-gpu.md`, C-102 (completare), C-103 (`preluat` → partea GPU gata în SIMULARE).
 
-**Următorul pas:** OS-ul leagă `5cfe523` (sau mai nou), Release `os-280`, `gpu lant` cu Adrian de față (I8 se va opri probabil tot la 0x59 — important e jurnalul).
-În jurnal se citesc rândurile `NOCAT` (mai ales `text NOCAT: source`, `recType`, adresa + linia asserturilor sau `errorCode` cu numele `NV_STATUS`, `subsystem`)
-și rezumatul de la final; abia atunci se vede ce îi lipsește lui GSP-RM (`GSP_SET_SYSTEM_INFO`, registrul, argumentele de pornire, memoria) și se repară.
-Niciun pas nou fără jurnal.
+**Următorul pas:** (1) OS-ul leagă `364ece2` (sau mai nou), Release `os-280`, `gpu lant` cu Adrian de față (I8 se va opri probabil tot la 0x59 — important e jurnalul):
+se citesc rândurile `NOCAT` (`text NOCAT: source`, `recType`, adresa + linia asserturilor sau `errorCode` cu numele `NV_STATUS`, `subsystem`) și rezumatul; abia atunci se
+vede ce îi lipsește lui GSP-RM și se repară. (2) C-103 pe placă: `gpu recupereaza` (OS) după un lanț oprit la I8 — dacă WPR2 citește 0 după Booter Unload, a doua
+încercare se face fără cablul scos. Niciun pas nou fără jurnal.
 
 ---
 ## Sesiunea 84 — 11 noiembrie 2026, ~10:28–10:52 (ora României), în cloud, FĂRĂ placă — C-102 URGENT: I8 „eroare hardware 0x59” la os-278

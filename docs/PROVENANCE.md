@@ -198,3 +198,14 @@ program C de probă (în afara repo-ului). Faptele de pe placă (`gpu-jurnal-007
 (`gsp::nocat`, `Event::Text`, `sequencer::{journal_skipped, journal_skipped_summary}`, `nvidia_rm570::{status_name, status_text, rpc_name}`); doar citiri
 din mesaje primite, nicio scriere nouă. Conținutul `libosPrintBuf` și al `diagBuffer` (altul decât stiva asserturilor) nu se decodează: ar cere simbolurile
 firmware-ului.
+
+**C-103 (sesiunea 85, 11 noiembrie 2026) — WPR2 coborât fără repornire.** Citite ca specificație din open-gpu-kernel-modules@570.144 (MIT):
+`kernel/gpu/gsp/arch/turing/kernel_gsp_booter_tu102.c` (`s_executeBooterUcode_TU102`, `kgspExecuteBooterLoad_TU102`, `kgspExecuteBooterUnloadIfNeeded_TU102`:
+reset SEC2, mailbox (0xFF, 0xFF) la descărcarea normală / `GspFwSRMeta` la suspend / `0xdeaddead` la GC6, mailbox0 trebuie 0, apoi `kgspIsWpr2Up` trebuie fals),
+`kernel_gsp_tu102.c` (`kgspTeardown_TU102`: reset GSP → FWSEC-SB → Booter Unload; `kgspIsWpr2Up_TU102`: câmpul VAL din `NV_PFB_PRI_MMU_WPR2_ADDR_HI`;
+`kgspWaitForProcessorSuspend_TU102`: GSP MAILBOX0 == 0x80000000), `kernel_gsp.c` (`_kgspBootGspRm`: refuză pornirea cu WPR2 ridicat; `kgspUnloadRm`: ordinea
+`UNLOADING_GUEST_DRIVER` → suspend → teardown). PCIe Base Specification (Device Capabilities/Control, PM `No_Soft_Reset`, Bridge Control) din cunoaștere generală a
+standardului. Nouveau (`booter.unload` la `fini`/`init`) și comportamentul plăcilor GeForce față de FLR — cunoaștere generală, doar pentru comparație, marcate așa în
+`docs/C-103_RESET_PLACA.md`. Cod scris de noi (`falcon::{booter_unload, booter_unload_dma, BOOTER_UNLOAD_MAILBOX, Unloaded}`, `gpu_pci::caps::{reset_capabilities,
+ResetCapabilities}`); modelul `gpu-sim::fake_gsp` (`SimUcode::BooterUnload`, `SimFault::Wpr2Stuck`) scris de noi, reproduce doar efectul vizibil (WPR2 → 0), nu interiorul
+programului semnat.
