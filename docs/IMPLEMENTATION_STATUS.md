@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 83 — 11 noiembrie 2026, ~07:20–07:40 (ora României), în cloud, FĂRĂ placă — **OPRIT: necesită analiza lui Adrian** (regula 8)
+
+Pornită de programare. **Nicio comandă nouă pentru cyber-gpu** în hub (ultima e C-100, pentru Kronos, închisă la 02:15: placa a fost la Kronos noaptea, S99/S100,
+liberă de la 01:59) și **niciun jurnal nou de pe placă** (ultimul dosar: `rezultate/2026-11-10-workstation-os277/`, analizat în sesiunea 80; dosarul `…-os278/` nu există).
+OS-ul e tot pe `os-278` (`de63f32`, cu `3aed5eb`) și s-a oprit la fel la 05:45 („OPRIT”, regula lui 5). Codul neschimbat față de `3aed5eb`. **Nimic testat pe RTX 3070 Ti.**
+CI GitHub verde pe `54cf0a2` (rularea 158, 01:30, 47 s). Copia din hub (C-34) e la `54cf0a2` = `origin/g0-g2-fundatie` (verificat cu `git bundle list-heads`).
+Verificare locală (`sh tools/check.sh`, Rust 1.97.0; ținta `x86_64-unknown-none` reinstalată): format, clippy `-D warnings`, **423 teste PASS** (4 ignorate), build no_std PASS.
+
+| Pas | Rezultat |
+|---|---|
+| Lucru nou | NOT TESTED — nu există pas nou fără placă; reparația C-99 așteaptă proba cu `os-278` |
+| Copia din hub (C-34) | PASS — la zi (`54cf0a2`); după commit-ul acesta (doar document) se reîmprospătează |
+| CI GitHub | PASS (pe `54cf0a2`) |
+
+**OPRIT: necesită analiza lui Adrian.** Regula 8 din programare: sesiunile 81, 82 și 83 n-au terminat niciun pas (ultimul pas de cod: C-99, sesiunea 80) — nu
+pentru că ceva e stricat, ci pentru că **tot ce se poate face fără placă e făcut** (I8 reparat de două ori în simulare, I9–I14 scrise și testate în simulare)
+și următorul pas depinde de un jurnal real. Nu se începe lucru nou și nu se inventează. **Oprirea se ridică singură** când apare în hub fie jurnalul testului cu `os-278`
+(`rezultate/2026-11-1x-workstation-os278/`), fie o comandă nouă pentru `cyber-gpu` în `COMENZI.md`; sesiunile până atunci: doar verificarea CI/copiei, fără pas nou.
+
+**Următorul pas (când Adrian are fereastra):** `gpu lant` cu `os-278` (pașii în hub, `stare/cyber-universe.md`), apoi `verifica_jurnal_lant` pe jurnalul din `rezultate/`;
+se urmăresc, după `secv #419 CORE_RESUME`: `bar0 w 0x840130`, rândurile `asteptat … raspuns dupa N us`, apoi `GSP_INIT_DONE` sau prima eroare după el.
+
+---
 ## Sesiunea 82 — 11 noiembrie 2026, ~01:25–01:40 (ora României), în cloud, FĂRĂ placă — oprire scurtă (os-278 așteaptă testul pe placă)
 
 Pornită de programare. Nicio comandă nouă pentru cyber-gpu (ultima din hub e C-100, pentru Kronos: placa e la Kronos până la 07:00; Kronos rulează la noapte S100 pe placă,
