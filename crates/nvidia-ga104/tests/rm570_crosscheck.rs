@@ -197,6 +197,7 @@ fn system_info_matches_the_header() {
         (off::OOR_ARCH, offset_of!(S, oorArch)),
         (off::ACPI_METHOD_DATA, offset_of!(S, acpiMethodData)),
         (off::HYPERVISOR_TYPE, offset_of!(S, hypervisorType)),
+        (off::B_IS_PASSTHRU, offset_of!(S, bIsPassthru)),
         (off::GSP_VF_INFO, offset_of!(S, gspVFInfo)),
         (off::B_IS_PRIMARY, offset_of!(S, bIsPrimary)),
         (off::HOST_PAGE_SIZE, offset_of!(S, hostPageSize)),

@@ -1942,7 +1942,7 @@ mod tests {
         use crate::chain::{READY_FOR_WINDOW, WINDOW_CHAIN_FULL, run_chain_ready};
         use crate::gsp::falcon::{self, GuardedBar0};
         use crate::gsp::golden::QueueTransportBell;
-        use crate::gsp::rpc::{event, function};
+        use crate::gsp::rpc::event;
         use crate::launch_cost;
         use core::cell::Cell;
         use gpu_core::diag::Journal;
@@ -1966,6 +1966,10 @@ mod tests {
             .collect();
         let mut q = CpuQueues::init(&mut shm, l, &pages).unwrap();
         let mut gsp: Option<SimGsp> = None;
+        let mut boot_peer: Option<SimGsp> = None;
+        // C-108: variant 1 — what the chain sends and when.
+        const SETTINGS: crate::gsp::variants::Settings = crate::gsp::variants::VARIANTS[0].settings;
+        let sysinfo_in = crate::gsp::sysinfo::tests::workstation();
         let mut rm = FakeRm::new();
         let vram = 8u64 << 30;
         let mut mem: Mem =
@@ -2038,25 +2042,35 @@ mod tests {
                 }
                 "i6-wpr2-citit" => falcon::read_frts_after_i6(&mut g, j, frts).map(|_| ()),
                 "i7-booter-gsp" => {
+                    // C-108 variant 1 (os-283 analysis): the two init RPCs and
+                    // the doorbell go in BEFORE Booter starts GSP-RM, as the
+                    // four public drivers do.
                     let mut b = GuardedBar0::new(&mut g, j, None)?;
+                    SETTINGS.queue_init_rpcs(&mut q, &mut shm, &sysinfo_in)?;
+                    falcon::ring_doorbell(&mut b)?;
                     if libos_order {
                         falcon::booter_load_dma_libos(
                             &mut b, &mut clock, &bo_u, &bo_img, WPR_META, LIBOS,
-                        )
+                        )?;
                     } else {
-                        falcon::booter_load_dma(&mut b, &mut clock, &bo_u, &bo_img, WPR_META)
+                        falcon::booter_load_dma(&mut b, &mut clock, &bo_u, &bo_img, WPR_META)?;
                     }
+                    // GSP-RM starts now: its early boot reads the command queue.
+                    boot_peer = Some(SimGsp::start_early_boot(
+                        &mut shm,
+                        l.cmd_queue_offset,
+                        l.stat_queue_offset,
+                    ));
+                    Ok(())
                 }
                 "i7-citit" => match falcon::read_after_i7(&mut g, j)?.passed() {
                     true => Ok(()),
                     false => Err(fail("I7: Booter refuzat sau RISC-V oprit")),
                 },
                 "i8-gsp-init" => {
-                    let sys =
-                        crate::gsp::sysinfo::encode(&crate::gsp::sysinfo::tests::workstation())?;
-                    q.send_rpc(&mut shm, function::GSP_SET_SYSTEM_INFO, &sys)?;
-                    let reg = crate::gsp::registry::encode(&crate::gsp::registry::boot_entries())?;
-                    q.send_rpc(&mut shm, function::SET_REGISTRY, &reg)?;
+                    if !SETTINGS.init_rpcs_ready_for_i8(&q)? {
+                        SETTINGS.queue_init_rpcs(&mut q, &mut shm, &sysinfo_in)?;
+                    }
                     let mut b = GuardedBar0::new(&mut g, j, None)?;
                     falcon::ring_doorbell(&mut b)?;
                     // C-75: GSP-RM finds its queues only through the LibOS
@@ -2065,8 +2079,11 @@ mod tests {
                         return Err(fail("cozi GSP: GSP-RM pornit fara adresa LibOS"));
                     }
                     let mut b = GuardedBar0::new(&mut g, j, None)?;
-                    let mut peer = SimGsp::start(&mut shm, l.cmd_queue_offset, l.stat_queue_offset);
+                    let mut peer = boot_peer.take().ok_or(fail("GSP-RM nepornit la I7"))?;
                     q.link_rx(&shm)?;
+                    // os-283 model: INIT_DONE = 0x59 unless both init RPCs
+                    // were in the queue when GSP-RM started.
+                    let init_result = peer.init_done_result();
                     let mut step = 0;
                     let ctx = crate::gsp::sequencer::SeqContext {
                         libos_addr: LIBOS,
@@ -2083,7 +2100,7 @@ mod tests {
                             step += 1;
                             match step {
                                 1 => peer.service(m),
-                                2 => peer.post(m, event::GSP_INIT_DONE, 0, &[]),
+                                2 => peer.post(m, event::GSP_INIT_DONE, init_result, &[]),
                                 _ => {}
                             }
                         },
@@ -2184,9 +2201,10 @@ mod tests {
         let w = full_window(true);
         assert!(w.report.all_passed(), "{}", w.report);
         assert_eq!(w.report.steps.len(), crate::chain::WINDOW_CHAIN_FULL.len());
-        // One doorbell for I8, then one per RM call (golden + I9 + GR info).
+        // One doorbell at I7 (init RPCs before Booter, C-108 variant 1), one
+        // for I8, then one per RM call (golden + I9 + GR info).
         assert!(w.rpc_bells > 10, "{}", w.rpc_bells);
-        assert_eq!(w.gsp_doorbells, 1 + w.rpc_bells);
+        assert_eq!(w.gsp_doorbells, 2 + w.rpc_bells);
         // All register writes in the GSP/SEC2 windows.
         assert!(w.writes.iter().all(|&(o, _)| {
             (0x110000..=0x113fff).contains(&o) || (0x840000..=0x843fff).contains(&o)
@@ -2211,7 +2229,8 @@ mod tests {
         );
         assert_eq!(w.report.outcome("bus-master-oprit"), Some(&Outcome::Passed));
         assert_eq!(w.command_after, gpu_sim::observed::COMMAND);
-        assert_eq!(w.gsp_doorbells, 1);
+        // I7 (init RPCs) + I8.
+        assert_eq!(w.gsp_doorbells, 2);
     }
 
     /// C-75 (T86): I7 in the old order (as `os-246` on 5 Nov: no GSP reset
@@ -2245,8 +2264,8 @@ mod tests {
         let s = r.i7_libos.unwrap();
         assert_eq!(s.libos, 0x0000_0002_0000_0000);
         assert_eq!(r.i7.as_ref(), Some(&s.booter));
-        // 5 GSP writes before Booter + 1 after.
-        assert_eq!(s.writes, s.booter.writes + 6);
+        // Doorbell + 5 GSP writes before Booter + 1 after (C-108 variant 1).
+        assert_eq!(s.writes, s.booter.writes + 7);
         // Planted mistakes in the new I7 part are caught.
         let bad = |from: &str, to: &str| {
             let t = n.journal_text.replacen(from, to, 1);

@@ -306,6 +306,13 @@ impl CpuQueues {
         Ok(Some(msg))
     }
 
+    /// How many RPCs the driver has put in the command queue so far (the
+    /// next sequence number). C-108: I8 checks that the two init RPCs were
+    /// queued **before** Booter (I7) when the variant asks for it.
+    pub fn rpcs_sent(&self) -> u32 {
+        self.tx_seq
+    }
+
     /// Encodes and sends one RPC (driver → GSP-RM) with the next sequence number.
     pub fn send_rpc(
         &mut self,

@@ -65,6 +65,7 @@ pub mod off {
     pub const OOR_ARCH: usize = 104;
     pub const ACPI_METHOD_DATA: usize = 160;
     pub const HYPERVISOR_TYPE: usize = 836;
+    pub const B_IS_PASSTHRU: usize = 840;
     pub const GSP_VF_INFO: usize = 856;
     pub const B_IS_PRIMARY: usize = 896;
     pub const HOST_PAGE_SIZE: usize = 920;
@@ -91,6 +92,29 @@ pub struct SystemInfoInput {
     pub is_primary: bool,
 }
 
+/// The few fields the public drivers fill differently (C-108, variants).
+/// Everything else in the payload is the same in all four of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Options {
+    /// `bIsPassthru`: 0 in RM on a desktop, nouveau, nova; **1** in tinygrad.
+    pub is_passthru: bool,
+    /// `bIsPrimary`: `None` = what the PCI layer says (VGA decode; RM and
+    /// nouveau), `Some(v)` = forced (tinygrad and nova send 0).
+    pub is_primary: Option<bool>,
+    /// `hostPageSize`: 4096 in RM (`osGetPageSize`); **0** (not set) in
+    /// nouveau r570, tinygrad and nova.
+    pub host_page_size: u64,
+}
+
+impl Options {
+    /// What we sent up to `os-283`: RM's desktop values.
+    pub const OS_283: Options = Options {
+        is_passthru: false,
+        is_primary: None,
+        host_page_size: HOST_PAGE_SIZE,
+    };
+}
+
 /// `nvDomainBusDeviceFunc` as NVIDIA's `nv_encode_pci_info` builds it.
 pub fn encode_domain_bus_slot(domain: u32, bus: u8, slot: u8) -> u64 {
     ((domain as u64) << 32) | ((bus as u64) << 8) | slot as u64
@@ -99,6 +123,11 @@ pub fn encode_domain_bus_slot(domain: u32, bus: u8, slot: u8) -> u64 {
 /// Builds the 928-byte payload. Refuses inputs that cannot describe a real
 /// NVIDIA BAR layout instead of sending GSP-RM something half-filled.
 pub fn encode(i: &SystemInfoInput) -> GpuResult<[u8; SIZE]> {
+    encode_with(i, &Options::OS_283)
+}
+
+/// [`encode`] with the fields a variant (C-108) may set differently.
+pub fn encode_with(i: &SystemInfoInput, o: &Options) -> GpuResult<[u8; SIZE]> {
     if i.vendor != NVIDIA_VENDOR {
         return Err(GpuError::InvalidArgument(
             "SET_SYSTEM_INFO: nu e o placa NVIDIA",
@@ -147,8 +176,9 @@ pub fn encode(i: &SystemInfoInput) -> GpuResult<[u8; SIZE]> {
         ((i.subsys_device as u32) << 16) | i.subsys_vendor as u32,
     );
     put_u32(&mut b, off::PCI_REVISION_ID, i.revision as u32);
-    b[off::B_IS_PRIMARY] = i.is_primary as u8;
-    put_u64(&mut b, off::HOST_PAGE_SIZE, HOST_PAGE_SIZE);
+    b[off::B_IS_PASSTHRU] = o.is_passthru as u8;
+    b[off::B_IS_PRIMARY] = o.is_primary.unwrap_or(i.is_primary) as u8;
+    put_u64(&mut b, off::HOST_PAGE_SIZE, o.host_page_size);
     Ok(b)
 }
 

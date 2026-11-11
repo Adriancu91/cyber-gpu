@@ -1010,6 +1010,74 @@ mod tests {
         (l, mem, q)
     }
 
+    /// os-283 (T122, SIMULARE): the same I8 wait, with the simulated GSP-RM
+    /// modelling what NVIDIA's sources say about its early boot — the init
+    /// RPCs are run only if they are already in the queue when GSP-RM
+    /// starts (`kgspQueueAsyncInitRpcs`: "before OBJGPU is created";
+    /// `kernel_gsp_gh100.c`: "GSP-RM may skip these RPCs if not sent in
+    /// time"). The os-283 order (queue at I8, after Booter) ends in
+    /// `GSP_INIT_DONE = 0x59` as on the board; variant 1 (queue at I7,
+    /// before Booter) ends in `rpc_result = 0`. DEDUS; proven only on the
+    /// board, with Adrian.
+    #[test]
+    fn t122_init_rpcs_after_booter_fail_before_booter_pass_simulated() {
+        use crate::gsp::sim_peer::NV_ERR_OPERATING_SYSTEM;
+        use crate::gsp::variants::{self, OS_283};
+        let ws = crate::gsp::sysinfo::tests::workstation();
+        let run = |settings: variants::Settings| {
+            let (mut g, mut j, mut c) = booted();
+            let (l, mut mem, mut q) = queues_after_i7();
+            let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+            if settings.init_rpcs_before_booter {
+                // I7: the two RPCs + the doorbell, then Booter starts GSP-RM.
+                settings.queue_init_rpcs(&mut q, &mut mem, &ws).unwrap();
+                falcon::ring_doorbell(&mut b).unwrap();
+            }
+            // Booter starts GSP-RM: early boot reads the command queue now.
+            let mut peer =
+                SimGsp::start_early_boot(&mut mem, l.cmd_queue_offset, l.stat_queue_offset);
+            // I8.
+            if !settings.init_rpcs_ready_for_i8(&q).unwrap() {
+                settings.queue_init_rpcs(&mut q, &mut mem, &ws).unwrap();
+            }
+            falcon::ring_doorbell(&mut b).unwrap();
+            q.link_rx(&mem).unwrap();
+            let result = peer.init_done_result();
+            let early = peer.early_boot.clone();
+            let mut step = 0;
+            let r = wait_init_done(&mut q, &mut mem, &mut b, &mut c, CTX, INIT_DONE_US, |m| {
+                step += 1;
+                match step {
+                    1 => peer.service(m),
+                    2 => peer.post(m, event::GSP_INIT_DONE, result, &[]),
+                    _ => {}
+                }
+            });
+            (early, r.map(|_| ()))
+        };
+        // os-283: nothing in the queue at early boot → 0x59, as on the board.
+        let (early, r) = run(OS_283);
+        assert!(early.is_empty());
+        assert!(matches!(
+            r,
+            Err(GpuError::HardwareFault {
+                code: NV_ERR_OPERATING_SYSTEM
+            })
+        ));
+        // Variant 1: both RPCs there at early boot → INIT_DONE 0.
+        let (early, r) = run(variants::get(1).unwrap().settings);
+        assert_eq!(
+            early,
+            [function::GSP_SET_SYSTEM_INFO, function::SET_REGISTRY]
+        );
+        r.unwrap();
+        // Every variant 1..=8 passes the model; 9 and 10 (old order) do not.
+        for v in variants::list() {
+            let (_, r) = run(v.settings);
+            assert_eq!(r.is_ok(), v.nr <= 8, "varianta {}", v.nr);
+        }
+    }
+
     /// C-102 (T113): the board of 11 Nov 2026 said only "eroare hardware
     /// 0x59". If GSP-RM's `GSP_INIT_DONE` carries `rpc_result` 0x59
     /// (NV_ERR_OPERATING_SYSTEM), the journal now names it and the

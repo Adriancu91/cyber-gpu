@@ -113,6 +113,16 @@ pub const B_DMEM_STACK_OFF: usize = 48;
 /// `NV_ERR_OPERATING_SYSTEM` (0x59) on the board; checked only at the next
 /// `gpu lant`. Nothing else in the structure changes.
 pub fn encode_gsp_args(q: &QueueLayout, shared_mem_pa: u64) -> GpuResult<[u8; GSP_ARGS_SIZE]> {
+    encode_gsp_args_with(q, shared_mem_pa, true)
+}
+
+/// [`encode_gsp_args`] with `bDmemStack` chosen (C-108 variants; `false` =
+/// what we sent up to `os-280`, 0 = "LibOS task stack").
+pub fn encode_gsp_args_with(
+    q: &QueueLayout,
+    shared_mem_pa: u64,
+    dmem_stack: bool,
+) -> GpuResult<[u8; GSP_ARGS_SIZE]> {
     if shared_mem_pa == 0 || !shared_mem_pa.is_multiple_of(4096) {
         return Err(GpuError::InvalidArgument(
             "GSP args: adresa memoriei partajate nula sau nealiniata",
@@ -126,7 +136,7 @@ pub fn encode_gsp_args(q: &QueueLayout, shared_mem_pa: u64) -> GpuResult<[u8; GS
     put_u64(&mut b, 24, q.stat_queue_offset as u64);
     // GSP_SR_INIT_ARGUMENTS at 32 (oldLevel, flags, bInPMTransition): 0
     // gpuInstance at 44: 0; profilerArgs at 56/64: 0.
-    b[B_DMEM_STACK_OFF] = 1;
+    b[B_DMEM_STACK_OFF] = dmem_stack as u8;
     Ok(b)
 }
 

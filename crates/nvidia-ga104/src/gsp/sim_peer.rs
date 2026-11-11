@@ -16,7 +16,17 @@ pub struct SimGsp {
     read: u32,
     seq: u32,
     pub served: Vec<(u32, u32)>,
+    /// SIMULARE of GSP-RM's early boot (os-283 analysis): the RPC functions
+    /// found in the command queue **when GSP-RM started** — these are the only
+    /// ones it runs "before OBJGPU is created" (RM `kgspQueueAsyncInitRpcs`);
+    /// anything sent later is a normal RPC, too late for the init.
+    pub early_boot: Vec<u32>,
 }
+
+/// `NV_ERR_OPERATING_SYSTEM` (`nvstatuscodes.h`): what the board answered in
+/// `GSP_INIT_DONE` at os-278..os-283, when the init RPCs reached the queue only
+/// after GSP-RM had started.
+pub const NV_ERR_OPERATING_SYSTEM: u32 = 0x59;
 
 fn rd(mem: &dyn SharedMem, o: usize) -> u32 {
     mem.read_u32(o)
@@ -46,6 +56,39 @@ impl SimGsp {
             read: 0,
             seq: 0,
             served: Vec::new(),
+            early_boot: Vec::new(),
+        }
+    }
+
+    /// SIMULARE of the moment Booter starts GSP-RM (I7): the status-queue
+    /// header is written and **whatever is already in the command queue is
+    /// consumed now, without replies** (the "async init RPCs" the four public
+    /// drivers queue before boot; GSP-RM does not answer them). What arrives
+    /// later is served normally by [`Self::service`] but counts as late.
+    /// This models the race RM's own comment describes
+    /// (`kernel_gsp_gh100.c`: "GSP-RM may skip these RPCs if not sent in
+    /// time"); it proves nothing about the real GSP-RM.
+    pub fn start_early_boot(mem: &mut dyn SharedMem, cmd: usize, stat: usize) -> Self {
+        let mut g = Self::start(mem, cmd, stat);
+        let mut found = Vec::new();
+        g.service_with(mem, |f, _| {
+            found.push(f);
+            Some((u32::MAX, Vec::new()))
+        });
+        g.early_boot = found;
+        g
+    }
+
+    /// SIMULARE: the `rpc_result` GSP-RM would put in `GSP_INIT_DONE`: 0 when
+    /// both `GSP_SET_SYSTEM_INFO` (72) and `SET_REGISTRY` (73) were in the
+    /// queue at early boot, else [`NV_ERR_OPERATING_SYSTEM`] (the board's
+    /// answer at os-278..os-283). DEDUS from the RM sources, not proven on the
+    /// board.
+    pub fn init_done_result(&self) -> u32 {
+        if self.early_boot.contains(&72) && self.early_boot.contains(&73) {
+            0
+        } else {
+            NV_ERR_OPERATING_SYSTEM
         }
     }
 
@@ -116,6 +159,7 @@ impl SimGsp {
             // GSP's read pointer of the command queue: status queue rx header.
             mem.write_u32(self.stat + 32, self.read);
             match answer(function, &payload) {
+                Some((u32::MAX, _)) => {}
                 Some((result, reply)) => self.post(mem, function, result, &reply),
                 None => self.post(mem, function, 0, &seq.to_le_bytes()),
             }

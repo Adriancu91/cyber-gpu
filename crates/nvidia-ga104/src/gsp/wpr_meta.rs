@@ -89,6 +89,23 @@ fn dma_ok(addr: u64, size: u64) -> bool {
 /// unaligned or out-of-window DMA addresses, a layout whose WPR end does not
 /// match the VGA rule) instead of producing a structure GSP would reject.
 pub fn encode(fb: &FbLayout, s: &SysmemInputs) -> GpuResult<[u8; SIZE]> {
+    encode_with_flags(fb, s, 0)
+}
+
+/// `GspFwWprMeta.flags` bit 0 (`GSP_FW_FLAGS_CLOCK_BOOST`, `gsp_fw_wpr_meta.h`):
+/// RM sets it on TU10x–AD10x unless the registry turns it off
+/// (`kernel_gsp_tu102.c`: `bBootGspRmWithBoostClocks`); nouveau, tinygrad and
+/// nova leave `flags = 0`. A C-108 variant; we sent 0 up to `os-283`.
+pub const FLAG_CLOCK_BOOST: u8 = 1;
+
+/// [`encode`] with `flags` (only [`FLAG_CLOCK_BOOST`] is known to us; any
+/// other bit is refused).
+pub fn encode_with_flags(fb: &FbLayout, s: &SysmemInputs, flags: u8) -> GpuResult<[u8; SIZE]> {
+    if flags & !FLAG_CLOCK_BOOST != 0 {
+        return Err(GpuError::InvalidArgument(
+            "WPR meta: bit de flags necunoscut (doar CLOCK_BOOST e permis)",
+        ));
+    }
     if s.radix3_elf_size == 0 || s.bootloader_size == 0 || s.signature_size == 0 {
         return Err(GpuError::InvalidArgument(
             "WPR meta: marimi zero (ELF, bootloader sau semnatura)",
@@ -143,7 +160,8 @@ pub fn encode(fb: &FbLayout, s: &SysmemInputs) -> GpuResult<[u8; SIZE]> {
     for (o, v) in fields {
         put_u64(&mut b, o, v);
     }
-    // Union, VF partition count, flags, padding, pmuReservedSize, verified: 0.
+    // Union, VF partition count, padding, pmuReservedSize, verified: 0.
+    b[off::FLAGS] = flags;
     Ok(b)
 }
 

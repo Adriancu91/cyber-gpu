@@ -15,6 +15,9 @@
 //! - [`msgq`]: the shared memory with the command/status queues (I5, I8);
 //! - [`registry`]: the `SET_REGISTRY` table (`PACKED_REGISTRY_TABLE`);
 //! - [`sysinfo`]: the `GSP_SET_SYSTEM_INFO` payload (`GspSystemInfo`, I8c');
+//! - [`variants`]: C-108 — the numbered variants of what GSP-RM gets at its
+//!   first boot (order of the init RPCs, the few fields the public drivers
+//!   fill differently), one per cold boot on the workstation;
 //! - [`nocat`]: the diagnostic records (`GSP_POST_NOCAT_RECORD`) and the
 //!   forwarded microcode logs (`UCODE_LIBOS_PRINT`) GSP-RM sent on the board
 //!   before refusing to initialise (os-279), decoded for the journal;
@@ -64,6 +67,7 @@ pub mod sequencer;
 pub(crate) mod sim_peer;
 pub mod sysinfo;
 pub mod user_space;
+pub mod variants;
 pub mod work_queue;
 pub mod wpr_meta;
 

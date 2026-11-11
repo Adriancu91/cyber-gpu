@@ -63,6 +63,26 @@ pub fn boot_entries() -> [Entry; 2] {
     ]
 }
 
+/// `RMDevidCheckIgnore = 1`: nouveau r570 and nova-core add it to the two
+/// above ("allows GSP-RM to boot even if the PCI dev ID is not found" —
+/// nova's own comment); RM and tinygrad do not. A C-108 variant.
+pub fn devid_check_ignore() -> Entry {
+    Entry {
+        name: "RMDevidCheckIgnore",
+        value: Value::Dword(1),
+    }
+}
+
+/// The boot table of a variant: the two entries, plus `RMDevidCheckIgnore`
+/// when asked (nouveau/nova order: the two first, then the third).
+pub fn boot_entries_with(devid_ignore: bool) -> Vec<Entry> {
+    let mut v = boot_entries().to_vec();
+    if devid_ignore {
+        v.push(devid_check_ignore());
+    }
+    v
+}
+
 /// Builds the table. Names must be ASCII without NUL.
 pub fn encode(entries: &[Entry]) -> GpuResult<Vec<u8>> {
     if entries.is_empty() || entries.len() > MAX_ENTRIES {

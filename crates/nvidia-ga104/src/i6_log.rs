@@ -46,6 +46,8 @@ const MOD_SEL: u64 = 0x1180;
 const BOOTVEC: u64 = 0x104;
 const MAILBOX0: u64 = 0x40;
 const MAILBOX1: u64 = 0x44;
+/// `NV_PGSP_QUEUE_HEAD(0)` − GSP window base (`dev_gsp.h`): the RPC doorbell.
+const QUEUE_HEAD: u64 = 0xc00;
 const CPUCTL: u64 = 0x100;
 const CPUCTL_ALIAS: u64 = 0x130;
 /// `NV_PFALCON_FALCON_DMATRFCMD_IMEM` (bit 4): the block goes to IMEM.
@@ -267,8 +269,16 @@ pub fn check_i7_libos(
             .count()
     };
     let n_pre = before(&events[..first]);
-    let pre = &writes[..n_pre.min(writes.len())];
+    let mut pre = &writes[..n_pre.min(writes.len())];
     let g = GSP_LO;
+    // C-108 variant 1 (os-283 analysis): the init RPCs' doorbell
+    // (`NV_PGSP_QUEUE_HEAD(0) = 0`) may come first, before the GSP reset, as
+    // in RM / nouveau / tinygrad / nova. Optional: the os-283 order has none.
+    let doorbell_first = matches!(pre.first(), Some(&(o, 0, _)) if o == g + QUEUE_HEAD);
+    if doorbell_first {
+        pre = &pre[1..];
+    }
+    let skip = usize::from(doorbell_first);
     // The os-246 form: mailboxes first, no GSP reset.
     if let Some(&(o, wr, af)) = pre.first()
         && o == g + MAILBOX0
@@ -293,36 +303,40 @@ pub fn check_i7_libos(
     for (k, &(off, what)) in exp.iter().enumerate() {
         match pre.get(k) {
             Some(&(o, _, _)) if o == g + off => {}
-            Some(&(o, _, _)) => return Err(err(k, o, what)),
-            None => return Err(err(k, g + off, what)),
+            Some(&(o, _, _)) => return Err(err(k + skip, o, what)),
+            None => return Err(err(k + skip, g + off, what)),
         }
     }
     if pre.len() > exp.len() {
         return Err(err(
-            exp.len(),
+            exp.len() + skip,
             pre[exp.len()].0,
             "scriere in plus inainte de Booter",
         ));
     }
     if pre[0].1 != 1 || pre[1].1 != 0 {
-        return Err(err(1, g + ENGINE, "resetarea GSP nu e 1 apoi 0"));
+        return Err(err(1 + skip, g + ENGINE, "resetarea GSP nu e 1 apoi 0"));
     }
     if pre[2].2 & (1 << 4) == 0 {
         return Err(err(
-            2,
+            2 + skip,
             g + BCR_CTRL,
             "GSP nu a trecut pe RISC-V (CORE_SELECT citit 0)",
         ));
     }
     for k in [3, 4] {
         if pre[k].1 != pre[k].2 {
-            return Err(err(k, pre[k].0, "cutia GSP nu a pastrat adresa LibOS"));
+            return Err(err(
+                k + skip,
+                pre[k].0,
+                "cutia GSP nu a pastrat adresa LibOS",
+            ));
         }
     }
     let libos = u64::from(pre[3].1) | u64::from(pre[4].1) << 32;
     if libos == 0 || libos_addr.is_some_and(|a| a != libos) {
         return Err(err(
-            3,
+            3 + skip,
             g + MAILBOX0,
             "cutiile GSP nu au adresa LibOS asteptata",
         ));
