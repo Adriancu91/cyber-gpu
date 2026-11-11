@@ -1,5 +1,42 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 87 — 11 noiembrie 2026, ~14:25–15:00 (ora României), în cloud, FĂRĂ placă — jurnalul os-280 citit; comparația „trei surse” (C-107); `bDmemStack = 1` = candidatul pentru 0x59
+
+Pornită de programare. În hub: jurnalul testului **os-280** (`rezultate/os-automat/2026-11-11/gpu-jurnal-008.txt`, 2438 rânduri, trimis singur de OS cu `trimite`;
+`rezultate/2026-11-11-workstation-os280/REZULTAT.md`), decizia nouă **„trei surse”** (DECIZII 14:41) și comanda **C-107** (14:39: compară și cu tinygrad, nouveau, nova) —
+exact lucrul făcut aici. Release-ul `os-281` (14:39) are codul vechi (`bcc314e`). **Nimic testat pe RTX 3070 Ti.**
+
+**Ce spune jurnalul (OBSERVAT, `verifica_jurnal_lant … 0x9c66000`):** I6, I7, cele 420 de comenzi ale secvențiatorului trec; `GSP_INIT_DONE` cu `rpc_result 0x59`
+(`NV_ERR_OPERATING_SYSTEM`), ca la os-279. **844 de înregistrări NOCAT, toate ASSERT, toate ÎNAINTE de cererea secvențiatorului, toate cu adrese diferite**
+(16 jurnalizate: `0x019ef3c6 … 0x019f0060`, crescătoare, 38–100 de octeți una de alta), `linia 0`, stiva goală, `count 1`; 2 jurnale PMU (16 și 24 B) chiar înainte de
+`GSP_INIT_DONE`. **Ce înseamnă (SPECIFICAȚIE `nvassert.c`, `journal.c`):** pe GSP asserturile se raportează fără linie (`NV_RM_ASSERT_UNKNOWN_LINE_NUM` = 0) și cu adresa
+de întoarcere → adrese diferite crescătoare = locuri de apel diferite dintr-o porțiune lungă de cod, nu o buclă; codul `NV_STATUS` al unui `NV_ASSERT_OK` nu intră în NOCAT.
+**nouveau r570 ignoră implicit înregistrările NOCAT** (`r570_gsp_drop_post_nocat_record`) → ele apar și pe porniri bune → DEDUS: probabil zgomot, nu cauza.
+
+**Comparația câmp cu câmp (`docs/os-280_ANALIZA_0x59.md` §3)** — ce trimitem noi față de RM 570.144, nouveau r570, tinygrad și nova-core (toate pornesc GSP-RM 570):
+`GspSystemInfo`, registrul, regiunile LibOS, `GspFwWprMeta` (așezare, heap 127 MiB = formula RM/nouveau/nova), `GSP_ARGUMENTS_CACHED` — **o singură diferență față de
+toate patru: `bDmemStack`** (ele 1 = stiva sarcinii RM în DMEM; noi 0 = „stiva LibOS”, varianta pe care RM o alege doar la cerere prin `RmGspStackPlacement=1`).
+`NV_ERR_OPERATING_SYSTEM` e codul generic al stratului LibOS. Diferențe care **nu** contează (alte drivere merg la fel ca noi): ACPI zero (tinygrad, nova), `flags` 0
+(nouveau, tinygrad, nova), 2 chei de registru (RM, tinygrad), `bIsPassthru 0` (nova).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `gsp::libos::encode_gsp_args` | `bDmemStack = 1` (octetul 48, `B_DMEM_STACK_OFF`, verificat cu bindgen în `tests/rm570_crosscheck.rs`); restul structurii neschimbat | PASS (SIMULARE) |
+| `docs/os-280_ANALIZA_0x59.md` | faptele din jurnal, forma asserturilor, tabelul celor patru surse, decizia, lista pentru os-282 | scris |
+| `integration/cyber-universe/os-280_bdmemstack.md` | nota pentru OS: nimic de schimbat în OS, doar legarea + Release `os-282` | scris |
+| `docs/PROVENANCE.md`, `docs/RISKS.md`, `docs/COMPATIBILITATE_FIRMWARE.md` | sursele citite (RM, nouveau, tinygrad, nova — nimic copiat), riscul „0x59 rămâne”, rândul I5e | scris |
+| Compatibilitate OS | aceeași semnătură `encode_gsp_args`; OS-ul (`gpu_i7.rs`) o folosește deja → efectul vine la legarea commit-ului nou | PASS |
+| Pe RTX 3070 Ti | — | NOT TESTED |
+
+Verificări (`sh tools/check.sh`, Rust 1.97.0): format, clippy `-D warnings`, **440 teste PASS** (4 ignorate), build no_std PASS. Commit `b3ac503` (+ documentele de după).
+**DEDUS, neprobat:** că `bDmemStack = 0` e cauza lui 0x59 — se vede la `gpu lant` cu os-282 (`rpc_result = 0` → I8e începe; altfel același 0x59, și atunci conținutul mesajelor
+noastre nu mai diferă de nova/nouveau → se caută ordinea/momentul și starea plăcii; rezerve, câte una pe rulare: `bIsPassthru = 1`, `CLOCK_BOOST`, `RMDevidCheckIgnore`).
+
+**Următorul pas:** (1) OS-ul leagă `b3ac503` (sau mai nou) → Release `os-282` → `gpu lant` (pornire rece; cu Adrian de față sau prin bucla C-104/C-105 când o aprobă).
+(2) Dacă `rpc_result = 0`: lanțul merge în I8e (golden) — primul apel RM pe placă; se citește jurnalul. (3) Dacă `0x59` rămâne: vezi mai sus. Fără jurnal nou, niciun pas nou pe driver.
+Regula 8: sesiunile 85, 86, 87 au avut pași — nu se aplică.
+
+---
 ## Sesiunea 86 — 11 noiembrie 2026, ~13:26–13:45 (ora României), în cloud, FĂRĂ placă — pregătirea analizei jurnalului os-280 (rezumatul NOCAT)
 
 Pornită de programare, la 13:26, imediat după sesiunea 85. **Nimic nou în hub pentru cyber-gpu:** nicio comandă nouă (C-103 `gata` partea GPU; C-104 e pentru OS),

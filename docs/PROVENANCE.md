@@ -220,7 +220,8 @@ LOG*/RMARGS; `_kgspCalculateFwHeapSize`), `interface/nvrm_registry.h` (`NV_REG_S
 `arch/nvalloc/unix/src/osinit.c` (cheile de registru). Linux nouveau (MIT, `nvkm/subdev/gsp/rm/r570/gsp.c`: `r570_gsp_set_rmargs` → `bDmemStack = 1`,
 `r570_gsp_set_system_info`, `r570_gsp_drop_post_nocat_record`; `rm/r570/rm.c`: parametrii heap-ului pe GA102; `tu102.c`: `tu102_gsp_wpr_meta_init`,
 `tu102_gsp_oneinit`; `rm/r535/gsp.c`: cheile de registru; `ga102.c`: 570.144 = varianta 1) și tinygrad `runtime/support/nv/ip.py` (MIT: `GSP_ARGUMENTS_CACHED(bDmemStack=True)`,
-regiunile LibOS, `init_wpr_meta`, `rpc_set_gsp_system_info` cu `bIsPassthru=1` și fără ACPI) — **citite pentru comparație**, nimic copiat; tabelul comparativ e în
+regiunile LibOS, `init_wpr_meta`, `rpc_set_gsp_system_info` cu `bIsPassthru=1` și fără ACPI) și Linux nova-core (GPL, doar citit: `gsp/fw.rs` `GSP_ARGUMENTS_CACHED { bDmemStack: 1 }`,
+`gsp/fw/commands.rs` `GspSetSystemInfo` fără ACPI, `bIsPrimary 0`; `gsp/commands.rs` cheile de registru; `gsp.rs` cele 4 regiuni LibOS; `fb.rs`) — **citite pentru comparație**, nimic copiat; tabelul comparativ e în
 `docs/os-280_ANALIZA_0x59.md` §3. Faptele din `gpu-jurnal-008.txt` (844 ASSERT, toate înainte de secvențiator, adrese diferite crescătoare, linia 0, stiva goală,
-`rpc_result 0x59`) sunt OBSERVATE; că `bDmemStack = 0` e cauza lui 0x59 e **DEDUS** (singura diferență față de toate cele trei drivere), de probat la os-281.
+`rpc_result 0x59`) sunt OBSERVATE; că `bDmemStack = 0` e cauza lui 0x59 e **DEDUS** (singura diferență față de toate cele patru drivere), de probat la os-282.
 Schimbarea de cod: un octet în `gsp::libos::encode_gsp_args` (`B_DMEM_STACK_OFF` = 48, verificat cu bindgen în `tests/rm570_crosscheck.rs`).
