@@ -19,6 +19,19 @@
 | Driverul nostru (`49e6685`, în os-295) | „dispozitiv nesuportat 10de:2520”, registre necitite, **zero scrieri** | protecția a mers; de la `6623d3c` identificarea GA106 există, dar doar prin funcțiile `_ampere` |
 | Altele | Intel UHD `8086:9a60` (ecranul e pe ea: hibrid), VMD `8086:9a0b` (discul NVMe ascuns), Wi-Fi `8086:43f0` (fără driver), i7-11800H, 64 GB | ecranul **nu** e pe placa NVIDIA → GSP-RM n-are ce afișaj să preia (ipoteza din os-295 §3) |
 
+### 0b. Ce a raportat Windows (OBSERVAT de unealta UHL a lui Adrian, 12 nov 22:14 și 23:03; NVML/CUDA, doar citire, fără serii) — `gpu_sim::laptop`
+
+| Ce | Valoare | Ce înseamnă pentru noi |
+|---|---|---|
+| Model laptop | ASUS TUF Gaming F15 **FX506HM**, BIOS FX506HM.318 (iun. 2025), Secure Boot oprit; FX506H* = 2021 → **fără MUX** | ecranul rămâne pe Intel; placa NVIDIA e doar de calcul — exact ce ne trebuie |
+| Placa | `10de:2520` **rev A1, subsistem 1043:16F2**, PCIe Gen4 **x8 activ** (x16 max), payload 256 B, **D3cold suportat**, ACPI `\_SB.PC00.PEG1.PEGP` | subsistemul și revizia intră în modelul `ga106_laptop_asus`; D3cold = laptopul poate tăia curentul plăcii (§3) — se vede în `pci.stare` |
+| **VBIOS** | **`94.06.1E.00.23`** (imaginea nu e citibilă din Windows; UHL n-o citește — corect) | de la `835f24d` turul scrie **`vbios.versiune`** din jetonul BIT 'i' (§5): pe laptop trebuie să dea exact acest șir; pe workstation `94.04.65.00.3e` |
+| Cip | GA106M, sm_86, **30 SM** (GA104: 48), L2 3 MiB, **6 GiB / 192 biți**, max 2100 MHz | aceleași programe SASS; `launch_cost`/`kronos_gen` au mai puține SM-uri la dispoziție; limita noastră pe laptop sub ~5,5 GB (pasul 4) |
+| BAR1 | 8 GiB @ **`0x6000000000`** (Resizable BAR) | baza era SIM în sesiunea 95; acum e din raport |
+| Putere | limită implicită 80 W, aplicată 95 W, repaus 20–26 W, 58–62 °C, P0 | doar informativ |
+
+Ce rămâne SIM în model: baza BAR3, poziția capabilităților, I/O-ul, **conținutul ROM-ului** (nu copiem VBIOS-ul; versiunea din jetonul 'i' e doar șirul raportat de Windows).
+
 ## 6. „Trezirea minimă” (C-116 pasul 2) — ce face și ce NU face
 
 - **Ce:** o singură scriere în registrul **Command** al funcției PCI (configurație, nu registre GPU): bitul 1 „Memory Space” pornit; Bus Master și I/O rămân cum erau (oprite).
@@ -120,6 +133,13 @@ plus trezirea minimă (`ccec8f9`): `gpu_pci::mem_space`, `read_tour::{run_tour_a
 starea GFW, imaginile VBIOS (tipuri, mărimi, ID-uri), jetoanele BIT, descriptorul FWSEC și semnăturile, siguranța, mărimea VRAM, WPR2.
 În plus ar ajuta (partea OS): modelul laptopului din SMBIOS (`hw lista`), prezența plăcii Intel, și dacă există placa NVIDIA pe magistrală
 (dacă lipsește → modul „Eco”).
+
+**Versiunea VBIOS (de la `835f24d`, sesiunea 96):** turul scrie faptul **`vbios.versiune`** citit din jetonul BIT 'i' (0x69) — 5 octeți la offset-ul jetonului,
+afișați `major.cip.minor.micro.patch` (primii 4 ca un întreg little-endian, al 5-lea „patch”), cum face nouveau `nvkm/subdev/bios/base.c` când tipărește
+`version %02x.%02x.%02x.%02x.%02x` (citit ca specificație; din memorie — sursa n-a putut fi recitită din cloud, de confirmat). E același șir pe care îl arată Windows / NVML,
+deci **prima comparație automată Windows ↔ Cyber Universe pe aceeași placă** (ideea din C-117): pe laptop trebuie să apară **`94.06.1e.00.23`**, pe workstation
+**`94.04.65.00.3e`**. Jetonul 'i' există pe placa de pe workstation (`0x69v2` în lista observată, 29 oct); dacă lipsește sau e scurt, faptul spune „necitita …”, nu inventează.
+`vbios::BiosVersion::matches_report("94.06.1E.00.23")` face comparația (majuscule/minuscule indiferent).
 
 ## Surse
 

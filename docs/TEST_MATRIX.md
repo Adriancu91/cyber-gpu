@@ -1,5 +1,18 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 96 (13 nov 2026, ~01:30, cloud, fără placă) — versiunea VBIOS din jetonul BIT 'i' + faptele UHL ale laptopului în model (C-116 / C-117), toate SIMULARE
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| **DIN WINDOWS** (citit din hub, `rezultate/2026-11-11-laptop-asus-tuf/REZULTAT.md`, 12 nov 22:14 + 23:03) | inventarul + raportul UHL ale lui Adrian pe ASUS TUF (doar citire, fără serii) | — | — | RTX 3060 Laptop `10de:2520` **rev A1, subsistem 1043:16F2**, **VBIOS 94.06.1E.00.23**, GA106M sm_86, **30 SM**, L2 3 MiB, 6 GiB/192 biți, BAR1 8 GiB @0x6000000000, PCIe Gen4 x8 activ (x16 max), D3cold suportat, ACPI `\_SB.PC00.PEG1.PEGP` | OBSERVAT (raport Windows, nu de driverul nostru) |
+| T127a | `vbios::read_layout`: fără jetonul 'i' (0x69) → `version = None`; cu jetonul 'i' de **4** octeți → `None` (fără octetul „patch” nu ghicim); 0 scrieri | `cargo test -p nvidia-ga104 --release version_is_none_when_token_i` | conform | conform | PASS (SIMULARE) |
+| T127b | cu jetonul 'i' de 5 octeți (octeți de test în forma versiunii raportate de Windows pentru workstation, `00 65 04 94 3e`): `BiosVersion {94, 04, 65, 00, 3e}`, afișat `94.04.65.00.3e`; `matches_report` acceptă `" 94.04.65.00.3E "`, refuză `94.04.65.00.3f`, `94.4.65.0.3e` și `""`; versiunea laptopului (`94.06.1E.00.23`) ≠ a workstation-ului | `cargo test -p nvidia-ga104 --release version_is_read_from_token_i` | conform | conform | PASS (SIMULARE) |
+| T127c | turul C-54 pe modelul observat al workstation-ului (jetonul 'i' SIM cu versiunea din Windows) dă faptul nou **`vbios.versiune = 94.04.65.00.3e`**; toate celelalte fapte neschimbate; 0 scrieri | `cargo test -p nvidia-ga104 --release tour_on_observed_model` | conform | conform | PASS (SIMULARE) |
+| T127d | `run_tour_awake` pe **modelul laptopului din faptele UHL** (`SimConfig::ga106_laptop_asus` + `ga106_bar0` + ROM-ul observat cu versiunea laptopului): `pci.subsistem = 1043:16f2`, `pci.bar1 = 0x6000000000 mem 64b prefetch`, `pci.rebar.bar1 = 8192 MiB`, `pci.legatura = gen4 x8 (max gen4 x16)`, `chip.familie = GA106`, **`vbios.versiune = 94.06.1e.00.23`**; 2 scrieri în configurație (pornit + repus), 0 în registre GPU, Command rămâne 0 | `cargo test -p nvidia-ga104 --release awake_tour_on_laptop_facts` | conform | conform | PASS (SIMULARE) |
+| T127e | tot pachetul | `sh tools/check.sh` | 475 PASS | **475 PASS** (472 → +3), 4 ignorate; format, clippy `-D warnings`, build no_std | PASS |
+| pe laptopul ASUS | `gpu tur --trezire` (os-298+, după DA) → în jurnal `vbios.versiune` | — | **`94.06.1e.00.23`** (= raportul Windows); altceva = citirea noastră a ROM-ului e greșită sau PROM-ul arată altă imagine | — | NOT TESTED (OS-ul trebuie să lege `835f24d`+ ca să apară rândul) |
+| pe workstation | `gpu lant` / `gpu tur` → `vbios.versiune` | — | **`94.04.65.00.3e`** (K0, `HARDWARE_WORKSTATION.md`) | — | NOT TESTED |
+
 ## Rezultate — sesiunea 95 (12 nov 2026, noaptea, cloud, fără placă) — C-116: laptopul ASUS TUF F15 (GA106) — recunoaștere doar-citire + „trezirea minimă” (Memory Space), toate SIMULARE
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |

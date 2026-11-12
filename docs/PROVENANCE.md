@@ -254,3 +254,13 @@ BAR3 32 MiB, D0) sunt OBSERVATE de OS pe 12 nov (hub `rezultate/2026-11-11-lapto
 `SimConfig::ga106_laptop_asus` sunt SIM. `gpu_pci::mem_space` (bitul Memory Space din Command): PCI Local Bus Specification 3.0 §6.2.2; Linux `pci_enable_device` /
 `pci_enable_resources` (GPL, **citit ca specificație**: pune exact acest bit după ce verifică alocarea BAR-urilor) — nouveau, nova-core și tinygrad se bazează
 pe el înainte de orice acces la BAR0. Cod original, după modelul `bus_master.rs` (D-013). Nimic rulat pe laptop.
+
+**Sesiunea 96 (13 nov, ~01:30), C-116/C-117 — versiunea VBIOS din jetonul BIT 'i' + faptele UHL ale laptopului:** `vbios::{BiosVersion, BIT_TOKEN_BIOS_INFO,
+read_bios_version}` (doar adăugări; câmp nou `VbiosLayout.version`). Formatul jetonului 'i' (0x69): 5 octeți la offset-ul jetonului, primii 4 un întreg little-endian
+(octetul 3 = major, 2 = cip, 1 = minor, 0 = micro), al 5-lea = patch, tipărit `%02x.%02x.%02x.%02x.%02x` — după nouveau `nvkm/subdev/bios/base.c` (`nvkm_bios_new`, MIT),
+**citit ca specificație, din memorie**: sursa n-a putut fi recitită din cloud în această sesiune (acces refuzat la fișier) → marcat „de confirmat” în `GA106_LAPTOP.md` §5;
+confirmarea reală vine din primul jurnal cu `vbios.versiune` (trebuie să coincidă cu șirul raportat de Windows: `94.04.65.00.3e` pe workstation, `94.06.1E.00.23` pe laptop).
+Că jetonul 'i' există pe placa noastră e OBSERVAT (`0x69v2` în `vbios.bit.jetoane`, 29 oct); lungimea și datele lui sunt SIM în `observed_rom` (5 octeți cu versiunea din
+Windows, nu copiați dintr-un ROM). `gpu_sim::laptop`: toate constantele sunt din raportul UHL al lui Adrian (Windows, NVML/CUDA, doar citire; hub
+`rezultate/2026-11-11-laptop-asus-tuf/REZULTAT.md`, 12 nov 22:14 și 23:03) și din `gpu identifica` (OS, os-295); nimic citit de driverul nostru de pe laptop.
+UHL e unealta lui Adrian (repo privat `Adriancu91/uhl`; nu l-am citit; aici sunt doar cifrele publicate în hub, fără serii).
