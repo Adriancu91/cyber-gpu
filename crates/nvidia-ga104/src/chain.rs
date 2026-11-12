@@ -265,6 +265,13 @@ fn plan_status(plan_step: &str) -> Option<StepStatus> {
         .map(|s| s.status)
 }
 
+/// os-295: the label of the journal row(s) carrying why a step failed
+/// (`text motivul esecului = "…"`), written right after `pas X: ESEC`; a
+/// reason longer than [`gpu_core::diag::TEXT_LEN`] continues in rows
+/// labelled [`STEP_FAIL_REASON_MORE`].
+pub const STEP_FAIL_REASON: &str = "motivul esecului";
+pub const STEP_FAIL_REASON_MORE: &str = "motivul esecului (urmare)";
+
 /// Runs `steps` in order with the rules of the module doc. `run` does one
 /// step (the OS's implementation); it gets the journal to record accesses.
 pub fn run_chain(
@@ -325,6 +332,7 @@ pub fn run_chain_ready(
                     name: s.id,
                     ok: false,
                 });
+                journal.push_text(STEP_FAIL_REASON, STEP_FAIL_REASON_MORE, &why);
                 out.push((s.id, Outcome::Skipped("oprire inainte de pas")));
                 stopped = Some((s.id, why));
                 continue;
@@ -350,6 +358,10 @@ pub fn run_chain_ready(
         match r {
             Ok(()) => out.push((s.id, Outcome::Passed)),
             Err(e) => {
+                // os-295 (12 Nov 2026): the reason went only to the screen
+                // (`ChainReport`), and the screen was gone — so it goes to
+                // the journal too, right after the failed step.
+                journal.push_text(STEP_FAIL_REASON, STEP_FAIL_REASON_MORE, &e);
                 if stopped.is_none() {
                     stopped = Some((s.id, e.clone()));
                 }
@@ -450,6 +462,71 @@ mod tests {
                 name: "i6-fwsec-frts",
                 ok: false
             }));
+    }
+
+    /// os-295 (12 Nov 2026): on the board I9 failed and the stick said only
+    /// `pas i9-canal-lucru: ESEC` — the reason was on the frozen screen. Now
+    /// the reason follows the step row, in pieces when long, and so does the
+    /// reason a step was not run (a gate).
+    #[test]
+    fn a_failed_step_leaves_its_reason_in_the_journal() {
+        let (_, _, j) = window(true, Err(GpuError::HardwareFault { code: 0x57 }));
+        let rows: Vec<String> = j.events().map(|e| e.to_string()).collect();
+        let at = rows
+            .iter()
+            .position(|r| r == "pas i6-fwsec-frts: ESEC")
+            .unwrap();
+        assert_eq!(
+            rows[at + 1],
+            "text motivul esecului = \"eroare hardware 0x57\""
+        );
+        // The row after the reason is the next step's business, not a continuation.
+        assert!(
+            !rows[at + 2].starts_with("text motivul esecului"),
+            "{}",
+            rows[at + 2]
+        );
+
+        // A long reason: two pieces, the second labelled "(urmare)".
+        let (_, _, j) = window(
+            true,
+            Err(GpuError::InvalidArgument(
+                "RM_CONTROL: raspunsul e pentru alta comanda",
+            )),
+        );
+        let rows: Vec<String> = j.events().map(|e| e.to_string()).collect();
+        let at = rows
+            .iter()
+            .position(|r| r == "pas i6-fwsec-frts: ESEC")
+            .unwrap();
+        assert_eq!(
+            &rows[at + 1..at + 3],
+            [
+                "text motivul esecului = \"argument invalid: RM_CONTROL: ra\"",
+                "text motivul esecului (urmare) = \"spunsul e pentru alta comanda\"",
+            ]
+        );
+
+        // A step stopped by a gate (I7 blocked in the plan) says why too.
+        let (_, _, j) = window(true, Ok(()));
+        let rows: Vec<String> = j.events().map(|e| e.to_string()).collect();
+        let at = rows
+            .iter()
+            .position(|r| r == "pas i7-booter-gsp: ESEC")
+            .unwrap();
+        assert!(
+            rows[at + 1].starts_with("text motivul esecului = \"blocat in plan (I7)"),
+            "{}",
+            rows[at + 1]
+        );
+
+        // Steps that pass write no reason: one reason (I7's), however many pieces.
+        assert_eq!(
+            rows.iter()
+                .filter(|r| r.starts_with("text motivul esecului = "))
+                .count(),
+            1
+        );
     }
 
     #[test]

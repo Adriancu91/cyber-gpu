@@ -25,11 +25,14 @@
 
 use alloc::vec::Vec;
 
+use gpu_core::diag::{Event, Journal};
 use gpu_core::error::{GpuError, GpuResult};
 use gpu_core::hal::Clock;
 
 use super::msgq::{CpuQueues, SharedMem};
+use super::nocat;
 use super::rmapi::{self, ChannelSetup, PdeLevel, PromoteEntry, class, cmd};
+use super::rpc;
 use super::rpc::function;
 
 /// The internal client handle tinygrad uses (`priv_root`). DEDUS.
@@ -340,13 +343,14 @@ pub const RM_REPLY_US: u64 = 5_000_000;
 
 impl<C: Clock + ?Sized, P: FnMut(&mut dyn SharedMem)> RmTransport for QueueTransport<'_, C, P> {
     fn call(&mut self, func: u32, payload: &[u8]) -> GpuResult<Vec<u8>> {
+        let events = &mut self.events;
         queue_call(
             self.q,
             self.mem,
             self.clock,
             self.timeout_us,
             &mut self.poll,
-            &mut self.events,
+            &mut |m| events.push(m.function),
             func,
             payload,
             None,
@@ -389,19 +393,135 @@ impl<C: Clock + ?Sized, P: FnMut(&mut dyn SharedMem), B: FnMut() -> GpuResult<()
             *rung += 1;
             Ok(())
         };
+        let events = &mut self.events;
         queue_call(
             self.q,
             self.mem,
             self.clock,
             self.timeout_us,
             &mut self.poll,
-            &mut self.events,
+            &mut |m| events.push(m.function),
             func,
             payload,
             Some(&mut ring),
         )
     }
 }
+
+/// os-295 (12 Nov 2026): [`QueueTransportBell`] that keeps **whole** the
+/// GSP-RM messages it skips while waiting for a reply (`skipped`), not only
+/// their function numbers — so after a refused RM call the diagnostic that
+/// GSP-RM may have posted alongside (a NOCAT record, an RC event) can go on
+/// the stick with [`journal_skipped`]. On the board, I9 failed with nothing
+/// but `pas i9-canal-lucru: ESEC` in the journal. Same queue protocol as
+/// [`QueueTransportBell`]; `events` keeps the function numbers as before.
+pub struct QueueTransportBellKeep<
+    'a,
+    C: Clock + ?Sized,
+    P: FnMut(&mut dyn SharedMem),
+    B: FnMut() -> GpuResult<()>,
+> {
+    pub q: &'a mut CpuQueues,
+    pub mem: &'a mut dyn SharedMem,
+    pub clock: &'a mut C,
+    pub timeout_us: u64,
+    pub poll: P,
+    pub events: Vec<u32>,
+    pub bell: B,
+    pub rung: u32,
+    /// The skipped messages, whole, in order (kept up to [`SKIPPED_KEEP_MAX`]
+    /// per transport; the rest are only counted in `events`).
+    pub skipped: Vec<rpc::Message>,
+}
+
+/// Skipped messages kept whole per [`QueueTransportBellKeep`] (os-279 saw 844
+/// NOCAT records during I8; one RM call should see a handful).
+pub const SKIPPED_KEEP_MAX: usize = 64;
+
+impl<C: Clock + ?Sized, P: FnMut(&mut dyn SharedMem), B: FnMut() -> GpuResult<()>> RmTransport
+    for QueueTransportBellKeep<'_, C, P, B>
+{
+    fn call(&mut self, func: u32, payload: &[u8]) -> GpuResult<Vec<u8>> {
+        let bell = &mut self.bell;
+        let rung = &mut self.rung;
+        let mut ring = || {
+            bell()?;
+            *rung += 1;
+            Ok(())
+        };
+        let events = &mut self.events;
+        let skipped = &mut self.skipped;
+        queue_call(
+            self.q,
+            self.mem,
+            self.clock,
+            self.timeout_us,
+            &mut self.poll,
+            &mut |m| {
+                events.push(m.function);
+                if skipped.len() < SKIPPED_KEEP_MAX {
+                    skipped.push(m);
+                }
+            },
+            func,
+            payload,
+            Some(&mut ring),
+        )
+    }
+}
+
+/// os-295: journals the messages GSP-RM sent on the way to an RM reply
+/// (from [`QueueTransportBellKeep::skipped`]), named by `what` (e.g. the
+/// step: "I9"): the count, then each one — NOCAT records and LibOS prints
+/// decoded as in I8, the others by function number, name and `rpc_result`.
+/// Nothing is written when there was nothing skipped.
+pub fn journal_skipped(j: &mut Journal, what: &'static str, skipped: &[rpc::Message]) {
+    if skipped.is_empty() {
+        return;
+    }
+    j.push(Event::Value {
+        what: SKIPPED_TOTAL,
+        value: skipped.len() as u32,
+    });
+    for (i, m) in skipped.iter().enumerate() {
+        j.push(Event::text(SKIPPED_AT, what.as_bytes()));
+        match m.function {
+            rpc::event::GSP_POST_NOCAT_RECORD => match nocat::NocatRecord::decode(&m.payload) {
+                Some(r) => r.journal(j, i as u32 + 1),
+                None => j.push(Event::Value {
+                    what: "mesaj sarit: NOCAT mai scurt decat inregistrarea (octeti)",
+                    value: m.payload.len() as u32,
+                }),
+            },
+            rpc::event::UCODE_LIBOS_PRINT => match nocat::LibosPrint::decode(&m.payload) {
+                Some(l) => l.journal(j),
+                None => j.push(Event::Value {
+                    what: "mesaj sarit: UCODE_LIBOS_PRINT trunchiat (octeti)",
+                    value: m.payload.len() as u32,
+                }),
+            },
+            f => {
+                j.push(Event::Value {
+                    what: "mesaj GSP-RM sarit (functia)",
+                    value: f,
+                });
+                if let Some(n) = rpc::name(f) {
+                    j.push(Event::text("mesaj GSP-RM sarit (numele)", n.as_bytes()));
+                }
+                if m.rpc_result != 0 {
+                    j.push(Event::Value {
+                        what: "mesaj GSP-RM sarit: rpc_result",
+                        value: m.rpc_result,
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// Labels of the rows [`journal_skipped`] writes.
+pub const SKIPPED_TOTAL: &str = "mesaje GSP-RM sarite in asteptarea raspunsului RM: total";
+pub const SKIPPED_AT: &str = "mesaj GSP-RM sarit: la pasul";
 
 #[allow(clippy::too_many_arguments)]
 fn queue_call<C: Clock + ?Sized>(
@@ -410,7 +530,7 @@ fn queue_call<C: Clock + ?Sized>(
     clock: &mut C,
     timeout_us: u64,
     poll: &mut dyn FnMut(&mut dyn SharedMem),
-    events: &mut Vec<u32>,
+    skipped: &mut dyn FnMut(rpc::Message),
     func: u32,
     payload: &[u8],
     bell: Option<&mut dyn FnMut() -> GpuResult<()>>,
@@ -428,7 +548,7 @@ fn queue_call<C: Clock + ?Sized>(
                 }
                 return Ok(m.payload);
             }
-            Some(m) if m.is_event() => events.push(m.function),
+            Some(m) if m.is_event() => skipped(m),
             Some(_) => {
                 return Err(GpuError::InvalidArgument(
                     "GSP-RM a raspuns la alta functie",
@@ -852,5 +972,136 @@ mod tests {
         assert!(!bar.vram.touched(screen.0, screen.1 - screen.0));
         assert!(!bar.vram.touched(gsp_area.0, gsp_area.1 - gsp_area.0));
         assert_eq!(bar.read32_raw(gpu_sim::pramin::BAR0_WINDOW), 0);
+    }
+
+    /// os-295 (12 Nov 2026): a refused RM call came back as nothing but
+    /// `pas i9-canal-lucru: ESEC`. The keeping transport holds whole the
+    /// messages GSP-RM posts on the way to a reply, and `journal_skipped`
+    /// puts them on the stick — a NOCAT record decoded, a LibOS print
+    /// decoded, any other message named — while the reply itself (refusal
+    /// or not) is handled exactly as before. SIMULARE.
+    #[test]
+    fn skipped_messages_are_kept_whole_and_journaled() {
+        use crate::gsp::nocat::tests::record;
+        use crate::gsp::rpc::event;
+        use core::cell::Cell;
+        let l = QueueLayout::standard();
+        let mut shm = alloc::vec![0u8; l.total_size];
+        let pages: Vec<u64> = (0..l.page_table_entries as u64)
+            .map(|i| 0x0500_0000 + i * 0x1000)
+            .collect();
+        let mut q = CpuQueues::init(&mut shm, l, &pages).unwrap();
+        let mut gsp = SimGsp::start(&mut shm, l.cmd_queue_offset, l.stat_queue_offset);
+        q.link_rx(&shm).unwrap();
+        let mut rm = FakeRm::new();
+        let mut clock = SimClock::default();
+        let bells = Cell::new(0u32);
+        // The simulated GSP: on the first command it posts a NOCAT record,
+        // a LibOS print and an unknown event before answering; the second
+        // command (a control on a handle nobody allocated) is refused.
+        let nocat = record(2, 0x27, 0, b"Display Subsystem");
+        let libos = {
+            let mut p = alloc::vec![0u8; 8 + 16];
+            p[..4].copy_from_slice(&0xf3d7_2200u32.to_le_bytes());
+            p[4..8].copy_from_slice(&16u32.to_le_bytes());
+            p[8] = 1;
+            p
+        };
+        let mut calls = 0;
+        let mut t = QueueTransportBellKeep {
+            q: &mut q,
+            mem: &mut shm,
+            clock: &mut clock,
+            timeout_us: RM_REPLY_US,
+            poll: |m: &mut dyn SharedMem| {
+                if calls == 0 {
+                    gsp.post(m, event::GSP_POST_NOCAT_RECORD, 0, &nocat);
+                    gsp.post(m, event::UCODE_LIBOS_PRINT, 0, &libos);
+                    gsp.post(m, 0x1fff, 0x33, &[]);
+                }
+                calls += 1;
+                gsp.service_with(m, |f, p| rm.handle(f, p));
+            },
+            events: Vec::new(),
+            bell: || {
+                bells.set(bells.get() + 1);
+                Ok(())
+            },
+            rung: 0,
+            skipped: Vec::new(),
+        };
+        let mut g = Rm {
+            t: &mut t,
+            client: CLIENT,
+            next: FIRST_HANDLE,
+        };
+        g.alloc(0, class::ROOT, &rmapi::root_params()).unwrap();
+        let refused = g.control(
+            0xdead_0001,
+            cmd::GET_DEVICE_INFO_TABLE,
+            &rmapi::device_info_request(),
+        );
+        assert!(
+            matches!(refused, Err(GpuError::HardwareFault { .. })),
+            "{refused:?}"
+        );
+        assert_eq!((t.rung, bells.get()), (2, 2));
+        // Numbers as before, whole messages besides.
+        assert_eq!(
+            t.events,
+            [
+                event::GSP_POST_NOCAT_RECORD,
+                event::UCODE_LIBOS_PRINT,
+                0x1fff
+            ]
+        );
+        assert_eq!(t.skipped.len(), 3);
+        assert_eq!(t.skipped[0].payload, nocat);
+        assert_eq!(t.skipped[2].rpc_result, 0x33);
+
+        let mut j = Journal::new(256);
+        journal_skipped(&mut j, "I9", &t.skipped);
+        let rows: Vec<String> = j.events().map(|e| alloc::format!("{e}")).collect();
+        assert_eq!(
+            rows[0],
+            "valoare mesaje GSP-RM sarite in asteptarea raspunsului RM: total = 0x00000003"
+        );
+        assert_eq!(rows[1], "text mesaj GSP-RM sarit: la pasul = \"I9\"");
+        assert!(
+            rows.iter().any(|r| r
+                == "text NOCAT: errorCode (nume NV_STATUS) = \"NV_ERR_INVALID_DMA_SPECIFIER\""),
+            "{rows:#?}"
+        );
+        assert!(
+            rows.iter()
+                .any(|r| r == "text NOCAT: source = \"Display Subsystem\""),
+            "{rows:#?}"
+        );
+        assert!(
+            rows.iter()
+                .any(|r| r.starts_with("valoare UCODE_LIBOS_PRINT: ucodeEngDesc")),
+            "{rows:#?}"
+        );
+        assert!(
+            rows.iter()
+                .any(|r| r == "valoare mesaj GSP-RM sarit (functia) = 0x00001fff"),
+            "{rows:#?}"
+        );
+        assert!(
+            rows.iter()
+                .any(|r| r == "valoare mesaj GSP-RM sarit: rpc_result = 0x00000033"),
+            "{rows:#?}"
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|r| r.starts_with("text mesaj GSP-RM sarit: la pasul"))
+                .count(),
+            3
+        );
+
+        // Nothing skipped: nothing written.
+        let mut j = Journal::new(8);
+        journal_skipped(&mut j, "I9", &[]);
+        assert!(j.is_empty());
     }
 }

@@ -189,6 +189,22 @@ impl Journal {
         }
         self.events.push_back(e);
     }
+    /// 12 Nov 2026 (os-295): a text longer than [`TEXT_LEN`], in pieces of
+    /// [`TEXT_LEN`] bytes — the first as `what`, the following ones as `more`
+    /// (e.g. "motivul esecului" / "motivul esecului (urmare)"), so the whole
+    /// text reaches the stick even when the screen is gone. An empty text
+    /// gives one empty event. Pieces are cut on bytes, so a multi-byte
+    /// character on a boundary shows as `.` on both sides.
+    pub fn push_text(&mut self, what: &'static str, more: &'static str, s: &str) {
+        let bytes = s.as_bytes();
+        if bytes.is_empty() {
+            self.push(Event::text(what, b""));
+            return;
+        }
+        for (i, piece) in bytes.chunks(TEXT_LEN).enumerate() {
+            self.push(Event::text(if i == 0 { what } else { more }, piece));
+        }
+    }
     pub fn events(&self) -> impl Iterator<Item = &Event> {
         self.events.iter()
     }
@@ -243,6 +259,44 @@ mod tests {
         let e = Event::text("ciudat", &[b'o', b'k', 0x01, 0xff, b'"', b' ', b'x']);
         assert_eq!(e.to_string(), "text ciudat = \"ok... x\"");
         assert_eq!(Event::text("gol", b"").to_string(), "text gol = \"\"");
+    }
+
+    /// os-295: the reason a step failed must reach the stick whole, in
+    /// pieces of TEXT_LEN, the first labelled differently from the rest.
+    #[test]
+    fn long_text_is_journaled_in_pieces() {
+        let mut j = Journal::new(16);
+        j.push_text("motiv", "motiv (urmare)", "eroare hardware 0x57");
+        let rows: Vec<String> = j.events().map(|e| e.to_string()).collect();
+        assert_eq!(rows, ["text motiv = \"eroare hardware 0x57\""]);
+
+        let mut j = Journal::new(16);
+        let long = "argument invalid: RM_CONTROL: raspunsul e pentru alta comanda";
+        assert_eq!(long.len(), 61);
+        j.push_text("motiv", "motiv (urmare)", long);
+        let rows: Vec<String> = j.events().map(|e| e.to_string()).collect();
+        assert_eq!(
+            rows,
+            [
+                "text motiv = \"argument invalid: RM_CONTROL: ra\"",
+                "text motiv (urmare) = \"spunsul e pentru alta comanda\"",
+            ]
+        );
+        // Put back together, the pieces are the whole text.
+        let joined: String = j
+            .events()
+            .map(|e| match e {
+                Event::Text { len, bytes, .. } => core::str::from_utf8(&bytes[..usize::from(*len)])
+                    .unwrap()
+                    .to_string(),
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(joined, long);
+
+        let mut j = Journal::new(16);
+        j.push_text("motiv", "motiv (urmare)", "");
+        assert_eq!(j.events().next().unwrap().to_string(), "text motiv = \"\"");
     }
 
     #[test]

@@ -24,6 +24,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt;
 
+use crate::chain;
 use crate::chain_log::parse_step;
 use crate::gsp::nocat_log::{self, NocatDigest};
 
@@ -52,6 +53,11 @@ pub struct VariantRun {
     pub settings: Vec<(String, u32)>,
     /// Every `pas <id>: ok|ESEC` row, in order.
     pub steps: Vec<(String, bool)>,
+    /// os-295: for each failed step, the reason the chain wrote after it
+    /// (`text motivul esecului = "…"` + its continuation rows, joined);
+    /// empty for a driver from before 12 Nov 2026 (the reason was only on
+    /// the screen then).
+    pub fail_reasons: Vec<(String, String)>,
     /// What GSP-RM said before `GSP_INIT_DONE` (empty if the run stopped earlier).
     pub nocat: NocatDigest,
     /// Rows in the journal.
@@ -166,6 +172,20 @@ pub fn read(text: &str) -> VariantRun {
             r.steps.push((id.to_string(), ok));
             continue;
         }
+        if let Some((what, v)) = text_row(s) {
+            if what == chain::STEP_FAIL_REASON {
+                if let Some((id, false)) = r.steps.last() {
+                    r.fail_reasons.push((id.clone(), v.to_string()));
+                }
+                continue;
+            }
+            if what == chain::STEP_FAIL_REASON_MORE {
+                if let Some((_, reason)) = r.fail_reasons.last_mut() {
+                    reason.push_str(v);
+                }
+                continue;
+            }
+        }
         if let Some((what, v)) = value_row(s) {
             if what == WHAT_VARIANT_NR {
                 r.variant = Some(v);
@@ -211,6 +231,15 @@ impl VariantRun {
     /// The last step row (`id`, passed), if any.
     pub fn last_step(&self) -> Option<&(String, bool)> {
         self.steps.last()
+    }
+
+    /// os-295: why `step` failed, if the journal says (drivers from 12 Nov
+    /// 2026 on write it; older journals have nothing — "fara motiv in jurnal").
+    pub fn fail_reason(&self, step: &str) -> Option<&str> {
+        self.fail_reasons
+            .iter()
+            .find(|(id, _)| id == step)
+            .map(|(_, why)| why.as_str())
     }
 
     /// The assert addresses of the records journaled in full, sorted and
@@ -343,6 +372,15 @@ impl fmt::Display for Table<'_> {
                     "  ultimul pas: {id} ({})",
                     if *ok { "ok" } else { "ESEC" }
                 )?;
+            }
+            for (id, _) in r.run.steps.iter().filter(|(_, ok)| !ok) {
+                match r.run.fail_reason(id) {
+                    Some(why) => writeln!(f, "  motivul la {id}: {why}")?,
+                    None => writeln!(
+                        f,
+                        "  motivul la {id}: fara motiv in jurnal (driver dinainte de 12 nov 2026; era doar pe ecran)"
+                    )?,
+                }
             }
             if let Some(n) = r.run.nocat.summary_received {
                 let addrs = r.run.assert_addresses();
@@ -539,6 +577,80 @@ mod tests {
                 "pas tur-dupa: ok",
             ],
         )
+    }
+
+    /// os-295 (12 Nov 2026): the real journal said `pas i9-canal-lucru: ESEC`
+    /// and nothing else (the reason was on the frozen screen). From now on
+    /// the chain writes the reason after the step; the reader joins its
+    /// pieces and the table shows it — or says the journal has none.
+    #[test]
+    fn the_reason_of_a_failed_step_is_read_and_shown() {
+        // The os-295 shape: a driver from before the fix.
+        let mut rows: Vec<&str> = alloc::vec![
+            "valoare varianta I8 (C-108): numarul = 0x00000001",
+            "text varianta I8: numele = \"rpc-inainte\"",
+            "pas i8-gsp-init: ok",
+            "pas i8e-golden: ok",
+            "pas i9-canal-lucru: ESEC",
+            "pas bus-master-oprit: ok",
+            "pas tur-dupa: ok",
+        ];
+        let old = read(&journal("49e6685", &rows));
+        assert_eq!(old.outcome(), Outcome::PassedI8);
+        assert!(old.fail_reasons.is_empty());
+        assert_eq!(old.fail_reason("i9-canal-lucru"), None);
+        let table = |run: VariantRun| {
+            let rows = [TableRow {
+                label: String::from("010.txt"),
+                run,
+                difference: None,
+            }];
+            alloc::format!(
+                "{}",
+                Table {
+                    rows: &rows,
+                    max_diff_rows: 4
+                }
+            )
+        };
+        let shown = table(old);
+        assert!(
+            shown.contains("motivul la i9-canal-lucru: fara motiv in jurnal"),
+            "{shown}"
+        );
+
+        // The same run with the fix: the reason in two pieces, joined back.
+        rows.insert(
+            5,
+            "text motivul esecului = \"argument invalid: RM_CONTROL: ra\"",
+        );
+        rows.insert(
+            6,
+            "text motivul esecului (urmare) = \"spunsul e pentru alta comanda\"",
+        );
+        let new = read(&journal("49e6685", &rows));
+        assert_eq!(
+            new.fail_reasons,
+            [(
+                String::from("i9-canal-lucru"),
+                String::from("argument invalid: RM_CONTROL: raspunsul e pentru alta comanda")
+            )]
+        );
+        assert_eq!(new.steps.len(), 5, "reason rows are not steps");
+        let shown = table(new);
+        assert!(
+            shown.contains(
+                "motivul la i9-canal-lucru: argument invalid: RM_CONTROL: raspunsul e pentru alta comanda"
+            ),
+            "{shown}"
+        );
+
+        // A reason row with no failed step before it belongs to nobody.
+        let stray = read(&journal(
+            "49e6685",
+            &["pas i8-gsp-init: ok", "text motivul esecului = \"x\""],
+        ));
+        assert!(stray.fail_reasons.is_empty());
     }
 
     #[test]
