@@ -17,7 +17,7 @@ Cyber Universe pe același calculator = test automat de corectitudine”) → un
 | Documente | `GA106_LAPTOP.md` §0b (faptele din Windows) + §5 (versiunea), TEST_MATRIX T127 a–e, PROVENANCE | scris — `900c9d7` |
 | Pe laptop / pe RTX 3070 Ti | — | NOT TESTED |
 
-Verificări (`sh tools/check.sh`, Rust 1.97.0): format, clippy `-D warnings`, **475 teste PASS** (4 ignorate; 472 → 475: +3), build no_std PASS. CI: vezi rândul de mai jos după push.
+Verificări (`sh tools/check.sh`, Rust 1.97.0): format, clippy `-D warnings`, **475 teste PASS** (4 ignorate; 472 → 475: +3), build no_std PASS. **CI VERDE pe `79fc5ae`** (rularea 43331815423, 56 s). Copia C-34 la `79fc5ae` (227 commit-uri, verificată).
 
 **Ce așteptăm de pe plăci (prima comparație automată Windows ↔ Cyber Universe):** laptop (`gpu tur --trezire`, os-298+ legat la `835f24d`+): `vbios.versiune = 94.06.1e.00.23`;
 workstation: `94.04.65.00.3e`. Dacă nu coincid → citirea noastră a ROM-ului e greșită sau PROM-ul arată altă imagine; dacă pe workstation apare „necitita” deși jetonul `0x69v2`
