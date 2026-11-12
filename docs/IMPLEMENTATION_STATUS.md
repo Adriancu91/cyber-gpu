@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 94 — 12 noiembrie 2026, ~22:25–23:10 (ora României), în cloud, FĂRĂ placă — jurnalele 011 (I7 ESEC la repetare) și 012 (Booter Unload 0x88) analizate; starea plăcii intră în jurnal după un I7 / Unload eșuat
+## Sesiunea 94 — 12 noiembrie 2026, ~19:25–20:00 (ora României), în cloud, FĂRĂ placă — jurnalele 011 (I7 ESEC la repetare) și 012 (Booter Unload 0x88) analizate; starea plăcii intră în jurnal după un I7 / Unload eșuat
 
 Pornită de programare. În hub, de la sesiunea 93: **nicio comandă nouă pentru cyber-gpu** (C-112 Kronos; **C-113** și **C-114** sunt ale OS-ului: stick-ul FAT32 de 64 GB nu
 poate adăuga al doilea rând, lentoarea de ~1 s/rând = probabil o așteptare cu limită în calea USB; un singur stick de test). Rămâneau de analizat din sesiunea 93 jurnalele
