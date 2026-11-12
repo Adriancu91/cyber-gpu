@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 91 — 12 noiembrie 2026, ~07:25–07:40 (ora României), în cloud, FĂRĂ placă — rularea de la 07:25: testul cu variante s-a AMÂNAT (C-110), oprire scurtă
+
+Pornită de programare. În hub, de la sesiunea 90: **C-110** (06:49, pentru Kronos) — Adrian: „Nu mai ajung azi la test, dă-i lui Kronos de muncă.” → **testul cu
+variante (os-289/os-290, C-108) se amână** la următoarea venire a lui Adrian, anunțată prin centrul de comandă; placa e a lui Kronos toată ziua și la noapte.
+**Nicio comandă nouă pentru cyber-gpu, niciun jurnal nou de pe placă** (ultimul rămâne `gpu-jurnal-009.txt`, os-283). **Nimic testat pe RTX 3070 Ti.**
+
+**Fără pas nou pe driver** (regula: fără jurnal nou de pe placă nu se inventează lucru; ce urmează depinde de rezultatul variantelor). Verificări:
+
+| Verificare | Rezultat |
+|---|---|
+| CI GitHub pe `fbc70e7` (documentul sesiunii 90) | VERDE (rularea 178, 43120530210, 91 s) |
+| Codul driverului față de sesiunea 89 | neschimbat (`b1d91a0` = ultimul commit de cod; 451 PASS atunci) |
+| Release-urile OS `os-289`/`os-290` | neschimbate, leagă `49e6685` (au cele 10 variante); OS-ul ține P6-80 pe `wip/` până după test |
+| Pe RTX 3070 Ti | NOT TESTED |
+
+Niciun commit de cod; doar acest document. Copia din hub (C-34) se reface după commit-ul acestui document.
+
+**Următorul pas:** neschimbat — când vine Adrian la workstation (data o anunță prin centrul de comandă): variantele de la 1, o pornire rece fiecare, `trimite` după
+fiecare; apoi `compara_variante 0x9c66000 gpu-jurnal-009.txt <jurnalele noi>` → varianta care trece / ce diferă. Dacă varianta 1 trece → I8e (golden) e primul
+apel RM pe placă. Dacă niciuna din 10 → comparația **stării plăcii** (`SEC2 CPUCTL`, `GSP MAILBOX0`, adresele DMA reale). Regula 8: sesiunile 88 și 89 au avut pași;
+90 și 91 sunt opriri scurte fără lucru de făcut (așteaptă placa) — nu se aplică încă; dacă și următoarea rulare e fără jurnal nou, rămâne tot oprire scurtă, nu lucru inventat.
+
+---
 ## Sesiunea 90 — 12 noiembrie 2026, ~01:25–01:45 (ora României), în cloud, FĂRĂ placă — rularea de rezervă „GPU 01:25” din C-108: oprire scurtă, totul e pregătit pentru testul de la 07:00
 
 Pornită de programare (rezerva „GPU 01:25” din C-108). În hub, de la sesiunea 89: **nicio comandă nouă pentru cyber-gpu, niciun jurnal nou de pe placă**
