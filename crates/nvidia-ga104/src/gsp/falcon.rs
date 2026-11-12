@@ -163,7 +163,12 @@ pub const RESET_READY_US: u64 = 150;
 pub const SCRUB_US: u64 = 4_000_000;
 pub const CORE_SELECT_US: u64 = 10_000;
 pub const HALT_US: u64 = 2_000_000;
-pub const RISCV_ACTIVE_US: u64 = 2_000_000;
+/// os-295, journal 011 (12 Nov 2026): was 2 s; the board once answered
+/// HALTED after it. nova-core waits up to 5 s for the core
+/// (`docs/GA104_INITIALIZATION.md`, the longest wait in the public sources),
+/// so the bound is nova's now. A longer wait writes nothing; if the core is
+/// not active after 5 s, the bound is not the cause.
+pub const RISCV_ACTIVE_US: u64 = 5_000_000;
 const STEP_US: u32 = 10;
 
 /// C-96: a poll loop in the RM 570.144 / nouveau sense. A read that answers
@@ -816,10 +821,10 @@ fn booter_load_with<M: Mmio + ?Sized, C: Clock + ?Sized>(
 /// MAILBOX0 = 0 (its success code), `FALCON_OS` was written — and the GSP
 /// RISC-V core never became active within [`RISCV_ACTIVE_US`]; `CPUCTL` read
 /// `0x10` (HALTED) afterwards. The journal held only the three reads of
-/// [`read_after_i7`], so *where* the boot stopped could not be told. RM
-/// 570.144 (`kgspBootstrapRiscvOSEarly_GA102`, MIT) and nouveau check the
-/// core right after Booter, with no wait at all, so the 2 s are not the
-/// cause; what is missing is the board's state at that moment.
+/// [`read_after_i7`], so *where* the boot stopped could not be told. The
+/// public drivers expect the core up right after Booter (nova waits at most
+/// 5 s), so a longer wait is not the fix; what was missing is the board's
+/// state at that moment.
 pub const I7_FAIL_RISCV_OFF: &str = "I7: Booter a terminat cu MAILBOX0 = 0, dar RISC-V-ul GSP nu a devenit activ; starea placii (doar citiri):";
 /// Booter Load halted with an error code in MAILBOX0 (the code is in the
 /// step's reason row; Booter's codes are not published — RM only prints them).
