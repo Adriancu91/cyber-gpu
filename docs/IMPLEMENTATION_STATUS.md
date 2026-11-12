@@ -18,7 +18,7 @@ Comanda nouă pentru cyber-gpu → sesiunea lucrează (C-116 preluat în hub la 
 | Documente | `docs/GA106_LAPTOP.md` (reluare, §0 faptele de pe laptop, §6 trezirea), TEST_MATRIX T126 a–h, PROVENANCE | scris |
 | Pe laptop / pe RTX 3070 Ti | — | NOT TESTED |
 
-Verificări (`sh tools/check.sh`, Rust 1.97.0): format, clippy `-D warnings`, **472 teste PASS** (4 ignorate; 458 → 472: +14), build no_std PASS. CI: vezi hub după push.
+Verificări (`sh tools/check.sh`, Rust 1.97.0): format, clippy `-D warnings`, **472 teste PASS** (4 ignorate; 458 → 472: +14), build no_std PASS. **CI VERDE pe `6b6bb38`** (rularea 43288866245, 58 s).
 
 **Regula „trei surse” pentru singura scriere nouă:** bitul Memory Space din Command = PCI Local Bus 3.0 §6.2.2; Linux `pci_enable_device` (citit ca specificație) îl pune pentru orice
 placă înainte ca nouveau / nova-core / tinygrad să atingă BAR0. Nu e „pornirea plăcii”: nu schimbă energia, nu pornește DMA, nu atinge ACPI — doar deschide fereastra de citire.
