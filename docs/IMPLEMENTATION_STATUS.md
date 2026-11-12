@@ -28,6 +28,9 @@ din SMBIOS în `hw`; (2) Adrian: pe laptop, stick-ul de test, `gpu tur` + DA →
 (3) noi, după jurnal: dacă VBIOS-ul prin PROM e gunoi → sarcina `_ROM` (ACPI); dacă totul e ca pe GA104 → pasul 3 din C-116 (I6–I8 pe GA106, cu `Family` în lanț) **doar cu DA-ul separat
 al lui Adrian**; limita VRAM pe laptop sub ~5,5 GB (pasul 4). GA104 rămâne ținta principală (I9 așteaptă jurnalul cu motivul; C-113 stick-ul, OS). Regula 8: sesiunile 93–95 au avut pași — nu se aplică.
 
+**21:25 — a doua pornire (manuală, din centrul de comandă, cu textul C-116):** hub-ul recitit — nimic nou după push-ul de la 21:22 (aceeași comandă C-116, deja la „pașii 1–2 gata”).
+Pasul (3) (I6–I8 pe GA106) rămâne, cum scrie C-116, **după jurnalul de citire de pe laptop** și cu DA-ul separat — nu se începe acum. Niciun commit de cod; doar acest rând.
+
 ---
 ## Sesiunea 94 — 12 noiembrie 2026, ~19:25–20:00 (ora României), în cloud, FĂRĂ placă — jurnalele 011 (I7 ESEC la repetare) și 012 (Booter Unload 0x88) analizate; starea plăcii intră în jurnal după un I7 / Unload eșuat
 
