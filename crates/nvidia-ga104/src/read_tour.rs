@@ -169,6 +169,44 @@ where
     M: Mmio + ?Sized,
     K: Clock + ?Sized,
 {
+    tour(cfg, addr, bar0, clock, journal, false)
+}
+
+/// C-116: the same tour, accepting GA104 **or** GA106 (the laptop). Same
+/// reads, same 0-write check. For GA106 two facts are added:
+/// `chip.familie = GA106` and `chip.scrieri = interzise ...`. For GA104
+/// the result is identical to [`run_tour`] plus `chip.familie = GA104`.
+/// With Memory Space off (the laptop as the firmware leaves it) it stops
+/// before any BAR0 read, with [`crate::probe::MEMORY_SPACE_OFF`]: the
+/// caller wakes the function first (`gpu_pci::mem_space`, behind a permit).
+pub fn run_tour_ampere<C, M, K>(
+    cfg: &mut C,
+    addr: Option<PciAddress>,
+    bar0: &mut M,
+    clock: &mut K,
+    journal: &mut Journal,
+) -> GpuResult<Tour>
+where
+    C: ConfigSpace + ?Sized,
+    M: Mmio + ?Sized,
+    K: Clock + ?Sized,
+{
+    tour(cfg, addr, bar0, clock, journal, true)
+}
+
+fn tour<C, M, K>(
+    cfg: &mut C,
+    addr: Option<PciAddress>,
+    bar0: &mut M,
+    clock: &mut K,
+    journal: &mut Journal,
+    ampere: bool,
+) -> GpuResult<Tour>
+where
+    C: ConfigSpace + ?Sized,
+    M: Mmio + ?Sized,
+    K: Clock + ?Sized,
+{
     let writes_before = journal.writes();
     let len_before = journal.len();
     let mut facts = Vec::new();
@@ -177,7 +215,19 @@ where
     ));
 
     // pci + boot
-    let l0 = crate::probe::level0(cfg, addr, bar0, journal)?;
+    let l0 = if ampere {
+        let (l0, family) = crate::probe::level0_ampere(cfg, addr, bar0, journal)?;
+        facts.push(Fact::new("chip.familie", family.name()));
+        if !family.writes_allowed() {
+            facts.push(Fact::new(
+                "chip.scrieri",
+                "interzise (C-116: doar citire pana la DA-ul lui Adrian)",
+            ));
+        }
+        l0
+    } else {
+        crate::probe::level0(cfg, addr, bar0, journal)?
+    };
     let r = &l0.candidate.report;
     let id = r.id;
     facts.push(Fact::new(
@@ -474,5 +524,85 @@ mod tests {
             .collect();
         assert_eq!(unproven, ["i6"]);
         assert!(NOT_YET.iter().any(|(id, _)| *id == "temperatura"));
+    }
+
+    /// C-116, SIMULARE: the read tour on a GA106 laptop model built from the
+    /// workstation model with only the ids changed (VBIOS, fuses, VRAM size
+    /// are the workstation's SIM values, not the laptop's).
+    #[test]
+    fn ampere_tour_on_ga106_laptop_model_reads_only() {
+        let mut cfg = observed::observed_config();
+        cfg.set_device_id(0x2520);
+        let mut bar0 = observed::observed_bar0();
+        bar0.set(0, 0xb760_00a1);
+        bar0.set(0xa00, 0x176a_1000);
+        let mut j = Journal::new(4096);
+        let t =
+            run_tour_ampere(&mut cfg, None, &mut bar0, &mut SimClock::default(), &mut j).unwrap();
+        assert_eq!(t.get("chip.nume"), Some("GA106"));
+        assert_eq!(t.get("chip.familie"), Some("GA106"));
+        assert!(t.get("chip.scrieri").unwrap().starts_with("interzise"));
+        assert_eq!(t.get("pci.id"), Some("10de:2520"));
+        assert_eq!(j.writes(), 0);
+        assert_eq!(cfg.writes, 0);
+        assert!(bar0.writes.is_empty());
+        // The GA104 tour refuses the laptop instead of guessing.
+        let mut cfg2 = observed::observed_config();
+        cfg2.set_device_id(0x2520);
+        let mut j2 = Journal::new(4096);
+        assert!(
+            run_tour(
+                &mut cfg2,
+                None,
+                &mut bar0,
+                &mut SimClock::default(),
+                &mut j2
+            )
+            .is_err()
+        );
+        // The laptop as the firmware leaves it (Memory Space off): the tour
+        // stops before the first BAR0 read.
+        let mut cfg3 = gpu_sim::pci::SimConfig::ga106_laptop_asus();
+        let mut bar3 = gpu_sim::mmio::SimMmio::ga106_bar0();
+        let mut j3 = Journal::new(4096);
+        assert_eq!(
+            run_tour_ampere(
+                &mut cfg3,
+                None,
+                &mut bar3,
+                &mut SimClock::default(),
+                &mut j3
+            ),
+            Err(GpuError::Blocked(crate::probe::MEMORY_SPACE_OFF))
+        );
+        assert!(bar3.reads.is_empty());
+        assert_eq!(cfg3.writes, 0);
+    }
+
+    #[test]
+    fn ampere_tour_on_workstation_adds_only_the_family() {
+        let mut j = Journal::new(4096);
+        let a = run_tour(
+            &mut observed::observed_config(),
+            None,
+            &mut observed::observed_bar0(),
+            &mut SimClock::default(),
+            &mut j,
+        )
+        .unwrap();
+        let mut j = Journal::new(4096);
+        let b = run_tour_ampere(
+            &mut observed::observed_config(),
+            None,
+            &mut observed::observed_bar0(),
+            &mut SimClock::default(),
+            &mut j,
+        )
+        .unwrap();
+        assert_eq!(b.get("chip.familie"), Some("GA104"));
+        assert!(b.get("chip.scrieri").is_none());
+        let rest: Vec<_> = b.facts.iter().filter(|f| f.key != "chip.familie").collect();
+        assert_eq!(rest.len(), a.facts.len());
+        assert!(rest.iter().zip(a.facts.iter()).all(|(x, y)| *x == y));
     }
 }

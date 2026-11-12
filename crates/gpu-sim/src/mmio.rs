@@ -42,6 +42,16 @@ impl SimMmio {
         m
     }
 
+    /// SIMULARE (C-116): GA106 BAR0 (16 MiB) with NV_PMC_BOOT_0 encoding
+    /// chip id 0x176 and BOOT_42 agreeing. Revision bits are SIM (nothing
+    /// has been read from the laptop's registers yet: Memory Space was off).
+    pub fn ga106_bar0() -> Self {
+        let mut m = Self::new(16 << 20);
+        m.set(0x0000_0000, 0x1760_00a1);
+        m.set(0x0000_0a00, (0x176 << 20) | (0xa << 16) | (0x1 << 12));
+        m
+    }
+
     pub fn set(&mut self, off: u64, v: u32) {
         self.regs.insert(off, v);
     }

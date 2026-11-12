@@ -11,6 +11,11 @@
 
 pub const ARCH_AMPERE: u8 = 0x17;
 pub const CHIP_GA104: u16 = 0x174;
+/// GA106 (RTX 3060 / 3060 Laptop): architecture 0x17, implementation 0x6
+/// (open-gpu-kernel-modules@570.144 `g_chips2halspec_nvoc.c`, MIT). C-116:
+/// recognised for READ-ONLY steps (and the minimal wake-up of the PCI
+/// function); the writing chain stays GA104-only.
+pub const CHIP_GA106: u16 = 0x176;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Boot0 {
