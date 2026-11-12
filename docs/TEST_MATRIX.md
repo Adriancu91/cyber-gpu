@@ -1,5 +1,16 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 94 (12 nov 2026, seara, cloud, fără placă) — jurnalele 011 (I7 ESEC la repetare) și 012 (Booter Unload 0x88): starea plăcii în jurnal după un I7 / Unload eșuat
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| **PE PLACĂ** os-295, jurnalul 011 | `gpu lant` (varianta 1), repetarea de la ~18:00, stick la ~1 s/rând (C-113) | `diff` fără marcaje de timp față de `gpu-jurnal-010.txt` (primele 1500 de rânduri) | aceleași scrieri | **12 rânduri diferite**: 4 adrese RAM (LibOS, imaginea Booter, `GspFwWprMeta`) + rezultatul; Booter a terminat cu `MAILBOX0 = 0` (`FALCON_OS` scris după), **`GSP RISCV_CPUCTL = 0x10`** după așteptare → `pas i7-booter-gsp: ESEC` (timeout). Cauza nu se poate stabili din jurnal (`docs/os-295_ANALIZA_011_012.md` §1) | OBSERVAT (citire de jurnal real); I7 pe placă: **FAIL o dată din 2** azi |
+| **PE PLACĂ** os-295, jurnalul 012 | `gpu recupereaza` (C-103), ~18:13, cel mai probabil aceeași pornire ca 011 | — | WPR2 coborât | Booter Unload (40 192 B) pornit → **`MAILBOX0 = 0x88`**, WPR2 rămâne ridicat; codul nu e publicat; diferența față de RM: fără FWSEC-SB înainte (§2) | OBSERVAT; C-103 pe placă: **FAIL** |
+| T125a | `booter_load` cu `SimFault::RiscvStaysOff`: eroarea rămâne `Timeout`; după ea `nota: I7: Booter a terminat cu MAILBOX0 = 0, dar RISC-V-ul GSP nu a devenit activ; starea placii (doar citiri):` + **9 rânduri** `valoare …` în ordinea `RESUME_STATE_READS` + `I7_FAIL_EXTRA_READS` (`GSP RISCV_CPUCTL` fără bitul 7, `SEC2 MAILBOX0 = 0`, `GSP RISCV_BCR_CTRL` prezent), nicio scriere după notă; un I7 care trece n-are „starea placii” | `cargo test -p nvidia-ga104 --release i7_with_riscv_off` | cum e descris | la fel | PASS (SIMULARE) |
+| T125b | `booter_load` cu `GspFwWprMeta` fără magic (SIM: Booter refuză cu `0xbad2`): `HardwareFault 0xbad2`, `nota: I7: Booter a oprit SEC2 cu MAILBOX0 != 0 …` + 9 rânduri cu `SEC2 MAILBOX0 = 0x0000bad2`; cealaltă notă lipsește | `cargo test -p nvidia-ga104 --release i7_with_booter_code` | cum e descris | la fel | PASS (SIMULARE) |
+| T125c | `booter_unload` cu un program greșit (SIM: `0xdead`): după `MAILBOX0 (Booter a dat eroare) = 0x0000dead` urmează `nota: C-103 Booter Unload: MAILBOX0 != 0; starea placii (doar citiri):` + 9 rânduri, nicio scriere | `cargo test -p nvidia-ga104 --release booter_unload_error_journals` | cum e descris | la fel | PASS (SIMULARE) |
+| T125d | `RISCV_ACTIVE_US` = 5 000 000 (nova); toate testele care așteaptă RISC-V activ trec neschimbate (`every_failure_is_reported_not_skipped`: `RiscvStaysOff` → `Timeout`) | `sh tools/check.sh` | 458 PASS | 458 PASS, 4 ignorate; clippy, format, build no_std | PASS |
+
 ## Rezultate — sesiunea 93 (12 nov 2026, cloud, fără placă) — după os-295 (I8 TRECE pe placă, I9 ESEC fără motiv în jurnal): motivul pe stick
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |

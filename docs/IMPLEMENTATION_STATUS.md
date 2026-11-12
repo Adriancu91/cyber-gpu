@@ -1,5 +1,41 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 94 — 12 noiembrie 2026, ~22:25–23:10 (ora României), în cloud, FĂRĂ placă — jurnalele 011 (I7 ESEC la repetare) și 012 (Booter Unload 0x88) analizate; starea plăcii intră în jurnal după un I7 / Unload eșuat
+
+Pornită de programare. În hub, de la sesiunea 93: **nicio comandă nouă pentru cyber-gpu** (C-112 Kronos; **C-113** și **C-114** sunt ale OS-ului: stick-ul FAT32 de 64 GB nu
+poate adăuga al doilea rând, lentoarea de ~1 s/rând = probabil o așteptare cu limită în calea USB; un singur stick de test). Rămâneau de analizat din sesiunea 93 jurnalele
+**011** și **012** → sesiunea lucrează. **Nimic din ce e scris mai jos nu e testat pe placă în afara jurnalelor citite.**
+
+**Jurnalul 011 (OBSERVAT; `gpu lant` varianta 1, ~18:00, stick la ~1 s/rând):** `diff` fără marcaje de timp față de 010 pe primele 1500 de rânduri = **12 rânduri**: 4 adrese
+RAM (LibOS `0x0a8bd000`, imaginea Booter, `GspFwWprMeta` `0x0a8ad000` — alocare diferită a OS-ului, valide) + rezultatul. **Scrierile în placă au fost identice, în aceeași ordine.**
+Booter a terminat cu `MAILBOX0 = 0` (dovada: `FALCON_OS ← 570144` e scris în cod abia după), apoi așteptarea „RISC-V activ” a expirat (2 s): `GSP RISCV_CPUCTL = 0x10` — aceeași
+valoare pe care 010 o arată la I8 **înainte** ca Booter să pornească nucleul (nepornit) → nu se poate spune dacă nucleul n-a pornit deloc sau a pornit și s-a oprit; `SCRATCH_14`
+bitul 26 și `GSP MAILBOX0` ar fi spus, dar la I7 nu le citeam. Singurul lucru diferit: **timpul** (I6 → Booter 65 s în loc de 15; încărcarea Booter-ului 56 s în loc de 9, lentoarea
+a început la rândul ~1440, în mijlocul ei). Cauza **nu se poate stabili**; nu e regresie de cod. Studiul: **`docs/os-295_ANALIZA_011_012.md`**.
+
+**Jurnalul 012 (OBSERVAT; `gpu recupereaza`, C-103, ~18:13, cel mai probabil aceeași pornire):** WPR2 ridicat (regiunea din 011) → reset GSP, reset SEC2, Booter Unload
+(40 192 B) → **`MAILBOX0 = 0x88`**, WPR2 rămâne. Codul **nu e publicat** (RM și nouveau doar îl tipăresc; tinygrad nu descarcă). Starea era una pe care niciun driver public
+n-o rulează așa: GSP-RM nu pornise niciodată, iar RM la `kgspTeardown` rulează **FWSEC-SB** înainte de Booter Unload (noi nu, decizia C-103). Propunere (cere DA): FWSEC-SB
+înainte — un program semnat în plus, doar în fereastră. Până atunci `gpu recupereaza` nu se mai încearcă; pornirea rece rămâne calea.
+
+**Ce s-a făcut (un pas mic, pe calea „următorul jurnal să spună unde s-a oprit”):**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Starea plăcii după un I7 eșuat | `falcon::journal_i7_failure`: după Booter cu cod (`I7_FAIL_BOOTER_CODE`) sau Booter cu 0 + RISC-V neactiv (`I7_FAIL_RISCV_OFF`), în `booter_load_with` și `booter_load_dma_libos` (calea OS): `nota: I7: …; starea placii (doar citiri):` + **9 rânduri `valoare`** = `RESUME_STATE_READS` (7, C-102) + `I7_FAIL_EXTRA_READS` (`GSP RISCV_BCR_CTRL`, `GSP FALCON_OS`). Niciun registru nou, doar citiri | PASS (T125a, T125b, SIMULARE) |
+| La fel după Booter Unload cu cod | `booter_unload`: după `MAILBOX0 (Booter a dat eroare)` → `UNLOAD_FAIL_STATE` + cele 9 rânduri | PASS (T125c, SIMULARE) |
+| Limita „RISC-V activ” | `RISCV_ACTIVE_US` 2 s → **5 s** (nova, `GA104_INITIALIZATION.md` pasul 6 — cea mai lungă din sursele publice); RM/nouveau verifică imediat (din citirile anterioare; sursele RM n-au putut fi recitite din cloud azi — acces refuzat — marcat „de confirmat”) | PASS (T125d) |
+| Compatibilitate OS | doar adăugări + valoarea `RISCV_ACTIVE_US`; OS-ul doar leagă `3404313`+ — nota `integration/cyber-universe/os-295_jurnalele-011-012.md` | PASS |
+| Pe RTX 3070 Ti | — | NOT TESTED |
+
+Verificări (`sh tools/check.sh`, Rust 1.97.0): format, clippy `-D warnings`, **458 teste PASS** (4 ignorate), build no_std PASS. Commit-uri: `85e0a34` (diagnoza), `3404313`
+(limita 5 s), + documentele (`docs/os-295_ANALIZA_011_012.md`, TEST_MATRIX T125 a–d, COMPATIBILITATE_FIRMWARE rândul I7, PROVENANCE).
+
+**Următorul pas:** (1) OS-ul: C-113 (stick-ul) înainte de orice test; apoi legarea `3404313`+ → Release; (2) un singur test pe placă, pornire rece → `gpu lant` → `trimite`;
+dacă I7 pică: rândurile `valoare` de după `nota: I7:` (SCRATCH_14 bitul 26, GSP MAILBOX0); dacă I9 pică: `text motivul esecului`; (3) `gpu recupereaza` doar după decizia lui Adrian
+despre FWSEC-SB. Fără jurnal nou, nimic altceva pe driver. Regula 8: sesiunile 93 și 94 au avut pași — nu se aplică.
+
+---
 ## Sesiunea 93 — 12 noiembrie 2026, ~18:00–18:55 (ora României), în cloud, FĂRĂ placă — **os-295: I8 A TRECUT PE PLACĂ** (varianta 1); golden ok; I9 ESEC fără motiv în jurnal → motivul intră pe stick
 
 Pornită de programare la 18:00; în hub, de la sesiunea 92: **C-111** (Adrian a venit la ~17:55 pentru testul cu variante; stick `os-295`, `os-289` nu mai există)
