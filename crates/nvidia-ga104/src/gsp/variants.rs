@@ -106,7 +106,7 @@ const SRC_ORDER: &str = "RM 570.144 kgspQueueAsyncInitRpcs (\"before OBJGPU is c
 /// The list, most probable first. Numbers are stable: a journal says
 /// "varianta 3" and means this list's entry 3, now and later (new variants
 /// are appended, never renumbered).
-pub const VARIANTS: [Variant; 10] = [
+pub const VARIANTS: [Variant; 11] = [
     Variant {
         nr: 1,
         name: "rpc-inainte",
@@ -210,7 +210,31 @@ pub const VARIANTS: [Variant; 10] = [
             ..OS_283
         },
     },
+    Variant {
+        nr: 11,
+        name: "rpc-inainte+neprimar",
+        changes: "varianta 1 + doar GspSystemInfo.bIsPrimary = 0 (placa declarata NE-primara, ca la tinygrad si nova-core) — proba daca asa GSP-RM lasa afisajul in pace (os-295: ecranul a inghetat la pornirea GSP-RM, NOCAT Display Engine); restul identic cu varianta 1",
+        source: "tinygrad ip.py rpc_set_gsp_system_info (bIsPrimary nesetat = 0), nova-core gsp/fw/commands.rs (SetSystemInfo, b_is_primary 0); efectul pe afisaj = DEDUS, neprobat",
+        settings: Settings {
+            sysinfo: sysinfo::Options {
+                is_primary: Some(false),
+                ..sysinfo::Options::OS_283
+            },
+            ..RPC_BEFORE
+        },
+    },
 ];
+
+/// os-295 (12 Nov 2026): the variant `gpu lant` runs when no `--varianta` is
+/// given — **1, `rpc-inainte`**, the one that passed I8 on the board
+/// (`GSP_INIT_DONE = 0`, `gpu-jurnal-010.txt`). Until then the default was
+/// [`OS_283`] (which never passed I8).
+pub const DEFAULT: u8 = 1;
+
+/// The default variant ([`DEFAULT`]).
+pub fn default_variant() -> &'static Variant {
+    get(DEFAULT).expect("DEFAULT is in VARIANTS")
+}
 
 /// All variants, in order.
 pub fn list() -> &'static [Variant] {
@@ -223,10 +247,13 @@ pub fn get(nr: u8) -> Option<&'static Variant> {
     VARIANTS.iter().find(|v| v.nr == nr)
 }
 
-/// The settings for `--varianta N`, or [`OS_283`] when no variant is given.
+/// The settings for `--varianta N`, or the default variant's
+/// ([`default_variant`], variant 1 since os-295) when no variant is given.
+/// `Some(0)` is refused like any unknown number. [`OS_283`] can no longer be
+/// chosen from the command line (it never passed I8).
 pub fn settings(nr: Option<u8>) -> GpuResult<Settings> {
     match nr {
-        None => Ok(OS_283),
+        None => Ok(default_variant().settings),
         Some(n) => get(n).map(|v| v.settings).ok_or(GpuError::InvalidArgument(
             "varianta: numar necunoscut (vezi gpu variante)",
         )),
@@ -303,15 +330,26 @@ impl Settings {
     /// Writes the values this variant sends into the journal (C-108: "valorile
     /// trimise, în jurnal, la fiecare variantă"), as `valoare` / `text` rows.
     pub fn journal(&self, nr: Option<u8>, j: &mut Journal) {
-        let (n, name) = match nr.and_then(get) {
-            Some(v) => (u32::from(v.nr), v.name),
-            None => (0, "os-283"),
+        // os-295: no `--varianta` = the default variant (1); the journal says
+        // which number ran and that it was the default, never "0 / os-283"
+        // (that would misname what was sent). Unknown numbers (the OS refuses
+        // them before this) are still written as given, name "necunoscuta".
+        let (n, name, how) = match nr {
+            None => {
+                let d = default_variant();
+                (u32::from(d.nr), d.name, "implicita (fara --varianta)")
+            }
+            Some(k) => match get(k) {
+                Some(v) => (u32::from(v.nr), v.name, "ceruta (--varianta N)"),
+                None => (u32::from(k), "necunoscuta", "ceruta (--varianta N)"),
+            },
         };
         j.push(Event::Value {
             what: "varianta I8 (C-108): numarul",
             value: n,
         });
         j.push(Event::text("varianta I8: numele", name.as_bytes()));
+        j.push(Event::text("varianta I8: aleasa", how.as_bytes()));
         let rows: [(&'static str, u32); 7] = [
             (
                 "varianta: RPC-urile de pornire inainte de Booter (1 = la I7, 0 = la I8)",
@@ -357,7 +395,7 @@ mod tests {
     /// difference its sentence states.
     #[test]
     fn t121_variants_are_numbered_named_and_sourced() {
-        assert_eq!(list().len(), 10);
+        assert_eq!(list().len(), 11);
         for (i, v) in list().iter().enumerate() {
             assert_eq!(usize::from(v.nr), i + 1);
             assert!(v.name.is_ascii() && v.name.len() <= gpu_core::diag::TEXT_LEN);
@@ -365,9 +403,25 @@ mod tests {
             assert_eq!(get(v.nr), Some(v));
         }
         assert_eq!(get(0), None);
-        assert_eq!(get(11), None);
-        assert_eq!(settings(None).unwrap(), OS_283);
+        assert_eq!(get(12), None);
+        // os-295: no --varianta = variant 1 (the one that passed I8 on the board).
+        assert_eq!(DEFAULT, 1);
+        assert_eq!(default_variant().name, "rpc-inainte");
+        assert_eq!(settings(None).unwrap(), RPC_BEFORE);
+        assert_ne!(settings(None).unwrap(), OS_283);
+        assert!(settings(Some(0)).is_err());
         assert_eq!(settings(Some(1)).unwrap(), RPC_BEFORE);
+        // Variant 11 differs from variant 1 only in bIsPrimary = 0.
+        assert_eq!(
+            get(11).unwrap().settings,
+            Settings {
+                sysinfo: sysinfo::Options {
+                    is_primary: Some(false),
+                    ..sysinfo::Options::OS_283
+                },
+                ..RPC_BEFORE
+            }
+        );
         assert!(settings(Some(99)).is_err());
         // Variant 1 differs from os-283 only in the order.
         assert_eq!(
@@ -377,18 +431,18 @@ mod tests {
             },
             OS_283
         );
-        // 1..=8 all put the RPCs before Booter; 9 and 10 keep the old order.
+        // 1..=8 and 11 put the RPCs before Booter; 9 and 10 keep the old order.
         for v in list() {
             assert_eq!(
                 v.settings.init_rpcs_before_booter,
-                v.nr <= 8,
+                v.nr <= 8 || v.nr == 11,
                 "varianta {}",
                 v.nr
             );
         }
-        // The names of 2..=8 say "rpc-inainte"; 9, 10 say "dupa-booter".
+        // The names of 2..=8 and 11 say "rpc-inainte"; 9, 10 say "dupa-booter".
         for v in list() {
-            let prefix = if v.nr <= 8 {
+            let prefix = if v.nr <= 8 || v.nr == 11 {
                 "rpc-inainte"
             } else {
                 "dupa-booter"
@@ -474,14 +528,42 @@ mod tests {
             rows.iter()
                 .any(|r| r.ends_with("hostPageSize = 0x00000000"))
         );
+        assert_eq!(
+            rows[2],
+            "text varianta I8: aleasa = \"ceruta (--varianta N)\""
+        );
+        // os-295: no --varianta = the default (1), said so in the journal.
         let mut j = Journal::new(64);
-        OS_283.journal(None, &mut j);
+        settings(None).unwrap().journal(None, &mut j);
         let rows: Vec<alloc::string::String> = j.events().map(|e| alloc::format!("{e}")).collect();
-        assert_eq!(rows[1], "text varianta I8: numele = \"os-283\"");
+        assert_eq!(rows[0], "valoare varianta I8 (C-108): numarul = 0x00000001");
+        assert_eq!(rows[1], "text varianta I8: numele = \"rpc-inainte\"");
+        assert_eq!(
+            rows[2],
+            "text varianta I8: aleasa = \"implicita (fara --varianta)\""
+        );
+        assert!(
+            rows.iter()
+                .any(|r| r.ends_with("inainte de Booter (1 = la I7, 0 = la I8) = 0x00000001"))
+        );
         assert!(
             rows.iter()
                 .any(|r| r.ends_with("bIsPrimary (2 = dupa VGA) = 0x00000002"))
         );
+        // Variant 11: bIsPrimary 0 in the journal; an unknown number is still written as given.
+        let mut j = Journal::new(64);
+        get(11).unwrap().settings.journal(Some(11), &mut j);
+        let rows: Vec<alloc::string::String> = j.events().map(|e| alloc::format!("{e}")).collect();
+        assert_eq!(rows[0], "valoare varianta I8 (C-108): numarul = 0x0000000b");
+        assert!(
+            rows.iter()
+                .any(|r| r.ends_with("bIsPrimary (2 = dupa VGA) = 0x00000000"))
+        );
+        let mut j = Journal::new(64);
+        OS_283.journal(Some(99), &mut j);
+        let rows: Vec<alloc::string::String> = j.events().map(|e| alloc::format!("{e}")).collect();
+        assert_eq!(rows[0], "valoare varianta I8 (C-108): numarul = 0x00000063");
+        assert_eq!(rows[1], "text varianta I8: numele = \"necunoscuta\"");
     }
 
     #[test]

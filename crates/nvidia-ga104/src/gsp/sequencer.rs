@@ -1071,10 +1071,10 @@ mod tests {
             [function::GSP_SET_SYSTEM_INFO, function::SET_REGISTRY]
         );
         r.unwrap();
-        // Every variant 1..=8 passes the model; 9 and 10 (old order) do not.
+        // Every variant 1..=8 and 11 passes the model; 9 and 10 (old order) do not.
         for v in variants::list() {
             let (_, r) = run(v.settings);
-            assert_eq!(r.is_ok(), v.nr <= 8, "varianta {}", v.nr);
+            assert_eq!(r.is_ok(), v.nr <= 8 || v.nr == 11, "varianta {}", v.nr);
         }
     }
 

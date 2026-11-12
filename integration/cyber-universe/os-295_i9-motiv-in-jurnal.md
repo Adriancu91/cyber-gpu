@@ -70,3 +70,17 @@ pornirea următoare (a mers azi). Dacă OS-ul vrea un semn vizibil la final, tre
 
 Un singur test: Release OS cu `cyber-gpu` ≥ `45dfc77`, `gpu lant --varianta 1`, `trimite` după repornire. În jurnal așteptăm `text motivul esecului = "…"`
 imediat după `pas i9-canal-lucru: ESEC` (dacă I9 mai eșuează). `compara_variante 0x9c66000 gpu-jurnal-010.txt <jurnalul nou>` arată motivul în tabel.
+
+## 5. (18:45, cererea din centrul de comandă) Varianta 1 implicită + varianta 11 „neprimar” — `cyber-gpu` `VARIANTA1_IMPLICITA` (commit-ul de după `f693307`)
+
+- **`variants::settings(None)` dă acum varianta 1** (`rpc-inainte`, cea care a trecut I8 pe placă), nu mai dă `OS_283`; `variants::DEFAULT = 1`, `variants::default_variant()`.
+  `settings(Some(0))` e refuzat ca orice număr necunoscut. **`gpu lant` fără `--varianta` = varianta 1** — OS-ul n-are nimic de schimbat în cod pentru asta, dar **textele**
+  „niciuna (ca os-283)” / „fara --varianta = ca os-283” din `gpu_tur.rs` (`variant_line`, `variants_list`) nu mai sunt adevărate: propunere — `variant_line(None)` să scrie
+  `format!("varianta I8 implicita: {} ({})", d.nr, d.name)` cu `d = variants::default_variant()`.
+- `Settings::journal(None, j)` scrie acum `numarul = 0x00000001`, `numele = "rpc-inainte"` și un rând nou **`text varianta I8: aleasa = "implicita (fara --varianta)"`**
+  (sau `"ceruta (--varianta N)"`); un număr necunoscut → `numele = "necunoscuta"`. `compara_variante` citește ambele forme.
+- **Varianta 11 `rpc-inainte+neprimar`** (adăugată la coadă, numerele vechi neschimbate; `list().len()` = 11): varianta 1 + **doar `GspSystemInfo.bIsPrimary = 0`** (placa declarată
+  ne-primară, ca la tinygrad `ip.py` — câmpul nesetat — și nova-core). **Scopul: proba dacă așa GSP-RM nu mai preia afișajul** (os-295: ecranul a înghețat la pornirea GSP-RM, NOCAT
+  „Display Engine”). Efectul pe afișaj e **DEDUS, neprobat**; nu există în sursele publice o setare numită „fără afișaj” — asta e singura valoare, cu sursă, care spune GSP-RM-ului
+  ceva despre rolul plăcii la afișaj. Risc: cu `bIsPrimary = 0` GSP-RM poate și să trateze diferit memoria „consolei” (în SIMULARE trece I8 ca varianta 1; pe placă = prima încercare).
+- Testul propus: (1) `gpu lant` (= varianta 1, cu motivul lui I9 în jurnal); (2) dacă ecranul tot îngheață și Adrian vrea să vadă, `gpu lant --varianta 11` la pornirea următoare.
