@@ -102,27 +102,34 @@ impl SimConfig {
     }
 
     /// SIMULARE (C-116): the ASUS TUF F15 laptop's RTX 3060 Laptop (GA106),
-    /// shaped like the GA104 model. FACTS observed on the laptop on 12 Nov
-    /// 2026 (os-295 `gpu identifica`, hub `rezultate/2026-11-11-laptop-asus-tuf`):
-    /// id `10de:2520` at 01:00.0, **Command 0x0000** (Memory Space left off by
-    /// the firmware: hybrid/Optimus laptop), BAR0 16 MiB at 0x85000000, BAR1
-    /// 8 GiB (Resizable BAR), BAR3 32 MiB, power state D0. SIM (not read):
-    /// the subsystem (1043 = ASUS, device 0), BAR1/BAR3 bases, link width,
-    /// capability layout, the I/O BAR.
+    /// shaped like the GA104 model, from the FACTS in [`crate::laptop`]
+    /// (hub `rezultate/2026-11-11-laptop-asus-tuf`): observed by the OS on
+    /// 12 Nov 2026 (os-295): id `10de:2520` at 01:00.0, **Command 0x0000**
+    /// (Memory Space left off by the firmware: hybrid/Optimus laptop), BAR0
+    /// 16 MiB at 0x85000000, BAR1 8 GiB (Resizable BAR), BAR3 32 MiB, D0;
+    /// reported by Windows (UHL, 12 Nov 22:14 / 23:03): subsystem
+    /// `1043:16f2`, revision A1, BAR1 at 0x60_0000_0000, link 16 GT/s x8
+    /// active / x16 max. SIM (not read): BAR3 base, capability layout, the
+    /// I/O BAR, the ROM contents.
     pub fn ga106_laptop_asus() -> Self {
+        use crate::laptop as lp;
         let mut s = Self::ga104_rtx3070ti();
         let mut set = |off: usize, v: u32| s.regs[off / 4] = v;
-        set(0x00, 0x2520_10de);
-        set(0x04, 0x0010_0000); // status: cap list; command: NOTHING enabled (observed)
-        set(0x10, 0x8500_0000); // BAR0 16 MiB (observed base)
-        set(0x14, 0x0000_000c); // BAR1 lo: mem64 prefetchable (base SIM)
-        set(0x18, 0x0000_0060); // BAR1 hi: 0x60_0000_0000 (SIM)
+        set(0x00, (lp::DEVICE as u32) << 16 | lp::VENDOR as u32);
+        set(0x04, 0x0010_0000 | lp::COMMAND as u32); // status: cap list; command: NOTHING enabled (observed)
+        set(0x08, 0x0300_0000 | lp::REVISION as u32); // revision A1 (Windows)
+        set(0x10, lp::BAR0_BASE as u32); // BAR0 16 MiB (observed base)
+        set(0x14, lp::BAR1_BASE as u32 | 0xc); // BAR1 lo: mem64 prefetchable
+        set(0x18, (lp::BAR1_BASE >> 32) as u32); // BAR1 hi: 0x60_0000_0000 (Windows)
         set(0x1c, 0x0000_000c); // BAR3 lo (base SIM)
         set(0x20, 0x0000_0062); // BAR3 hi: 0x62_0000_0000 (SIM)
         set(0x24, 0x0000_3001); // BAR5: I/O (SIM)
-        set(0x2c, 0x0000_1043); // subsystem vendor ASUS, device SIM
-        set(0x84, 0x0000_0084); // LinkCap: 16 GT/s x8 (SIM)
-        set(0x88, 0x0084_0000); // LinkSta: 16 GT/s x8 (SIM)
+        set(
+            0x2c,
+            ((lp::SUBSYS_DEVICE as u32) << 16) | lp::SUBSYS_VENDOR as u32,
+        ); // subsystem ASUS 1043:16f2 (Windows)
+        set(0x84, 0x0000_0104); // LinkCap: 16 GT/s x16 max (Windows)
+        set(0x88, 0x0084_0000); // LinkSta: 16 GT/s x8 active (Windows)
         set(0x204, ((1u32 << 14) - (1 << 6)) << 4); // BAR1: 64 MiB .. 8 GiB
         set(0x208, 0x0000_0d41); // BAR1, 2 resizable BARs, current 2^13 MiB = 8 GiB (observed size)
         s.bar_mask = [

@@ -20,7 +20,15 @@
 //! - the BIT table ("\xff\xb8BIT") inside the PCI-AT image: token size at +9,
 //!   token count at +10, tokens from +12, each `id, version, length u16,
 //!   offset u16` — DEDUS from nouveau `bios/bit.c` (MIT). Token 0x70 is the
-//!   Falcon data that leads to FWSEC (nova-core documentation).
+//!   Falcon data that leads to FWSEC (nova-core documentation);
+//! - the VBIOS version from BIT token 'i' (0x69, "BIOS info"): 5 bytes at the
+//!   token's data offset, printed `major.chip.minor.micro.patch` with the
+//!   first four bytes read as a little-endian u32 (byte 3 = major … byte 0 =
+//!   micro) and byte 4 = patch — as nouveau `nvkm/subdev/bios/base.c` does
+//!   when it prints "version %02x.%02x.%02x.%02x.%02x" (MIT, read as a
+//!   specification). This is the string Windows / NVML report as the VBIOS
+//!   version (workstation: 94.04.65.00.3e; laptop: 94.06.1E.00.23), so the
+//!   first journal from a board can be checked against the Windows report.
 //!
 //! Locating the FWSEC ucode itself (PMU lookup table, application 0x85,
 //! FalconUCodeDescV3) is done by [`crate::fwsec`], with the same reader; its
@@ -44,6 +52,10 @@ pub const CODE_EFI: u8 = 0x03;
 pub const CODE_NBSI: u8 = 0x70;
 pub const CODE_FWSEC: u8 = 0xe0;
 pub const BIT_TOKEN_FALCON_DATA: u8 = 0x70;
+/// BIT token 'i': BIOS info, carries the VBIOS version (see module doc).
+pub const BIT_TOKEN_BIOS_INFO: u8 = 0x69;
+/// Bytes of token 'i' needed for a full version (4 version + 1 patch).
+pub const BIOS_INFO_MIN_LEN: u16 = 5;
 
 /// Wall-clock budget for the whole I3 scan.
 pub const VBIOS_TIMEOUT_US: u64 = 2_000_000;
@@ -87,6 +99,52 @@ pub struct BitToken {
     pub data_offset: u16,
 }
 
+/// The VBIOS version as NVIDIA tools print it: `94.04.65.00.3e`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BiosVersion {
+    pub major: u8,
+    pub chip: u8,
+    pub minor: u8,
+    pub micro: u8,
+    pub patch: u8,
+}
+
+impl BiosVersion {
+    /// The 5 bytes at the data offset of BIT token 'i', in ROM order.
+    pub fn from_bytes(b: [u8; 5]) -> Self {
+        BiosVersion {
+            micro: b[0],
+            minor: b[1],
+            chip: b[2],
+            major: b[3],
+            patch: b[4],
+        }
+    }
+
+    /// True when `reported` (the string Windows / NVML / a BIOS screen
+    /// shows, e.g. "94.06.1E.00.23") names this version; case-insensitive,
+    /// surrounding spaces ignored. Anything else — including a string in
+    /// another shape — is `false`, never a guess.
+    pub fn matches_report(&self, reported: &str) -> bool {
+        let r = reported.trim();
+        let mine = alloc::format!("{self}");
+        r.len() == mine.len()
+            && r.bytes()
+                .zip(mine.bytes())
+                .all(|(a, b)| a.to_ascii_lowercase() == b)
+    }
+}
+
+impl core::fmt::Display for BiosVersion {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{:02x}.{:02x}.{:02x}.{:02x}.{:02x}",
+            self.major, self.chip, self.minor, self.micro, self.patch
+        )
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VbiosLayout {
     /// IFR version if the ROM starts with an "NVGI" header.
@@ -96,6 +154,10 @@ pub struct VbiosLayout {
     pub images: Vec<RomImage>,
     /// Offset of the BIT table (PROM window) and its tokens.
     pub bit: Option<(u32, Vec<BitToken>)>,
+    /// The VBIOS version from BIT token 'i', when the token is there with
+    /// at least [`BIOS_INFO_MIN_LEN`] bytes inside the PCI-AT image.
+    /// `None` is "not read", never an invented value.
+    pub version: Option<BiosVersion>,
     pub prom_reads: u32,
 }
 
@@ -321,13 +383,41 @@ fn scan<M: Mmio + ?Sized, K: Clock + ?Sized>(rom: &mut Rom<'_, M, K>) -> GpuResu
         Some(img) if img.code_type == CODE_PCI_AT => find_bit(rom, img)?,
         _ => None,
     };
+    let version = match (&bit, images.first()) {
+        (Some((_, tokens)), Some(pci_at)) => read_bios_version(rom, pci_at, tokens)?,
+        _ => None,
+    };
     Ok(VbiosLayout {
         ifr_version,
         rom_start,
         images,
         bit,
+        version,
         prom_reads: 0,
     })
+}
+
+/// The VBIOS version from BIT token 'i' (5 reads at most, read-only). The
+/// token's data offset is relative to the PCI-AT image, like token 0x70's.
+/// Missing token, too short a token or data outside the image → `Ok(None)`.
+pub(crate) fn read_bios_version<M: Mmio + ?Sized, K: Clock + ?Sized>(
+    rom: &mut Rom<'_, M, K>,
+    pci_at: &RomImage,
+    tokens: &[BitToken],
+) -> GpuResult<Option<BiosVersion>> {
+    let Some(t) = tokens.iter().find(|t| t.id == BIT_TOKEN_BIOS_INFO) else {
+        return Ok(None);
+    };
+    if t.length < BIOS_INFO_MIN_LEN || t.data_offset as u32 + BIOS_INFO_MIN_LEN as u32 > pci_at.size
+    {
+        return Ok(None);
+    }
+    let at = pci_at.offset + t.data_offset as u32;
+    let mut b = [0u8; 5];
+    for (k, slot) in b.iter_mut().enumerate() {
+        *slot = rom.u8(at + k as u32)?;
+    }
+    Ok(Some(BiosVersion::from_bytes(b)))
 }
 
 pub(crate) fn find_bit<M: Mmio + ?Sized, K: Clock + ?Sized>(
@@ -418,6 +508,57 @@ mod tests {
                 .all(|&o| (PROM_BASE..PROM_BASE + PROM_SIZE).contains(&o))
         );
         assert!(l.prom_reads > 0 && (l.prom_reads as usize) == m.reads.len());
+    }
+
+    #[test]
+    fn version_is_none_when_token_i_is_missing_or_short() {
+        // ga10x_like_chain: tokens 0x42 and 0x70 only.
+        let mut m = board(&rom::ga10x_like_chain());
+        let l = run(&mut m).0.unwrap();
+        assert_eq!(l.version, None);
+        // Token 'i' there, but only 4 bytes: no patch byte → not read.
+        let mut m = board(&rom::with_bios_info([0, 0x65, 0x04, 0x94, 0x3e], 4));
+        let l = run(&mut m).0.unwrap();
+        assert_eq!(l.version, None);
+        assert!(l.bit.as_ref().unwrap().1.iter().any(|t| t.id == 0x69));
+        assert!(m.writes.is_empty());
+    }
+
+    #[test]
+    fn version_is_read_from_token_i_in_nouveau_order() {
+        // Test bytes shaped like the workstation's Windows-reported
+        // "94.04.65.00.3e" (HARDWARE_WORKSTATION.md), not copied from a ROM.
+        let v = rom::bios_info_bytes(0x94, 0x04, 0x65, 0x00, 0x3e);
+        let mut m = board(&rom::with_bios_info(v, 5));
+        let (r, j) = run(&mut m);
+        let l = r.unwrap();
+        let ver = l.version.expect("token 'i' with 5 bytes");
+        assert_eq!(
+            ver,
+            BiosVersion {
+                major: 0x94,
+                chip: 0x04,
+                minor: 0x65,
+                micro: 0x00,
+                patch: 0x3e
+            }
+        );
+        assert_eq!(alloc::format!("{ver}"), "94.04.65.00.3e");
+        assert!(ver.matches_report("94.04.65.00.3e"));
+        assert!(ver.matches_report(" 94.04.65.00.3E "));
+        assert!(!ver.matches_report("94.04.65.00.3f"));
+        assert!(
+            !ver.matches_report("94.4.65.0.3e"),
+            "another shape is not a match"
+        );
+        assert!(!ver.matches_report(""));
+        assert!(l.complete());
+        assert!(m.writes.is_empty());
+        assert_eq!(j.writes(), 0);
+        // The laptop's Windows report (hub, 12 Nov 23:03): "94.06.1E.00.23".
+        let lap = BiosVersion::from_bytes(rom::bios_info_bytes(0x94, 0x06, 0x1e, 0x00, 0x23));
+        assert!(lap.matches_report("94.06.1E.00.23"));
+        assert!(!ver.matches_report("94.06.1E.00.23"));
     }
 
     #[test]

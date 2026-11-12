@@ -17,6 +17,7 @@ pub mod fake_gsp;
 pub mod fake_rm;
 pub mod fw_stick;
 pub mod golden_log;
+pub mod laptop;
 pub mod mmio;
 pub mod observed;
 pub mod pci;

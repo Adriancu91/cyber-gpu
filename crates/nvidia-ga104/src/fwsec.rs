@@ -684,6 +684,7 @@ mod tests {
             rom_start: 0,
             images: Vec::new(),
             bit: None,
+            version: None,
             prom_reads: 0,
         };
         let mut m = SimMmio::new(0x1000);

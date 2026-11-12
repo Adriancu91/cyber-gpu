@@ -112,6 +112,59 @@ pub fn ga10x_like_chain() -> Vec<u8> {
     ])
 }
 
+/// SIM: where [`with_bios_info`] puts the data of BIT token 'i' (0x69)
+/// inside the PCI-AT image of [`ga10x_like_chain`].
+pub const SIM_BIOS_INFO_AT: u16 = 0x2100;
+
+/// [`ga10x_like_chain`] whose BIT table also has token 'i' (0x69, length
+/// `len`) with the 5 version bytes `version` at [`SIM_BIOS_INFO_AT`] — in
+/// ROM order (`micro, minor, chip, major, patch`). The version bytes are
+/// test values, never a copy of a VBIOS.
+pub fn with_bios_info(version: [u8; 5], len: u16) -> Vec<u8> {
+    let mut b = build_chain(&[
+        SimImage {
+            code_type: 0x00,
+            blocks: 128,
+            npde: true,
+            bit: Some((
+                0x1000,
+                vec![
+                    (0x42, 1, 0x20, 0x2000),
+                    (0x69, 2, len, SIM_BIOS_INFO_AT),
+                    (0x70, 1, 4, 0x3000),
+                ],
+            )),
+        },
+        SimImage {
+            code_type: 0x03,
+            blocks: 64,
+            npde: true,
+            bit: None,
+        },
+        SimImage {
+            code_type: 0xe0,
+            blocks: 32,
+            npde: true,
+            bit: None,
+        },
+        SimImage {
+            code_type: 0xe0,
+            blocks: 32,
+            npde: true,
+            bit: None,
+        },
+    ]);
+    let at = SIM_BIOS_INFO_AT as usize;
+    b[at..at + 5].copy_from_slice(&version);
+    b
+}
+
+/// The 5 bytes of BIT token 'i' for a version printed `a.b.c.d.e` (each a
+/// hex byte): ROM order is `d, c, b, a, e`.
+pub const fn bios_info_bytes(major: u8, chip: u8, minor: u8, micro: u8, patch: u8) -> [u8; 5] {
+    [micro, minor, chip, major, patch]
+}
+
 /// Prefix `chain` with an IFR header ("NVGI"), version 3, whose ROM
 /// directory ("RFRD") points at the chain. Field placement per the nova-core
 /// VBIOS documentation; values are SIM.

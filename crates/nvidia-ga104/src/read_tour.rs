@@ -206,6 +206,10 @@ pub enum Wake {
 
 /// Fact key written by [`run_tour_awake`].
 pub const FACT_WAKE: &str = "pci.trezire";
+/// The VBIOS version from BIT token 'i' (`vbios::BiosVersion`), as the
+/// Windows report prints it (`94.04.65.00.3e`), or [`VBIOS_VERSION_UNREAD`].
+pub const FACT_VBIOS_VERSION: &str = "vbios.versiune";
+pub const VBIOS_VERSION_UNREAD: &str = "necitita (jetonul BIT 0x69 lipseste sau e scurt)";
 
 /// C-116 step 2, the "minimal wake-up" around the read tour, for a GPU the
 /// firmware left with Memory Space OFF (Adrian's laptop). Reads only the
@@ -377,6 +381,15 @@ where
                         .map(|t| format!("{:#04x}v{}", t.id, t.version))
                         .collect();
                     facts.push(Fact::new("vbios.bit.jetoane", t.join(" ")));
+                    // The version Windows / NVML also report; the first
+                    // journal from a board is checked against that string.
+                    facts.push(Fact::new(
+                        FACT_VBIOS_VERSION,
+                        match lay.version {
+                            Some(v) => alloc::format!("{v}"),
+                            None => VBIOS_VERSION_UNREAD.into(),
+                        },
+                    ));
                 }
                 match crate::fwsec::locate(bar0, journal, clock, BUDGET_US, &lay) {
                     Ok(loc) => {
@@ -526,6 +539,8 @@ mod tests {
             ("vbios.imagine2", "0x24600 tip 0xe0 22016 octeti 10de:2200"),
             ("vbios.imagine3", "0x29c00 tip 0xe0 386048 octeti 10de:2200"),
             ("vbios.bit", "0x1b0 17"),
+            // Windows-reported version in the SIM token 'i' (observed::VBIOS_VERSION_BYTES).
+            (FACT_VBIOS_VERSION, gpu_sim::workstation::VBIOS_VERSION),
             ("fwsec.pmu", "0x87ecb"),
             (
                 "fwsec.aplicatii",
@@ -637,6 +652,65 @@ mod tests {
         );
         assert!(bar3.reads.is_empty());
         assert_eq!(cfg3.writes, 0);
+    }
+
+    #[test]
+    fn awake_tour_on_laptop_facts_model_shows_what_windows_reported() {
+        // SIMULARE (T127): the laptop model built from the facts in
+        // gpu_sim::laptop (OS os-295 + Windows UHL), with a GA106 BOOT_0 and
+        // the observed ROM layout carrying the laptop's Windows-reported
+        // VBIOS version in token 'i'. The tour must show those facts back —
+        // the first real journal is compared against the same strings.
+        use gpu_pci::mem_space::MemorySpacePermit;
+        use gpu_sim::laptop as lp;
+        let permit = MemorySpacePermit::new("test SIMULARE C-116/C-117");
+        let mut cfg = gpu_sim::pci::SimConfig::ga106_laptop_asus();
+        let mut bar0 = gpu_sim::mmio::SimMmio::ga106_bar0();
+        bar0.set(0x118128, observed::PRIV_LEVEL_MASK);
+        bar0.set(0x118234, observed::GFW_BOOT);
+        bar0.load_bytes(
+            0x30_0000,
+            &observed::observed_rom_with_version(gpu_sim::rom::bios_info_bytes(
+                0x94, 0x06, 0x1e, 0x00, 0x23,
+            )),
+        );
+        let mut j = Journal::new(4096);
+        let (t, wake) = run_tour_awake(
+            &mut cfg,
+            None,
+            &mut bar0,
+            &mut SimClock::default(),
+            &mut j,
+            &permit,
+        )
+        .unwrap();
+        assert_eq!(wake, Wake::EnabledAndRestored);
+        for (k, v) in [
+            ("pci.id", "10de:2520"),
+            ("pci.subsistem", "1043:16f2"),
+            ("pci.stare", "D0"),
+            ("pci.bar0", "0x85000000 mem"),
+            ("pci.bar1", "0x6000000000 mem 64b prefetch"),
+            ("pci.rebar.bar1", "8192 MiB"),
+            ("pci.legatura", "gen4 x8 (max gen4 x16)"),
+            ("chip.nume", "GA106"),
+            ("chip.familie", "GA106"),
+            (FACT_VBIOS_VERSION, lp::VBIOS_VERSION),
+        ] {
+            assert_eq!(t.get(k), Some(v), "{k}");
+        }
+        let ver = crate::vbios::BiosVersion::from_bytes(gpu_sim::rom::bios_info_bytes(
+            0x94, 0x06, 0x1e, 0x00, 0x23,
+        ));
+        assert!(ver.matches_report("94.06.1E.00.23"), "the hub's spelling");
+        assert!(!ver.matches_report(gpu_sim::workstation::VBIOS_VERSION));
+        assert_eq!(cfg.writes, 2, "enable + restore Memory Space, nothing else");
+        assert!(bar0.writes.is_empty(), "no GPU register written");
+        assert_eq!(
+            cfg.read_raw(0x04) & 0xffff,
+            lp::COMMAND as u32,
+            "left as found"
+        );
     }
 
     #[test]

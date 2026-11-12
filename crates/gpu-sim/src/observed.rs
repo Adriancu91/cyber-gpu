@@ -73,6 +73,13 @@ pub const BIT_TOKENS: [(u8, u8); 17] = [
     (0x69, 2),
 ];
 
+/// The VBIOS version Windows reported for this board (K0 inventory,
+/// [`crate::workstation::VBIOS_VERSION`] = "94.04.65.00.3e") as the 5 bytes
+/// of BIT token 'i' in ROM order (`micro, minor, chip, major, patch`). The
+/// board's token 'i' has NOT been read yet (its length and data are SIM,
+/// [`STILL_SIM`]); the first journal with `vbios.versiune` tells.
+pub const VBIOS_VERSION_BYTES: [u8; 5] = crate::rom::bios_info_bytes(0x94, 0x04, 0x65, 0x00, 0x3e);
+
 // ---- FWSEC (29 Oct, `gpu fwsec`, I3b) ----
 pub const PMU_TABLE: u32 = 0x87ecb;
 /// Application ids listed by the PMU lookup table (0x85 = FWSEC_PROD).
@@ -94,7 +101,7 @@ pub const UCODE_ID: u8 = 9;
 /// copied). Printed by the comparison tool so nobody mistakes it for data.
 pub const STILL_SIM: &[&str] = &[
     "configuratia PCI: pozitia capabilitatilor, starea (Status), legatura PCIe, marimile suportate de Resizable BAR",
-    "VBIOS: continutul imaginilor (intentionat: nu copiem VBIOS-ul), pozitia PCIR/NPDE in imagini, lungimile si datele jetoanelor BIT",
+    "VBIOS: continutul imaginilor (intentionat: nu copiem VBIOS-ul), pozitia PCIR/NPDE in imagini, lungimile si datele jetoanelor BIT (jetonul 0x69: 5 octeti cu versiunea raportata de Windows, necitita inca de pe placa)",
     "FWSEC: antetul tabelei PMU si descriptorii celorlalte aplicatii; octetii ucode-ului si ai semnaturilor (zero)",
     "registrele I6 (siguranta 0x8241e0, VRAM 0x1183a4, WPR2 0x1fa828): inca necitite pe placa",
     "orice registru necitit pe placa: 0 in simulare (placa reala poate da 0xbadf....)",
@@ -145,9 +152,18 @@ fn blocks(size: u32) -> u16 {
 /// them, with the observed descriptor fields. Every content byte is zero or
 /// SIM ([`STILL_SIM`]).
 pub fn observed_rom() -> Vec<u8> {
-    // SIM: token lengths 4, data offsets in an empty area of image 0; the
-    // Falcon data token (0x70) points at FALCON_DATA_AT.
+    observed_rom_with_version(VBIOS_VERSION_BYTES)
+}
+
+/// [`observed_rom`] with other bytes in BIT token 'i' — e.g. the laptop's
+/// Windows-reported version ([`crate::laptop::VBIOS_VERSION`]) for a GA106
+/// model. SIM: the laptop's ROM layout has not been read yet.
+pub fn observed_rom_with_version(version: [u8; 5]) -> Vec<u8> {
+    // SIM: token lengths 4 (token 'i': 5), data offsets in an empty area of
+    // image 0; the Falcon data token (0x70) points at FALCON_DATA_AT; token
+    // 'i' (0x69) carries the 5 version bytes.
     const FALCON_DATA_AT: usize = 0x3000;
+    let mut bios_info_at = None;
     let tokens = BIT_TOKENS
         .iter()
         .enumerate()
@@ -157,7 +173,13 @@ pub fn observed_rom() -> Vec<u8> {
             } else {
                 0x2000 + 0x10 * k as u16
             };
-            (id, ver, 4u16, data)
+            let len = if id == 0x69 {
+                bios_info_at = Some(data as usize);
+                5u16
+            } else {
+                4u16
+            };
+            (id, ver, len, data)
         })
         .collect();
     let mut b = build_chain(&[
@@ -186,6 +208,9 @@ pub fn observed_rom() -> Vec<u8> {
             bit: None,
         },
     ]);
+    if let Some(at) = bios_info_at {
+        b[at..at + 5].copy_from_slice(&version);
+    }
     // FWSEC images: "NV" signature, "NPDS" data structure, device 0x2200.
     for &(off, _, _, _, dev) in &IMAGES[2..] {
         let off = off as usize;
