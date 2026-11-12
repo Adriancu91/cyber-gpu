@@ -1,5 +1,44 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 93 — 12 noiembrie 2026, ~18:00–18:50 (ora României), în cloud, FĂRĂ placă — **os-295: I8 A TRECUT PE PLACĂ** (varianta 1); golden ok; I9 ESEC fără motiv în jurnal → motivul intră pe stick
+
+Pornită de programare la 18:00; în hub, de la sesiunea 92: **C-111** (Adrian a venit la ~17:55 pentru testul cu variante; stick `os-295`, `os-289` nu mai există)
+și **rezultatul `rezultate/2026-11-12-workstation-os295/REZULTAT.md`** + jurnalul **`gpu-jurnal-010.txt`** (2425 rânduri, cyber-gpu `49e6685`, `gpu lant --varianta 1`).
+Nicio comandă nouă pentru cyber-gpu, dar un **jurnal nou de pe placă** → sesiunea lucrează (regula din sesiunile 90–92). Nimic din ce e scris mai jos nu e testat pe placă în afara jurnalului citit.
+
+**Ce spune placa (OBSERVAT, `gpu-jurnal-010.txt`; `compara_variante 0x9c66000 gpu-jurnal-009.txt gpu-jurnal-010.txt`):**
+
+| Pas | Pe RTX 3070 Ti, 12 nov ~17:48 |
+|---|---|
+| I8 (varianta 1 `rpc-inainte`: `SetSystemInfo` + `SetRegistry` + soneria la I7, înainte de Booter) | **`GSP_INIT_DONE rpc_result = 0x00000000`** după 11,17 s → **`pas i8-gsp-init: ok`**. Doar 2 NOCAT (os-283: 844): 1 ASSERT (`0x0132d3b2`), 1 ENGINE `NV_ERR_INVALID_DMA_SPECIFIER` „Display Subsystem / Display Engine”; 2 `UCODE_LIBOS_PRINT` (ENG_PMU). **Analiza din sesiunea 88 (`os-283_ANALIZA_ORDINE_RPC.md`) s-a confirmat; variantele 2–10 nu mai sunt necesare.** |
+| I8e golden image | **`pas i8e-golden: ok`** — 11 mesaje RM (7 alocări + 4 comenzi) acceptate de GSP-RM, tabelele de pagini scrise în VRAM prin fereastra 0x1700. **Primele apeluri RM acceptate pe placă.** |
+| I9 canal de lucru | **`pas i9-canal-lucru: ESEC`** după 11 sonerii: 10 mesaje acceptate (client, dispozitiv, subdispozitiv, VA space, `SET_PAGE_DIRECTORY`, TSG, context share, canal, compute, `PROMOTE_CTX` fizic); **al 11-lea, `PROMOTE_CTX` jumătatea virtuală, a eșuat — refuz sau timeout, NU SE ȘTIE**: motivul mergea doar pe ecran, și ecranul era înghețat. Marcajele de timp de pe stick sunt ora scrierii (13 ms/rând), nu ora evenimentului. |
+| curățare | `bus-master-oprit: ok`, `tur-dupa: ok`; verdict „OPRIT CURAT la i9-canal-lucru”. |
+| ecranul | înghețat la rândul 2274 (`SCRATCH_14 = 0x17100000`, exact la pornirea RISC-V-ului GSP); jurnalul a continuat ~9 s de evenimente. Ipoteză: GSP-RM a preluat afișajul (NOCAT „Display Engine”). Nu avem o setare publică, cu sursă, care să-l oprească — nu inventăm. |
+
+Studiul: **`docs/os-295_ANALIZA_I9.md`**. Notificare trimisă lui Adrian pe telefon la 18:05 (rezumatul de mai sus). Corectură față de notificare: „refuz rapid” nu se poate
+susține din marcajele de timp de pe stick — poate fi la fel de bine limita de 5 s.
+
+**Ce s-a făcut (un pas mic, pe calea critică „următorul jurnal să spună DE CE”):**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Motivul pașilor eșuați în jurnal | `gpu_core::diag::Journal::push_text` (text lung în bucăți de 32 de octeți); `chain::run_chain_ready` scrie după `pas X: ESEC` rândul `text motivul esecului = "…"` (+ `(urmare)`), și pentru pașii opriți de o poartă. **OS-ul n-are nimic de schimbat** — leagă `45dfc77`+ | PASS (T124, T124b) |
+| Mesajele GSP-RM sărite în timpul unui apel RM | `gsp::golden::QueueTransportBellKeep` (păstrează mesajele întregi, ≤ 64) + `golden::journal_skipped` (NOCAT decodat ca la I8, LibOS print, altele numite + `rpc_result`). `QueueTransportBell` neschimbat; pentru OS o schimbare opțională în `OsRm::call` | PASS (T124c, SIMULARE) |
+| `variant_log` / `compara_variante` | citește motivul (`fail_reasons`, `fail_reason`), îl arată în tabel; jurnalele vechi: „fara motiv in jurnal (driver dinainte de 12 nov 2026; era doar pe ecran)” | PASS (T124d, T124e pe jurnalul real) |
+| tinygrad `ip.py` (master, MIT, citit ca specificație) | `promote_ctx` pentru canalul de lucru: fizic `bInitialize=1, bNonmapped=1, physAttr=0x4`, apoi virtual (`gpuVirtAddr`, restul 0), `hObject` = canalul, `engineType` 1, buffere 0/1/2, promovarea imediat după alocarea obiectului compute — **codul nostru face același lucru**; diferența (dacă e refuz) e în ce promovăm, nu în formă | OBSERVAT (citire) |
+| Compatibilitate OS | doar adăugări (`push_text`, `STEP_FAIL_REASON*`, `QueueTransportBellKeep`, `journal_skipped`, `VariantRun::fail_reasons`); `queue_call` (privat) primește închiderea pentru mesajele sărite; nicio scriere nouă în registre | PASS |
+| Pe RTX 3070 Ti | — | NOT TESTED (schimbările de azi) |
+
+Verificări (`sh tools/check.sh`, Rust 1.97.0): format, clippy `-D warnings`, **455 teste PASS** (4 ignorate), build no_std PASS. Commit-uri: `45dfc77` (cod), + documentele.
+Nota pentru OS: `integration/cyber-universe/os-295_i9-motiv-in-jurnal.md`. `docs/COMPATIBILITATE_FIRMWARE.md`: rândurile I8g, I8e, I9 cu rezultatul de pe placă.
+
+**Următorul pas:** (1) OS-ul leagă `45dfc77`+ (opțional §2 din notă) → Release; (2) un singur test pe placă, `gpu lant --varianta 1`, `trimite` → în jurnal
+`text motivul esecului = "…"` după `pas i9-canal-lucru: ESEC`; (3) cu motivul: cod `NV_STATUS` → `names` + regulile `PROMOTE_CTX` (ce promovăm: mărimi/aliniere,
+VA space prin context share, `engineType`); timeout → tabelele de pagini / `SET_PAGE_DIRECTORY`. Fără jurnal nou, nimic altceva pe driver. Regula 8: sesiunile 90–92
+au fost opriri scurte (așteptau placa), 93 a avut pași — nu se aplică.
+
+---
 ## Sesiunea 92 — 12 noiembrie 2026, ~13:25–13:40 (ora României), în cloud, FĂRĂ placă — rularea de la 13:25: tot amânat (C-110), oprire scurtă (a treia la rând, așteaptă placa)
 
 Pornită de programare. În hub, de la sesiunea 91: **nicio comandă nouă pentru cyber-gpu, niciun jurnal nou de pe placă** (ultimul rămâne `gpu-jurnal-009.txt`, os-283).

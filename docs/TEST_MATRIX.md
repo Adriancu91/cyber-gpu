@@ -1,5 +1,17 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 93 (12 nov 2026, cloud, fără placă) — după os-295 (I8 TRECE pe placă, I9 ESEC fără motiv în jurnal): motivul pe stick
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| **PE PLACĂ** os-295 | `gpu lant --varianta 1` pe RTX 3070 Ti (Adrian, 12 nov ~17:48; stick os-295, cyber-gpu `49e6685`), jurnalul `rezultate/os-automat/2026-11-12/gpu-jurnal-010.txt` (2425 rânduri) | `compara_variante 0x9c66000 gpu-jurnal-009.txt gpu-jurnal-010.txt` | I8 trece dacă RPC-urile sunt înaintea lui Booter (T122) | **`GSP_INIT_DONE rpc_result = 0`** după 11,17 s, `pas i8-gsp-init: ok`, 2 NOCAT (nu 844), **`pas i8e-golden: ok`** (11 mesaje RM acceptate), **`pas i9-canal-lucru: ESEC`** după 11 sonerii (al 11-lea mesaj = `PROMOTE_CTX` virtual), fără motiv în jurnal; „OPRIT CURAT la i9-canal-lucru”; ecranul înghețat de la pornirea GSP-RM, jurnalul complet pe stick | **I8 PASS, I8e PASS, I9 FAIL (motiv necunoscut)** — `docs/os-295_ANALIZA_I9.md` |
+| T124 | `Journal::push_text`: text scurt = 1 rând `text motiv = "…"`; 61 de octeți = 2 rânduri (`motiv` / `motiv (urmare)`), lipite la loc dau textul; textul gol = 1 rând gol | `cargo test -p gpu-core long_text_is_journaled_in_pieces` | conform | conform | PASS |
+| T124b | `chain::run_chain_ready`: după `pas i6-fwsec-frts: ESEC` urmează `text motivul esecului = "eroare hardware 0x57"`; un motiv de 61 de octeți = 2 rânduri; pasul oprit de poartă (I7 blocat în plan) are și el motivul („blocat in plan (I7)…”); pașii trecuți n-au motiv | `cargo test -p nvidia-ga104 a_failed_step_leaves_its_reason` | conform | conform | PASS (SIMULARE) |
+| T124c | `QueueTransportBellKeep` prin cozile reale către `SimGsp` + `FakeRm`: în timpul primului apel GSP-RM trimite 1 NOCAT ENGINE (`0x27`, „Display Subsystem”), 1 `UCODE_LIBOS_PRINT`, 1 eveniment `0x1fff` cu `rpc_result 0x33`; răspunsul (acceptat) și refuzul comenzii a doua (`HardwareFault`) ca înainte; 2 sonerii; `events` = cele 3 numere, `skipped` = cele 3 mesaje întregi; `journal_skipped` → `total = 3`, 3 × „la pasul = "I9"”, NOCAT decodat (`NV_ERR_INVALID_DMA_SPECIFIER`, sursa), LibOS print decodat, `0x1fff` + `rpc_result 0x33`; nimic sărit = nimic scris | `cargo test -p nvidia-ga104 skipped_messages_are_kept_whole` | conform | conform | PASS (SIMULARE) |
+| T124d | `variant_log`: jurnal în forma os-295 (fără motiv) → `fail_reasons` gol, tabelul spune „fara motiv in jurnal (driver dinainte de 12 nov 2026; era doar pe ecran)”; cu rândurile motivului în 2 bucăți → lipite: „argument invalid: RM_CONTROL: raspunsul e pentru alta comanda”, arătat în tabel; rândurile motivului nu sunt pași; un rând de motiv fără pas eșuat înainte = ignorat | `cargo test -p nvidia-ga104 the_reason_of_a_failed_step` | conform | conform | PASS |
+| T124e | `compara_variante 0x9c66000 gpu-jurnal-009.txt gpu-jurnal-010.txt` pe jurnalele reale | — | tabel + „au trecut de I8: varianta 1” | 009: „I8 refuzat 0x59”, 010: „I8 TRECUT”, „motivul la i9-canal-lucru: fara motiv in jurnal …”, 51/40 rânduri diferite, verdicte „OPRIT CURAT la i8-gsp-init” / „… la i9-canal-lucru”, cod de ieșire 0 | PASS (citire de jurnal real) |
+| Suita | `sh tools/check.sh` (Rust 1.97.0): format, clippy `-D warnings`, teste, build no_std | — | tot verde | **455 PASS** (4 ignorate) | PASS |
+
 ## Rezultate — sesiunea 89 (11 nov 2026, cloud, fără placă) — pregătirea pentru jurnalele de joi (C-108): `variant_log` + `compara_variante`
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |
