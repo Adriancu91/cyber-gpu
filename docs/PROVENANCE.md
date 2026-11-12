@@ -245,3 +245,12 @@ trimitere; `Falcon.init_hw`: FRTS, Booter, `FALCON_OS = 0`). Linux `067c5c2` (GP
 `gsp/fw/commands.rs` (`bIsPrimary: 0`, fără `hostPageSize`), `gsp/commands.rs` (3 chei de registru). Nimic copiat; valorile și ordinea sunt în
 `gsp/variants.rs` cu sursa lângă fiecare variantă; tabelul în `docs/os-283_ANALIZA_ORDINE_RPC.md`. Faptele din `gpu-jurnal-009.txt` (identic cu 008) sunt
 OBSERVATE; că ordinea e cauza lui 0x59 e **DEDUS** (din comentariile RM), de probat joi. Modelul `SimGsp::start_early_boot` e scris de noi după acele comentarii.
+
+**Sesiunea 95 (12 nov, noaptea), C-116 — GA106 doar-citire + „trezirea minimă”:** codul GA106 din `256a1f2` (sesiunea 77) e repus, adaptat (doar adăugări:
+`ids::{GA106_MODELS, Family, lookup_ga106, lookup_ampere, LAPTOP_DEVICE}`, `boot::CHIP_GA106`, `probe::{probe_config_ampere, probe_mmio_family, level0_ampere,
+MEMORY_SPACE_OFF}`, `read_tour::{run_tour_ampere, run_tour_awake, Wake, FACT_WAKE}`); sursele lui rămân cele din sesiunea 77 (open-gpu-kernel-modules@570.144
+README + `g_chips2halspec_nvoc.c`, MIT; pci.ids citat; `linux-firmware` `WHENCE`). Faptele despre laptop (`10de:2520`, Command 0, BAR0 @0x85000000, BAR1 8 GiB,
+BAR3 32 MiB, D0) sunt OBSERVATE de OS pe 12 nov (hub `rezultate/2026-11-11-laptop-asus-tuf/REZULTAT.md`); subsistemul, bazele BAR1/BAR3, legătura și I/O-ul din
+`SimConfig::ga106_laptop_asus` sunt SIM. `gpu_pci::mem_space` (bitul Memory Space din Command): PCI Local Bus Specification 3.0 §6.2.2; Linux `pci_enable_device` /
+`pci_enable_resources` (GPL, **citit ca specificație**: pune exact acest bit după ce verifică alocarea BAR-urilor) — nouveau, nova-core și tinygrad se bazează
+pe el înainte de orice acces la BAR0. Cod original, după modelul `bus_master.rs` (D-013). Nimic rulat pe laptop.

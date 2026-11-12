@@ -1,5 +1,34 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 95 — 12 noiembrie 2026, ~21:00–21:40 (ora României), în cloud, FĂRĂ placă — **C-116 (nou, 20:57): laptopul ASUS TUF F15 (GA106) = a doua mașină de test** — pașii (1) și (2) în SIMULARE: recunoaștere GA106 doar-citire + „trezirea minimă” (Memory Space)
+
+Pornită de programare la 21:00. În hub, de la sesiunea 94: **C-116** (Adrian, 20:57: „ne mutăm cu testele aici (pe laptop) și vor fi mult mai rapide; apoi facem GPU pentru placa asta”),
+cu rezultatul OS-ului de pe laptop (`rezultate/2026-11-11-laptop-asus-tuf/REZULTAT.md`, os-295, 20:20–20:28): OS-ul pornește (C-109 rezolvat), NVIDIA **`10de:2520`** la 01:00.0,
+**D0, Command 0x0000** (Memory Space oprit de firmware), BAR0 16 MiB @0x85000000, BAR1 8 GiB (ReBAR), BAR3 32 MiB; driverul (`49e6685`) a refuzat corect, **zero scrieri**.
+Comanda nouă pentru cyber-gpu → sesiunea lucrează (C-116 preluat în hub la 21:00). **Nimic din ce e scris mai jos nu e rulat pe laptop sau pe workstation.**
+
+**Ce s-a făcut (doar adăugări; `probe::level0`, `probe_config`, `run_tour`, lanțul — neschimbate, refuză laptopul ca înainte):**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| C-116 (1) recunoașterea GA106 doar-citire (repusă din `256a1f2`, sesiunea 77, adaptată) | `ids::{GA106_MODELS (12 ID-uri, sursa README 570.144), LAPTOP_DEVICE = 0x2520, Family, lookup_ga106, lookup_ampere}`, `boot::CHIP_GA106 = 0x176`; `probe::{probe_config_ampere, probe_mmio_family, level0_ampere, MEMORY_SPACE_OFF}` + `Candidate::memory_space_enabled()`; `read_tour::run_tour_ampere` (faptele `chip.familie`, `chip.scrieri = interzise …`); `SimConfig::ga106_laptop_asus()` din faptele de pe laptop, `SimMmio::ga106_bar0()`. **Nou față de sesiunea 77:** cu Memory Space oprit, `level0_ampere` **nu citește BAR0** (refuz numit) | PASS (T126a–d, SIMULARE) — `6623d3c` |
+| C-116 (2) „trezirea minimă” | **`gpu_pci::mem_space`** (modelul `bus_master.rs`, D-013): `MemorySpacePermit`, `check_before_enable` (doar citiri: răspunde, antet tip 0, D0, BAR0 alocat, BAR-urile numite de ReBAR alocate), `enable_memory_space` (**o scriere** în Command, doar bitul 1; Bus Master/I/O neatinse; citit înapoi; deja pornit → 0 scrieri), `restore_memory_space` (repune valoarea veche; refuză dacă s-au schimbat alți biți). **`read_tour::run_tour_awake`**: pornește → turul C-54 → **repune întotdeauna** (și la eșec) → `Wake::{NotNeeded, EnabledAndRestored}`, faptul `pci.trezire` | PASS (T126e–g, SIMULARE) — `ccec8f9` |
+| Siguranță | niciun registru GPU scris (testele numără `bar0.writes == 0`); 2 scrieri în configurație în total, placa rămâne cum a lăsat-o firmware-ul; `Family::writes_allowed()` = doar GA104 → I6+ pe laptop refuzat fără cod nou (pasul 3 din C-116 cere DA-ul separat) | PASS |
+| Compatibilitate OS | doar adăugări; OS-ul compilează neschimbat la `ccec8f9`. Nota: `integration/cyber-universe/C-116_ga106-trezire.md` (propunerea: `gpu identifica`/`cauta`/`vbios` pe `_ampere`; `gpu tur` pe laptop cu `run_tour_awake` după DA, doar `gpu-scrie`) | PASS |
+| Documente | `docs/GA106_LAPTOP.md` (reluare, §0 faptele de pe laptop, §6 trezirea), TEST_MATRIX T126 a–h, PROVENANCE | scris |
+| Pe laptop / pe RTX 3070 Ti | — | NOT TESTED |
+
+Verificări (`sh tools/check.sh`, Rust 1.97.0): format, clippy `-D warnings`, **472 teste PASS** (4 ignorate; 458 → 472: +14), build no_std PASS. CI: vezi hub după push.
+
+**Regula „trei surse” pentru singura scriere nouă:** bitul Memory Space din Command = PCI Local Bus 3.0 §6.2.2; Linux `pci_enable_device` (citit ca specificație) îl pune pentru orice
+placă înainte ca nouveau / nova-core / tinygrad să atingă BAR0. Nu e „pornirea plăcii”: nu schimbă energia, nu pornește DMA, nu atinge ACPI — doar deschide fereastra de citire.
+
+**Următorul pas:** (1) OS-ul (C-116 partea lui): leagă `ccec8f9`+, `gpu identifica`/`cauta`/`vbios` pe `_ampere`, `gpu tur` pe laptop cu trezirea minimă după DA (doar `gpu-scrie`), modelul
+din SMBIOS în `hw`; (2) Adrian: pe laptop, stick-ul de test, `gpu tur` + DA → `trimite` → primul jurnal de citire de pe GA106 (BOOT_0 `0x176…`, GFW, VBIOS prin PROM, FWSEC, VRAM, WPR2);
+(3) noi, după jurnal: dacă VBIOS-ul prin PROM e gunoi → sarcina `_ROM` (ACPI); dacă totul e ca pe GA104 → pasul 3 din C-116 (I6–I8 pe GA106, cu `Family` în lanț) **doar cu DA-ul separat
+al lui Adrian**; limita VRAM pe laptop sub ~5,5 GB (pasul 4). GA104 rămâne ținta principală (I9 așteaptă jurnalul cu motivul; C-113 stick-ul, OS). Regula 8: sesiunile 93–95 au avut pași — nu se aplică.
+
+---
 ## Sesiunea 94 — 12 noiembrie 2026, ~19:25–20:00 (ora României), în cloud, FĂRĂ placă — jurnalele 011 (I7 ESEC la repetare) și 012 (Booter Unload 0x88) analizate; starea plăcii intră în jurnal după un I7 / Unload eșuat
 
 Pornită de programare. În hub, de la sesiunea 93: **nicio comandă nouă pentru cyber-gpu** (C-112 Kronos; **C-113** și **C-114** sunt ale OS-ului: stick-ul FAT32 de 64 GB nu
