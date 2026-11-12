@@ -1,5 +1,33 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 92 — 12 noiembrie 2026, ~13:25–13:40 (ora României), în cloud, FĂRĂ placă — rularea de la 13:25: tot amânat (C-110), oprire scurtă (a treia la rând, așteaptă placa)
+
+Pornită de programare. În hub, de la sesiunea 91: **nicio comandă nouă pentru cyber-gpu, niciun jurnal nou de pe placă** (ultimul rămâne `gpu-jurnal-009.txt`, os-283).
+C-110 rămâne în vigoare (placa e a lui Kronos azi; S103 și S104 ale lui Kronos sunt gata, S105 la noapte). OS-ul a publicat `os-293` (P6-80, mouse USB), `os-294` (P6-81,
+`log mmio` — pasul 1 din P6-12, pornit de observația noastră despre registrele cu cache) și `os-295` (P6-82, testul `remote` în CI) — **nimic schimbat în partea GPU**,
+toate leagă în continuare `49e6685`. **Nimic testat pe RTX 3070 Ti.**
+
+**Fără pas nou pe driver** (regula: fără jurnal nou de pe placă nu se inventează lucru). Verificări:
+
+| Verificare | Rezultat |
+|---|---|
+| CI GitHub pe `bc864e3` (documentul sesiunii 91) | VERDE (rularea 179, 43161718850, 59 s) |
+| Codul driverului față de sesiunea 89 | neschimbat (`b1d91a0` = ultimul commit de cod; 451 PASS atunci; `tools/check.sh` nu s-a rerulat — nimic de reverificat) |
+| Legarea OS (`cyber-universe` `ea5d9b3` = os-295, `kernel/Cargo.toml`) | toate cele 5 crate-uri la `rev = "49e6685"`; `49e6685` conține `20830f5` (variantele) → os-289…os-295 au toate cele 10 variante |
+| Pe RTX 3070 Ti | NOT TESTED |
+
+Niciun commit de cod; doar acest document. Copia din hub (C-34) se reface după commit-ul acestui document.
+
+**Regula 8 (oprirea de siguranță), citită cinstit:** sesiunile 90, 91 și 92 n-au terminat niciun pas — dar nu pentru că s-ar fi împotmolit ceva, ci pentru că singurul pas
+următor (testul cu variante) are nevoie de placă și Adrian a amânat venirea (C-110). Nu scriu „OPRIT: necesită analiza lui Adrian”, fiindcă nu e nimic de analizat; **starea
+e „AȘTEAPTĂ PLACA”**: nicio sesiune nu începe lucru nou pe driver până nu apare în hub fie un jurnal nou de pe placă, fie o comandă nouă pentru cyber-gpu. Rulările programate
+până atunci rămân opriri scurte (verificări + documentul de stare), ca aceasta. Dacă Adrian vrea altceva între timp (de ex. pregătiri fără placă), o spune prin centrul de comandă.
+
+**Următorul pas:** neschimbat — când vine Adrian la workstation (data o anunță prin centrul de comandă): variantele de la 1 (`gpu lant --varianta N`, o pornire rece fiecare,
+`trimite` după fiecare; stick = orice Release de la `os-289` încoace); apoi `compara_variante 0x9c66000 gpu-jurnal-009.txt <jurnalele noi>` → varianta care trece / ce diferă.
+Dacă varianta 1 trece → I8e (golden) e primul apel RM pe placă. Dacă niciuna din 10 → comparația **stării plăcii** (`SEC2 CPUCTL`, `GSP MAILBOX0`, adresele DMA reale).
+
+---
 ## Sesiunea 91 — 12 noiembrie 2026, ~07:25–07:40 (ora României), în cloud, FĂRĂ placă — rularea de la 07:25: testul cu variante s-a AMÂNAT (C-110), oprire scurtă
 
 Pornită de programare. În hub, de la sesiunea 90: **C-110** (06:49, pentru Kronos) — Adrian: „Nu mai ajung azi la test, dă-i lui Kronos de muncă.” → **testul cu
