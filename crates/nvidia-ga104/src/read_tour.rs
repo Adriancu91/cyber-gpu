@@ -194,6 +194,66 @@ where
     tour(cfg, addr, bar0, clock, journal, true)
 }
 
+/// What the wake-up did around a tour (C-116).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Wake {
+    /// Memory Space was already on: the tour ran as [`run_tour_ampere`], no write.
+    NotNeeded,
+    /// Memory Space was turned on for the tour (one Command write) and the
+    /// old Command value was put back after it (one more write).
+    EnabledAndRestored,
+}
+
+/// Fact key written by [`run_tour_awake`].
+pub const FACT_WAKE: &str = "pci.trezire";
+
+/// C-116 step 2, the "minimal wake-up" around the read tour, for a GPU the
+/// firmware left with Memory Space OFF (Adrian's laptop). Reads only the
+/// configuration space first; if the function already decodes memory the
+/// tour runs as [`run_tour_ampere`] with no write. Otherwise, behind the
+/// permit, it turns Memory Space on (`gpu_pci::mem_space`: one Command
+/// write, read back), runs the tour, and **always** puts Command back —
+/// also when the tour fails — so the board is left as the firmware had
+/// it. The tour's own 0-write check still holds between the two writes.
+/// The fact `pci.trezire` says which case happened. Nothing here has run
+/// on the laptop; SIMULATION only.
+pub fn run_tour_awake<C, M, K>(
+    cfg: &mut C,
+    addr: Option<PciAddress>,
+    bar0: &mut M,
+    clock: &mut K,
+    journal: &mut Journal,
+    permit: &gpu_pci::mem_space::MemorySpacePermit,
+) -> GpuResult<(Tour, Wake)>
+where
+    C: ConfigSpace + ?Sized,
+    M: Mmio + ?Sized,
+    K: Clock + ?Sized,
+{
+    let (candidate, _family) = crate::probe::probe_config_ampere(cfg, addr)?;
+    if candidate.memory_space_enabled() {
+        let mut t = run_tour_ampere(cfg, addr, bar0, clock, journal)?;
+        t.facts.push(Fact::new(
+            FACT_WAKE,
+            "nu a fost nevoie (Memory Space era pornit)",
+        ));
+        return Ok((t, Wake::NotNeeded));
+    }
+    journal.push(Event::Note(
+        "C-116 trezire minima: Memory Space oprit de firmware; il pornesc pentru tur si il repun dupa",
+    ));
+    let old = gpu_pci::mem_space::enable_memory_space(cfg, permit, journal)?;
+    let result = run_tour_ampere(cfg, addr, bar0, clock, journal);
+    let restored = gpu_pci::mem_space::restore_memory_space(cfg, permit, journal, old);
+    let mut t = result?;
+    restored?;
+    t.facts.push(Fact::new(
+        FACT_WAKE,
+        "Memory Space pornit de noi pentru tur (C-116, o scriere in Command), repus la loc dupa",
+    ));
+    Ok((t, Wake::EnabledAndRestored))
+}
+
 fn tour<C, M, K>(
     cfg: &mut C,
     addr: Option<PciAddress>,
@@ -604,5 +664,106 @@ mod tests {
         let rest: Vec<_> = b.facts.iter().filter(|f| f.key != "chip.familie").collect();
         assert_eq!(rest.len(), a.facts.len());
         assert!(rest.iter().zip(a.facts.iter()).all(|(x, y)| *x == y));
+    }
+
+    /// C-116 step 2, SIMULARE: the laptop as the firmware leaves it
+    /// (Command 0). The wake-up writes Command once, the tour reads with 0
+    /// writes, Command goes back to 0: two configuration writes in all,
+    /// no GPU register written.
+    #[test]
+    fn awake_tour_on_laptop_model_two_config_writes_board_left_as_found() {
+        use gpu_pci::mem_space::MemorySpacePermit;
+        let permit = MemorySpacePermit::new("test SIMULARE C-116");
+        let mut cfg = observed::observed_config();
+        cfg.set_device_id(0x2520);
+        cfg.write_raw(0x04, 0x0010_0000); // Memory Space off, as observed on the laptop
+        let mut bar0 = observed::observed_bar0();
+        bar0.set(0, 0xb760_00a1);
+        bar0.set(0xa00, 0x176a_1000);
+        let mut j = Journal::new(4096);
+        let (t, wake) = run_tour_awake(
+            &mut cfg,
+            None,
+            &mut bar0,
+            &mut SimClock::default(),
+            &mut j,
+            &permit,
+        )
+        .unwrap();
+        assert_eq!(wake, Wake::EnabledAndRestored);
+        assert_eq!(t.get("chip.familie"), Some("GA106"));
+        assert_eq!(t.get("chip.nume"), Some("GA106"));
+        assert!(
+            t.get(FACT_WAKE)
+                .unwrap()
+                .starts_with("Memory Space pornit de noi")
+        );
+        assert_eq!(cfg.writes, 2, "enable + restore");
+        assert_eq!(j.writes(), 2);
+        assert!(bar0.writes.is_empty(), "no GPU register written");
+        assert_eq!(
+            cfg.read_raw(0x04) & 0xffff,
+            0x0000,
+            "Command as the firmware left it"
+        );
+        // The restore is also journaled as a step.
+        assert!(j.events().any(
+            |e| matches!(e, Event::Step { name, ok: true } if *name == gpu_pci::mem_space::STEP_RESTORED)
+        ));
+        // Memory Space already on (the workstation): no write at all.
+        let mut j = Journal::new(4096);
+        let mut cfg2 = observed::observed_config();
+        let (t2, wake2) = run_tour_awake(
+            &mut cfg2,
+            None,
+            &mut observed::observed_bar0(),
+            &mut SimClock::default(),
+            &mut j,
+            &permit,
+        )
+        .unwrap();
+        assert_eq!(wake2, Wake::NotNeeded);
+        assert_eq!(t2.get("chip.familie"), Some("GA104"));
+        assert_eq!(cfg2.writes, 0);
+        assert_eq!(j.writes(), 0);
+    }
+
+    /// C-116, SIMULARE: when the tour fails after the wake-up (the board does
+    /// not answer BOOT_0), Command is still put back.
+    #[test]
+    fn awake_tour_restores_command_even_when_the_tour_fails() {
+        use gpu_pci::mem_space::MemorySpacePermit;
+        let permit = MemorySpacePermit::new("test SIMULARE C-116");
+        let mut cfg = gpu_sim::pci::SimConfig::ga106_laptop_asus();
+        let mut bar0 = gpu_sim::mmio::SimMmio::new(16 << 20);
+        bar0.set(0, 0xffff_ffff); // BOOT_0 all ones: not responding
+        let mut j = Journal::new(4096);
+        let r = run_tour_awake(
+            &mut cfg,
+            None,
+            &mut bar0,
+            &mut SimClock::default(),
+            &mut j,
+            &permit,
+        );
+        assert!(matches!(r, Err(GpuError::NotResponding)));
+        assert_eq!(cfg.writes, 2, "enable + restore");
+        assert_eq!(cfg.read_raw(0x04) & 0xffff, 0x0000);
+        // A non-NVIDIA / unknown device: refused before any write.
+        let mut cfg = gpu_sim::pci::SimConfig::ga106_laptop_asus();
+        cfg.set_device_id(0x25a0); // GA107: not in our tables
+        let mut j = Journal::new(64);
+        assert!(matches!(
+            run_tour_awake(
+                &mut cfg,
+                None,
+                &mut bar0,
+                &mut SimClock::default(),
+                &mut j,
+                &permit
+            ),
+            Err(GpuError::Unsupported { .. })
+        ));
+        assert_eq!(cfg.writes, 0);
     }
 }

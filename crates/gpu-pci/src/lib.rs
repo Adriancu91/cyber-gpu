@@ -9,7 +9,10 @@
 //!   safe on any device, including the primary display GPU;
 //! - **BAR sizing** ([`bar::size_bars`]): writes to configuration space with
 //!   memory decode disabled. It requires an explicit [`bar::SizingPermit`]
-//!   and restores and verifies every register it touches.
+//!   and restores and verifies every register it touches;
+//! - **one Command bit** ([`bus_master`] for DMA, [`mem_space`] for the
+//!   C-116 minimal wake-up of a GPU the firmware left with memory decode
+//!   off): one write each, read back, behind an explicit permit.
 
 #![cfg_attr(not(test), no_std)]
 #![forbid(unsafe_code)]
@@ -20,6 +23,7 @@ pub mod bar;
 pub mod bus_master;
 pub mod caps;
 pub mod header;
+pub mod mem_space;
 pub mod report;
 
 pub use bar::{Bar, BarKind, SizingPermit};

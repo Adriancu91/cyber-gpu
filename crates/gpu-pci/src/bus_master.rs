@@ -94,7 +94,9 @@ pub fn restore_command<C: ConfigSpace + ?Sized>(
     write_checked(cfg, j, cmd, old)
 }
 
-fn write_checked<C: ConfigSpace + ?Sized>(
+/// One Command write with the before/after values journaled; a read-back
+/// that differs is undone once. Shared with [`crate::mem_space`].
+pub(crate) fn write_checked<C: ConfigSpace + ?Sized>(
     cfg: &mut C,
     j: &mut Journal,
     before16: u16,
