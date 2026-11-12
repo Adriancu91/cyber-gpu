@@ -71,7 +71,7 @@ pornirea următoare (a mers azi). Dacă OS-ul vrea un semn vizibil la final, tre
 Un singur test: Release OS cu `cyber-gpu` ≥ `45dfc77`, `gpu lant --varianta 1`, `trimite` după repornire. În jurnal așteptăm `text motivul esecului = "…"`
 imediat după `pas i9-canal-lucru: ESEC` (dacă I9 mai eșuează). `compara_variante 0x9c66000 gpu-jurnal-010.txt <jurnalul nou>` arată motivul în tabel.
 
-## 5. (18:45, cererea din centrul de comandă) Varianta 1 implicită + varianta 11 „neprimar” — `cyber-gpu` `VARIANTA1_IMPLICITA` (commit-ul de după `f693307`)
+## 5. (18:45, cererea din centrul de comandă) Varianta 1 implicită + varianta 11 „neprimar” — `cyber-gpu` `e49ca76`
 
 - **`variants::settings(None)` dă acum varianta 1** (`rpc-inainte`, cea care a trecut I8 pe placă), nu mai dă `OS_283`; `variants::DEFAULT = 1`, `variants::default_variant()`.
   `settings(Some(0))` e refuzat ca orice număr necunoscut. **`gpu lant` fără `--varianta` = varianta 1** — OS-ul n-are nimic de schimbat în cod pentru asta, dar **textele**

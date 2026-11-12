@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 93 — 12 noiembrie 2026, ~18:00–18:50 (ora României), în cloud, FĂRĂ placă — **os-295: I8 A TRECUT PE PLACĂ** (varianta 1); golden ok; I9 ESEC fără motiv în jurnal → motivul intră pe stick
+## Sesiunea 93 — 12 noiembrie 2026, ~18:00–18:55 (ora României), în cloud, FĂRĂ placă — **os-295: I8 A TRECUT PE PLACĂ** (varianta 1); golden ok; I9 ESEC fără motiv în jurnal → motivul intră pe stick
 
 Pornită de programare la 18:00; în hub, de la sesiunea 92: **C-111** (Adrian a venit la ~17:55 pentru testul cu variante; stick `os-295`, `os-289` nu mai există)
 și **rezultatul `rezultate/2026-11-12-workstation-os295/REZULTAT.md`** + jurnalul **`gpu-jurnal-010.txt`** (2425 rânduri, cyber-gpu `49e6685`, `gpu lant --varianta 1`).
@@ -33,7 +33,14 @@ susține din marcajele de timp de pe stick — poate fi la fel de bine limita de
 Verificări (`sh tools/check.sh`, Rust 1.97.0): format, clippy `-D warnings`, **455 teste PASS** (4 ignorate), build no_std PASS. Commit-uri: `45dfc77` (cod), + documentele.
 Nota pentru OS: `integration/cyber-universe/os-295_i9-motiv-in-jurnal.md`. `docs/COMPATIBILITATE_FIRMWARE.md`: rândurile I8g, I8e, I9 cu rezultatul de pe placă.
 
-**Următorul pas:** (1) OS-ul leagă `45dfc77`+ (opțional §2 din notă) → Release; (2) un singur test pe placă, `gpu lant --varianta 1`, `trimite` → în jurnal
+**18:45 — a doua trecere (pornită manual din centrul de comandă, cu rezultatul os-295 și trei cereri):** (1) **varianta 1 implicită** — `variants::settings(None)` dă varianta 1 (`DEFAULT = 1`,
+`default_variant()`), `Some(0)` refuzat; `Settings::journal(None)` scrie `numarul = 1`, `numele = "rpc-inainte"` + rândul nou `text varianta I8: aleasa = "implicita (fara --varianta)"`;
+OS-ul doar leagă (textele „ca os-283” din `gpu_tur.rs` rămân de corectat de sesiunea OS — propunere în notă). (2) motivul exact al eșecului I9 în jurnal — făcut mai sus (`45dfc77`);
+**repararea nu e clară** fără cod (forma mesajelor = tinygrad; nu ghicim). (3) afișajul: **nu există în sursele publice o setare „fără afișaj”** pentru GSP-RM; singura valoare cu sursă
+despre rolul plăcii la afișaj e `GspSystemInfo.bIsPrimary` (tinygrad și nova trimit 0) → **varianta 11 `rpc-inainte+neprimar`** = varianta 1 + doar `bIsPrimary = 0`, ca probă (efectul
+pe afișaj DEDUS, neprobat; în SIMULARE trece I8). `VARIANTS` are 11 intrări (numerele vechi neschimbate). T121/T122 extinse; 455 PASS; commit `e49ca76`, CI în curs.
+
+**Următorul pas:** (1) OS-ul leagă `e49ca76`+ (opțional §2 din notă) → Release; (2) un singur test pe placă, `gpu lant --varianta 1`, `trimite` → în jurnal
 `text motivul esecului = "…"` după `pas i9-canal-lucru: ESEC`; (3) cu motivul: cod `NV_STATUS` → `names` + regulile `PROMOTE_CTX` (ce promovăm: mărimi/aliniere,
 VA space prin context share, `engineType`); timeout → tabelele de pagini / `SET_PAGE_DIRECTORY`. Fără jurnal nou, nimic altceva pe driver. Regula 8: sesiunile 90–92
 au fost opriri scurte (așteptau placa), 93 a avut pași — nu se aplică.
