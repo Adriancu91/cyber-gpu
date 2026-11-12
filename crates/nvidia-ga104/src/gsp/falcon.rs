@@ -798,14 +798,68 @@ fn booter_load_with<M: Mmio + ?Sized, C: Clock + ?Sized>(
         (wpr_meta_addr as u32, (wpr_meta_addr >> 32) as u32),
     )?;
     if mb0 != 0 {
+        journal_i7_failure(bar, I7_FAIL_BOOTER_CODE);
         return Err(GpuError::HardwareFault { code: mb0 });
     }
-    wait_riscv_active(bar, clock)?;
+    if let Err(e) = wait_riscv_active(bar, clock) {
+        journal_i7_failure(bar, I7_FAIL_RISCV_OFF);
+        return Err(e);
+    }
     bar.journal().push(Event::Step {
         name: "I7 Booter + GSP RISC-V",
         ok: true,
     });
     Ok(())
+}
+
+/// os-295, `gpu-jurnal-011.txt` (12 Nov 2026): Booter Load halted SEC2 with
+/// MAILBOX0 = 0 (its success code), `FALCON_OS` was written — and the GSP
+/// RISC-V core never became active within [`RISCV_ACTIVE_US`]; `CPUCTL` read
+/// `0x10` (HALTED) afterwards. The journal held only the three reads of
+/// [`read_after_i7`], so *where* the boot stopped could not be told. RM
+/// 570.144 (`kgspBootstrapRiscvOSEarly_GA102`, MIT) and nouveau check the
+/// core right after Booter, with no wait at all, so the 2 s are not the
+/// cause; what is missing is the board's state at that moment.
+pub const I7_FAIL_RISCV_OFF: &str = "I7: Booter a terminat cu MAILBOX0 = 0, dar RISC-V-ul GSP nu a devenit activ; starea placii (doar citiri):";
+/// Booter Load halted with an error code in MAILBOX0 (the code is in the
+/// step's reason row; Booter's codes are not published — RM only prints them).
+pub const I7_FAIL_BOOTER_CODE: &str =
+    "I7: Booter a oprit SEC2 cu MAILBOX0 != 0 (eroare Booter); starea placii (doar citiri):";
+
+/// C-103 / os-295: Booter Unload halted with an error code (journal 012: 0x88).
+pub const UNLOAD_FAIL_STATE: &str =
+    "C-103 Booter Unload: MAILBOX0 != 0; starea placii (doar citiri):";
+
+/// The two registers read after a failed I7 on top of
+/// [`RESUME_STATE_READS`]: the GSP core select we programmed before Booter
+/// (did it stick?) and `FALCON_OS` we wrote after it (os-246: GSP mailbox
+/// writes once did not stick). Both are registers I7 already writes.
+pub const I7_FAIL_EXTRA_READS: [(&str, u32); 2] = [
+    (
+        "GSP RISCV_BCR_CTRL (0x111 = RISC-V ales)",
+        f2::NV_FALCON2_GSP_BASE + riscv::NV_PRISCV_RISCV_BCR_CTRL,
+    ),
+    (
+        "GSP FALCON_OS (570144 = versiunea scrisa)",
+        gsp::NV_PGSP.lo + fv4::NV_PFALCON_FALCON_OS,
+    ),
+];
+
+/// Journals `why` and the board's state after a failed I7: the seven
+/// registers of [`journal_resume_state`] plus [`I7_FAIL_EXTRA_READS`], each
+/// as `valoare … = 0x…`. Reads only; a register that cannot be read is
+/// journaled with its priv error (diagnosis never changes the result).
+pub fn journal_i7_failure<M: Mmio + ?Sized>(bar: &mut GuardedBar0<'_, M>, why: &'static str) {
+    bar.journal().push(Event::Note(why));
+    journal_resume_state(bar);
+    for &(what, off) in I7_FAIL_EXTRA_READS.iter() {
+        let value = match bar.read(off) {
+            Ok(v) => v,
+            Err(GpuError::HardwareFault { code }) => code,
+            Err(_) => continue,
+        };
+        bar.journal().push(Event::Value { what, value });
+    }
 }
 
 /// C-103: the mailbox arguments of a normal (non-suspend, non-GC6) Booter
@@ -864,6 +918,11 @@ pub fn booter_unload<M: Mmio + ?Sized, C: Clock + ?Sized>(
             what: "C-103 Booter Unload: MAILBOX0 (Booter a dat eroare)",
             value: mb0,
         });
+        // os-295, `gpu-jurnal-012.txt` (12 Nov 2026): the board answered
+        // 0x88 here, after an I7 whose GSP core never ran GSP-RM; the code is
+        // not published (RM only prints it). The state rows give the next
+        // such journal what this one lacked. Reads only.
+        journal_i7_failure(bar, UNLOAD_FAIL_STATE);
         return Err(GpuError::HardwareFault { code: mb0 });
     }
     if let Some(still) = read_wpr2(bar)? {
@@ -1016,13 +1075,20 @@ pub fn booter_load_dma_libos<M: Mmio + ?Sized, C: Clock + ?Sized>(
         (wpr_meta_addr as u32, (wpr_meta_addr >> 32) as u32),
     )?;
     if mb0 != 0 {
+        journal_i7_failure(bar, I7_FAIL_BOOTER_CODE);
         return Err(GpuError::HardwareFault { code: mb0 });
     }
     bar.write(
         Engine::Gsp.base() + fv4::NV_PFALCON_FALCON_OS,
         GSP_RM_APP_VERSION_570_144,
     )?;
-    wait_riscv_active(bar, clock)?;
+    // os-295, journal 011: this wait expired on the board once (Booter
+    // reported 0, core stayed HALTED); the state rows say what the board
+    // looked like when it did. RM/nouveau check the core here without any wait.
+    if let Err(e) = wait_riscv_active(bar, clock) {
+        journal_i7_failure(bar, I7_FAIL_RISCV_OFF);
+        return Err(e);
+    }
     bar.journal().push(Event::Step {
         name: "I7 GSP RISC-V + LibOS + Booter",
         ok: true,
@@ -1247,6 +1313,32 @@ mod tests_c103 {
                 .any(|e| alloc::format!("{e}").contains("WPR2 inca ridicat dupa Booter"))
         );
     }
+
+    /// os-295, journal 012 (T125c): after a Booter Unload that halts with a
+    /// code, the journal names the code and then the board's state — the
+    /// nine `valoare` rows — with no write journaled by the diagnosis. SIMULARE.
+    #[test]
+    fn booter_unload_error_journals_the_board_state() {
+        let (mut g, mut j, mut c) = booted();
+        let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+        let wrong = |b: &mut GuardedBar0<'_, FakeGsp>, _: &mut SimClock, e: Engine| {
+            b.model().sim_load(e.base(), SimUcode::FwsecFrts);
+            Ok(())
+        };
+        assert!(booter_unload(&mut b, &mut c, wrong).is_err());
+        let _ = b;
+        let rows: Vec<String> = j.events().map(|e| alloc::format!("{e}")).collect();
+        let k = rows
+            .iter()
+            .position(|r| r.contains(UNLOAD_FAIL_STATE))
+            .expect("the state note");
+        assert!(rows[k - 1].contains("MAILBOX0 (Booter a dat eroare) = 0x0000dead"));
+        super::tests::assert_state_rows(&rows[k + 1..], 9);
+        assert!(
+            !rows[k..].iter().any(|r| r.starts_with("bar0 w")),
+            "the diagnosis wrote nothing"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1258,6 +1350,113 @@ mod tests {
 
     const FRTS: (u64, u64) = ((8 << 30) - (2 << 20), (8 << 30) - (1 << 20));
     const META: u64 = 0x1_2345_6000;
+
+    /// os-295 (T125): `rows` starts with the `n` state rows a failed I7 /
+    /// Booter Unload journals — the names of [`RESUME_STATE_READS`] then
+    /// [`I7_FAIL_EXTRA_READS`], in order, each `valoare … = 0x…`.
+    pub(super) fn assert_state_rows(rows: &[String], n: usize) {
+        let names: Vec<&str> = RESUME_STATE_READS
+            .iter()
+            .chain(I7_FAIL_EXTRA_READS.iter())
+            .map(|&(what, _)| what)
+            .collect();
+        assert_eq!(names.len(), n);
+        assert!(rows.len() >= n, "only {} rows: {rows:?}", rows.len());
+        for (row, what) in rows.iter().zip(names) {
+            let want = alloc::format!("valoare {what} = 0x");
+            assert!(row.starts_with(&want), "row {row:?}, wanted {want:?}");
+        }
+    }
+
+    /// os-295, journal 011 (T125a): Booter halts with 0, the GSP RISC-V core
+    /// stays off — the error is still the timeout, and right after it the
+    /// journal names the moment and the board's state (nine reads, no write):
+    /// SEC2 halted, GSP CPUCTL without bit 7, the core select still RISC-V.
+    /// SIMULARE (the board's 12 Nov journal held only three reads).
+    #[test]
+    fn i7_with_riscv_off_journals_the_board_state() {
+        let mut g = FakeGsp::new();
+        g.fault = SimFault::RiscvStaysOff;
+        let mut j = Journal::new(512);
+        let mut c = SimClock::default();
+        let r = {
+            let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+            fwsec_frts(&mut b, &mut c, load_ok, FRTS).unwrap();
+            booter_load(&mut b, &mut c, load_ok, META)
+        };
+        assert!(matches!(r, Err(GpuError::Timeout { .. })), "{r:?}");
+        let rows: Vec<String> = j.events().map(|e| alloc::format!("{e}")).collect();
+        let k = rows
+            .iter()
+            .position(|r| r.contains(I7_FAIL_RISCV_OFF))
+            .expect("the state note");
+        assert!(rows[k].starts_with("nota: "));
+        assert_state_rows(&rows[k + 1..], 9);
+        let value = |what: &str| -> u32 {
+            let row = rows[k + 1..]
+                .iter()
+                .find(|r| r.contains(what))
+                .unwrap_or_else(|| panic!("no row for {what}"));
+            u32::from_str_radix(row.rsplit("0x").next().unwrap(), 16).unwrap()
+        };
+        assert_eq!(value("GSP RISCV_CPUCTL") & (1 << 7), 0, "core off");
+        assert_eq!(value("SEC2 MAILBOX0"), 0, "Booter's success code");
+        assert!(
+            rows[k + 1..]
+                .iter()
+                .any(|r| r.contains("GSP RISCV_BCR_CTRL"))
+        );
+        assert!(
+            !rows[k..].iter().any(|r| r.starts_with("bar0 w")),
+            "the diagnosis wrote nothing"
+        );
+        // Nothing of this on a passing I7.
+        let mut g = FakeGsp::new();
+        let mut j = Journal::new(512);
+        let mut c = SimClock::default();
+        {
+            let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+            fwsec_frts(&mut b, &mut c, load_ok, FRTS).unwrap();
+            booter_load(&mut b, &mut c, load_ok, META).unwrap();
+        }
+        assert!(
+            !j.events()
+                .any(|e| alloc::format!("{e}").contains("starea placii"))
+        );
+    }
+
+    /// os-295 (T125b): a Booter that halts with an error code journals the
+    /// other note and the same state rows. SIMULARE.
+    #[test]
+    fn i7_with_booter_code_journals_the_board_state() {
+        let mut g = FakeGsp::new();
+        g.frts = FRTS;
+        // A meta without the magic: the SIM Booter refuses it with 0xbad2.
+        g.wpr_meta_mem = Some((META, alloc::vec![0u8; 4096]));
+        let mut j = Journal::new(512);
+        let mut c = SimClock::default();
+        let r = {
+            let mut b = GuardedBar0::new(&mut g, &mut j, None).unwrap();
+            fwsec_frts(&mut b, &mut c, load_ok, FRTS).unwrap();
+            booter_load(&mut b, &mut c, load_ok, META)
+        };
+        assert!(
+            matches!(r, Err(GpuError::HardwareFault { code: 0xbad2 })),
+            "{r:?}"
+        );
+        let rows: Vec<String> = j.events().map(|e| alloc::format!("{e}")).collect();
+        let k = rows
+            .iter()
+            .position(|r| r.contains(I7_FAIL_BOOTER_CODE))
+            .expect("the state note");
+        assert_state_rows(&rows[k + 1..], 9);
+        assert!(
+            rows[k + 1..]
+                .iter()
+                .any(|r| r.contains("SEC2 MAILBOX0 = 0x0000bad2"))
+        );
+        assert!(!rows.iter().any(|r| r.contains(I7_FAIL_RISCV_OFF)));
+    }
 
     /// C-75 (T87): after FWSEC-FRTS the simulated GSP drops mailbox writes
     /// (as the board on 5 Nov): `write_libos_mailboxes` notices it and
