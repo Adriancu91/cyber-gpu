@@ -1,5 +1,33 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 96 — 13 noiembrie 2026, ~01:30–02:15 (ora României), în cloud, FĂRĂ placă — nicio comandă nouă pentru cyber-gpu; fapte noi din Windows (raportul UHL al laptopului) → un pas mic: **versiunea VBIOS din jetonul BIT 'i'** (`vbios.versiune`) + faptele UHL în modelul laptopului (SIMULARE)
+
+Pornită de programare la 01:25. În hub, de la sesiunea 95 (21:40): **C-116 partea OS gata** (Release `os-298`: `gpu tur --trezire` pe laptop, GA106 doar-citire; leagă `6b6bb38`);
+**C-117** (analizatorul UHL în OS — `analiza`, `os-299`/`os-300`, gata de sesiunea OS; placa NVIDIA intră prin turul nostru de citire, 0 scrieri); **C-118** (Wi-Fi AX201 — doar OS).
+**Nicio comandă nouă pentru cyber-gpu, niciun jurnal nou de pe placă sau de pe laptop.** Nou pentru noi: `rezultate/2026-11-11-laptop-asus-tuf/REZULTAT.md` are acum **inventarul și raportul UHL din Windows**
+(Adrian, 12 nov 22:14 / 23:03): RTX 3060 Laptop **rev A1, subsistem 1043:16F2, VBIOS 94.06.1E.00.23, 30 SM, L2 3 MiB, 6 GiB/192 biți, BAR1 8 GiB @0x6000000000, Gen4 x8 (x16 max), D3cold**.
+Regula „fără jurnal nou nu se inventează lucru” citită cinstit: nu e jurnal de la driver, dar sunt **fapte OBSERVATE noi despre placa de test** și o idee a lui Adrian (C-117: „comparația Windows ↔
+Cyber Universe pe același calculator = test automat de corectitudine”) → un singur pas mic care pregătește exact acea comparație, fără nicio scriere nouă. **Nimic de mai jos nu e rulat pe laptop sau pe workstation.**
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Versiunea VBIOS | `vbios::BiosVersion` (major.cip.minor.micro.patch), `VbiosLayout.version`, `read_bios_version` din jetonul BIT **'i' (0x69)**: 5 octeți la offset-ul jetonului (relativ la imaginea PCI-AT, ca la 0x70), ordinea nouveau (`base.c`, din memorie — **de confirmat**; sursa n-a putut fi recitită din cloud); sub 5 octeți sau jeton lipsă → `None`, nu ghicim. Turul C-54 (toate variantele) scrie **`vbios.versiune = 94.xx.xx.xx.xx`** sau „necitita …”. `matches_report("94.06.1E.00.23")` pentru compararea cu șirul din Windows. 5 citiri PROM în plus, 0 scrieri | PASS (T127a–c, SIMULARE) — `835f24d` |
+| Faptele UHL în model | `gpu_sim::laptop` (ca `workstation.rs`): subsistem `1043:16f2`, rev A1, `VBIOS_VERSION`, 30 SM, L2, VRAM 6 GiB/192 biți, BAR1 @0x6000000000, gen4 x8/x16, D3cold, `VRAM_BUDGET_BYTES` (5,5 GB); `SimConfig::ga106_laptop_asus()` le folosește (subsistemul, revizia, baza BAR1 și legătura nu mai sunt SIM); `observed_rom` are jetonul 'i' cu versiunea din Windows a workstation-ului; `observed_rom_with_version` | PASS (T127d: turul trezit pe modelul laptopului arată `1043:16f2`, `gen4 x8 (max gen4 x16)`, `vbios.versiune = 94.06.1e.00.23`, 2 scrieri în configurație, 0 în registre) |
+| Compatibilitate OS | doar adăugări (câmp nou în `VbiosLayout`, pe care OS-ul doar îl citește; `vbios_lines`/`fwsec::locate` neschimbate); OS-ul compilează neschimbat la `835f24d`. Nota: `integration/cyber-universe/C-117_vbios-versiune.md` (rând `versiune VBIOS` în `gpu vbios`, proprietate `vbios_version` MEASURED în `analiza`, compararea cu raportul Windows doar pe FX506HM) | PASS |
+| Documente | `GA106_LAPTOP.md` §0b (faptele din Windows) + §5 (versiunea), TEST_MATRIX T127 a–e, PROVENANCE | scris — `900c9d7` |
+| Pe laptop / pe RTX 3070 Ti | — | NOT TESTED |
+
+Verificări (`sh tools/check.sh`, Rust 1.97.0): format, clippy `-D warnings`, **475 teste PASS** (4 ignorate; 472 → 475: +3), build no_std PASS. CI: vezi rândul de mai jos după push.
+
+**Ce așteptăm de pe plăci (prima comparație automată Windows ↔ Cyber Universe):** laptop (`gpu tur --trezire`, os-298+ legat la `835f24d`+): `vbios.versiune = 94.06.1e.00.23`;
+workstation: `94.04.65.00.3e`. Dacă nu coincid → citirea noastră a ROM-ului e greșită sau PROM-ul arată altă imagine; dacă pe workstation apare „necitita” deși jetonul `0x69v2`
+e observat → jetonul e mai scurt de 5 octeți → alternativa 'B' (0x42 BIOSDATA), abia atunci.
+
+**Următorul pas:** neschimbat față de sesiunea 95 — (1) OS-ul leagă `835f24d`+ (opțional §Propunere din notă); (2) Adrian: pe laptop `gpu tur --trezire` + DA → jurnalul (BOOT_0 `0x176…`, GFW,
+VBIOS prin PROM + **`vbios.versiune`**, FWSEC, VRAM ~6 GiB, WPR2); pe workstation un `gpu lant` cu stick-ul reparat (os-297+); (3) noi, după jurnale: VBIOS gunoi → `_ROM`; totul ca pe GA104 → pasul 3
+din C-116 doar cu DA separat; I9 picat cu motiv → regulile `PROMOTE_CTX`. Fără jurnal nou și fără comandă nouă, nimic altceva pe driver. Regula 8: sesiunile 94–96 au avut pași — nu se aplică.
+
+---
 ## Sesiunea 95 — 12 noiembrie 2026, ~21:00–21:40 (ora României), în cloud, FĂRĂ placă — **C-116 (nou, 20:57): laptopul ASUS TUF F15 (GA106) = a doua mașină de test** — pașii (1) și (2) în SIMULARE: recunoaștere GA106 doar-citire + „trezirea minimă” (Memory Space)
 
 Pornită de programare la 21:00. În hub, de la sesiunea 94: **C-116** (Adrian, 20:57: „ne mutăm cu testele aici (pe laptop) și vor fi mult mai rapide; apoi facem GPU pentru placa asta”),
