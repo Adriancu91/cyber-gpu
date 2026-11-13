@@ -23,7 +23,7 @@ Riscurile de laptop din §3 (placa lipsă / adormită, VBIOS doar prin ACPI `_RO
 | Compatibilitate OS | doar adăugări (modul nou în `gpu-sim`, o ramură în plus în `line_facts`); BAR5 al modelului `ga106_laptop_asus` = `0x4001` (observat; niciun test OS nu depindea de valoarea SIM `0x3001`) | PASS |
 | Pe laptop / pe RTX 3070 Ti | — (nimic nou rulat de noi) | NOT TESTED |
 
-Verificări (`sh tools/check.sh`, Rust 1.97.0): format, clippy `-D warnings`, **479 teste PASS** (4 ignorate; 475 → 479: +4), build no_std PASS. CI: vezi rândul de mai jos după push.
+Verificări (`sh tools/check.sh`, Rust 1.97.0): format, clippy `-D warnings`, **479 teste PASS** (4 ignorate; 475 → 479: +4), build no_std PASS. **CI VERDE pe `4ff043d`** (rularea 43419174124, 54 s). Copia C-34 la `4ff043d` (231 commit-uri, verificată).
 
 **Ce NU s-a făcut, intenționat:** pasul 3 din C-116 (I6–I8 pe GA106 = primele scrieri în registrele laptopului) cere **DA-ul separat al lui Adrian** — nu există, Adrian e plecat până luni seara;
 niciun rând de cod pentru el, doar lista §7. `Family::writes_allowed()` rămâne doar GA104.
