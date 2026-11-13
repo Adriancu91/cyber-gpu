@@ -23,12 +23,12 @@
 
 | Ce | Valoare | Ce înseamnă pentru noi |
 |---|---|---|
-| Model laptop | ASUS TUF Gaming F15 **FX506HM**, BIOS FX506HM.318 (iun. 2025), Secure Boot oprit; FX506H* = 2021 → **fără MUX** | ecranul rămâne pe Intel; placa NVIDIA e doar de calcul — exact ce ne trebuie |
+| Model laptop | ASUS TUF Gaming F15 **FX506HM**, BIOS FX506HM.318 (iun. 2025), Secure Boot oprit; **fără MUX** — OBSERVAT (raportul UHL de energie, 13 nov 07:11: funcțiile ASUS de MUX/eGPU/limite de putere „nesuportate”; dGPU activ), nu mai e dedus din anul modelului | ecranul rămâne pe Intel; placa NVIDIA e doar de calcul — exact ce ne trebuie |
 | Placa | `10de:2520` **rev A1, subsistem 1043:16F2**, PCIe Gen4 **x8 activ** (x16 max), payload 256 B, **D3cold suportat**, ACPI `\_SB.PC00.PEG1.PEGP` | subsistemul și revizia intră în modelul `ga106_laptop_asus`; D3cold = laptopul poate tăia curentul plăcii (§3) — se vede în `pci.stare` |
 | **VBIOS** | **`94.06.1E.00.23`** (imaginea nu e citibilă din Windows; UHL n-o citește — corect) | de la `835f24d` turul scrie **`vbios.versiune`** din jetonul BIT 'i' (§5): pe laptop trebuie să dea exact acest șir; pe workstation `94.04.65.00.3e` |
 | Cip | GA106M, sm_86, **30 SM** (GA104: 48), L2 3 MiB, **6 GiB / 192 biți**, max 2100 MHz | aceleași programe SASS; `launch_cost`/`kronos_gen` au mai puține SM-uri la dispoziție; limita noastră pe laptop sub ~5,5 GB (pasul 4) |
 | BAR1 | 8 GiB @ **`0x6000000000`** (Resizable BAR) | baza era SIM în sesiunea 95; acum e din raport |
-| Putere | limită implicită 80 W, aplicată 95 W, repaus 20–26 W, 58–62 °C, P0 | doar informativ |
+| Putere | limită implicită 80 W, aplicată 95 W, repaus 20–26 W, 58–62 °C, P0; raportul de energie (13 nov 07:11): **25,6 W și 61 °C în repaus** (NVML), ventilatorul GPU 3100 RPM — condus de EC/firmware (ASUS DSTS), nu de zona ACPI; zona `\_TZ.THRM` ~79 °C (prag critic 100 °C) | doar informativ; driverul nu atinge nici limitele de putere, nici ventilatoarele (rămân la EC, fără scrieri) |
 
 Ce rămâne SIM în model: baza BAR3, poziția capabilităților, I/O-ul, **conținutul ROM-ului** (nu copiem VBIOS-ul; versiunea din jetonul 'i' e doar șirul raportat de Windows).
 

@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 97 — 13 noiembrie 2026, ~07:25–07:45 (ora României), în cloud, FĂRĂ placă — oprire scurtă: nicio comandă nouă pentru cyber-gpu, niciun jurnal nou de pe placă sau laptop; doar o notă de documentație (raportul UHL de energie confirmă „fără MUX”)
+
+Pornită de programare la 07:25. În hub, de la sesiunea 96 (02:15): **C-118 W0 gata** (OS, `os-301`: `wifi identifica`; **`os-301` leagă deja `835f24d`** — P6-89, deci `vbios.versiune`
+ajunge în `gpu vbios` și `analiza`), OS-ul în oprire scurtă (05:45, „os-301 așteaptă testul pe laptop”), Kronos stare 00:17. **Nicio comandă nouă pentru cyber-gpu** (C-116 pașii 1–2 gata, pasul 3
+așteaptă jurnalul de pe laptop + DA; C-117 partea noastră gata). **Niciun jurnal nou** de pe workstation sau laptop. Nou în `rezultate/2026-11-11-laptop-asus-tuf/REZULTAT.md`: raportul UHL de
+**stocare** (VMD, PM9A1 — nu ne privește) și de **energie** (13 nov 07:11): GPU 25,6 W / 61 °C în repaus (NVML), ventilator GPU 3100 RPM condus de EC, funcțiile ASUS de MUX/eGPU/limite de putere
+**nesuportate** pe FX506HM → „fără MUX” devine OBSERVAT (până acum era dedus din anul modelului); dGPU activ. Nimic din asta nu cere cod în driver (nu atingem puterea, nici ventilatoarele).
+
+Regula „fără jurnal nou nu se inventează lucru”: respectată — **niciun commit de cod**. Un singur rând de documentație: `GA106_LAPTOP.md` §0b (MUX observat, puterea/temperatura din raport).
+Verificările de la pornire (`sh tools/check.sh`, Rust 1.97.0, ținta `x86_64-unknown-none` instalată): format, clippy `-D warnings`, **475 PASS** (4 ignorate), build no_std PASS; **CI VERDE pe `f4b012c`**
+(rularea 43332410525, 48 s). Sursele publice (nouveau `base.c`, RM 570.144 `kernel_gsp_ga102.c`) **tot nu se pot reciti din cloud** (cererea de acces n-a primit răspuns) → rămân „de confirmat”:
+ordinea octeților versiunii VBIOS și verificarea „RISC-V activ” din RM. Se confirmă cel mai cinstit pe placă: dacă `vbios.versiune` de pe laptop e exact `94.06.1e.00.23`, ordinea e bună.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Verificări la pornire | `tools/check.sh` complet, CI pe vârful ramurii | PASS (475, SIMULARE) |
+| Documentație | `GA106_LAPTOP.md` §0b: „fără MUX” OBSERVAT (ASUS DSTS), puterea/temperatura/ventilatorul GPU din raportul de energie, cu nota că driverul nu le atinge | scris |
+| Cod | — (nimic de făcut cinstit fără jurnal nou) | — |
+| Pe laptop / pe RTX 3070 Ti | — | NOT TESTED |
+
+**Următorul pas:** neschimbat — (1) Adrian, pe laptop, cu stick-ul `os-301`: `gpu tur --trezire` + DA → jurnalul (BOOT_0 `0x176…`, GFW, VBIOS prin PROM + **`vbios.versiune = 94.06.1e.00.23`**,
+FWSEC, VRAM ~6 GiB, WPR2); `wifi identifica` și `analiza` pentru OS; (2) pe workstation un `gpu lant` (varianta 1, `os-298`+) → motivul lui I9 pe stick; (3) noi, după jurnale: VBIOS gunoi → `_ROM`;
+totul ca pe GA104 → pasul 3 din C-116 doar cu DA separat; I9 picat cu motiv → regulile `PROMOTE_CTX`. Fără jurnal nou și fără comandă nouă, nimic altceva pe driver.
+Regula 8: sesiunile 95 și 96 au avut pași (97 e oprire scurtă, nu eșec) — nu se aplică.
+
+---
 ## Sesiunea 96 — 13 noiembrie 2026, ~01:30–02:15 (ora României), în cloud, FĂRĂ placă — nicio comandă nouă pentru cyber-gpu; fapte noi din Windows (raportul UHL al laptopului) → un pas mic: **versiunea VBIOS din jetonul BIT 'i'** (`vbios.versiune`) + faptele UHL în modelul laptopului (SIMULARE)
 
 Pornită de programare la 01:25. În hub, de la sesiunea 95 (21:40): **C-116 partea OS gata** (Release `os-298`: `gpu tur --trezire` pe laptop, GA106 doar-citire; leagă `6b6bb38`);
