@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 99 — 13 noiembrie 2026, ~19:25–19:45 (ora României), în cloud, FĂRĂ placă — oprire scurtă: nicio comandă nouă pentru cyber-gpu, niciun jurnal nou de pe placă sau laptop; niciun commit de cod
+
+Pornită de programare la 19:25. În hub, de la sesiunea 98 (13:55): **C-120** (Kronos, urgent: revizia pentru rularea S110 — nu ne privește), Kronos stare 17:20, **OS-ul „OPRIT: necesită analiza lui Adrian”**
+(17:50, regula lor 5: a treia sesiune la rând fără sarcină; nicio problemă de cod, doar așteptare — Adrian e plecat până luni seara, C-119). **Nicio comandă nouă pentru cyber-gpu**
+(C-116 pasul 3 așteaptă DA-ul separat; C-117 partea noastră gata). **Niciun jurnal nou** de pe workstation (placa e a lui Kronos non-stop, C-119) sau de pe laptop. Nou pentru noi: nimic —
+`rezultate/` neschimbat de la os-301 (citit în sesiunea 98); nota OS-ului despre „45 fapte pe ecran / 47 pe model” (stare/cyber-universe.md 15:00) spune ce știam: cele 2 rânduri lipsesc dintre
+cele tăiate sus în poză, se lămurește la următorul test pe laptop cu `analiza` (`os-302`). Nimic din asta nu cere cod sau documentație în driver.
+
+Regula „fără jurnal nou și fără comandă nouă nu se inventează lucru” (sesiunile 90–98): respectată — **niciun commit de cod, niciun rând nou în documente** în afara acestei stări.
+Verificările de la pornire (`sh tools/check.sh`, Rust 1.97.0, ținta `x86_64-unknown-none` instalată): format, clippy `-D warnings`, **479 teste PASS** (4 ignorate), build no_std PASS;
+**CI VERDE pe `e0bacf9`** (rularea 43419426786, 43 s). Clona din cloud completată (`--unshallow`, 232 commit-uri) pentru copia C-34.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Verificări la pornire | `tools/check.sh` complet, CI pe vârful ramurii | PASS (479, SIMULARE) |
+| Cod / documentație | — (nimic de făcut cinstit fără jurnal nou sau comandă nouă) | — |
+| Pe laptop / pe RTX 3070 Ti | — | NOT TESTED |
+
+**Următorul pas:** neschimbat față de sesiunea 98 — (1) **Adrian, luni seara (16 nov):** DA sau NU pentru pasul 3 pe laptop (`GA106_LAPTOP.md` §7; întâi `gpu i6` singur, apoi `gpu lant`);
+(2) pe workstation, când Kronos eliberează placa (după C-119): un `gpu lant` (varianta 1, `os-302`) → **motivul lui I9** în jurnal; (3) noi, după oricare jurnal nou sau după DA: I9 picat cu motiv →
+regulile `PROMOTE_CTX`; DA pe laptop → pasul 3 după §7. Fără jurnal nou și fără comandă nouă, nimic altceva pe driver. Regula 8: sesiunile 96 și 98 au avut pași (97 și 99 sunt opriri scurte,
+nu eșecuri) — nu se aplică.
+
+---
 ## Sesiunea 98 — 13 noiembrie 2026, ~13:25–13:55 (ora României), în cloud, FĂRĂ placă — **PRIMUL JURNAL DE PE LAPTOP (GA106) citit:** `gpu tur --trezire` a TRECUT pe ASUS TUF (os-301), 45 de fapte, 0 scrieri în registre; **`vbios.versiune` = exact șirul din Windows**; jurnalul pus în model (C-116 pasul 3, partea de citire)
 
 Pornită de programare la 13:25. În hub, de la sesiunea 97 (07:45): **testul ASUS os-301 (Adrian, ~07:35–07:50)** — `rezultate/2026-11-13-laptop-asus-os301/`: `wifi identifica`, `gpu identifica`,
