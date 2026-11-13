@@ -122,8 +122,8 @@ impl SimConfig {
         set(0x14, lp::BAR1_BASE as u32 | 0xc); // BAR1 lo: mem64 prefetchable
         set(0x18, (lp::BAR1_BASE >> 32) as u32); // BAR1 hi: 0x60_0000_0000 (Windows)
         set(0x1c, 0x0000_000c); // BAR3 lo (base SIM)
-        set(0x20, 0x0000_0062); // BAR3 hi: 0x62_0000_0000 (SIM)
-        set(0x24, 0x0000_3001); // BAR5: I/O (SIM)
+        set(0x20, 0x0000_0062); // BAR3 hi: 0x62_0000_0000 (observed 13 Nov, os-301)
+        set(0x24, 0x0000_4001); // BAR5: I/O at 0x4000 (observed 13 Nov, os-301)
         set(
             0x2c,
             ((lp::SUBSYS_DEVICE as u32) << 16) | lp::SUBSYS_VENDOR as u32,

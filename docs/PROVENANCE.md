@@ -264,3 +264,12 @@ Că jetonul 'i' există pe placa noastră e OBSERVAT (`0x69v2` în `vbios.bit.je
 Windows, nu copiați dintr-un ROM). `gpu_sim::laptop`: toate constantele sunt din raportul UHL al lui Adrian (Windows, NVML/CUDA, doar citire; hub
 `rezultate/2026-11-11-laptop-asus-tuf/REZULTAT.md`, 12 nov 22:14 și 23:03) și din `gpu identifica` (OS, os-295); nimic citit de driverul nostru de pe laptop.
 UHL e unealta lui Adrian (repo privat `Adriancu91/uhl`; nu l-am citit; aici sunt doar cifrele publicate în hub, fără serii).
+
+**Sesiunea 98 (13 nov, ~13:30), C-116 pasul 3 (partea de citire) — primul jurnal de pe laptop în model:** `gpu_sim::observed_laptop` (doar adăugări) ține valorile
+OBSERVATE pe ASUS TUF F15 (GA106) la `gpu tur --trezire`, 13 nov ~07:35, `os-301` (cyber-gpu `835f24d`): cele 8 citiri BAR0 din `gpu-jurnal-003.txt` (hub
+`rezultate/2026-11-13-laptop-asus-os301/`, fișier de 24 de rânduri, copiat întreg în testul `board_compare`) și cele 39 de fapte vizibile în poza `gpu-tur-trezire.jpg`
+(transcrise de noi; primele rânduri ale ecranului, tăiate în poză, nu sunt ghicite). Ca la `observed` (workstation): se păstrează doar valori de registre, poziții, mărimi
+și ID-uri — **conținutul VBIOS-ului nu e copiat** (ROM sintetic cu aceeași așezare; primul cuvânt PROM `0xeb7faa55`, jurnalizat de OS, nu e reprodus), niciun octet de
+firmware NVIDIA. Ordinea octeților din jetonul BIT 'i' (`read_bios_version`, scrisă în sesiunea 96 „din memorie, de confirmat”) e acum **confirmată pe placă**:
+`vbios.versiune = 94.06.1e.00.23` = șirul raportat de Windows/NVML pentru aceeași placă. `board_compare::line_facts` citește și rândurile de jurnal de pe stick
+(`gpu: bar0 r …`), nu doar pe cele din rapoartele OS (`jurnal cyber-gpu:`). Nimic nou rulat pe laptop sau pe workstation în această sesiune.

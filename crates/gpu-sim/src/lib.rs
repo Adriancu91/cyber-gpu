@@ -20,6 +20,7 @@ pub mod golden_log;
 pub mod laptop;
 pub mod mmio;
 pub mod observed;
+pub mod observed_laptop;
 pub mod pci;
 pub mod pramin;
 pub mod rom;

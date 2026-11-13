@@ -43,8 +43,9 @@ fn line_facts(line: &str, out: &mut Vec<Fact>) {
         }
         return;
     }
-    // Journal lines of our driver.
-    if line.contains("jurnal cyber-gpu:") {
+    // Journal lines of our driver: in an OS report (`jurnal cyber-gpu:`)
+    // or straight from the stick journal (`gpu: bar0 r 0x… = 0x…`).
+    if line.contains("jurnal cyber-gpu:") || line.contains(" gpu: bar0 r ") {
         if let Some(gpu_core::diag::Event::MmioRead {
             bar: 0,
             offset,
@@ -508,6 +509,197 @@ mod tests {
         // The VBIOS dword and the firmware file are different on purpose.
         assert_eq!(c.count(Verdict::DifferentOnPurpose), 2, "{c}");
         assert!(c.count(Verdict::Same) >= 28, "{c}");
+    }
+
+    /// `gpu-jurnal-003.txt` from the laptop's stick (hub
+    /// `rezultate/2026-11-13-laptop-asus-os301/`, 13 Nov 2026, `os-301`,
+    /// `gpu tur --trezire`): the whole file, 24 lines, no VBIOS bytes except
+    /// the first PROM dword the OS journals.
+    const LAPTOP_JOURNAL_003: &str = "\
+# jurnal gpu P6-40, cyber-gpu 835f24d, comanda: gpu tur --trezire
+[  430.784727] gpu: nota: C-116 trezire minima: Memory Space oprit de firmware; il pornesc pentru tur si il repun dupa
+[  430.798746] gpu: cfg  r 0x004 = 0x00000000
+[  430.811588] gpu: cfg  w 0x004: 0x00100000 <- 0x00000002 => 0x00100002
+[  430.824415] gpu: pas C-116 trezire minima: Memory Space pornit: ok
+[  430.837263] gpu: nota: tur de citire (C-54): incepe, 0 scrieri permise
+[  430.850092] gpu: pas nivel0: configuratie: ok
+[  430.863033] gpu: nota: GA106 (C-116): doar citire; lantul cu scrieri ramane doar pentru GA104
+[  430.875886] gpu: bar0 r 0x000000 = 0xb76000a1
+[  430.888894] gpu: bar0 r 0x000a00 = 0x176a1000
+[  430.901928] gpu: pas nivel0: BOOT_0/BOOT_42: ok
+[  430.914949] gpu: bar0 r 0x118128 = 0x00008b8f
+[  430.927926] gpu: bar0 r 0x118234 = 0x000003ff
+[  430.940961] gpu: pas I2: GFW_BOOT: ok
+[  430.954192] gpu: bar0 r 0x300000 = 0xeb7faa55
+[  430.967162] gpu: pas I3: VBIOS prin PROM: ok
+[  430.980250] gpu: pas I3: descriptorul FWSEC: ok
+[  430.993445] gpu: bar0 r 0x8241e0 = 0x00000003
+[  431.006518] gpu: pas I6 pregatire: semnatura FWSEC aleasa (doar citire): ok
+[  431.019716] gpu: bar0 r 0x1183a4 = 0x00001800
+[  431.032944] gpu: bar0 r 0x1fa828 = 0x00000000
+[  431.046221] gpu: pas I6 pregatire (doar citire): ok
+[  431.059472] gpu: nota: tur de citire (C-54): gata, 0 scrieri
+[  431.313005] gpu: cfg  w 0x004: 0x00100002 <- 0x00000000 => 0x00100000
+[  431.326331] gpu: pas C-116 trezire minima: Command repus (Memory Space oprit): ok
+";
+
+    /// The `fapt` lines of the same run, transcribed from the photo
+    /// `gpu-tur-trezire.jpg` (the screen; the first lines — `pci.id`,
+    /// `pci.subsistem`, Command, ReBAR — are cut off at the top of the photo
+    /// and are left out rather than guessed): 39 lines of the 45 facts the
+    /// screen counted.
+    const LAPTOP_FACTS_OS301: &str = "\
+fapt pci.bus_master = nu
+fapt pci.stare = D0
+fapt pci.bar0 = 0x85000000 mem
+fapt pci.bar1 = 0x6000000000 mem 64b prefetch
+fapt pci.bar3 = 0x6200000000 mem 64b prefetch
+fapt pci.bar5 = 0x4000 io
+fapt pci.legatura = gen4 x8 (max gen4 x16)
+fapt bar0.0x000000 = 0xb76000a1
+fapt bar0.0x000a00 = 0x176a1000
+fapt chip.nume = GA106
+fapt chip.consecvent = da
+fapt gfw.progres = 0xff
+fapt gfw.runde = 1
+fapt bar0.0x118128 = 0x00008b8f
+fapt vbios.ifr = nu
+fapt vbios.imagini = 3
+fapt vbios.imagine0 = 0x00000 tip 0x00 65024 octeti 10de:2520
+fapt vbios.imagine1 = 0x0fe00 tip 0xe0 22016 octeti 10de:2200
+fapt vbios.imagine2 = 0x15400 tip 0xe0 415744 octeti 10de:2200
+fapt vbios.bit = 0x1b0 17
+fapt vbios.bit.jetoane = 0x32v1 0x42v2 0x43v2 0x44v1 0x49v1 0x4dv2 0x4ev0 0x50v2 0x53v2 0x54v1 0x55v1 0x56v1 0x78v1 0x64v1 0x70v2 0x75v1 0x69v2
+fapt vbios.versiune = 94.06.1e.00.23
+fapt fwsec.pmu = 0x7aafe
+fapt fwsec.aplicatii = 0x01 0x00 0x00 0x00 0x00 0x07 0x08 0x00 0x45 0x85 0x49 0x89 0x00 0x00 0x00 0x00
+fapt fwsec.descriptor = v3 la 0x2c834 antet 0x4ac ucode 0xe900 imem 0xe100 dmem 0x800
+fapt fwsec.semnaturi = 3 masca 0x0007 motoare 0x0400 ucode_id 9
+fapt i6.siguranta = 0x8241e0 versiunea 2 semnatura 2
+fapt i6.vram = 6144 MiB
+fapt i6.wpr2 = coborat
+fapt i6.trece = da
+fapt i6.wpr2.etapa = coborat (pornire rece)
+fapt bar0.0x000000 = 0xb76000a1
+fapt bar0.0x000a00 = 0x176a1000
+fapt bar0.0x118128 = 0x00008b8f
+fapt bar0.0x118234 = 0x000003ff
+fapt bar0.0x8241e0 = 0x00000003
+fapt bar0.0x1183a4 = 0x00001800
+fapt bar0.0x1fa828 = 0x00000000
+fapt pci.trezire = Memory Space pornit de noi pentru tur (C-116, o scriere in Command), repus la loc dupa
+";
+
+    /// The awake tour on the SIMULATED laptop built from journal 003.
+    fn sim_laptop() -> (Vec<Fact>, Vec<u64>, usize) {
+        use gpu_pci::mem_space::MemorySpacePermit;
+        use gpu_sim::observed_laptop as ol;
+        let permit = MemorySpacePermit::new("test SIMULARE C-116 (3): jurnalul 003 de pe laptop");
+        let mut cfg = ol::observed_laptop_config();
+        let mut bar0 = ol::observed_laptop_bar0();
+        let mut j = Journal::new(4096);
+        let (t, wake) = crate::read_tour::run_tour_awake(
+            &mut cfg,
+            None,
+            &mut bar0,
+            &mut SimClock::default(),
+            &mut j,
+            &permit,
+        )
+        .unwrap();
+        assert_eq!(wake, crate::read_tour::Wake::EnabledAndRestored);
+        assert!(bar0.writes.is_empty(), "no GPU register written");
+        (t.facts, bar0.reads, cfg.writes)
+    }
+
+    /// C-116 (3), SIMULARE: the first real journal from the GA106 laptop
+    /// (13 Nov 2026) against the model built from it. Every fact the laptop
+    /// showed is reproduced (ids, BARs, link, chip, GFW, the 3 VBIOS images,
+    /// the 17 BIT tokens, `vbios.versiune` = the Windows string, FWSEC
+    /// descriptor, fuse, VRAM 6144 MiB, WPR2 down); the only difference is
+    /// the VBIOS dword, on purpose.
+    #[test]
+    fn laptop_journal_003_agrees_with_the_observed_laptop_model() {
+        let board = facts_from_report(&format!("{LAPTOP_JOURNAL_003}{LAPTOP_FACTS_OS301}"));
+        let (sim, reads, cfg_writes) = sim_laptop();
+        let c = compare(&board, &sim);
+        assert!(!c.has_real_difference(), "{c}");
+        assert_eq!(c.count(Verdict::OnlyBoard), 0, "{c}");
+        assert_eq!(c.count(Verdict::DifferentOnPurpose), 1, "{c}");
+        assert!(c.count(Verdict::Same) >= 36, "{c}");
+        // What the model has and the photo does not: the lines cut off at
+        // the top of the photo (ids, class, Command, ReBAR) and the two
+        // GA106 family facts. Nothing else.
+        let only_sim: Vec<&str> = c
+            .rows
+            .iter()
+            .filter(|r| r.verdict == Verdict::OnlySim)
+            .map(|r| r.key.as_str())
+            .collect();
+        assert_eq!(
+            only_sim,
+            [
+                "chip.familie",
+                "chip.scrieri",
+                "pci.id",
+                "pci.subsistem",
+                "pci.clasa",
+                "pci.command",
+                "pci.rebar.bar1",
+                "pci.rebar.bar3",
+            ],
+            "{c}"
+        );
+        assert_eq!(last(&sim, "pci.id"), Some("10de:2520"));
+        assert_eq!(last(&sim, "pci.subsistem"), Some("1043:16f2"));
+        // The stick journal lines count as board facts too.
+        assert_eq!(last(&board, "bar0.0x1183a4"), Some("0x00001800"));
+        // The same 8 journaled BAR0 reads, in the same order as on the
+        // laptop (the OS journals the first PROM read only; the model
+        // records every PROM dword, so the PROM window is folded into its
+        // first read); 2 configuration writes (Memory Space on, then back).
+        let prom = crate::regs::PROM_BASE..crate::regs::PROM_BASE + crate::regs::PROM_SIZE;
+        let mut folded: Vec<u64> = Vec::new();
+        for &o in &reads {
+            if !prom.contains(&o) || folded.last() != Some(&crate::regs::PROM_BASE) {
+                folded.push(if prom.contains(&o) {
+                    crate::regs::PROM_BASE
+                } else {
+                    o
+                });
+            }
+        }
+        let journal_reads: Vec<u64> = gpu_sim::observed_laptop::BAR0_READS
+            .iter()
+            .map(|&(o, _)| o)
+            .collect();
+        assert_eq!(folded, journal_reads);
+        assert_eq!(cfg_writes, 2);
+    }
+
+    /// The laptop model is not the workstation model with new ids: a tour
+    /// on the workstation model differs from the laptop journal in the
+    /// VBIOS split, the FWSEC build, the chip and the VRAM size.
+    #[test]
+    fn laptop_journal_is_not_explained_by_the_workstation_model() {
+        let board = facts_from_report(LAPTOP_FACTS_OS301);
+        let c = compare(&board, &sim_facts());
+        assert!(c.has_real_difference());
+        let differs = |k: &str| {
+            c.rows
+                .iter()
+                .any(|r| r.key == k && r.verdict != Verdict::Same)
+        };
+        for k in [
+            "vbios.imagini",
+            "vbios.imagine1",
+            "fwsec.descriptor",
+            "fwsec.pmu",
+            "i6.vram",
+            "chip.nume",
+        ] {
+            assert!(differs(k), "{k}: {c}");
+        }
     }
 
     #[test]
