@@ -1,5 +1,38 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 98 — 13 noiembrie 2026, ~13:25–13:55 (ora României), în cloud, FĂRĂ placă — **PRIMUL JURNAL DE PE LAPTOP (GA106) citit:** `gpu tur --trezire` a TRECUT pe ASUS TUF (os-301), 45 de fapte, 0 scrieri în registre; **`vbios.versiune` = exact șirul din Windows**; jurnalul pus în model (C-116 pasul 3, partea de citire)
+
+Pornită de programare la 13:25. În hub, de la sesiunea 97 (07:45): **testul ASUS os-301 (Adrian, ~07:35–07:50)** — `rezultate/2026-11-13-laptop-asus-os301/`: `wifi identifica`, `gpu identifica`,
+**`gpu tur --trezire` TREC**, `analiza` și `test tot` (6/7, doar rețeaua fără cablu); OS-ul a făcut `os-302` (P6-90: `analiza` refolosește faptele turului). **C-119** (Kronos, antrenament mare ≤72 h;
+**Adrian plecat până luni seara, 16 nov** — placa workstation-ului e a lui Kronos non-stop, fără teste OS/GPU acolo); DECIZII 11:11: întâi GPU funcțional. **Nicio comandă nouă pentru cyber-gpu**, dar
+**un jurnal nou de pe o placă** → sesiunea lucrează (regula din sesiunile 90–93). **Nimic de mai jos nu e rulat de noi pe laptop sau pe workstation** — am citit ce a rulat Adrian.
+
+**Ce spune laptopul (OBSERVAT, `gpu-jurnal-003.txt` + poza `gpu-tur-trezire.jpg`; `docs/GA106_LAPTOP.md` §0c):** BOOT_0 `0xb76000a1` / BOOT_42 `0x176a1000` → GA106 consecvent; GFW `0xff` la prima
+rundă; VBIOS valid prin PROM, **3 imagini** (PCI-AT `10de:2520`, două FWSEC `10de:2200`; **fără imagine EFI**, spre deosebire de workstation), BIT la 0x1b0 cu **aceleași 17 jetoane**;
+**`vbios.versiune = 94.06.1e.00.23` = raportul UHL din Windows** → ordinea octeților jetonului 'i' (scrisă în sesiunea 96 „din memorie, de confirmat”) e **confirmată pe placă**, prima comparație
+automată Windows ↔ Cyber Universe (C-117) a reușit; FWSEC: descriptor v3 la 0x2c834, **IMEM 0xe100** (workstation 0xe200), DMEM 0x800, 3 semnături, ucode_id 9 — altă construcție, același format,
+parserul l-a citit neschimbat; siguranța `0x8241e0 = 3` (v2/s2 ca GA104); **VRAM 6144 MiB**; WPR2 coborât → `i6.trece = da`; **2 scrieri în Command (pornit, repus la 0000), 0 în registrele plăcii**.
+Riscurile de laptop din §3 (placa lipsă / adormită, VBIOS doar prin ACPI `_ROM`) **nu s-au arătat**; sarcina `_ROM` nu e necesară. Stick-ul pe laptop: 6,1 ms/rând (fără încetinirea de ~1 s).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Modelul laptopului din jurnal | **`gpu_sim::observed_laptop`** (doar adăugări): cele 8 citiri BAR0 din jurnalul 003, așezarea VBIOS (3 imagini, BIT, jetonul 'i' cu versiunea observată), descriptorul FWSEC și tabela PMU la pozițiile observate, BAR3/BAR5 observate; ca la `observed` (workstation): registre, poziții, mărimi, ID-uri — **nu conținut de VBIOS** (cuvântul PROM `0xeb7faa55` nu e reprodus), nu firmware; `STILL_SIM` spune ce rămâne inventat | PASS (T128a, SIMULARE) |
+| Comparația jurnal ↔ model | `board_compare`: jurnalul 003 întreg (24 de rânduri, copiat în test) + cele **39 de fapte transcrise din poză** (rândurile tăiate sus nu sunt ghicite) față de `run_tour_awake` pe model → **36 LA FEL, 0 DIFERIT, 1 diferit intenționat (cuvântul PROM), 0 doar pe placă**; aceleași 8 citiri BAR0 jurnalizate, în aceeași ordine; 2 scrieri în configurație, 0 în registre. `line_facts` citește acum și rândurile de pe stick (`gpu: bar0 r …`), nu doar din rapoartele OS | PASS (T128b, SIMULARE față de un jurnal OBSERVAT) |
+| Proba inversă | același jurnal față de modelul workstation-ului → diferențe reale (imaginile VBIOS, FWSEC, VRAM, cip): modelul laptopului nu e workstation-ul cu alte ID-uri | PASS (T128c) |
+| Documente | `GA106_LAPTOP.md` §0c (tabelul observat laptop ↔ workstation), §2/§3/§5 trecute de la „de citit” / „DEDUS” / „de confirmat” la OBSERVAT, **§7 lista de pregătire pentru pasul 3 (I6–I8 pe GA106), fără cod, până la DA**; TEST_MATRIX T128 a–d; PROVENANCE; nota pentru OS `integration/cyber-universe/os-301_laptop-tur-citit.md` (nimic de schimbat în OS; amănuntul „45 fapte” pe ecran față de 47 de rânduri `fapt` pe model) | scris — `214de94` |
+| Compatibilitate OS | doar adăugări (modul nou în `gpu-sim`, o ramură în plus în `line_facts`); BAR5 al modelului `ga106_laptop_asus` = `0x4001` (observat; niciun test OS nu depindea de valoarea SIM `0x3001`) | PASS |
+| Pe laptop / pe RTX 3070 Ti | — (nimic nou rulat de noi) | NOT TESTED |
+
+Verificări (`sh tools/check.sh`, Rust 1.97.0): format, clippy `-D warnings`, **479 teste PASS** (4 ignorate; 475 → 479: +4), build no_std PASS. CI: vezi rândul de mai jos după push.
+
+**Ce NU s-a făcut, intenționat:** pasul 3 din C-116 (I6–I8 pe GA106 = primele scrieri în registrele laptopului) cere **DA-ul separat al lui Adrian** — nu există, Adrian e plecat până luni seara;
+niciun rând de cod pentru el, doar lista §7. `Family::writes_allowed()` rămâne doar GA104.
+
+**Următorul pas:** (1) **Adrian, luni seara:** DA sau NU pentru pasul 3 pe laptop (`GA106_LAPTOP.md` §7; întâi `gpu i6` singur, apoi `gpu lant`); (2) pe workstation, când se eliberează placa de la
+Kronos (după C-119, ~luni): un `gpu lant` (varianta 1, `os-302`) → **motivul lui I9** în jurnal (`text motivul esecului`) — tot drumul critic GPU (DECIZII 13 nov 11:11); (3) noi, după oricare jurnal:
+I9 picat cu motiv → regulile `PROMOTE_CTX`; DA pe laptop → pasul 3 după §7. Fără jurnal nou și fără comandă nouă, nimic altceva pe driver. Regula 8: sesiunile 96 și 98 au avut pași (97 oprire scurtă) — nu se aplică.
+
+---
 ## Sesiunea 97 — 13 noiembrie 2026, ~07:25–07:45 (ora României), în cloud, FĂRĂ placă — oprire scurtă: nicio comandă nouă pentru cyber-gpu, niciun jurnal nou de pe placă sau laptop; doar o notă de documentație (raportul UHL de energie confirmă „fără MUX”)
 
 Pornită de programare la 07:25. În hub, de la sesiunea 96 (02:15): **C-118 W0 gata** (OS, `os-301`: `wifi identifica`; **`os-301` leagă deja `835f24d`** — P6-89, deci `vbios.versiune`
