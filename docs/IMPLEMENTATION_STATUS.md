@@ -1,5 +1,32 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 102 — 16 noiembrie 2026, ~13:25–13:45 (ora României), în cloud, FĂRĂ placă — **OPRIT rămâne: necesită analiza lui Adrian** (regula 8); citită ideea nouă pentru I9, comparată doar-citire cu codul
+
+Pornită de programare. În hub, de la sesiunea 101: Kronos (C-121, C-122 — nu ne privesc), OS-ul „OPRIT rămâne”, și **o idee nouă pentru noi**: `idei/2026-11-16_cercetare-i9-promote-ctx.md`
+(centrul de comandă, la cererea lui Adrian, 16 nov 12:20 — „doar informație, nimic de aprobat”). **Nicio comandă nouă pentru cyber-gpu, niciun jurnal nou în `rezultate/`, niciun DA pentru laptop.**
+Ideea nu e una dintre cele trei condiții care ridică oprirea, deci **nu s-a scris cod**; s-a făcut doar o comparație prin citire a codului nostru cu cele 4 puncte, ca Adrian să poată decide:
+
+| Punct din idee | Ce face codul nostru acum (`nvidia_ga104::gsp::{golden, user_space}`, `mmu`) | Concluzie |
+|---|---|---|
+| V1 — alinierea / pagina VA | alinierea vine deja de la GSP-RM (`KGR_GET_CONTEXT_BUFFERS_INFO`, `golden.rs`); ATTRIBUTE_CB la 2 MiB; **dar toate mapările sunt pe pagini de 4 KiB** (nu există PTE de 64 KiB / 2 MiB) | parțial la fel; pagina mare lipsește |
+| V2 — maparea privilegiată (`priv = 1`, nouveau) | `PageAttr` are doar `volatile` și `read_only`; **bitul PRIVILEGE (bitul 5 din PTE) nu e pus niciodată** (constanta există în `nvidia_rm570::regs`) | **diferență reală** — cel mai ieftin de încercat |
+| V3 — lista bufferelor pe canal (`NV2080_CTRL_CMD_GR_GET_CTX_BUFFER_INFO`) | nu se trimite; folosim lista fixă MAIN/PM/PATCH (ca tinygrad) | lipsește; ar fi un mesaj de citire în jurnal |
+| V4 — firmware 570.190 (tinygrad) vs 570.144 (noi) | neschimbat (decizia din 26 oct) | doar notat |
+| forma mesajului virtual (`hObject` = canalul, doar `bufferId` + `gpuVirtAddr`) | la fel ca driverul oficial și tinygrad | nimic de schimbat |
+
+Verificările de la pornire (`sh tools/check.sh`, Rust 1.97.0, ținta `x86_64-unknown-none` reinstalată): format, clippy `-D warnings`, **479 teste PASS** (4 ignorate), build no_std PASS;
+**CI VERDE** pe `237992a` (rularea 43561674765).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Verificări la pornire | `tools/check.sh` complet, CI pe vârful ramurii | PASS (479, SIMULARE) |
+| Comparația V1–V4 cu codul | doar citire, tabelul de mai sus | făcut (fără cod) |
+| Cod | — (regula 8: OPRIT) | — |
+| Pe laptop / pe RTX 3070 Ti | — | NOT TESTED |
+
+**Ce ridică oprirea (oricare):** (1) **Adrian:** „da” pentru V2+V3 (+ opțional V1) în SIMULARE — o variantă nouă de I9 (bufferele de context mapate privilegiat, lista cerută de la RM și scrisă în jurnal), totul doar adăugare, de probat pe placă în fereastra cu el; (2) DA sau NU pentru pasul 3 pe laptop (`GA106_LAPTOP.md` §7); (3) un jurnal nou în `rezultate/` (`gpu lant` pe workstation → motivul lui I9); (4) o comandă nouă în `COMENZI.md`.
+
+---
 ## Sesiunea 101 — 14 noiembrie 2026, ~07:25–07:40 (ora României), în cloud, FĂRĂ placă — **OPRIT: necesită analiza lui Adrian** (regula 8: sesiunile 99, 100 și 101 fără niciun pas)
 
 Pornită de programare la 07:25. În hub, de la sesiunea 100 (01:40): doar OS-ul „OPRIT rămâne (doar așteptare)” la 02:50 și 05:50. **Nicio comandă nouă pentru cyber-gpu**,
