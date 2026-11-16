@@ -273,3 +273,13 @@ OBSERVATE pe ASUS TUF F15 (GA106) la `gpu tur --trezire`, 13 nov ~07:35, `os-301
 firmware NVIDIA. Ordinea octeților din jetonul BIT 'i' (`read_bios_version`, scrisă în sesiunea 96 „din memorie, de confirmat”) e acum **confirmată pe placă**:
 `vbios.versiune = 94.06.1e.00.23` = șirul raportat de Windows/NVML pentru aceeași placă. `board_compare::line_facts` citește și rândurile de jurnal de pe stick
 (`gpu: bar0 r …`), nu doar pe cele din rapoartele OS (`jurnal cyber-gpu:`). Nimic nou rulat pe laptop sau pe workstation în această sesiune.
+
+**Sesiunea 103 (16 nov, ~19:30), C-125 (I9 V2 + V3, după `os-302`):** surse citite ca specificație, nimic copiat — NVIDIA open-gpu-kernel-modules **570.144**
+(MIT): `ctrl2080gr.h` (`NV2080_CTRL_CMD_GR_GET_CTX_BUFFER_INFO`, structurile — **generate automat** cu bindgen în `nvidia-rm570/src/rmapi.rs`, ca restul
+crate-ului, notificarea MIT păstrată), `g_subdevice_nvoc.c` (flagurile comenzilor: `0x8000` pentru `GR_GET_CTX_BUFFER_INFO`, `0x10244` pentru `PROMOTE_CTX`),
+`control.h` (sensul flagurilor), `nv_gpu_ops.c` (`nvGpuOpsBindChannelResources`, cum trimite UVM jumătatea virtuală), `kernel_graphics_context.c`
+(`kgrctxPreparePromoteCtxBuffer`, promovarea PM); `dev_mmu.h` (bitul `PRIVILEGE` = 5, deja generat). nouveau `r535/gr.c` (MIT): `priv = 1` pentru bufferele de
+context — doar ideea; codul nostru (`mmu::encode_pte_privileged`, `user_space::open_work_channel_with`, `I9Report`) e scris de noi. Ideea și sursele au venit din
+hub (`idei/2026-11-16_cercetare-i9-promote-ctx.md`, centrul de comandă). Valorile din `gpu_sim::fake_rm::SIM_CHANNEL_CTX_BUFFERS` sunt SIM. Niciun octet de
+firmware NVIDIA citit sau copiat; adresele NOCAT din jurnal nu au fost căutate în firmware.
+

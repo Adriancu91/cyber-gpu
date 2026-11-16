@@ -1,5 +1,20 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 103 (16 nov 2026, ~19:30, cloud, fără placă) — C-125: I9 V2 (PTE privilegiat) + V3 (lista bufferelor de la RM), după `os-302` (I9 = `0x57`), toate SIMULARE
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| **PE PLACĂ** (OBSERVAT, `os-302`, 16 nov ~14:15, cu Adrian; hub `rezultate/2026-11-16-workstation-os302/`) | `gpu lant` varianta 1 | — | — | I0–I8 + golden TREC; I9 ESEC la `PROMOTE_CTX` virtual: `0x57` `NV_ERR_OBJECT_NOT_FOUND` | ESEC (motiv cunoscut) |
+| T129a | opțiunile oprite (`I9Options::OS_302`, implicit) → **exact aceleași mesaje RM și același canal** ca `open_work_channel_cleared` (os-302); PTE-urile bufferelor de context fără PRIVILEGE | `cargo test -p nvidia-ga104 c125_off_sends` | conform | conform | PASS (SIMULARE) |
+| T129b | V2: MAIN/PM/PATCH mapate cu PRIVILEGE = 1 pe fiecare pagină (citit cu walker-ul independent `gpu_sim::vram::translate`); inelul/USERD nu; mesajele RM identice cu os-302; PTE-ul diferă doar în bitul 5 | `cargo test -p nvidia-ga104 c125_v2` | conform | conform | PASS (SIMULARE) |
+| T129c | V3: `GR_GET_CTX_BUFFER_INFO` trimis o dată, înainte de cele 2 `PROMOTE_CTX`; lista modelului (valori SIM) citită întreagă; jurnalul: opțiunile = 3, starea 0, 3 buffere, ale noastre „în lista RM”, „privilegiat”, MAIN marcat „mărime diferită” (+64 pagini, ca tinygrad) | `cargo test -p nvidia-ga104 c125_v3_lists` | conform | conform | PASS (SIMULARE) |
+| T129d | V3 refuzat de RM (`NOT_SUPPORTED`): refuzul notat (cod + nume `NV_ERR_NOT_SUPPORTED`), canalul se creează și se programează mai departe | `cargo test -p nvidia-ga104 c125_v3_refusal` | conform | conform | PASS (SIMULARE) |
+| T129e | cazul os-302 (al doilea `PROMOTE_CTX` refuzat cu `0x57`): eroarea oprește lanțul ca înainte, **raportul rămâne** (lista RM + bufferele noastre) și se scrie în jurnal | `cargo test -p nvidia-ga104 c125_report_survives` | conform | conform | PASS (SIMULARE) |
+| T129f | greșeli plantate în cererea V3 (client, canal, alt obiect) prinse de modelul cu offset-uri scrise de mână; răspuns scurt / >64 intrări refuzat de parser; 0 intrări = listă goală | `cargo test -p nvidia-ga104 c125_planted` | conform | conform | PASS (SIMULARE) |
+| T129g | antetele NVIDIA regenerate (bindgen 0.71.1, 570.144): în `nvidia-rm570/src/rmapi.rs` doar adăugări (`NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS` 5136 B, intrarea 80 B, comanda `0x20801219`) | `sh tools/gen-rm570/generate.sh …` + `git diff` | doar adăugări | doar adăugări | PASS |
+| T129h | tot pachetul | `sh tools/check.sh` | 485 PASS | **485 PASS** (479 → +6), 4 ignorate; format, clippy `-D warnings`, build no_std | PASS |
+| — | V2/V3 pe RTX 3070 Ti | — | — | — | NOT TESTED (fereastra cu Adrian) |
+
 ## Rezultate — sesiunea 98 (13 nov 2026, ~13:30, cloud, fără placă) — PRIMUL JURNAL DE PE LAPTOP (GA106, `os-301`, `gpu tur --trezire`) citit și pus în model: C-116 pasul 3, partea de citire
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |
