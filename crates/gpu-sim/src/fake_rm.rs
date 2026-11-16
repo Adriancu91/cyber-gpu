@@ -108,6 +108,8 @@ pub mod cmd {
     pub const TSG_SCHEDULE: u32 = 0xa06c_0101;
     /// I10c (`ctrl2080internal.h`): `NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_INFO`.
     pub const KGR_GET_INFO: u32 = 0x2080_0a2a;
+    /// C-125 (`ctrl2080gr.h`): `NV2080_CTRL_CMD_GR_GET_CTX_BUFFER_INFO`.
+    pub const GR_GET_CTX_BUFFER_INFO: u32 = 0x2080_1219;
 }
 
 /// Parameter sizes in 570.144 (x86-64 C layout).
@@ -133,7 +135,21 @@ pub mod size {
     /// I10c: `NV2080_CTRL_INTERNAL_STATIC_GR_GET_INFO_PARAMS` = 8 engines ×
     /// 58 (`NV0080_CTRL_GR_INFO_MAX_SIZE`) pairs {index u32, data u32}.
     pub const GR_INFO: usize = 8 * 58 * 8;
+    /// C-125: `NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS` = 3 × u32 (padded
+    /// to 16) + 64 entries × 80 B (`NV2080_CTRL_GR_CTX_BUFFER_INFO`).
+    pub const CTX_BUFFER_INFO: usize = 16 + 64 * 80;
 }
+
+/// C-125: what this model lists for a channel's context buffers
+/// (`GR_GET_CTX_BUFFER_INFO`): (BUFFER_ID, size). **SIM values**: the
+/// sizes are this model's own GRAPHICS / GRAPHICS_PATCH sizes; alignment
+/// and page 4 KiB, VRAM, contiguous, local. The board's answer — if GSP-RM
+/// answers at all (in NVIDIA's driver the CPU-side RM does) — is unknown.
+pub const SIM_CHANNEL_CTX_BUFFERS: [(u16, u64); 3] = [
+    (0, SIM_CTX_INFO[0].0 as u64),
+    (1, SIM_CTX_INFO[16].0 as u64),
+    (2, SIM_CTX_INFO[16].0 as u64),
+];
 
 /// I10c: GR0's static info, `NV0080_CTRL_GR_INFO_INDEX_*` (`ctrl0080gr.h`)
 /// → value. **SIM values**: the shape of a full GA104 (6 GPC × 4 TPC × 2 SM
@@ -226,6 +242,9 @@ pub struct FakeRm {
     scheduled: Vec<u32>,
     reserved_pdes_copied: bool,
     pub log: RmLog,
+    /// C-125: answer `GR_GET_CTX_BUFFER_INFO` with this status instead of
+    /// the list (e.g. `NOT_SUPPORTED`: GSP-RM may not have this control).
+    pub refuse_ctx_buffer_info: Option<u32>,
 }
 
 fn rd32(b: &[u8], o: usize) -> u32 {
@@ -609,6 +628,12 @@ impl FakeRm {
                     st
                 }
                 (cmd::PROMOTE_CTX, Some(class::SUBDEVICE)) => self.promote(client, params),
+                (cmd::GR_GET_CTX_BUFFER_INFO, Some(class::SUBDEVICE)) => {
+                    match self.refuse_ctx_buffer_info {
+                        Some(code) => code,
+                        None => self.ctx_buffer_info(params),
+                    }
+                }
                 (cmd::WORK_SUBMIT_TOKEN, Some(class::CHANNEL_GPFIFO)) => {
                     if params.len() != size::WORK_SUBMIT_TOKEN {
                         status::INVALID_PARAM_STRUCT
@@ -646,6 +671,7 @@ impl FakeRm {
                     | cmd::KGR_GET_INFO
                     | cmd::COPY_SERVER_RESERVED_PDES
                     | cmd::PROMOTE_CTX
+                    | cmd::GR_GET_CTX_BUFFER_INFO
                     | cmd::WORK_SUBMIT_TOKEN
                     | cmd::TSG_SCHEDULE,
                     Some(_),
@@ -796,6 +822,44 @@ impl FakeRm {
             {
                 return status::INVALID_ARGUMENT;
             }
+        }
+        status::OK
+    }
+
+    // C-125. hUserClient 0, hChannel 4, bufferCount 8, ctxBufferInfo[64] 16
+    // (80 B: alignment 0, size 8, bufferHandle 16, pageCount 24, physAddr 32,
+    // bufferType 40, aperture 44, kind 48, pageSize 52, bIsContigous 56,
+    // bGlobalBuffer 57, bLocalBuffer 58, bDeviceDescendant 59, uuid 60).
+    // Our reading: the client must exist, the handle must be one of its
+    // channels or channel groups (else OBJECT_NOT_FOUND, the code RM's
+    // `CliGetKernelChannel` path gives for a missing channel — DEDUS).
+    fn ctx_buffer_info(&self, b: &mut [u8]) -> u32 {
+        if b.len() != size::CTX_BUFFER_INFO {
+            return status::INVALID_PARAM_STRUCT;
+        }
+        let (user, chan) = (rd32(b, 0), rd32(b, 4));
+        if !self.has_client(user) {
+            return status::INVALID_CLIENT;
+        }
+        if !matches!(
+            self.class_in(user, chan),
+            Some(class::CHANNEL_GPFIFO | class::CHANNEL_GROUP)
+        ) {
+            return status::OBJECT_NOT_FOUND;
+        }
+        b[8..].fill(0);
+        wr32(b, 8, SIM_CHANNEL_CTX_BUFFERS.len() as u32);
+        for (i, (id, sz)) in SIM_CHANNEL_CTX_BUFFERS.iter().enumerate() {
+            let e = 16 + i * 80;
+            wr32(b, e, 0x1000); // alignment (u64, high half 0)
+            wr32(b, e + 8, *sz as u32);
+            wr32(b, e + 12, (*sz >> 32) as u32);
+            wr32(b, e + 24, sz.div_ceil(0x1000) as u32);
+            wr32(b, e + 40, *id as u32);
+            wr32(b, e + 44, 2); // FBMEM
+            wr32(b, e + 52, 0x1000);
+            b[e + 56] = 1; // contiguous
+            b[e + 58] = 1; // local
         }
         status::OK
     }

@@ -198,6 +198,21 @@ pub fn encode_pte(pa: u64, attr: PageAttr) -> GpuResult<u64> {
     Ok(e as u64)
 }
 
+/// C-125 (V2): a 4 KiB VRAM PTE as [`encode_pte`], plus `PRIVILEGE` = 1
+/// (bit 5, generated `NV_MMU_VER2_PTE_PRIVILEGE`, `dev_mmu.h` 570.144, MIT):
+/// only privileged clients (the context-switch firmware) may use the page.
+/// nouveau maps the GR context buffers this way (`r535/gr.c`, `priv = 1`,
+/// MIT; read as specification). Whether GSP-RM needs it for `PROMOTE_CTX`
+/// is **not known** — it is the V2 try of the I9 idea; nothing observed.
+pub fn encode_pte_privileged(pa: u64, attr: PageAttr) -> GpuResult<u64> {
+    let e = encode_pte(pa, attr)?;
+    Ok(put(
+        e as u128,
+        f::NV_MMU_VER2_PTE_PRIVILEGE,
+        f::NV_MMU_VER2_PTE_PRIVILEGE_TRUE as u128,
+    )? as u64)
+}
+
 /// C-83 (I11): the highest host-RAM bus address (exclusive) a system-memory
 /// PTE may name here. `ADDRESS_SYS` is bits 53:8 (46 bits of 4 KiB pages);
 /// we stop at 2^52, the x86-64 physical address limit, so a wrong value from
@@ -348,6 +363,23 @@ impl<W: VramWrite> GpuMemory<W> {
     /// Maps `size` bytes of VRAM at `pa` to `va` with 4 KiB pages. Refuses
     /// (before writing anything) a page that is already mapped.
     pub fn map(&mut self, va: u64, pa: u64, size: u64, attr: PageAttr) -> GpuResult<()> {
+        self.map_with(va, pa, size, attr, false)
+    }
+
+    /// C-125 (V2): as [`Self::map`], every PTE with `PRIVILEGE` = 1
+    /// ([`encode_pte_privileged`]).
+    pub fn map_privileged(&mut self, va: u64, pa: u64, size: u64, attr: PageAttr) -> GpuResult<()> {
+        self.map_with(va, pa, size, attr, true)
+    }
+
+    fn map_with(
+        &mut self,
+        va: u64,
+        pa: u64,
+        size: u64,
+        attr: PageAttr,
+        privileged: bool,
+    ) -> GpuResult<()> {
         if size == 0 || !va.is_multiple_of(PAGE) || !pa.is_multiple_of(PAGE) {
             return Err(GpuError::InvalidArgument("MMU: mapare nealiniata"));
         }
@@ -369,7 +401,12 @@ impl<W: VramWrite> GpuMemory<W> {
         for i in 0..n {
             let (v, p) = (va + i * PAGE, pa + i * PAGE);
             let pt = self.table(4, v)?;
-            self.write(pt + LEVELS[4].index(v) * 8, encode_pte(p, attr)?)?;
+            let e = if privileged {
+                encode_pte_privileged(p, attr)?
+            } else {
+                encode_pte(p, attr)?
+            };
+            self.write(pt + LEVELS[4].index(v) * 8, e)?;
             self.pages.insert(v, p);
         }
         Ok(())
@@ -463,6 +500,17 @@ impl<W: VramWrite + crate::gsp::work_queue::ChannelMemory> crate::gsp::work_queu
     }
     fn read_u32(&mut self, pa: u64) -> GpuResult<u32> {
         self.writer_mut().read_u32(pa)
+    }
+}
+
+/// C-125 (V2): the GR context buffers of the work channel, mapped privileged.
+impl<W: VramWrite> crate::gsp::user_space::PrivilegedMemory for GpuMemory<W> {
+    fn alloc_mapped_privileged(&mut self, size: u64, align: u64) -> GpuResult<Mapping> {
+        let pa = GoldenMemory::alloc_phys(self, size, align)?;
+        let len = size.next_multiple_of(PAGE);
+        let va = self.va.alloc(len, align.max(PAGE))?;
+        self.map_privileged(va, pa, len, PageAttr::default())?;
+        Ok(Mapping { va, pa, size })
     }
 }
 

@@ -56,6 +56,12 @@ pub mod cmd {
     pub const TSG_SCHEDULE: u32 = r::NVA06C_CTRL_CMD_GPFIFO_SCHEDULE;
     /// I10c: the static GR info (on a subdevice).
     pub const KGR_GET_INFO: u32 = r::NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_INFO;
+    /// C-125 (V3): the GR context buffers of one channel (on a subdevice;
+    /// `ctrl2080gr.h`). In NVIDIA's driver this control runs in the CPU-side
+    /// RM (`subdeviceCtrlCmdKGrGetCtxBufferInfo`, flags `0x8000`, not
+    /// `ROUTE_TO_PHYSICAL`; `g_subdevice_nvoc.c` 570.144) — GSP-RM alone may
+    /// refuse it. Only read; the answer goes to the journal.
+    pub const GR_GET_CTX_BUFFER_INFO: u32 = r::NV2080_CTRL_CMD_GR_GET_CTX_BUFFER_INFO;
 }
 
 /// `NV2080_ENGINE_TYPE_GR0` (the graphics/compute engine).
@@ -900,6 +906,70 @@ pub fn parse_promote(p: &[u8]) -> GpuResult<Vec<PromoteEntry>> {
                 ]),
                 initialize: p[at + offset_of!(E, bInitialize)] != 0,
                 nonmapped: p[at + offset_of!(E, bNonmapped)] != 0,
+            }
+        })
+        .collect())
+}
+
+/// C-125 (V3): one GR context buffer as RM lists it for a channel
+/// (`NV2080_CTRL_GR_CTX_BUFFER_INFO`, `ctrl2080gr.h` 570.144, generated
+/// layout). Kept: what says how the buffer must be mapped. Left out: the
+/// opaque `bufferHandle`, `physAddr`, `pageCount` and `uuid` (RM's own
+/// bookkeeping).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CtxBufferInfo {
+    /// `NV2080_CTRL_GPU_PROMOTE_CTX_BUFFER_ID_*`.
+    pub buffer_type: u32,
+    pub size: u64,
+    pub alignment: u64,
+    pub page_size: u32,
+    /// `NV2080_CTRL_GR_CTX_BUFFER_INFO_APERTURE_*` (1 = RAM, 2 = VRAM).
+    pub aperture: u32,
+    pub kind: u32,
+    pub contiguous: bool,
+    pub global: bool,
+    pub local: bool,
+}
+
+/// C-125 (V3): `NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS` asking for the
+/// buffers of `h_channel` (a channel or a TSG) of client `h_user_client`.
+pub fn ctx_buffer_info_request(h_user_client: u32, h_channel: u32) -> Vec<u8> {
+    type P = r::NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS;
+    let mut b = alloc::vec![0u8; size_of::<P>()];
+    put_u32(&mut b, offset_of!(P, hUserClient), h_user_client);
+    put_u32(&mut b, offset_of!(P, hChannel), h_channel);
+    b
+}
+
+/// C-125 (V3): the answer to [`ctx_buffer_info_request`]. Refuses a wrong
+/// length or a count above `NV2080_CTRL_GR_MAX_CTX_BUFFER_COUNT`.
+pub fn parse_ctx_buffer_info(p: &[u8]) -> GpuResult<Vec<CtxBufferInfo>> {
+    type P = r::NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS;
+    type E = r::NV2080_CTRL_GR_CTX_BUFFER_INFO;
+    if p.len() != size_of::<P>() {
+        return Err(GpuError::InvalidArgument(
+            "lista bufferelor de context: lungime gresita",
+        ));
+    }
+    let n = get_u32(p, offset_of!(P, bufferCount));
+    if n > r::NV2080_CTRL_GR_MAX_CTX_BUFFER_COUNT {
+        return Err(GpuError::InvalidArgument(
+            "lista bufferelor de context: prea multe intrari",
+        ));
+    }
+    Ok((0..n as usize)
+        .map(|i| {
+            let e = offset_of!(P, ctxBufferInfo) + i * size_of::<E>();
+            CtxBufferInfo {
+                buffer_type: get_u32(p, e + offset_of!(E, bufferType)),
+                size: get_u64(p, e + offset_of!(E, size)),
+                alignment: get_u64(p, e + offset_of!(E, alignment)),
+                page_size: get_u32(p, e + offset_of!(E, pageSize)),
+                aperture: get_u32(p, e + offset_of!(E, aperture)),
+                kind: get_u32(p, e + offset_of!(E, kind)),
+                contiguous: p[e + offset_of!(E, bIsContigous)] != 0,
+                global: p[e + offset_of!(E, bGlobalBuffer)] != 0,
+                local: p[e + offset_of!(E, bLocalBuffer)] != 0,
             }
         })
         .collect())

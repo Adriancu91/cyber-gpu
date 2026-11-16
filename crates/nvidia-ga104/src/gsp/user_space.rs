@@ -47,16 +47,28 @@
 //! does on its GSP path (`ops_nv.py` `_query_gpu_info`, MIT, commit
 //! f5b17be). The local memory size (`work_queue::local_memory_size`) takes
 //! this shape; a board that is not `sm_86` is refused before any launch.
+//!
+//! C-125 (also SIMULARE only; Adrian's "da" of 16 Nov 2026 13:47): after
+//! `os-302` (I9 refused at the **virtual** `PROMOTE_CTX` with `0x57`
+//! `NV_ERR_OBJECT_NOT_FOUND`), two tries behind [`I9Options`], both off by
+//! default (= exactly the `os-302` messages): **V2** maps MAIN/PM/PATCH with
+//! the PTE `PRIVILEGE` bit (as nouveau `r535/gr.c`, `priv = 1`); **V3** asks
+//! RM, before the promotion, for the channel's context buffers
+//! (`NV2080_CTRL_CMD_GR_GET_CTX_BUFFER_INFO`, as UVM in NVIDIA's
+//! `nv_gpu_ops.c` `_nvGpuOpsRetainChannelResources`) and only **records** the
+//! answer ([`I9Report`]) — a refusal is recorded too and the chain goes on.
+//! Sources read as specification (MIT), nothing copied.
 
 use gpu_core::error::{GpuError, GpuResult};
 
 use alloc::vec::Vec;
 
 use super::golden::{GoldenImage, GoldenMemory, Mapping, PROMOTE_PHYS_ATTR, Rm, RmTransport};
-use super::rmapi::{self, GrInfo, PromoteEntry, WorkChannelSetup, class, cmd};
+use super::rmapi::{self, CtxBufferInfo, GrInfo, PromoteEntry, WorkChannelSetup, class, cmd};
 use super::rpc::function;
 use super::work_queue::ChannelMemory;
 use crate::mmu::LEVELS;
+use gpu_core::diag::{Event, Journal};
 
 /// The client handle tinygrad uses for its work (`PCIIface.root`). DEDUS.
 pub const USER_CLIENT: u32 = 0xc100_0000;
@@ -235,7 +247,233 @@ pub fn open_work_channel<T: RmTransport + ?Sized, M: GoldenMemory + ?Sized>(
     cg: &ComputeGroup,
     g: &GoldenImage,
 ) -> GpuResult<WorkChannel> {
-    open_channel(t, mem, u, cg, g, |_, _| Ok(()))
+    open_channel(
+        t,
+        mem,
+        u,
+        cg,
+        g,
+        |_, _| Ok(()),
+        |m, size, align| m.alloc_mapped(size, align),
+        false,
+        &mut I9Report::default(),
+    )
+}
+
+/// C-125 (V2): memory that can map a buffer with the PTE `PRIVILEGE` bit.
+pub trait PrivilegedMemory {
+    /// As [`GoldenMemory::alloc_mapped`], every page mapped privileged.
+    fn alloc_mapped_privileged(&mut self, size: u64, align: u64) -> GpuResult<Mapping>;
+}
+
+/// C-125: the tries for I9 after `os-302`. `Default` (all off) = exactly
+/// what `os-302` sent. Only for the window on the workstation with Adrian.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct I9Options {
+    /// V2: MAIN/PM/PATCH of the work channel mapped with `PRIVILEGE` = 1.
+    pub privileged_ctx: bool,
+    /// V3: before the promotion, ask RM for the channel's context buffers
+    /// (`GR_GET_CTX_BUFFER_INFO`, read only) and record the answer.
+    pub ctx_buffer_info: bool,
+}
+
+impl I9Options {
+    /// As `os-302` (nothing new).
+    pub const OS_302: I9Options = I9Options {
+        privileged_ctx: false,
+        ctx_buffer_info: false,
+    };
+    /// What Adrian approved in C-125: V2 + V3.
+    pub const C125: I9Options = I9Options {
+        privileged_ctx: true,
+        ctx_buffer_info: true,
+    };
+
+    /// The two flags as one number for the journal: bit 0 = V2, bit 1 = V3.
+    pub fn bits(&self) -> u32 {
+        self.privileged_ctx as u32 | (self.ctx_buffer_info as u32) << 1
+    }
+}
+
+/// C-125 (V3): what RM answered to `GR_GET_CTX_BUFFER_INFO`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum CtxInfoAnswer {
+    /// Not asked (V3 off) or the chain stopped before the question.
+    #[default]
+    NotAsked,
+    /// RM's list for the channel.
+    Listed(Vec<CtxBufferInfo>),
+    /// RM refused, with this `NV_STATUS` (the chain went on).
+    Refused(u32),
+}
+
+/// C-125: what the I9 tries saw, filled **as the chain goes**, so it can
+/// be journaled even when a later message fails (the case of `os-302`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct I9Report {
+    pub options: I9Options,
+    /// V3's answer.
+    pub ctx_info: CtxInfoAnswer,
+    /// The work channel's context buffers as promoted: (id, mapping),
+    /// filled before the first `PROMOTE_CTX`.
+    pub ctx_bufs: Vec<(u16, Mapping)>,
+    /// Whether those buffers were mapped privileged (V2).
+    pub privileged: bool,
+}
+
+/// Journal row names (C-125). Short ASCII, as the stick journal shows them.
+pub mod journal_rows {
+    pub const OPTIONS: &str = "i9 c125 optiuni (b0 V2 priv, b1 V3 lista)";
+    pub const V3_STATUS: &str = "i9 v3 GR_GET_CTX_BUFFER_INFO stare";
+    pub const V3_STATUS_NAME: &str = "i9 v3 refuz";
+    pub const V3_COUNT: &str = "i9 v3 buffere in lista RM";
+    pub const V3_TYPE: &str = "i9 v3 buf tip (BUFFER_ID)";
+    pub const V3_SIZE: &str = "i9 v3 buf marime";
+    pub const V3_ALIGN: &str = "i9 v3 buf aliniere";
+    pub const V3_PAGE: &str = "i9 v3 buf pagina";
+    pub const V3_APERTURE: &str = "i9 v3 buf aperture (1 RAM, 2 VRAM)";
+    pub const V3_KIND: &str = "i9 v3 buf kind";
+    pub const V3_FLAGS: &str = "i9 v3 buf b0 contig b1 global b2 local";
+    pub const V3_NOT_ASKED: &str = "i9 v3 lista RM neceruta";
+    pub const OURS_ID: &str = "i9 ctx buf id (al nostru)";
+    pub const OURS_VA_HI: &str = "i9 ctx buf va hi";
+    pub const OURS_VA_LO: &str = "i9 ctx buf va lo";
+    pub const OURS_SIZE: &str = "i9 ctx buf marime";
+    pub const OURS_PRIV: &str = "i9 ctx buf privilegiat (V2)";
+    pub const OURS_IN_RM: &str = "i9 ctx buf in lista RM (1 da, 0 nu)";
+    pub const OURS_RM_SIZE_SAME: &str = "i9 ctx buf marime = RM (1 da)";
+}
+
+fn sat32(v: u64) -> u32 {
+    u32::try_from(v).unwrap_or(u32::MAX)
+}
+
+impl I9Report {
+    /// Writes the report as journal rows (numbers as `Value`, the name of a
+    /// refusal as `Text`). Nothing is judged here: the rows only say what
+    /// was sent and what RM answered, for the analysis after the window.
+    pub fn journal(&self, j: &mut Journal) {
+        use journal_rows as n;
+        j.push(Event::Value {
+            what: n::OPTIONS,
+            value: self.options.bits(),
+        });
+        let listed = match &self.ctx_info {
+            CtxInfoAnswer::NotAsked => {
+                j.push(Event::Note(n::V3_NOT_ASKED));
+                None
+            }
+            CtxInfoAnswer::Refused(code) => {
+                j.push(Event::Value {
+                    what: n::V3_STATUS,
+                    value: *code,
+                });
+                j.push(Event::text(
+                    n::V3_STATUS_NAME,
+                    nvidia_rm570::status_name(*code).unwrap_or("?").as_bytes(),
+                ));
+                None
+            }
+            CtxInfoAnswer::Listed(l) => {
+                j.push(Event::Value {
+                    what: n::V3_STATUS,
+                    value: 0,
+                });
+                j.push(Event::Value {
+                    what: n::V3_COUNT,
+                    value: l.len() as u32,
+                });
+                for b in l {
+                    for (what, value) in [
+                        (n::V3_TYPE, b.buffer_type),
+                        (n::V3_SIZE, sat32(b.size)),
+                        (n::V3_ALIGN, sat32(b.alignment)),
+                        (n::V3_PAGE, b.page_size),
+                        (n::V3_APERTURE, b.aperture),
+                        (n::V3_KIND, b.kind),
+                        (
+                            n::V3_FLAGS,
+                            b.contiguous as u32 | (b.global as u32) << 1 | (b.local as u32) << 2,
+                        ),
+                    ] {
+                        j.push(Event::Value { what, value });
+                    }
+                }
+                Some(l)
+            }
+        };
+        for (id, m) in &self.ctx_bufs {
+            for (what, value) in [
+                (n::OURS_ID, *id as u32),
+                (n::OURS_VA_HI, (m.va >> 32) as u32),
+                (n::OURS_VA_LO, m.va as u32),
+                (n::OURS_SIZE, sat32(m.size)),
+                (n::OURS_PRIV, self.privileged as u32),
+            ] {
+                j.push(Event::Value { what, value });
+            }
+            if let Some(l) = listed {
+                let rm = l.iter().find(|b| b.buffer_type == *id as u32);
+                j.push(Event::Value {
+                    what: n::OURS_IN_RM,
+                    value: rm.is_some() as u32,
+                });
+                if let Some(b) = rm {
+                    j.push(Event::Value {
+                        what: n::OURS_RM_SIZE_SAME,
+                        value: (b.size == m.size) as u32,
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// C-125: as [`open_work_channel_cleared`], with the I9 tries `opts`
+/// (all off = the same messages as `open_work_channel_cleared`). `report`
+/// is filled as the steps go — read it (and [`I9Report::journal`] it) also
+/// when this returns an error.
+pub fn open_work_channel_with<
+    T: RmTransport + ?Sized,
+    M: GoldenMemory + ChannelMemory + PrivilegedMemory + ?Sized,
+>(
+    t: &mut T,
+    mem: &mut M,
+    u: &UserSpace,
+    cg: &ComputeGroup,
+    g: &GoldenImage,
+    opts: I9Options,
+    report: &mut I9Report,
+) -> GpuResult<WorkChannel> {
+    *report = I9Report {
+        options: opts,
+        ..I9Report::default()
+    };
+    let privileged = opts.privileged_ctx;
+    open_channel(
+        t,
+        mem,
+        u,
+        cg,
+        g,
+        clear_userd,
+        move |m, size, align| {
+            if privileged {
+                m.alloc_mapped_privileged(size, align)
+            } else {
+                m.alloc_mapped(size, align)
+            }
+        },
+        opts.ctx_buffer_info,
+        report,
+    )
+}
+
+fn clear_userd<M: ChannelMemory + ?Sized>(m: &mut M, userd_pa: u64) -> GpuResult<()> {
+    for off in (0..USERD_SIZE).step_by(4) {
+        m.write_u32(userd_pa + off, 0)?;
+    }
+    Ok(())
 }
 
 /// I10a: like [`open_work_channel`], but USERD is zeroed **before** the
@@ -254,18 +492,24 @@ pub fn open_work_channel_cleared<
     cg: &ComputeGroup,
     g: &GoldenImage,
 ) -> GpuResult<WorkChannel> {
-    open_channel(t, mem, u, cg, g, |m, userd_pa| {
-        for off in (0..USERD_SIZE).step_by(4) {
-            m.write_u32(userd_pa + off, 0)?;
-        }
-        Ok(())
-    })
+    open_channel(
+        t,
+        mem,
+        u,
+        cg,
+        g,
+        clear_userd,
+        |m, size, align| m.alloc_mapped(size, align),
+        false,
+        &mut I9Report::default(),
+    )
 }
 
 /// Bytes of USERD (`AmpereAControlGPFifo`, generated).
 pub const USERD_SIZE: u64 =
     core::mem::size_of::<nvidia_rm570::rmapi::AmpereAControlGPFifo>() as u64;
 
+#[allow(clippy::too_many_arguments)]
 fn open_channel<T: RmTransport + ?Sized, M: GoldenMemory + ?Sized>(
     t: &mut T,
     mem: &mut M,
@@ -273,6 +517,9 @@ fn open_channel<T: RmTransport + ?Sized, M: GoldenMemory + ?Sized>(
     cg: &ComputeGroup,
     g: &GoldenImage,
     clear_userd: impl FnOnce(&mut M, u64) -> GpuResult<()>,
+    mut alloc_ctx: impl FnMut(&mut M, u64, u64) -> GpuResult<Mapping>,
+    ask_ctx_info: bool,
+    report: &mut I9Report,
 ) -> GpuResult<WorkChannel> {
     rmapi::check_root(u.root)?;
     let runlist = g
@@ -320,11 +567,28 @@ fn open_channel<T: RmTransport + ?Sized, M: GoldenMemory + ?Sized>(
     let channel = rm.alloc(cg.channel_group, class::CHANNEL_GPFIFO, &params)?;
     let compute = rm.alloc(channel, class::COMPUTE, &[])?;
 
+    // C-125 (V3): RM's own list for this channel, recorded only. A refusal
+    // is an answer too (recorded, the chain goes on); a broken transport is
+    // not (stops, as every other message).
+    if ask_ctx_info {
+        match rm.control(
+            u.subdevice,
+            cmd::GR_GET_CTX_BUFFER_INFO,
+            &rmapi::ctx_buffer_info_request(u.client, channel),
+        ) {
+            Ok(p) => report.ctx_info = CtxInfoAnswer::Listed(rmapi::parse_ctx_buffer_info(&p)?),
+            Err(GpuError::HardwareFault { code }) => report.ctx_info = CtxInfoAnswer::Refused(code),
+            Err(e) => return Err(e),
+        }
+    }
+
     // The GR context of this channel: physical half, then virtual half.
     let mut ctx_bufs = Vec::with_capacity(plan.len());
     for b in &plan {
-        ctx_bufs.push((b.id, mem.alloc_mapped(b.size, b.align)?));
+        ctx_bufs.push((b.id, alloc_ctx(mem, b.size, b.align)?));
     }
+    report.ctx_bufs = ctx_bufs.clone();
+    report.privileged = report.options.privileged_ctx;
     let phys: Vec<_> = plan
         .iter()
         .zip(&ctx_bufs)
@@ -2623,5 +2887,215 @@ mod tests {
             ChainVerdict::StoppedCleanly("i8e-golden".into()),
             "{r:?}"
         );
+    }
+
+    // ---- C-125: the I9 tries V2 + V3 after os-302 (SIMULARE) ----
+
+    /// Every PTE of `m` as the independent walker reads it: privileged?
+    fn ptes_privileged(mem: &Mem, m: &Mapping) -> Vec<bool> {
+        (0..m.size.div_ceil(0x1000))
+            .map(|i| translate(&mem.writer().0, mem.root(), m.va + i * 0x1000).unwrap())
+            .map(|t| {
+                assert_eq!(t.pa % 0x1000, 0);
+                t.privileged
+            })
+            .collect()
+    }
+
+    fn with(opts: I9Options, refuse: Option<u32>) -> (Direct, Mem, WorkChannel, I9Report) {
+        let (mut d, mut mem, g, u, cg) = grouped();
+        d.0.refuse_ctx_buffer_info = refuse;
+        let mut rep = I9Report::default();
+        let w = open_work_channel_with(&mut d, &mut mem, &u, &cg, &g, opts, &mut rep).unwrap();
+        (d, mem, w, rep)
+    }
+
+    #[test]
+    fn c125_off_sends_exactly_what_os302_sent() {
+        let (mut d0, mut mem0, g, u, cg) = grouped();
+        let w0 = open_work_channel_cleared(&mut d0, &mut mem0, &u, &cg, &g).unwrap();
+        let (d, mem, w, rep) = with(I9Options::OS_302, None);
+        assert_eq!(I9Options::default(), I9Options::OS_302);
+        assert_eq!(d.0.log, d0.0.log);
+        assert_eq!(w, w0);
+        assert_eq!(rep.ctx_info, CtxInfoAnswer::NotAsked);
+        assert!(!rep.privileged);
+        assert_eq!(rep.ctx_bufs, w.ctx_bufs);
+        for (_, m) in &w.ctx_bufs {
+            assert!(ptes_privileged(&mem, m).iter().all(|p| !p));
+        }
+    }
+
+    #[test]
+    fn c125_v2_maps_only_the_context_buffers_privileged() {
+        let (d0, ..) = with(I9Options::OS_302, None);
+        let v2 = I9Options {
+            privileged_ctx: true,
+            ctx_buffer_info: false,
+        };
+        let (d, mem, w, rep) = with(v2, None);
+        // Same messages as os-302 (only the page tables differ).
+        assert_eq!(d.0.log, d0.0.log);
+        assert!(rep.privileged);
+        assert_eq!(w.ctx_bufs.len(), 3);
+        for (_, m) in &w.ctx_bufs {
+            let p = ptes_privileged(&mem, m);
+            assert!(!p.is_empty() && p.iter().all(|&x| x), "buffer {m:?}");
+        }
+        // The ring (and USERD) the CPU and the host read: not privileged.
+        assert!(ptes_privileged(&mem, &w.ring).iter().all(|p| !p));
+        // The PTE differs from os-302 in bit 5 only.
+        let a = crate::mmu::encode_pte(0x1234_5000, crate::mmu::PageAttr::default()).unwrap();
+        let b = crate::mmu::encode_pte_privileged(0x1234_5000, crate::mmu::PageAttr::default())
+            .unwrap();
+        assert_eq!(a ^ b, 1 << 5);
+    }
+
+    #[test]
+    fn c125_v3_lists_the_buffers_before_the_promotion() {
+        let (d, _, w, rep) = with(I9Options::C125, None);
+        let n = d.0.log.controls.len();
+        assert_eq!(
+            d.0.log.controls[n - 5..],
+            [
+                (c_cmd::GR_GET_CTX_BUFFER_INFO, status::OK),
+                (c_cmd::PROMOTE_CTX, status::OK),
+                (c_cmd::PROMOTE_CTX, status::OK),
+                (c_cmd::WORK_SUBMIT_TOKEN, status::OK),
+                (c_cmd::TSG_SCHEDULE, status::OK)
+            ]
+        );
+        assert_eq!(d.0.promoted(w.channel), [0, 1, 2, 0, 1, 2]);
+        let CtxInfoAnswer::Listed(l) = &rep.ctx_info else {
+            panic!("{:?}", rep.ctx_info)
+        };
+        assert_eq!(
+            l.iter().map(|b| b.buffer_type).collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
+        for (b, (id, sz)) in l.iter().zip(gpu_sim::fake_rm::SIM_CHANNEL_CTX_BUFFERS) {
+            assert_eq!((b.buffer_type, b.size), (id as u32, sz));
+            assert_eq!((b.alignment, b.page_size, b.aperture), (0x1000, 0x1000, 2));
+            assert!(b.contiguous && b.local && !b.global);
+        }
+        // The journal: options, RM's list, our buffers compared with it.
+        let mut j = Journal::new(256);
+        rep.journal(&mut j);
+        let vals: Vec<(&str, u32)> = j
+            .events()
+            .filter_map(|e| match *e {
+                gpu_core::diag::Event::Value { what, value } => Some((what, value)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(vals[0], (journal_rows::OPTIONS, 3));
+        assert!(vals.contains(&(journal_rows::V3_STATUS, 0)));
+        assert!(vals.contains(&(journal_rows::V3_COUNT, 3)));
+        let in_rm = vals
+            .iter()
+            .filter(|v| **v == (journal_rows::OURS_IN_RM, 1))
+            .count();
+        assert_eq!(in_rm, 3);
+        let priv_rows = vals
+            .iter()
+            .filter(|v| **v == (journal_rows::OURS_PRIV, 1))
+            .count();
+        assert_eq!(priv_rows, 3);
+        // Our MAIN is larger than RM's raw size (tinygrad's + 64 pages): the
+        // journal says "different" for it instead of hiding it.
+        assert!(vals.contains(&(journal_rows::OURS_RM_SIZE_SAME, 0)));
+    }
+
+    #[test]
+    fn c125_v3_refusal_is_recorded_and_the_chain_goes_on() {
+        let (d, _, w, rep) = with(I9Options::C125, Some(status::NOT_SUPPORTED));
+        assert_eq!(rep.ctx_info, CtxInfoAnswer::Refused(status::NOT_SUPPORTED));
+        assert!(d.0.is_scheduled(d.0.parent_of(w.channel).unwrap()));
+        let mut j = Journal::new(64);
+        rep.journal(&mut j);
+        let texts: Vec<_> = j.events().map(|e| alloc::format!("{e}")).collect();
+        assert!(
+            texts.iter().any(|t| t.contains("NV_ERR_NOT_SUPPORTED")),
+            "{texts:?}"
+        );
+        assert!(texts.iter().any(|t| t.contains(journal_rows::V3_STATUS)));
+    }
+
+    /// The board's case (os-302): the virtual PROMOTE_CTX refused with
+    /// 0x57. The error stops the chain as before, and the report still has
+    /// RM's list and our buffers for the journal.
+    #[test]
+    fn c125_report_survives_the_os302_refusal() {
+        struct RefuseVirtualPromote(Direct, u32);
+        impl RmTransport for RefuseVirtualPromote {
+            fn call(&mut self, f: u32, p: &[u8]) -> GpuResult<Vec<u8>> {
+                if f == function::GSP_RM_CONTROL && super::super::get_u32(p, 8) == cmd::PROMOTE_CTX
+                {
+                    self.1 += 1;
+                    if self.1 == 2 {
+                        return Err(GpuError::HardwareFault {
+                            code: status::OBJECT_NOT_FOUND,
+                        });
+                    }
+                }
+                self.0.call(f, p)
+            }
+        }
+        let (d, mut mem, g, u, cg) = grouped();
+        let mut t = RefuseVirtualPromote(d, 0);
+        let mut rep = I9Report::default();
+        let r = open_work_channel_with(&mut t, &mut mem, &u, &cg, &g, I9Options::C125, &mut rep);
+        assert_eq!(
+            r,
+            Err(GpuError::HardwareFault {
+                code: status::OBJECT_NOT_FOUND
+            })
+        );
+        assert!(matches!(rep.ctx_info, CtxInfoAnswer::Listed(ref l) if l.len() == 3));
+        assert_eq!(rep.ctx_bufs.len(), 3);
+        let mut j = Journal::new(256);
+        rep.journal(&mut j);
+        assert!(j.len() > 3 * 5 + 3 * 7);
+    }
+
+    /// Planted mistakes in the V3 request are caught by the model's own
+    /// offsets; a short or overfull answer is refused by our parser.
+    #[test]
+    fn c125_planted_v3_mistakes_are_caught() {
+        let (mut d, mut mem, g, u, cg) = grouped();
+        let w = open_work_channel_cleared(&mut d, &mut mem, &u, &cg, &g).unwrap();
+        let (u_client, sub) = (u.client, u.subdevice);
+        let mut rm = Rm {
+            t: &mut d,
+            client: u_client,
+            next: w.next_handle,
+        };
+        let good = rmapi::ctx_buffer_info_request(u_client, w.channel);
+        assert_eq!(good.len(), gpu_sim::fake_rm::size::CTX_BUFFER_INFO);
+        assert!(rm.control(sub, cmd::GR_GET_CTX_BUFFER_INFO, &good).is_ok());
+        for (off, v, code) in [
+            (0usize, 0x1234u32, status::INVALID_CLIENT),
+            (4, 0x1234, status::OBJECT_NOT_FOUND),
+            (4, u_client, status::OBJECT_NOT_FOUND),
+        ] {
+            let mut bad = good.clone();
+            bad[off..off + 4].copy_from_slice(&v.to_le_bytes());
+            assert_eq!(
+                rm.control(sub, cmd::GR_GET_CTX_BUFFER_INFO, &bad),
+                Err(GpuError::HardwareFault { code }),
+                "greseala V3 la {off} = {v:#x}"
+            );
+        }
+        assert!(
+            rm.control(sub, cmd::GR_GET_CTX_BUFFER_INFO, &good[..16])
+                .is_err()
+        );
+        assert!(rmapi::parse_ctx_buffer_info(&good[..100]).is_err());
+        let mut over = good.clone();
+        over[8..12].copy_from_slice(&65u32.to_le_bytes());
+        assert!(rmapi::parse_ctx_buffer_info(&over).is_err());
+        let mut empty = good;
+        empty[8..12].copy_from_slice(&0u32.to_le_bytes());
+        assert_eq!(rmapi::parse_ctx_buffer_info(&empty), Ok(Vec::new()));
     }
 }

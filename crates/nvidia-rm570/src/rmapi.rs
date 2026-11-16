@@ -2,7 +2,7 @@
 // Source: NVIDIA open-gpu-kernel-modules tag 570.144 (8ec351aeb96a93a4bb69ccc12a542bf8a8df2b6f): nvos.h, class/cl0000.h, cl0080.h,
 // cl2080.h, cl90f1.h, clc56f.h, clc7c0.h, clc7b5.h, cla06c.h, cl9067.h, cl2080_notification.h,
 // alloc/alloc_channel.h, ctrl0080fifo.h,
-// ctrl0080dma.h, ctrl2080fifo.h, ctrl2080gpu.h, ctrl2080internal.h, ctrl90f1.h, ctrla06c.h, ctrla06fgpfifo.h, ctrlc36f.h, g_rpc-structures.h,
+// ctrl0080dma.h, ctrl2080fifo.h, ctrl2080gpu.h, ctrl2080gr.h, ctrl2080internal.h, ctrl90f1.h, ctrla06c.h, ctrla06fgpfifo.h, ctrlc36f.h, g_rpc-structures.h,
 // g_sdk-structures.h.
 // MIT, Copyright NVIDIA CORPORATION & AFFILIATES; full notice in crates/nvidia-rm570/LICENSE-NVIDIA.
 // Layout only; no code.
@@ -22,6 +22,11 @@ pub const NV0080_CTRL_GR_INFO_INDEX_LITTER_NUM_GPCS: u32 = 20;
 pub const NV0080_CTRL_GR_INFO_INDEX_LITTER_NUM_TPC_PER_GPC: u32 = 23;
 pub const NV0080_CTRL_GR_INFO_INDEX_LITTER_NUM_SM_PER_TPC: u32 = 32;
 pub const NV0080_CTRL_GR_INFO_MAX_SIZE: u32 = 58;
+pub const NV2080_CTRL_GR_MAX_CTX_BUFFER_COUNT: u32 = 64;
+pub const NV2080_CTRL_CMD_GR_GET_CTX_BUFFER_INFO: u32 = 545264153;
+pub const NV2080_CTRL_GR_CTX_BUFFER_INFO_APERTURE_UNKNOWN: u32 = 0;
+pub const NV2080_CTRL_GR_CTX_BUFFER_INFO_APERTURE_SYSMEM: u32 = 1;
+pub const NV2080_CTRL_GR_CTX_BUFFER_INFO_APERTURE_FBMEM: u32 = 2;
 pub const NV2080_CTRL_GPU_PROMOTE_CTX_BUFFER_ID_MAIN: u32 = 0;
 pub const NV2080_CTRL_GPU_PROMOTE_CTX_BUFFER_ID_PM: u32 = 1;
 pub const NV2080_CTRL_GPU_PROMOTE_CTX_BUFFER_ID_PATCH: u32 = 2;
@@ -122,6 +127,84 @@ pub type NvU64 = ::core::ffi::c_ulonglong;
 pub type NvHandle = NvU32;
 pub type NvBool = NvU8;
 pub type NvP64 = *mut ::core::ffi::c_void;
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct NV2080_CTRL_GR_CTX_BUFFER_INFO {
+    pub alignment: NvU64,
+    pub size: NvU64,
+    pub bufferHandle: NvP64,
+    pub pageCount: NvU64,
+    pub physAddr: NvU64,
+    pub bufferType: NvU32,
+    pub aperture: NvU32,
+    pub kind: NvU32,
+    pub pageSize: NvU32,
+    pub bIsContigous: NvBool,
+    pub bGlobalBuffer: NvBool,
+    pub bLocalBuffer: NvBool,
+    pub bDeviceDescendant: NvBool,
+    pub uuid: [NvU8; 16usize],
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of NV2080_CTRL_GR_CTX_BUFFER_INFO"]
+        [::core::mem::size_of::<NV2080_CTRL_GR_CTX_BUFFER_INFO>() - 80usize];
+    ["Alignment of NV2080_CTRL_GR_CTX_BUFFER_INFO"]
+        [::core::mem::align_of::<NV2080_CTRL_GR_CTX_BUFFER_INFO>() - 8usize];
+    ["Offset of field: NV2080_CTRL_GR_CTX_BUFFER_INFO::alignment"]
+        [::core::mem::offset_of!(NV2080_CTRL_GR_CTX_BUFFER_INFO, alignment) - 0usize];
+    ["Offset of field: NV2080_CTRL_GR_CTX_BUFFER_INFO::size"]
+        [::core::mem::offset_of!(NV2080_CTRL_GR_CTX_BUFFER_INFO, size) - 8usize];
+    ["Offset of field: NV2080_CTRL_GR_CTX_BUFFER_INFO::bufferHandle"]
+        [::core::mem::offset_of!(NV2080_CTRL_GR_CTX_BUFFER_INFO, bufferHandle) - 16usize];
+    ["Offset of field: NV2080_CTRL_GR_CTX_BUFFER_INFO::pageCount"]
+        [::core::mem::offset_of!(NV2080_CTRL_GR_CTX_BUFFER_INFO, pageCount) - 24usize];
+    ["Offset of field: NV2080_CTRL_GR_CTX_BUFFER_INFO::physAddr"]
+        [::core::mem::offset_of!(NV2080_CTRL_GR_CTX_BUFFER_INFO, physAddr) - 32usize];
+    ["Offset of field: NV2080_CTRL_GR_CTX_BUFFER_INFO::bufferType"]
+        [::core::mem::offset_of!(NV2080_CTRL_GR_CTX_BUFFER_INFO, bufferType) - 40usize];
+    ["Offset of field: NV2080_CTRL_GR_CTX_BUFFER_INFO::aperture"]
+        [::core::mem::offset_of!(NV2080_CTRL_GR_CTX_BUFFER_INFO, aperture) - 44usize];
+    ["Offset of field: NV2080_CTRL_GR_CTX_BUFFER_INFO::kind"]
+        [::core::mem::offset_of!(NV2080_CTRL_GR_CTX_BUFFER_INFO, kind) - 48usize];
+    ["Offset of field: NV2080_CTRL_GR_CTX_BUFFER_INFO::pageSize"]
+        [::core::mem::offset_of!(NV2080_CTRL_GR_CTX_BUFFER_INFO, pageSize) - 52usize];
+    ["Offset of field: NV2080_CTRL_GR_CTX_BUFFER_INFO::bIsContigous"]
+        [::core::mem::offset_of!(NV2080_CTRL_GR_CTX_BUFFER_INFO, bIsContigous) - 56usize];
+    ["Offset of field: NV2080_CTRL_GR_CTX_BUFFER_INFO::bGlobalBuffer"]
+        [::core::mem::offset_of!(NV2080_CTRL_GR_CTX_BUFFER_INFO, bGlobalBuffer) - 57usize];
+    ["Offset of field: NV2080_CTRL_GR_CTX_BUFFER_INFO::bLocalBuffer"]
+        [::core::mem::offset_of!(NV2080_CTRL_GR_CTX_BUFFER_INFO, bLocalBuffer) - 58usize];
+    ["Offset of field: NV2080_CTRL_GR_CTX_BUFFER_INFO::bDeviceDescendant"]
+        [::core::mem::offset_of!(NV2080_CTRL_GR_CTX_BUFFER_INFO, bDeviceDescendant) - 59usize];
+    ["Offset of field: NV2080_CTRL_GR_CTX_BUFFER_INFO::uuid"]
+        [::core::mem::offset_of!(NV2080_CTRL_GR_CTX_BUFFER_INFO, uuid) - 60usize];
+};
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS {
+    pub hUserClient: NvHandle,
+    pub hChannel: NvHandle,
+    pub bufferCount: NvU32,
+    pub ctxBufferInfo: [NV2080_CTRL_GR_CTX_BUFFER_INFO; 64usize],
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS"]
+        [::core::mem::size_of::<NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS>() - 5136usize];
+    ["Alignment of NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS"]
+        [::core::mem::align_of::<NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS>() - 8usize];
+    ["Offset of field: NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS::hUserClient"]
+        [::core::mem::offset_of!(NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS, hUserClient) - 0usize];
+    ["Offset of field: NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS::hChannel"]
+        [::core::mem::offset_of!(NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS, hChannel) - 4usize];
+    ["Offset of field: NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS::bufferCount"]
+        [::core::mem::offset_of!(NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS, bufferCount) - 8usize];
+    ["Offset of field: NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS::ctxBufferInfo"][::core::mem::offset_of!(
+        NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS,
+        ctxBufferInfo
+    ) - 16usize];
+};
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct NV2080_CTRL_GPU_PROMOTE_CTX_BUFFER_ENTRY {
