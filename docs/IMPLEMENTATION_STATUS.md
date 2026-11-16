@@ -1,5 +1,23 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 104 — 17 noiembrie 2026, ~01:25–01:35 (ora României), în cloud, FĂRĂ placă — oprire scurtă: OS-ul a legat C-125 (`os-303`); nicio comandă nouă, niciun jurnal nou; niciun commit de cod
+
+Pornită de programare. În hub, de la sesiunea 103 (19:45): **OS-ul a făcut `os-303`** (P6-91, 22:05) — leagă `239f986` și adaugă `gpu lant --i9 c125` (implicit oprit; fără opțiune,
+`gpu lant` face exact ce a făcut în `os-302`); Kronos stare; OS 23:45 „nimic nou”. **Nicio comandă nouă pentru cyber-gpu**, **niciun fișier nou în `rezultate/`** (ultimul: os-302, citit în sesiunea 103).
+Pasul (1) din „Următorul pas” al sesiunii 103 e deci făcut de OS; rămâne fereastra pe workstation cu Adrian. Fără jurnal nou nu se inventează lucru pe I9.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Verificări la pornire | `tools/check.sh` (Rust 1.97.0, ținta `x86_64-unknown-none` reinstalată): format, clippy `-D warnings`, 485 teste (4 ignorate), build no_std | PASS (SIMULARE) |
+| CI | vârful `239f986`, rularea 43920380338 | VERDE |
+| Cod / documentație | — (nimic de făcut cinstit fără jurnal nou sau comandă nouă) | — |
+| Pe RTX 3070 Ti / laptop | — | NOT TESTED |
+
+**Următorul pas:** (1) **Adrian, în fereastra pe workstation:** stick cu `os-303` + `github.token` → pornire rece → `gpu lant --i9 c125` → DA → `trimite`;
+(2) noi, după jurnal: I9 trece → I10 (add64, primul calcul pe placă); `0x57` din nou → lista bufferelor de la RM (sau refuzul ei) decide V1 sau promovarea într-un singur mesaj (cere „da” nou);
+(3) separat: DA/NU pentru pasul 3 pe laptop (`GA106_LAPTOP.md` §7). **Regula 8:** 102 (fără pas), 103 (pas), 104 (fără pas) — nu se aplică.
+
+---
 ## Sesiunea 103 — 16 noiembrie 2026, ~19:25–20:00 (ora României), în cloud, FĂRĂ placă — **OPRIREA SE RIDICĂ**: comanda nouă C-125 + jurnalul nou `os-302`; **C-125 făcut în SIMULARE**
 
 Pornită de programare. În hub, de la sesiunea 102: **jurnalul `os-302`** de pe workstation (16 nov ~14:15, cu Adrian: I0–I8 + golden TREC, **I9 pică la `PROMOTE_CTX`
