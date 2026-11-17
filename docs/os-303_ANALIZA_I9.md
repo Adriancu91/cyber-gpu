@@ -5,6 +5,15 @@ Surse de date: hub `rezultate/2026-11-16-workstation-os302/` și `rezultate/2026
 Etichete: **OBSERVAT** = scris în jurnalul de pe placă; **CITIT** = scris în sursele deschise (MIT), citite ca specificație; **DEDUS** = concluzia noastră;
 **NECUNOSCUT** = nu se poate afla fără placă (partea „fizică” a GSP-RM e în firmware, pe care nu avem voie să-l analizăm).
 
+> **Actualizare (sesiunea 108, după `os-304`, 17 nov ~16:05) — textul de mai jos rămâne cum a fost scris; ce s-a aflat între timp e în
+> `docs/os-304_ANALIZA_I9.md`:**
+> 1. **Rezultatul pe placă** e rândul 2 din §6: A `0x57`, B trece de `PROMOTE_CTX` și de obiectul compute. Deci cauza lui `0x57` era **ce buffere**
+>    promovăm (bufferul PM și/sau lipsa globalelor), nu forma mesajului: estimarea „(a) + (d) cele mai probabile” de aici **a fost greșită** — A le schimba
+>    exact pe acelea și a fost refuzată la fel. Refuzul s-a mutat la mesajul următor (jetonul, `0x40`).
+> 2. **Îndreptare:** unde scrie mai jos că tinygrad merge „doar pe 570.190” și că nu avem dovadă pentru 570.144 — e greșit. Commit-ul tinygrad studiat în
+>    octombrie (`9cf7829a6`) rula aceeași secvență pe **570.144**; iar tinygrad nu citește niciodată starea întoarsă de RM, deci secvența lui nu
+>    dovedește că GSP-RM o acceptă. Ipoteza (f) cade.
+
 ## 0. Pe scurt (pentru Adrian)
 
 - **Ce s-a întâmplat:** la I9, placa primește bufferele de lucru ale canalului în **două** mesaje: întâi „unde sunt în memorie” (trece), apoi „la ce adresă

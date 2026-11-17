@@ -297,3 +297,24 @@ canalului), `r535/vmm.c` (spațiul de adrese), `r570/gr.c` (promovarea înaintea
 **tinygrad** (MIT, commit `9ecf871`): `runtime/ops_nv.py`, `runtime/support/nv/ip.py`, `nvdev.py` (firmware 570.190). Codul nostru
 (`user_space::open_work_channel_c133`, `C133Report`, `gpu_sim::fake_rm::PromoteRule`) e scris de noi; `PromoteRule` modelează **ipoteze**, nu placa. Niciun
 octet de firmware NVIDIA citit sau copiat; adresele NOCAT din jurnale nu au fost căutate în firmware. Niciun cod GPL citit pentru această sesiune.
+
+**Sesiunea 108 (17 nov, ~16:20), C-135 (I9 pasul 5 după `os-304`: jetonul refuzat cu `0x40`):** surse citite ca specificație, **nimic copiat** — NVIDIA
+open-gpu-kernel-modules **570.144** (MIT): `kernel_channel.c` (`kchannelCtrlCmdGpfifoGetWorkSubmitToken`, `kchannelNotifyWorkSubmitToken`,
+`kchannelUpdateNotifierMem` — verificarea `ADDR_FBMEM` de pe GSP; `kchannelConstruct`: contextul de erori, tipurile din `internalFlags`, runlist-ul la
+alocare; `_kchannelSendChannelAllocRpc`: ChID-ul ales de RM-ul de pe CPU, `errorNotifierMem`; `kchannelCtrlCmdGpFifoSchedule`, `kchannelIsSchedulable`,
+`kchannelCtrlCmdBind`), `kernel_channel_group_api.c` (`kchangrpapiCtrlCmdGpFifoSchedule`), `kernel_fifo.c` (`kfifoGenerateWorkSubmitToken`,
+`kfifoChidMgrAllocChid`, `KFIFO_NUM_GSP_RESERVED_CHANNELS`), `arch/ampere/kernel_fifo_ga100.c` (`kfifoGenerateWorkSubmitTokenHal_GA100`),
+`arch/maxwell/kernel_channel_gm107.c` (`kchannelAllocHwID`), `arch/maxwell/kernel_fifo_gm107.c` (`kfifoRunlistSetId`), `g_kernel_channel_nvoc.c`
+(flagurile comenzilor: `0x8` pentru jeton, `0xc0` pentru varianta internă), `g_kernel_channel_nvoc.h` (`ErrorNotifierType`,
+`NV_KERNELCHANNEL_ALLOC_INTERNALFLAGS_*`), `inc/kernel/rmapi/control.h` (sensul flagurilor), `alloc/alloc_channel.h` (`NVOS04_FLAGS_*`),
+`ctrl/ctrlc36f.h`, `ctrl/ctrla06c.h`, `ctrl/ctrla06f/ctrla06fgpfifo.h`, `vgpu/rpc.c` (`rpcRmApiControl_GSP`: starea comenzii e în câmpul `status` al
+răspunsului), `nvstatuscodes.h`. Pentru comparația de versiuni: aceleași fișiere de la eticheta **570.190** (canale, fifo, GR: identice cu 570.144).
+**nouveau** (Linux, ramura principală la 17 nov 2026; fișiere cu licența MIT): `nvkm/subdev/gsp/rm/r535/fifo.c` + `r570/fifo.c` (`internalFlags` cu
+notificatoare `NONE`, ChID prin `USERD_INDEX`, `BIND` + `GPFIFO_SCHEDULE` pe canal), `nvkm/engine/fifo/ga100.c` + `tu102.c` (jetonul soneriei calculat de
+driver), `r535/ctrl.c` + `r535/alloc.c` (citesc `rpc->status`, pe lângă `rpc_result` din `r535/rpc.c`). **tinygrad** (MIT): `runtime/support/nv/ip.py` și `runtime/ops_nv.py` la commit-urile `9cf7829a6`
+(26 oct, firmware 570.144) și `9ecf871` (17 nov, 570.190) — `read_resp` / `rpc_rm_alloc` / `rpc_rm_control`: se verifică doar rezultatul transportului
+RPC, nu starea RM. Constantele `rmapi::internal_flags` și `rmapi::channel_flags` sunt scrise de mână din antetele MIT de mai sus (intervale de biți pe
+care bindgen nu le poate evalua), cu sursa în comentariu. Codul nostru (`user_space::open_work_channel_c135`, `C135Report`,
+`rmapi::work_channel_params_with`, `gpu_sim::fake_rm::TokenRule`) e scris de noi; `TokenRule` și regula ChID-urilor din model sunt **ipoteze / valori
+SIM**, nu placa. Niciun octet de firmware NVIDIA citit sau copiat; adresele NOCAT din jurnale nu au fost căutate în firmware. Niciun cod GPL citit pentru
+această sesiune.

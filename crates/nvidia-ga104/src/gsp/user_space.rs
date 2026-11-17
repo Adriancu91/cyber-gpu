@@ -1157,12 +1157,14 @@ pub struct C135Report {
 pub const C135_BUFFERS: [u16; 2] = C133_B_BUFFERS;
 /// …plus the golden image's VA for FECS_EVENT and PRIV_ACCESS_MAP.
 pub const C135_GLOBAL_VAS: [u16; 2] = C133_GLOBAL_VAS;
-/// The channel id try F asks for: USERD page 1, index 0. Free by
-/// construction in this chain: the golden channel fixes id 3 (page 0),
-/// GSP-RM keeps id 0, and the channels whose id GSP-RM chose before it
-/// (at most one in `--i9 c135`) take the first free ids. A refusal of the
-/// channel with this id is an answer too (the chain stops with RM's code).
-pub const C135_F_CHID: u32 = 8;
+/// The channel id try F asks for: USERD page 2, index 0. Free in this
+/// chain whichever way GSP-RM hands out ids: it keeps id 0, the golden
+/// channel fixes id 3 (page 0), and the one channel whose id GSP-RM chose
+/// before (try N's) gets the first free id — in page 0, or at the start of
+/// page 1 if GSP-RM gives each client its own USERD page. A refusal of the
+/// channel with this id is an answer too (the chain stops with RM's code;
+/// no other id is guessed).
+pub const C135_F_CHID: u32 = 16;
 
 /// Journal row names (C-135). Short ASCII, as the stick journal shows them.
 pub mod journal_rows_c135 {
@@ -4542,8 +4544,9 @@ mod tests {
     }
 
     /// The token control refused for another reason (the reply's token field
-    /// untouched): try F runs in a NEW group, names channel id 8 in the
-    /// channel's flags, computes the token itself and never asks GSP-RM;
+    /// untouched): try F runs in a NEW group, names its channel id
+    /// (`C135_F_CHID`, 16) in the channel's flags, computes the token itself
+    /// and never asks GSP-RM;
     /// then the group is scheduled. N's group is never scheduled.
     #[test]
     fn c135_try_f_names_its_channel_id_when_the_token_is_refused() {
@@ -4598,11 +4601,11 @@ mod tests {
         assert!(!d.0.is_scheduled(n.channel_group));
         assert!(d.0.is_scheduled(f.channel_group));
         // GSP-RM (the model) gave the channel exactly the id we named.
-        assert_eq!(C135_F_CHID, 8);
+        assert_eq!(C135_F_CHID, 16);
         assert_eq!(d.0.chid(w.channel), Some(C135_F_CHID));
         assert_ne!(d.0.chid(n.channel), Some(C135_F_CHID));
         let facts = d.0.channel_facts(w.channel).unwrap();
-        assert_eq!(facts.flags, 0x0020_1000);
+        assert_eq!(facts.flags, 0x0020_2000);
         assert_eq!(rmapi::chid_of_flags(facts.flags), Some(C135_F_CHID));
         assert_eq!(
             (
@@ -4768,16 +4771,16 @@ mod tests {
     }
 
     /// The id try F names is refused when it is in use (here: channels made
-    /// before it filled the ids up to 8): RM's refusal is the result, never
-    /// a guess of another id.
+    /// before it filled the ids up to 16): RM's refusal is the result,
+    /// never a guess of another id.
     #[test]
     fn c135_try_f_in_use_channel_id_is_refused_by_rm() {
         let (mut d, mut mem, g, u) = c135_base(PromoteRule::Lenient, TokenRule::RefusedNoId);
-        // Seven working channels (ids 1, 2, 4, 5, 6, 7, 8 in the model: 3 is
+        // Fifteen working channels (ids 1, 2, 4, 5, … 16 in the model: 3 is
         // the golden channel's).
         let cg = open_compute_group(&mut d, &u).unwrap();
         let mut next = cg.next_handle;
-        for _ in 0..7 {
+        for _ in 0..15 {
             let mut cgi = cg;
             cgi.next_handle = next;
             let w = open_work_channel_cleared(&mut d, &mut mem, &u, &cgi, &g);
@@ -4786,10 +4789,13 @@ mod tests {
             assert_eq!(w, Err(invalid_state()));
             next += 2;
         }
-        let taken: Vec<u32> = (0..7)
+        let taken: Vec<u32> = (0..15)
             .map(|i| d.0.chid(cg.next_handle + 2 * i).unwrap())
             .collect();
-        assert_eq!(taken, [1, 2, 4, 5, 6, 7, 8]);
+        assert_eq!(
+            taken,
+            (1..=C135_F_CHID).filter(|&i| i != 3).collect::<Vec<_>>()
+        );
         let mut u2 = u;
         u2.next_handle = next;
         let mut rep = C135Report::default();
@@ -4979,7 +4985,7 @@ mod tests {
         assert_eq!(of(&v, n::REFUSAL), [0x40]);
         assert_eq!(texts, ["NV_ERR_INVALID_STATE"]);
         assert_eq!(notes, 0);
-        // The longest report: 62 rows.
+        // The longest report that passes: 59 rows.
         assert_eq!(len, 1 + (4 + 20 + 3 + 1 + 2) + (4 + 20 + 2 + 1) + 1);
         assert!(len <= 64);
 

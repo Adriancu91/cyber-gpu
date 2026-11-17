@@ -1,5 +1,35 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 108 — 17 noiembrie 2026, ~16:15–17:25 (ora României), în cloud, FĂRĂ placă — jurnalul `os-304` analizat (blocajul `0x57` e depășit; refuzul nou, `0x40`, e la **jetonul de lucru**); **C-135 făcut în SIMULARE: `--i9 c135`**
+
+Pornită de Adrian (comanda C-135, 16:12). Date noi: `os-304` (17 nov, workstation, `gpu lant --i9 c133`, cyber-gpu `b352d50`): I0–I8 + golden TREC;
+încercarea A refuzată `0x57` (ca la os-302/303); **încercarea B: `PROMOTE_CTX` și obiectul compute ACCEPTATE pe placă**; apoi **`0x40`
+`NV_ERR_INVALID_STATE`** cu un singur ASSERT nou (`0x0185eb2e`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Analiza (C-135 pașii 1–2) | `docs/os-304_ANALIZA_I9.md`. (1) Numărând soneriile din jurnal (una pe mesaj), mesajul refuzat e **cererea jetonului** (`GET_WORK_SUBMIT_TOKEN`, pe canal), nu programarea grupului — aceea **nu a fost trimisă niciodată** pe placă. (2) Confirmat rândul „A `0x57`, B trece” din analiza `os-303`: refuzul vechi ținea de bufferul PM și/sau de lipsa adreselor bufferelor globale (care din două: NECUNOSCUT; nu contează pentru mers mai departe). (3) Pasul 5 pus lângă nouveau (570.144), RM-ul NVIDIA 570.144 și tinygrad: cei care verifică răspunsurile **nu cer niciodată jetonul de la GSP-RM** (își aleg numărul canalului și calculează jetonul) și nu declară un notificator de erori pe care nu-l au. (4) În RM 570.144, singurul drum „exact un ASSERT + `INVALID_STATE`” al acestei comenzi e scrierea jetonului în notificatorul de erori al canalului, care pe GSP trebuie să fie memorie video; al nostru e descris ca la tinygrad (`{0, 0xecc, 0}`, tipuri „necunoscut”). (5) **Îndreptare la analiza `os-303`:** tinygrad nu citește starea RM a răspunsurilor (doar rezultatul transportului) și rula aceeași secvență și pe 570.144 ⇒ „tinygrad trimite X” nu dovedește că GSP-RM acceptă X; ipoteza „diferența de firmware” cade (fișierele RM pentru canale sunt identice între 570.144 și 570.190). 5 ipoteze cu pro/contra | DEDUS (surse MIT citite; nimic copiat) |
+| Reparația (pasul 3) | `user_space::open_work_channel_c135` + `C135Report` (doar adăugări). Pornește **direct cu forma B** (fără A). **N** = canalul spune „fără notificator de erori” (`hObjectError` = 0, `internalFlags` = `0x14`), jetonul cerut de la GSP-RM, apoi programarea grupului. **F** (doar dacă jetonul lui N e refuzat, în grup nou) = fără notificator + **numărul canalului ales de noi** în `flags` (ChID 16, ca NVIDIA, nouveau și canalul nostru golden), jetonul calculat, GSP-RM neîntrebat, apoi programarea. Ce poartă un jeton refuzat (starea + câmpul din răspuns) e **notat, niciodată folosit**. Orice alt refuz oprește imediat. Raportul ajunge în jurnal pe toate drumurile. `gpu_sim::fake_rm::TokenRule` + numerele de canal din model joacă ipotezele (nu placa) | PASS (SIMULARE), T131a–m |
+| Documente | `docs/os-304_ANALIZA_I9.md` (§7: ce confirmă / infirmă fiecare rezultat de pe placă și ce urmează); notă de actualizare în `docs/os-303_ANALIZA_I9.md`; TEST_MATRIX T131; PROVENANCE; nota pentru OS `integration/cyber-universe/C-135_i9-pasul-5.md` | — |
+| Verificări | `tools/check.sh` (Rust 1.97.0): format, clippy `-D warnings`, **507 teste** (493 → +14; 4 ignorate), build no_std | PASS (SIMULARE) |
+| Pe RTX 3070 Ti | `--i9 c135` | NOT TESTED (fereastra cu Adrian) |
+
+Interfața publică: doar adăugări (`user_space::{open_work_channel_c135, C135Report, C135Try, C135Variant, C135Stage, C135Token, journal_rows_c135,
+C135_BUFFERS, C135_GLOBAL_VAS, C135_F_CHID}`; `rmapi::{ErrorNotifier, work_channel_params_with, internal_flags, channel_flags, fixed_chid_flags,
+chid_of_flags, control_reply_status, GSP_RESERVED_CHIDS}`; `gpu_sim::fake_rm::{TokenRule, FakeRm::token_rule, ChannelFacts, FakeRm::channel_facts,
+FakeRm::fixed_chid, GSP_RESERVED_CHIDS, SIM_CHANNELS, status::NO_FREE_FIFOS}`). `gpu lant` fără opțiune, `--i9 c125` și `--i9 c133` trimit exact ce
+trimiteau. O schimbare **doar în modelul de simulare** (nu în driver): canalul golden primește acum numărul din `flags` (3), nu 0; canalele de lucru
+primesc aceleași numere ca înainte.
+**Cât de sigur:** cauza „notificatorul de erori” ~80 %; că I9 trece cu `c135` în aceeași rulare ~70–75 % (F acoperă aproape orice alt refuz la jeton;
+rămâne riscul ~20 % al programării grupului, netrimisă niciodată pe placă — semnul lui ar fi `0x40` fără ASSERT).
+
+**Următorul pas:** (1) OS-ul leagă commit-ul acestei sesiuni și adaugă `gpu lant --i9 c135` (nota din `integration/`) → `os-305`; (2) **Adrian, în
+fereastra pe workstation:** stick nou + `github.token` → pornire la rece → `gpu lant --i9 c135` → DA → `trimite`; (3) noi, după jurnal
+(`os-304_ANALIZA_I9.md` §7): N sau F trece → aceeași rulare merge singură mai departe la **I10 (add64)**, primul calcul pe placă; programarea refuzată →
+programare pe canal ca nouveau (`BIND` + `GPFIFO_SCHEDULE`), cu „da” nou. Separat: DA/NU pentru pasul 3 pe laptop.
+**Regula 8:** 108 are pas (analiză + cod).
+
+---
 ## Sesiunea 107 — 17 noiembrie 2026, ~14:10–14:35 (ora României), în cloud, FĂRĂ placă — **OPRIREA SE RIDICĂ** (C-133); jurnalul `os-303` analizat; **C-133 făcut în SIMULARE: `--i9 c133`**
 
 Pornită de Adrian (comanda C-133, 14:05). Date noi: `os-303` (17 nov ~13:40, workstation, `gpu lant --i9 c125`, cyber-gpu `239f986`): I0–I8 + golden TREC;

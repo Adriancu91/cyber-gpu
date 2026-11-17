@@ -1,5 +1,24 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 108 (17 nov 2026, ~16:20, cloud, fără placă) — C-135: I9 pasul 5 după `os-304` (jetonul refuzat cu `0x40`): `open_work_channel_c135` — forma B direct, canal fără notificator de erori (încercarea N), apoi ChID ales de noi + jeton calculat (F), toate SIMULARE
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T131a | modelul care joacă ipotezele „globalele sunt necesare” + „notificatorul trebuie să fie memorie video” (`fake_rm::{PromoteRule, TokenRule}`) dă pentru `--i9 c133` exact ce a dat placa la `os-304`: A `0x57` la `PROMOTE_CTX`, B trece de promovare și compute, `0x40` la `GET_WORK_SUBMIT_TOKEN`, programarea netrimisă; aceleași handle-uri ca în jurnalul plăcii | `cargo test -p nvidia-ga104 c135_the_hypothesis` | conform | conform | PASS (SIMULARE) |
+| T131b | încercarea N (pe modelul de mai sus și pe cel permisiv): un singur grup; canalul trimite `hObjectError` = 0, `internalFlags` = `0x14`, `errorNotifierMem` zero, `flags` = 0; forma B (4 intrări) înaintea obiectului; jetonul vine de la RM; grupul programat; fără a doua încercare; fără pagină de notificator, fără PM | `cargo test -p nvidia-ga104 c135_try_n` | conform | conform | PASS (SIMULARE) |
+| T131c | jetonul refuzat din alt motiv (câmpul neatins): F în **grup nou**, `flags` = `0x00202000` (ChID 16, primit întocmai de la model), **niciun** control de jeton pentru F, jeton = runlist `<< 16` \| 16, grupul lui N neprogramat, memorie și handle-uri separate | `cargo test -p nvidia-ga104 c135_try_f_names` | conform | conform | PASS (SIMULARE) |
+| T131d | ce a purtat un jeton refuzat se **notează și nu se folosește**: (1) refuz într-un răspuns întreg care are deja un id — id-ul e în raport, canalul reușit e al lui F cu id-ul lui; (2) refuz în antetul RPC — „fără răspuns” | `cargo test -p nvidia-ga104 c135_a_refused_token` | conform | conform | PASS (SIMULARE) |
+| T131e | doar jetonul refuzat al lui N duce la F; orice alt refuz (grup, context share, canal, `PROMOTE_CTX`, compute, programare) și un timeout la jeton opresc imediat, cu pasul în raport; în F orice refuz oprește | `cargo test -p nvidia-ga104 c135_other_failures` | conform | conform | PASS (SIMULARE) |
+| T131f | ChID-ul lui F e deja ocupat (15 canale făcute înainte): refuzul RM (`NO_FREE_FIFOS` în model) e rezultatul; nu se ghicește alt id | `cargo test -p nvidia-ga104 c135_try_f_in_use` | conform | conform | PASS (SIMULARE) |
+| T131g | greșeli de partea noastră (rădăcină, fără runlist GR0, runlist prea mare pentru sonerie, fără MAIN/PATCH/FECS_EVENT/PRIV_ACCESS_MAP, global fără VA) nu trimit nimic; fără bufferul PM în golden merge | `cargo test -p nvidia-ga104 c135_bad_setup` | conform | conform | PASS (SIMULARE) |
+| T131h | fără opțiune nimic nu se schimbă: drumul vechi și `--i9 c133` își descriu notificatorul ca înainte (`{0, 0xecc, 0}`, tipuri necunoscute) și trimit aceleași mesaje; canalul golden primește ChID 3 din `flags` | `cargo test -p nvidia-ga104 c135_off` | conform | conform | PASS (SIMULARE) |
+| T131i | raportul ajunge în jurnal pe toate drumurile: N reușit (29 de rânduri), N refuzat + F reușit (59 de rânduri), refuz în antetul RPC (notă), încercare oprită înaintea jetonului | `cargo test -p nvidia-ga104 c135_report` | conform | conform | PASS (SIMULARE) |
+| T131j | `c135` prin cozile reale (transportul de pe placă, cu GSP simulat): N reușește pe modelul care reproduce `os-304`; refuzul jetonului vine întreg prin cozi și duce la F | `cargo test -p nvidia-ga104 c135_through` | conform | conform | PASS (SIMULARE) |
+| T131k | parametrii canalului: constructorul vechi = `(AsTinygrad, None)` octet cu octet; „fără notificator” schimbă doar `hObjectError`, `internalFlags`, mărimea din `errorNotifierMem`; ChID-ul ales schimbă doar `flags`; `flags` ↔ ChID (canalul golden = ChID 3); răspunsul unui control refuzat își păstrează parametrii | `cargo test -p nvidia-ga104 -- c135_channel_params c135_fixed c135_refused_control` | conform | conform | PASS |
+| T131l | modelul: ChID din `flags` sau dat de model (regulă SIM), 0 e al GSP, id ocupat / în afara plajei refuzat | `cargo test -p gpu-sim channel_ids` | conform | conform | PASS (SIMULARE) |
+| T131m | tot pachetul | `sh tools/check.sh` | 507 PASS | **507 PASS** (493 → +14), 4 ignorate; format, clippy `-D warnings`, build no_std | PASS |
+| — | `--i9 c135` pe RTX 3070 Ti | — | — | — | NOT TESTED (fereastra cu Adrian) |
+
 ## Rezultate — sesiunea 107 (17 nov 2026, ~14:20, cloud, fără placă) — C-133: I9 cu promovarea într-un singur mesaj PA + VA înaintea obiectului compute (`open_work_channel_c133`, încercările A și B), după `os-303` (I9 tot `0x57`), toate SIMULARE
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |

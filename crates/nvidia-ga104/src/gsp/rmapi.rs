@@ -1446,6 +1446,7 @@ mod tests {
     #[test]
     fn c135_fixed_channel_id_flags() {
         assert_eq!(fixed_chid_flags(8), Ok(0x0020_1000));
+        assert_eq!(fixed_chid_flags(16), Ok(0x0020_2000));
         assert_eq!(fixed_chid_flags(3), Ok(0x0020_0300));
         assert_eq!(
             fixed_chid_flags(0xfff),
