@@ -1,5 +1,22 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 105 — 17 noiembrie 2026, ~07:25–07:35 (ora României), în cloud, FĂRĂ placă — oprire scurtă: nicio comandă nouă, niciun jurnal nou; niciun commit de cod
+
+Pornită de programare. În hub, de la sesiunea 104 (01:35): doar Kronos (stare, C-131 — nu ne privește) și OS-ul „nimic nou; OPRIT (os-303)” (02:45, 05:45).
+**Nicio comandă nouă pentru cyber-gpu**, **niciun fișier nou în `rezultate/`** (ultimul: os-302). Fără jurnal nou nu se inventează lucru pe I9.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Verificări la pornire | `tools/check.sh` (Rust 1.97.0, ținta `x86_64-unknown-none` reinstalată): format, clippy `-D warnings`, 485 teste (4 ignorate), build no_std | PASS (SIMULARE) |
+| CI | vârful `e6e9cc7`, rularea 43979569973 | VERDE |
+| Cod / documentație | — (nimic de făcut cinstit fără jurnal nou sau comandă nouă) | — |
+| Pe RTX 3070 Ti / laptop | — | NOT TESTED |
+
+**Următorul pas:** neschimbat — (1) **Adrian, în fereastra pe workstation:** stick cu `os-303` + `github.token` → pornire rece → `gpu lant --i9 c125` → DA → `trimite`;
+(2) noi, după jurnal: I9 trece → I10 (add64); `0x57` din nou → lista RM decide V1 sau promovarea într-un singur mesaj (cere „da” nou); (3) separat: DA/NU pentru pasul 3 pe laptop.
+**Regula 8:** 103 (pas), 104 și 105 (fără pas) — nu se aplică acum. Dacă sesiunea 106 e tot fără jurnal și fără comandă, cele trei (104–106) n-au niciun pas → „OPRIT: necesită analiza lui Adrian”.
+
+---
 ## Sesiunea 104 — 17 noiembrie 2026, ~01:25–01:35 (ora României), în cloud, FĂRĂ placă — oprire scurtă: OS-ul a legat C-125 (`os-303`); nicio comandă nouă, niciun jurnal nou; niciun commit de cod
 
 Pornită de programare. În hub, de la sesiunea 103 (19:45): **OS-ul a făcut `os-303`** (P6-91, 22:05) — leagă `239f986` și adaugă `gpu lant --i9 c125` (implicit oprit; fără opțiune,
