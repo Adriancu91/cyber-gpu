@@ -162,6 +162,36 @@ pub fn check_control_reply(sent: &[u8], reply: &[u8]) -> GpuResult<Vec<u8>> {
     }
 }
 
+/// C-135: as [`check_control_reply`], but a refusal is not an error here:
+/// returns RM's status **and** the parameters of the reply, whatever the
+/// status (RM 570.144 `rpcRmApiControl_GSP`: the control handler's status
+/// travels in the reply's `status` field, next to the parameters the
+/// handler may already have written). For a caller that must *record* what
+/// came back with a refusal; the parameters of a refused control must never
+/// be used as an answer. A reply for another command is still an error.
+pub fn control_reply_status(sent: &[u8], reply: &[u8]) -> GpuResult<(u32, Vec<u8>)> {
+    if reply.len() != sent.len() {
+        return Err(GpuError::InvalidArgument(
+            "RM_CONTROL: raspuns de alta lungime",
+        ));
+    }
+    for o in [
+        r::RPC_GSP_RM_CONTROL_HCLIENT,
+        r::RPC_GSP_RM_CONTROL_HOBJECT,
+        r::RPC_GSP_RM_CONTROL_CMD,
+    ] {
+        if get_u32(reply, o as usize) != get_u32(sent, o as usize) {
+            return Err(GpuError::InvalidArgument(
+                "RM_CONTROL: raspunsul e pentru alta comanda",
+            ));
+        }
+    }
+    Ok((
+        get_u32(reply, r::RPC_GSP_RM_CONTROL_STATUS as usize),
+        reply[CONTROL_HDR..].to_vec(),
+    ))
+}
+
 /// `NV0000_ALLOC_PARAMETERS`: all zero, as tinygrad sends it (GSP-RM fills
 /// in what it needs for an internal client).
 pub fn root_params() -> Vec<u8> {
@@ -243,7 +273,12 @@ pub struct ChannelSetup {
 }
 
 /// Values tinygrad uses for the golden channel (ip.py, `init_golden_image`
-/// and `rpc_rm_alloc`). DEDUS: proven only by tinygrad running them.
+/// and `rpc_rm_alloc`). DEDUS: proven by tinygrad running them and, since
+/// `os-295`, by the golden image passing on our board. What two of them
+/// mean (read in RM 570.144 for C-135, see [`channel_flags`] and
+/// [`internal_flags`]): `FLAGS` = "use channel id 3" (USERD page 0, index 3,
+/// `PAGE_FIXED`) + `PRIVILEGED_CHANNEL`; `INTERNAL_FLAGS` = kernel
+/// privilege, error notifier type `CTXDMA`, ECC notifier type `NONE`.
 pub mod golden_channel {
     pub const GPFIFO_ENTRIES: u32 = 32;
     pub const CID: u32 = 3;
@@ -378,7 +413,108 @@ fn handle_marker(pa: u64) -> GpuResult<u32> {
 /// values: instance 4 KiB, RAMFC 0x200 at its start, method buffer 0x5000,
 /// USERD 0x400 after the ring, error notifier {0, 0xecc, 0}).
 pub fn work_channel_params(c: &WorkChannelSetup) -> GpuResult<Vec<u8>> {
+    work_channel_params_with(c, ErrorNotifier::AsTinygrad, None)
+}
+
+/// C-135: how a working channel describes its error notifier to GSP-RM.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ErrorNotifier {
+    /// What [`work_channel_params`] always sent (tinygrad's values): a
+    /// non-zero `hObjectError`, `errorNotifierMem = {0, 0xecc, 0}` and
+    /// `internalFlags = 0` (both notifier types "unknown").
+    AsTinygrad,
+    /// No error notifier, said explicitly (nouveau `r535_chan_alloc` /
+    /// `r570_chan_alloc`): `hObjectError = 0`, `errorNotifierMem` zero,
+    /// `internalFlags` = both notifier types `NONE`.
+    None,
+}
+
+/// `NV_KERNELCHANNEL_ALLOC_INTERNALFLAGS_*` (RM 570.144
+/// `g_kernel_channel_nvoc.h`, MIT). Written by hand: the header gives bit
+/// ranges (`1:0`, `3:2`, `5:4`), which bindgen cannot evaluate. The notifier
+/// types are `ErrorNotifierType` there: `UNKNOWN` 0, `NONE` 1, `CTXDMA` 2,
+/// `MEMORY` 3 — "RPCed to GSP in `internalFlags` along with the actual
+/// memdesc in `errorNotifierMem`".
+pub mod internal_flags {
+    /// Bits 1:0 — `PRIVILEGE_USER` = 0 (what a working channel has).
+    pub const PRIVILEGE_USER: u32 = 0;
+    /// Bits 3:2 — `ERROR_NOTIFIER_TYPE_NONE`.
+    pub const ERROR_NOTIFIER_NONE: u32 = 1 << 2;
+    /// Bits 5:4 — `ECC_ERROR_NOTIFIER_TYPE_NONE`.
+    pub const ECC_ERROR_NOTIFIER_NONE: u32 = 1 << 4;
+    /// A user channel that explicitly has no notifiers (= nouveau's
+    /// `internalFlags` for an unprivileged channel).
+    pub const NO_NOTIFIERS: u32 = PRIVILEGE_USER | ERROR_NOTIFIER_NONE | ECC_ERROR_NOTIFIER_NONE;
+}
+
+/// `NVOS04_FLAGS_CHANNEL_USERD_INDEX_*` (570.144 `alloc/alloc_channel.h`,
+/// MIT; bit ranges, written by hand): how a client tells RM **which channel
+/// id to use**. RM 570.144 `kchannelAllocHwID_GM107` +
+/// `kfifoChidMgrAllocChid`: with `PAGE_FIXED` the id is
+/// `PAGE_VALUE * 8 + INDEX_VALUE` (8 = channels per USERD page);
+/// `INDEX_FIXED` must then be clear (`INVALID_STATE` otherwise). NVIDIA's
+/// CPU-side RM sets these on every channel it asks GSP-RM for
+/// (`_kchannelSendChannelAllocRpc`: "will make the Physical RMAPI use our
+/// ChID"), nouveau does the same, and so does our golden channel
+/// (`golden_channel::FLAGS` = page 0, index 3).
+pub mod channel_flags {
+    pub const USERD_INDEX_SHIFT: u32 = 8;
+    pub const USERD_INDEX_MASK: u32 = 0x7;
+    pub const USERD_INDEX_FIXED: u32 = 1 << 11;
+    pub const USERD_PAGE_SHIFT: u32 = 12;
+    pub const USERD_PAGE_MASK: u32 = 0x1ff;
+    pub const USERD_PAGE_FIXED: u32 = 1 << 21;
+    /// Channels per USERD page.
+    pub const CHANNELS_PER_USERD_PAGE: u32 = 8;
+}
+
+/// Channel ids GSP-RM keeps for its own channels (RM 570.144
+/// `kernel_fifo.c`, `KFIFO_NUM_GSP_RESERVED_CHANNELS` = 1: on GSP the range
+/// for everybody else starts after them).
+pub const GSP_RESERVED_CHIDS: u32 = 1;
+
+/// The channel `flags` that ask GSP-RM for exactly the channel id `chid`
+/// (see [`channel_flags`]). Refused before anything is sent: an id GSP-RM
+/// keeps for itself, or one that does not fit the doorbell's 12 bits.
+pub fn fixed_chid_flags(chid: u32) -> GpuResult<u32> {
+    use channel_flags as f;
+    if !(GSP_RESERVED_CHIDS..=DOORBELL_VECTOR_MASK).contains(&chid) {
+        return Err(GpuError::InvalidArgument(
+            "canal: id de canal rezervat pentru GSP sau prea mare",
+        ));
+    }
+    let (page, index) = (
+        chid / f::CHANNELS_PER_USERD_PAGE,
+        chid % f::CHANNELS_PER_USERD_PAGE,
+    );
+    Ok(f::USERD_PAGE_FIXED | page << f::USERD_PAGE_SHIFT | index << f::USERD_INDEX_SHIFT)
+}
+
+/// The channel id a channel's `flags` ask for, if they fix one (the inverse
+/// of [`fixed_chid_flags`]; other flag bits are ignored).
+pub fn chid_of_flags(flags: u32) -> Option<u32> {
+    use channel_flags as f;
+    (flags & f::USERD_PAGE_FIXED != 0 && flags & f::USERD_INDEX_FIXED == 0).then(|| {
+        (flags >> f::USERD_PAGE_SHIFT & f::USERD_PAGE_MASK) * f::CHANNELS_PER_USERD_PAGE
+            + (flags >> f::USERD_INDEX_SHIFT & f::USERD_INDEX_MASK)
+    })
+}
+
+/// C-135: [`work_channel_params`] with the two choices of `--i9 c135`:
+/// the error notifier (`notifier`) and, with `chid`, a channel id chosen by
+/// the driver ([`fixed_chid_flags`]; `None` = GSP-RM chooses, as before).
+/// `(AsTinygrad, None)` gives exactly the bytes of [`work_channel_params`].
+/// With [`ErrorNotifier::None`], `c.notifier_pa` is not used.
+pub fn work_channel_params_with(
+    c: &WorkChannelSetup,
+    notifier: ErrorNotifier,
+    chid: Option<u32>,
+) -> GpuResult<Vec<u8>> {
     use golden_channel as g;
+    let flags = match chid {
+        Some(id) => fixed_chid_flags(id)?,
+        None => 0,
+    };
     if c.entries < 2 || !c.entries.is_power_of_two() {
         return Err(GpuError::InvalidArgument(
             "canal: numarul de intrari GPFIFO nu e putere a lui 2",
@@ -403,12 +539,16 @@ pub fn work_channel_params(c: &WorkChannelSetup) -> GpuResult<Vec<u8>> {
     }
     type C = r::NV_CHANNEL_ALLOC_PARAMS;
     let buffer = handle_marker(c.ring_pa)?;
-    let error = handle_marker(c.notifier_pa)?;
+    let error = match notifier {
+        ErrorNotifier::AsTinygrad => handle_marker(c.notifier_pa)?,
+        ErrorNotifier::None => 0,
+    };
     let mut b = alloc::vec![0u8; size_of::<C>()];
     put_u32(&mut b, offset_of!(C, hObjectError), error);
     put_u32(&mut b, offset_of!(C, hObjectBuffer), buffer);
     put_u64(&mut b, offset_of!(C, gpFifoOffset), c.ring_va);
     put_u32(&mut b, offset_of!(C, gpFifoEntries), c.entries);
+    put_u32(&mut b, offset_of!(C, flags), flags);
     put_u32(&mut b, offset_of!(C, hContextShare), c.ctxshare);
     put_u32(&mut b, offset_of!(C, hUserdMemory), buffer); // [0]
     put_u64(&mut b, offset_of!(C, userdOffset), c.userd_offset()); // [0]
@@ -432,16 +572,24 @@ pub fn work_channel_params(c: &WorkChannelSetup) -> GpuResult<Vec<u8>> {
         offset_of!(C, mthdbufMem),
         &MemDesc::vidmem(c.mthd_pa, g::METHOD_BUFFER_SIZE),
     );
-    put_memdesc(
-        &mut b,
-        offset_of!(C, errorNotifierMem),
-        &MemDesc {
-            base: 0,
-            size: work_channel::ERROR_NOTIFIER_SIZE,
-            address_space: 0,
-            cache_attrib: 0,
-        },
-    );
+    match notifier {
+        ErrorNotifier::AsTinygrad => put_memdesc(
+            &mut b,
+            offset_of!(C, errorNotifierMem),
+            &MemDesc {
+                base: 0,
+                size: work_channel::ERROR_NOTIFIER_SIZE,
+                address_space: 0,
+                cache_attrib: 0,
+            },
+        ),
+        // `errorNotifierMem` stays zero; the types say "none" explicitly.
+        ErrorNotifier::None => put_u32(
+            &mut b,
+            offset_of!(C, internalFlags),
+            internal_flags::NO_NOTIFIERS,
+        ),
+    }
     Ok(b)
 }
 
@@ -1222,5 +1370,137 @@ mod tests {
         assert_eq!(parse_promote(&b).unwrap(), es);
         assert!(promote_params(1, 1, 1, &[]).is_err());
         assert!(promote_params(1, 1, 1, &[es[0]; 17]).is_err());
+    }
+
+    fn c135_setup() -> WorkChannelSetup {
+        WorkChannelSetup {
+            ring_va: 0x10_2000_0000,
+            ring_pa: 0x7000_0000,
+            entries: work_channel::ENTRIES,
+            ctxshare: 0xcf00_000c,
+            inst_pa: 0x7001_0000,
+            mthd_pa: 0x7002_0000,
+            notifier_pa: 0x7003_0000,
+        }
+    }
+
+    /// C-135: the old builder is exactly `(AsTinygrad, None)`; "no error
+    /// notifier" changes three fields and nothing else; a fixed channel id
+    /// changes `flags` and nothing else. Offsets as the independent model
+    /// reads them (written by hand there).
+    #[test]
+    fn c135_channel_params_change_only_what_they_say() {
+        type C = r::NV_CHANNEL_ALLOC_PARAMS;
+        let c = c135_setup();
+        let old = work_channel_params(&c).unwrap();
+        assert_eq!(
+            work_channel_params_with(&c, ErrorNotifier::AsTinygrad, None).unwrap(),
+            old
+        );
+        // What os-304 sent: an error context, described as not-VRAM, types unknown.
+        assert_eq!(get_u32(&old, 0), 0x7003_0000);
+        assert_eq!(get_u32(&old, 244), 0);
+        assert_eq!(
+            (get_u64(&old, 248 + 8), get_u32(&old, 248 + 16)),
+            (0xecc, 0)
+        );
+        assert_eq!(get_u32(&old, 20), 0);
+
+        let none = work_channel_params_with(&c, ErrorNotifier::None, None).unwrap();
+        assert_eq!(get_u32(&none, 0), 0); // hObjectError
+        assert_eq!(get_u32(&none, 244), 0x14); // internalFlags: both types NONE, user
+        assert_eq!(internal_flags::NO_NOTIFIERS, 0x14);
+        assert!(none[248..272].iter().all(|&b| b == 0)); // errorNotifierMem
+        let differ = |a: &[u8], b: &[u8]| -> Vec<usize> {
+            (0..a.len())
+                .filter(|&i| a[i] != b[i])
+                .map(|i| i & !3)
+                .collect::<Vec<_>>()
+        };
+        let mut d = differ(&old, &none);
+        d.dedup();
+        assert_eq!(d, [0, 244, 248 + 8]);
+        // The notifier page is not used at all without a notifier.
+        let mut no_page = c;
+        no_page.notifier_pa = 0;
+        assert!(work_channel_params(&no_page).is_err());
+        assert_eq!(
+            work_channel_params_with(&no_page, ErrorNotifier::None, None).unwrap(),
+            none
+        );
+
+        let fixed = work_channel_params_with(&c, ErrorNotifier::None, Some(8)).unwrap();
+        let mut d = differ(&none, &fixed);
+        d.dedup();
+        assert_eq!(d, [offset_of!(C, flags)]);
+        assert_eq!(get_u32(&fixed, offset_of!(C, flags)), 0x0020_1000);
+        // The other checks of the old builder still apply.
+        let mut bad = c;
+        bad.ctxshare = 0;
+        assert!(work_channel_params_with(&bad, ErrorNotifier::None, Some(8)).is_err());
+        assert!(work_channel_params_with(&c, ErrorNotifier::None, Some(0)).is_err());
+    }
+
+    /// C-135: the channel id ↔ `flags`. The golden channel's flags (which
+    /// GSP-RM accepts on the board) are this very encoding: page 0, index 3.
+    #[test]
+    fn c135_fixed_channel_id_flags() {
+        assert_eq!(fixed_chid_flags(8), Ok(0x0020_1000));
+        assert_eq!(fixed_chid_flags(3), Ok(0x0020_0300));
+        assert_eq!(
+            fixed_chid_flags(0xfff),
+            Ok(0x0020_0000 | 0x1ff << 12 | 7 << 8)
+        );
+        for id in [1, 2, 3, 7, 8, 9, 63, 64, 511, 0xfff] {
+            let f = fixed_chid_flags(id).unwrap();
+            assert_eq!(chid_of_flags(f), Some(id));
+            assert_eq!(f & channel_flags::USERD_INDEX_FIXED, 0);
+            assert_eq!(f & 3, 0); // still a physical channel
+        }
+        // GSP's own id, and ids the doorbell cannot carry.
+        assert!(fixed_chid_flags(0).is_err());
+        assert!(fixed_chid_flags(0x1000).is_err());
+        assert_eq!(chid_of_flags(golden_channel::FLAGS), Some(3));
+        assert_eq!(golden_channel::FLAGS & !0x20, fixed_chid_flags(3).unwrap());
+        assert_eq!(chid_of_flags(0), None);
+        assert_eq!(
+            chid_of_flags(0x0020_1000 | channel_flags::USERD_INDEX_FIXED),
+            None
+        );
+        // The independent model reads the same bits.
+        assert_eq!(gpu_sim::fake_rm::FakeRm::fixed_chid(0x0020_1000), Some(8));
+        assert_eq!(GSP_RESERVED_CHIDS, gpu_sim::fake_rm::GSP_RESERVED_CHIDS);
+    }
+
+    /// C-135: a refused control comes back as (status, parameters) from
+    /// `control_reply_status`, and still as an error from the checked path.
+    #[test]
+    fn c135_refused_control_reply_keeps_its_parameters() {
+        let sent = encode_control(0xc100_0000, 0xcf00_000d, cmd::WORK_SUBMIT_TOKEN, &[0xff; 4]);
+        let mut reply = sent.clone();
+        put_u32(&mut reply, r::RPC_GSP_RM_CONTROL_STATUS as usize, 0x40);
+        reply[CONTROL_HDR..].copy_from_slice(&7u32.to_le_bytes());
+        assert_eq!(
+            control_reply_status(&sent, &reply),
+            Ok((0x40, 7u32.to_le_bytes().to_vec()))
+        );
+        assert_eq!(
+            check_control_reply(&sent, &reply),
+            Err(GpuError::HardwareFault { code: 0x40 })
+        );
+        put_u32(&mut reply, r::RPC_GSP_RM_CONTROL_STATUS as usize, 0);
+        assert_eq!(
+            control_reply_status(&sent, &reply),
+            Ok((0, 7u32.to_le_bytes().to_vec()))
+        );
+        // Another command's reply, or a short one, is an error either way.
+        let mut other = reply.clone();
+        put_u32(
+            &mut other,
+            r::RPC_GSP_RM_CONTROL_CMD as usize,
+            cmd::TSG_SCHEDULE,
+        );
+        assert!(control_reply_status(&sent, &other).is_err());
+        assert!(control_reply_status(&sent, &reply[..reply.len() - 1]).is_err());
     }
 }

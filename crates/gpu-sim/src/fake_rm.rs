@@ -76,6 +76,7 @@ pub mod status {
     pub const INVALID_OBJECT_PARENT: u32 = 0x36;
     pub const INVALID_PARAM_STRUCT: u32 = 0x3a;
     pub const INVALID_STATE: u32 = 0x40;
+    pub const NO_FREE_FIFOS: u32 = 0x4f;
     pub const NOT_SUPPORTED: u32 = 0x56;
     pub const OBJECT_NOT_FOUND: u32 = 0x57;
 }
@@ -244,6 +245,48 @@ pub enum PromoteRule {
     VaRefused,
 }
 
+/// C-135: how the model answers `GET_WORK_SUBMIT_TOKEN`. As with
+/// [`PromoteRule`], each rule other than `Lenient` plays one **hypothesis**
+/// about the `0x40` the board answered in `os-304`
+/// (`docs/os-304_ANALIZA_I9.md`); none is knowledge about GSP-RM.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TokenRule {
+    /// The channel id is returned, status `OK` (the model before C-135).
+    #[default]
+    Lenient,
+    /// Hypothesis (n): the token is generated (written in the reply), then
+    /// RM tries to write it into the channel's error notifier; a channel
+    /// that declared an error context which is not video memory gets
+    /// `INVALID_STATE` (RM 570.144 `kchannelUpdateNotifierMem`, the
+    /// `ADDR_FBMEM` check under `RMCFG_FEATURE_PLATFORM_GSP`). A channel
+    /// without an error context gets `OK`.
+    NotifierNotVram,
+    /// The control is refused for every channel after the id was written
+    /// in the reply (a refusal that is not about the notifier).
+    RefusedAfterId,
+    /// The control is refused for every channel and the reply's token
+    /// field is left as it was sent.
+    RefusedNoId,
+}
+
+/// C-135: what a channel's allocation told the model (for the tests):
+/// `hObjectError`, `flags`, `internalFlags` and the address space and size
+/// of `errorNotifierMem`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ChannelFacts {
+    pub h_object_error: u32,
+    pub flags: u32,
+    pub internal_flags: u32,
+    pub notifier_space: u32,
+    pub notifier_size: u64,
+}
+
+/// Channel ids the model keeps for GSP's own channels (RM 570.144
+/// `KFIFO_NUM_GSP_RESERVED_CHANNELS`): ids for everybody else start here.
+pub const GSP_RESERVED_CHIDS: u32 = 1;
+/// The model's channel ids per runlist (SIM value; the board has its own).
+pub const SIM_CHANNELS: u32 = 512;
+
 /// SIMULARE: the resource manager behind the queues.
 #[derive(Clone, Debug, Default)]
 pub struct FakeRm {
@@ -269,6 +312,11 @@ pub struct FakeRm {
     /// C-133: the hypothesis this model plays for `PROMOTE_CTX` on a
     /// channel in a channel group (default: accept, as before).
     pub promote_rule: PromoteRule,
+    /// C-135: the hypothesis this model plays for `GET_WORK_SUBMIT_TOKEN`
+    /// (default: accept, as before).
+    pub token_rule: TokenRule,
+    /// C-135: channel handle → what its allocation said.
+    facts: BTreeMap<u32, ChannelFacts>,
 }
 
 fn rd32(b: &[u8], o: usize) -> u32 {
@@ -316,6 +364,30 @@ impl FakeRm {
     /// The channel id the model gave a channel.
     pub fn chid(&self, channel: u32) -> Option<u32> {
         self.chids.get(&channel).copied()
+    }
+
+    /// C-135: what the channel's allocation said about its error notifier
+    /// and its flags.
+    pub fn channel_facts(&self, channel: u32) -> Option<ChannelFacts> {
+        self.facts.get(&channel).copied()
+    }
+
+    /// The channel id a channel's `flags` fix, if any
+    /// (`NVOS04_FLAGS_CHANNEL_USERD_INDEX_*`, `alloc_channel.h`: PAGE_FIXED
+    /// bit 21, PAGE_VALUE 20:12, INDEX_FIXED bit 11, INDEX_VALUE 10:8;
+    /// id = page × 8 + index).
+    pub fn fixed_chid(flags: u32) -> Option<u32> {
+        (flags & 1 << 21 != 0).then(|| (flags >> 12 & 0x1ff) * 8 + (flags >> 8 & 7))
+    }
+
+    /// The id the next channel without a fixed id gets: the number of
+    /// channels so far (at least the first id not kept for GSP), skipping
+    /// ids in use. **SIM rule** — which free id GSP-RM picks is its own
+    /// business; only "from the range after GSP's" is from RM's source.
+    fn next_chid(&self) -> Option<u32> {
+        let used: Vec<u32> = self.chids.values().copied().collect();
+        ((self.chids.len() as u32).max(GSP_RESERVED_CHIDS)..SIM_CHANNELS)
+            .find(|id| !used.contains(id))
     }
 
     /// The GR buffers promoted on a channel, in order.
@@ -381,8 +453,23 @@ impl FakeRm {
                 self.clients.push(client);
             } else {
                 if class == class::CHANNEL_GPFIFO {
-                    let id = self.chids.len() as u32;
+                    let c = &p[32..];
+                    let flags = rd32(c, 20);
+                    // `check_alloc` made sure one of the two exists.
+                    let id = Self::fixed_chid(flags)
+                        .or_else(|| self.next_chid())
+                        .unwrap_or(0);
                     self.chids.insert(object, id);
+                    self.facts.insert(
+                        object,
+                        ChannelFacts {
+                            h_object_error: rd32(c, 0),
+                            flags,
+                            internal_flags: rd32(c, 244),
+                            notifier_space: rd32(c, 248 + 16),
+                            notifier_size: rd64(c, 248 + 8),
+                        },
+                    );
                 }
                 if matches!(class, class::COMPUTE | class::DMA_COPY) {
                     self.bound.push(parent);
@@ -466,6 +553,12 @@ impl FakeRm {
         if params.len() != want_size {
             return status::INVALID_PARAM_STRUCT;
         }
+        if class == class::CHANNEL_GPFIFO {
+            let st = self.check_chid(rd32(params, 20));
+            if st != status::OK {
+                return st;
+            }
+        }
         match class {
             // NV0080_ALLOC_PARAMETERS.hClientShare (offset 4) must name our client.
             class::DEVICE if rd32(params, 4) != client => status::INVALID_ARGUMENT,
@@ -538,6 +631,27 @@ impl FakeRm {
             _ => return Err(status::INVALID_ARGUMENT),
         };
         got.ok_or(status::INSUFFICIENT_RESOURCES)
+    }
+
+    // The channel id a channel allocation asks for (`flags`, see
+    // `fixed_chid`). RM 570.144 `kchannelAllocHwID_GM107`: PAGE_FIXED with
+    // INDEX_FIXED is `INVALID_STATE`; `kfifoChidMgrAllocChid`: on GSP the
+    // range starts after the ids kept for GSP. An id outside the range or in
+    // use: this model answers `NO_FREE_FIFOS` (**SIM** — the real code is
+    // whatever RM's heap returns).
+    fn check_chid(&self, flags: u32) -> u32 {
+        match Self::fixed_chid(flags) {
+            Some(_) if flags & 1 << 11 != 0 => status::INVALID_STATE,
+            Some(id)
+                if !(GSP_RESERVED_CHIDS..SIM_CHANNELS).contains(&id)
+                    || self.chids.values().any(|&u| u == id) =>
+            {
+                status::NO_FREE_FIFOS
+            }
+            Some(_) => status::OK,
+            None if self.next_chid().is_none() => status::NO_FREE_FIFOS,
+            None => status::OK,
+        }
     }
 
     // NV_CHANNEL_ALLOC_PARAMS: gpFifoOffset 8, gpFifoEntries 16, flags 20,
@@ -663,8 +777,24 @@ impl FakeRm {
                         status::INVALID_PARAM_STRUCT
                     } else {
                         let id = self.chids.get(&object).copied().unwrap_or(0);
-                        wr32(params, 0, id & 0xfff);
-                        status::OK
+                        let f = self.facts.get(&object).copied().unwrap_or_default();
+                        // C-135: the hypothesis being played (see `TokenRule`).
+                        // ADDR_FBMEM = 2.
+                        let (write_id, st) = match self.token_rule {
+                            TokenRule::Lenient => (true, status::OK),
+                            TokenRule::NotifierNotVram
+                                if f.h_object_error != 0 && f.notifier_space != 2 =>
+                            {
+                                (true, status::INVALID_STATE)
+                            }
+                            TokenRule::NotifierNotVram => (true, status::OK),
+                            TokenRule::RefusedAfterId => (true, status::INVALID_STATE),
+                            TokenRule::RefusedNoId => (false, status::INVALID_STATE),
+                        };
+                        if write_id {
+                            wr32(params, 0, id & 0xfff);
+                        }
+                        st
                     }
                 }
                 (cmd::TSG_SCHEDULE, Some(class::CHANNEL_GROUP)) => {
@@ -1022,5 +1152,43 @@ mod tests {
         assert_eq!(st(rm.alloc(&bad)), status::INVALID_PARAM_STRUCT);
         // Unknown functions are not answered at all.
         assert!(rm.handle(72, &[]).is_none());
+    }
+
+    /// C-135: which channel id a channel gets in this model. Fixed by the
+    /// channel's flags (page × 8 + index) when they say so; otherwise the
+    /// model's own (SIM) rule. Id 0 is GSP's.
+    #[test]
+    fn channel_ids_fixed_by_flags_or_handed_out() {
+        // PAGE_FIXED, page 0, index 3 (+ the privileged bit): the golden channel.
+        assert_eq!(FakeRm::fixed_chid(0x0020_0320), Some(3));
+        assert_eq!(FakeRm::fixed_chid(0x0020_1000), Some(8));
+        assert_eq!(FakeRm::fixed_chid(0), None);
+        assert_eq!(FakeRm::fixed_chid(0x0000_1300), None); // values without PAGE_FIXED
+
+        let mut rm = FakeRm::new();
+        // Nothing allocated: the first handed-out id is the first one after GSP's.
+        assert_eq!(rm.next_chid(), Some(GSP_RESERVED_CHIDS));
+        assert_eq!(rm.check_chid(0), status::OK);
+        // A fixed id: free, GSP's own, out of range, with INDEX_FIXED too.
+        assert_eq!(rm.check_chid(0x0020_1000), status::OK);
+        assert_eq!(rm.check_chid(0x0020_0000), status::NO_FREE_FIFOS); // id 0
+        assert_eq!(
+            rm.check_chid(0x0020_0000 | (SIM_CHANNELS / 8) << 12),
+            status::NO_FREE_FIFOS
+        );
+        assert_eq!(rm.check_chid(0x0020_1000 | 1 << 11), status::INVALID_STATE);
+
+        // The golden channel at 3, then three channels without a fixed id:
+        // 1, 2 and — 3 being taken — 4.
+        rm.chids.insert(0x10, 3);
+        for (h, want) in [(0x11, 1), (0x12, 2), (0x13, 4)] {
+            let id = rm.next_chid().unwrap();
+            assert_eq!(id, want);
+            rm.chids.insert(h, id);
+        }
+        // An id in use is refused; a free one is not.
+        assert_eq!(rm.check_chid(0x0020_0300), status::NO_FREE_FIFOS);
+        assert_eq!(rm.check_chid(0x0020_0400), status::NO_FREE_FIFOS);
+        assert_eq!(rm.check_chid(0x0020_1000), status::OK);
     }
 }

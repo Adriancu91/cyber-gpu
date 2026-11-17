@@ -224,6 +224,23 @@ impl<T: RmTransport + ?Sized> Rm<'_, T> {
         let reply = self.t.call(function::GSP_RM_CONTROL, &sent)?;
         rmapi::check_control_reply(&sent, &reply)
     }
+
+    /// C-135: as [`Self::control`], but when GSP-RM refuses the control in
+    /// a whole reply, returns its status **with** the reply's parameters
+    /// (`Ok((status, params))`, status ≠ 0) instead of an error — for a
+    /// caller that records what a refusal carried. A refusal that arrives
+    /// in the RPC header (no parameters), a transport failure or a reply
+    /// for another command are errors, as in [`Self::control`].
+    pub(crate) fn control_raw(
+        &mut self,
+        object: u32,
+        command: u32,
+        params: &[u8],
+    ) -> GpuResult<(u32, Vec<u8>)> {
+        let sent = rmapi::encode_control(self.client, object, command, params);
+        let reply = self.t.call(function::GSP_RM_CONTROL, &sent)?;
+        rmapi::control_reply_status(&sent, &reply)
+    }
 }
 
 /// Runs the whole golden-image sequence. Stops at the first RM error (the

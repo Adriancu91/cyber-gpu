@@ -67,6 +67,16 @@
 //! (A: MAIN, PM, PATCH; B: MAIN, PATCH + the VA of FECS_EVENT and
 //! PRIV_ACCESS_MAP), each in a new channel group. Analysis:
 //! `docs/os-303_ANALIZA_I9.md`. The other functions are unchanged.
+//!
+//! C-135 (also SIMULARE only; Adrian, 17 Nov 2026 16:11): `os-304` — form B
+//! of C-133 passed `PROMOTE_CTX` and the compute object on the board; the
+//! refusal moved to `GET_WORK_SUBMIT_TOKEN` (`0x40`, one new ASSERT).
+//! [`open_work_channel_c135`] starts directly with form B and changes what
+//! the channel says about its error notifier (none, as nouveau): try N asks
+//! GSP-RM for the token as before; try F (only if N's token control is
+//! refused) names its own channel id and computes the token, as NVIDIA's
+//! CPU-side RM and nouveau do. Analysis: `docs/os-304_ANALIZA_I9.md`.
+//! The other functions are unchanged.
 
 use gpu_core::error::{GpuError, GpuResult};
 
@@ -1036,6 +1046,492 @@ fn c133_try<T: RmTransport + ?Sized, M: GoldenMemory + ChannelMemory + ?Sized>(
     ))
 }
 
+// ───────────────────────── C-135 (SIMULARE only) ─────────────────────────
+//
+// `os-304` (17 Nov 2026, `--i9 c133`): try A was refused as before
+// (`0x57`); try B — MAIN and PATCH with PA + VA, FECS_EVENT and
+// PRIV_ACCESS_MAP with the golden image's VA, no PM, one message before the
+// object — passed `PROMOTE_CTX` **and** the compute object on the board.
+// The refusal moved to the next message, `GET_WORK_SUBMIT_TOKEN`: `0x40`
+// `NV_ERR_INVALID_STATE` with a single, new ASSERT; the group's schedule
+// was never sent. Analysis: `docs/os-304_ANALIZA_I9.md`.
+//
+// What the open sources say about that control (RM 570.144
+// `kernel_channel.c`, MIT, read as the specification): RM first generates
+// the token, then writes it as a notification into the channel's error
+// context (`kchannelNotifyWorkSubmitToken` → `kchannelUpdateNotifierMem`);
+// on GSP that memory must be video memory — one ASSERT, `INVALID_STATE`.
+// Our working channel declares an error context (`hObjectError` ≠ 0) and
+// describes it as tinygrad does: `{base 0, size 0xecc, addressSpace 0}`,
+// both notifier types "unknown". Neither NVIDIA's CPU-side RM nor nouveau
+// ever sends this control to GSP-RM (they choose the channel id themselves
+// and compute the token); tinygrad sends it but reads only the result of
+// the RPC transport, never RM's status.
+//
+// `--i9 c135` starts directly with form B (no try A before it) and has two
+// tries for the step after the compute object, each in a new channel group,
+// the second only if GSP-RM refuses the first one's token control:
+// * **N** — the channel says explicitly that it has **no error notifier**
+//   (as nouveau on 570.144); GSP-RM chooses the channel id and is asked for
+//   the token, as before; then the group is scheduled;
+// * **F** — no error notifier **and the channel id chosen by the driver**
+//   (the `USERD_INDEX` flags, as NVIDIA's CPU-side RM, nouveau and our own
+//   golden channel do); the driver computes the token (runlist + channel
+//   id) and GSP-RM is not asked; then the group is scheduled.
+// A token control refused in try N is recorded with what its reply carried
+// (RM's status and the reply's token field) — recorded only, never used.
+// Nothing here has run on the board; nothing here writes a register.
+
+/// C-135: how a try gets past the step after the compute object.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum C135Variant {
+    /// No error notifier; GSP-RM chooses the channel id and gives the token.
+    N = 1,
+    /// No error notifier; the driver chooses the channel id
+    /// ([`C135_F_CHID`]) and computes the token; GSP-RM is not asked.
+    F = 2,
+}
+
+/// C-135: the last step of a try that GSP-RM accepted (for try F, `Token`
+/// means "computed by the driver").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum C135Stage {
+    /// Nothing accepted yet.
+    #[default]
+    Started = 0,
+    /// Channel group + context share.
+    Group = 1,
+    /// The GPFIFO channel.
+    Channel = 2,
+    /// The single `PROMOTE_CTX` (form B).
+    Promoted = 3,
+    /// The compute object.
+    Compute = 4,
+    /// The work submit token (from GSP-RM in N, computed in F).
+    Token = 5,
+    /// The group's schedule: I9 done.
+    Scheduled = 6,
+}
+
+/// C-135: where a try's work submit token came from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum C135Token {
+    /// The try stopped before the token.
+    #[default]
+    NotReached,
+    /// GSP-RM accepted `GET_WORK_SUBMIT_TOKEN`; its channel id.
+    FromRm(u32),
+    /// GSP-RM refused `GET_WORK_SUBMIT_TOKEN` with `status`. `reply` is the
+    /// token field of the refused reply when a whole reply came back
+    /// (`None`: the refusal came in the RPC header). **Recorded only** —
+    /// a refused control's parameters are never used as an answer.
+    Refused { status: u32, reply: Option<u32> },
+    /// Not asked: the driver chose this channel id (try F).
+    Chosen(u32),
+}
+
+/// C-135: one try, filled **as it goes** (readable after an error too).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct C135Try {
+    pub variant: C135Variant,
+    /// Handles GSP-RM accepted (0 = not reached).
+    pub channel_group: u32,
+    pub channel: u32,
+    /// The entries of the one `PROMOTE_CTX`, as sent (empty = not reached).
+    pub entries: Vec<PromoteEntry>,
+    pub token: C135Token,
+    pub stage: C135Stage,
+    /// GSP-RM's status for the step after `stage`, if it refused it.
+    pub refusal: Option<u32>,
+}
+
+/// C-135: everything the tries saw; journal it also when I9 fails.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct C135Report {
+    pub tries: Vec<C135Try>,
+    pub passed: Option<C135Variant>,
+}
+
+/// The promotion of both C-135 tries = form B of C-133, the one GSP-RM
+/// accepted on the board in `os-304`: MAIN and PATCH per channel…
+pub const C135_BUFFERS: [u16; 2] = C133_B_BUFFERS;
+/// …plus the golden image's VA for FECS_EVENT and PRIV_ACCESS_MAP.
+pub const C135_GLOBAL_VAS: [u16; 2] = C133_GLOBAL_VAS;
+/// The channel id try F asks for: USERD page 1, index 0. Free by
+/// construction in this chain: the golden channel fixes id 3 (page 0),
+/// GSP-RM keeps id 0, and the channels whose id GSP-RM chose before it
+/// (at most one in `--i9 c135`) take the first free ids. A refusal of the
+/// channel with this id is an answer too (the chain stops with RM's code).
+pub const C135_F_CHID: u32 = 8;
+
+/// Journal row names (C-135). Short ASCII, as the stick journal shows them.
+pub mod journal_rows_c135 {
+    pub const TRIES: &str = "i9 c135 incercari facute";
+    pub const VARIANT: &str =
+        "i9 c135 incercarea (1 N: fara notificator, 2 F: + id de canal ales de noi)";
+    pub const GROUP: &str = "i9 c135 grup de canale (handle)";
+    pub const CHANNEL: &str = "i9 c135 canal (handle)";
+    pub const ENTRIES: &str = "i9 c135 intrari in PROMOTE_CTX";
+    pub const BUF_ID: &str = "i9 c135 buf id";
+    pub const BUF_VA_HI: &str = "i9 c135 buf va hi";
+    pub const BUF_VA_LO: &str = "i9 c135 buf va lo";
+    pub const BUF_SIZE: &str = "i9 c135 buf marime (0 = doar VA)";
+    pub const BUF_FLAGS: &str = "i9 c135 buf b0 PA+init b1 nonmapped";
+    pub const TOKEN_KIND: &str =
+        "i9 c135 jeton (0 neajuns, 1 de la RM, 2 refuzat de RM, 3 calculat de noi)";
+    pub const TOKEN_CHID: &str = "i9 c135 id de canal";
+    pub const TOKEN_STATUS: &str = "i9 c135 jeton refuzat: stare RM";
+    pub const TOKEN_REPLY: &str = "i9 c135 jeton refuzat: campul din raspuns (doar notat)";
+    pub const TOKEN_NO_REPLY: &str =
+        "i9 c135 jeton refuzat: fara raspuns intreg (refuzul a venit in antetul RPC)";
+    pub const STAGE: &str = "i9 c135 ultimul pas acceptat (1 grup, 2 canal, 3 PROMOTE, 4 compute, 5 jeton, 6 programat)";
+    pub const REFUSAL: &str = "i9 c135 refuz RM la pasul urmator (stare)";
+    pub const REFUSAL_NAME: &str = "i9 c135 refuz";
+    pub const PASSED: &str = "i9 c135 varianta reusita (0 niciuna, 1 N, 2 F)";
+}
+
+impl C135Report {
+    /// Writes the report as journal rows: what was sent in each try and
+    /// what GSP-RM answered. Nothing is judged here.
+    pub fn journal(&self, j: &mut Journal) {
+        use journal_rows_c135 as n;
+        j.push(Event::Value {
+            what: n::TRIES,
+            value: self.tries.len() as u32,
+        });
+        for t in &self.tries {
+            for (what, value) in [
+                (n::VARIANT, t.variant as u32),
+                (n::GROUP, t.channel_group),
+                (n::CHANNEL, t.channel),
+                (n::ENTRIES, t.entries.len() as u32),
+            ] {
+                j.push(Event::Value { what, value });
+            }
+            for e in &t.entries {
+                for (what, value) in [
+                    (n::BUF_ID, e.buffer_id as u32),
+                    (n::BUF_VA_HI, (e.gpu_va >> 32) as u32),
+                    (n::BUF_VA_LO, e.gpu_va as u32),
+                    (n::BUF_SIZE, sat32(e.size)),
+                    (
+                        n::BUF_FLAGS,
+                        e.initialize as u32 | (e.nonmapped as u32) << 1,
+                    ),
+                ] {
+                    j.push(Event::Value { what, value });
+                }
+            }
+            let (kind, chid) = match t.token {
+                C135Token::NotReached => (0, None),
+                C135Token::FromRm(id) => (1, Some(id)),
+                C135Token::Refused { .. } => (2, None),
+                C135Token::Chosen(id) => (3, Some(id)),
+            };
+            j.push(Event::Value {
+                what: n::TOKEN_KIND,
+                value: kind,
+            });
+            if let Some(value) = chid {
+                j.push(Event::Value {
+                    what: n::TOKEN_CHID,
+                    value,
+                });
+            }
+            if let C135Token::Refused { status, reply } = t.token {
+                j.push(Event::Value {
+                    what: n::TOKEN_STATUS,
+                    value: status,
+                });
+                match reply {
+                    Some(value) => j.push(Event::Value {
+                        what: n::TOKEN_REPLY,
+                        value,
+                    }),
+                    None => j.push(Event::Note(n::TOKEN_NO_REPLY)),
+                }
+            }
+            j.push(Event::Value {
+                what: n::STAGE,
+                value: t.stage as u32,
+            });
+            if let Some(code) = t.refusal {
+                j.push(Event::Value {
+                    what: n::REFUSAL,
+                    value: code,
+                });
+                j.push(Event::text(
+                    n::REFUSAL_NAME,
+                    nvidia_rm570::status_name(code).unwrap_or("?").as_bytes(),
+                ));
+            }
+        }
+        j.push(Event::Value {
+            what: n::PASSED,
+            value: self.passed.map_or(0, |v| v as u32),
+        });
+    }
+}
+
+/// C-135: opens the working channel with the promotion of form B (one
+/// message before the compute object: MAIN and PATCH with PA + VA, the
+/// golden image's VA for FECS_EVENT and PRIV_ACCESS_MAP) and **without an
+/// error notifier** — try N, then, only if GSP-RM refuses N's
+/// `GET_WORK_SUBMIT_TOKEN`, try F in a new channel group (the channel id
+/// chosen by the driver, the token computed by the driver, GSP-RM not
+/// asked). Replaces the pair [`open_compute_group`] +
+/// [`open_work_channel_with`] for `--i9 c135`: it makes its own channel
+/// group(s) and returns the one the channel is in. `report` is filled as
+/// the steps go — read it (and [`C135Report::journal`] it) also when this
+/// returns an error. Any other refusal (and any transport error) stops at
+/// once. The channel has no notifier page (`WorkChannel::notifier_pa` = 0)
+/// and no PM buffer. USERD is zeroed before each channel. The doorbell is
+/// not rung here.
+pub fn open_work_channel_c135<T: RmTransport + ?Sized, M: GoldenMemory + ChannelMemory + ?Sized>(
+    t: &mut T,
+    mem: &mut M,
+    u: &UserSpace,
+    g: &GoldenImage,
+    report: &mut C135Report,
+) -> GpuResult<(ComputeGroup, WorkChannel)> {
+    *report = C135Report::default();
+    // Everything that can be wrong on our side is checked before the first
+    // message, so a bad setup sends nothing.
+    rmapi::check_root(u.root)?;
+    let runlist = g
+        .runlists
+        .iter()
+        .find(|&&(e, _)| e == rmapi::ENGINE_GR0)
+        .map(|&(_, r)| r)
+        .ok_or(GpuError::InvalidArgument(
+            "GSP-RM nu a raportat runlist-ul lui GR0",
+        ))?;
+    let find = |id: u16| {
+        g.gr_bufs
+            .iter()
+            .find(|(b, _)| b.id == id)
+            .ok_or(GpuError::InvalidArgument(
+                "imaginea golden nu are bufferul de context cerut",
+            ))
+    };
+    for id in C135_BUFFERS {
+        find(id)?;
+    }
+    let mut globals = Vec::with_capacity(C135_GLOBAL_VAS.len());
+    for id in C135_GLOBAL_VAS {
+        let (_, m) = find(id)?;
+        if m.va == 0 || !m.va.is_multiple_of(0x1000) {
+            return Err(GpuError::InvalidArgument(
+                "imaginea golden nu are VA pentru un buffer global",
+            ));
+        }
+        globals.push((id, m.va));
+    }
+    // Try F's channel id and token must be valid before try N starts.
+    rmapi::fixed_chid_flags(C135_F_CHID)?;
+    rmapi::doorbell_token(C135_F_CHID, runlist)?;
+
+    let mut next = u.next_handle;
+    let mut last = 0;
+    for variant in [C135Variant::N, C135Variant::F] {
+        report.tries.push(C135Try {
+            variant,
+            channel_group: 0,
+            channel: 0,
+            entries: Vec::new(),
+            token: C135Token::NotReached,
+            stage: C135Stage::Started,
+            refusal: None,
+        });
+        let tr = report.tries.last_mut().expect("just pushed");
+        let mut rm = Rm {
+            t: &mut *t,
+            client: u.client,
+            next,
+        };
+        let r = c135_try(&mut rm, mem, u, g, runlist, &globals, tr);
+        next = rm.next;
+        match r {
+            Ok(done) => {
+                report.passed = Some(variant);
+                return Ok(done);
+            }
+            Err(GpuError::HardwareFault { code }) => {
+                tr.refusal = Some(code);
+                let token_refused = matches!(tr.token, C135Token::Refused { .. });
+                if !(variant == C135Variant::N && token_refused) {
+                    // Not N's token control: nothing try F would change.
+                    return Err(GpuError::HardwareFault { code });
+                }
+                last = code;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(GpuError::HardwareFault { code: last })
+}
+
+fn c135_try<T: RmTransport + ?Sized, M: GoldenMemory + ChannelMemory + ?Sized>(
+    rm: &mut Rm<'_, T>,
+    mem: &mut M,
+    u: &UserSpace,
+    g: &GoldenImage,
+    runlist: u32,
+    globals: &[(u16, u64)],
+    tr: &mut C135Try,
+) -> GpuResult<(ComputeGroup, WorkChannel)> {
+    // A new channel group and context share for this try (as I9d).
+    let channel_group = rm.alloc(
+        u.device,
+        class::CHANNEL_GROUP,
+        &rmapi::channel_group_params(u.vaspace)?,
+    )?;
+    let sent = rmapi::ctxshare_params(u.vaspace, rmapi::subcontext::ASYNC)?;
+    let (ctxshare, got) = rm.alloc_reply(channel_group, class::CONTEXT_SHARE, &sent)?;
+    let subctx_id = rmapi::parse_ctxshare_reply(&sent, &got)?;
+    tr.channel_group = channel_group;
+    tr.stage = C135Stage::Group;
+
+    // The channel as `open_work_channel_cleared` makes it, except that it
+    // says "no error notifier" and, in try F, names its own channel id.
+    let entries = rmapi::work_channel::ENTRIES;
+    let ring = mem.alloc_mapped(WorkChannelSetup::buffer_size(entries), 0x1000)?;
+    let inst_pa = mem.alloc_phys(rmapi::golden_channel::INSTANCE_SIZE, 0x1000)?;
+    let mthd_pa = mem.alloc_phys(rmapi::golden_channel::METHOD_BUFFER_SIZE, 0x1000)?;
+    let setup = WorkChannelSetup {
+        ring_va: ring.va,
+        ring_pa: ring.pa,
+        entries,
+        ctxshare,
+        inst_pa,
+        mthd_pa,
+        notifier_pa: 0,
+    };
+    let fixed_chid = match tr.variant {
+        C135Variant::N => None,
+        C135Variant::F => Some(C135_F_CHID),
+    };
+    let params = rmapi::work_channel_params_with(&setup, rmapi::ErrorNotifier::None, fixed_chid)?;
+    clear_userd(mem, ring.pa + setup.userd_offset())?;
+    let channel = rm.alloc(channel_group, class::CHANNEL_GPFIFO, &params)?;
+    tr.channel = channel;
+    tr.stage = C135Stage::Channel;
+
+    // Form B: ONE PROMOTE_CTX before the object — MAIN and PATCH with PA
+    // and VA, then the golden image's VA for the two global buffers.
+    let mut ctx_bufs = Vec::with_capacity(C135_BUFFERS.len());
+    let mut promote = Vec::with_capacity(C135_BUFFERS.len() + globals.len());
+    for id in C135_BUFFERS {
+        let (b, _) =
+            g.gr_bufs
+                .iter()
+                .find(|(b, _)| b.id == id)
+                .ok_or(GpuError::InvalidArgument(
+                    "imaginea golden nu are bufferul de context cerut",
+                ))?;
+        let m = mem.alloc_mapped(b.size, b.align)?;
+        promote.push(PromoteEntry {
+            buffer_id: id,
+            gpu_va: m.va,
+            gpu_pa: m.pa,
+            size: b.size,
+            phys_attr: PROMOTE_PHYS_ATTR,
+            initialize: true,
+            nonmapped: false,
+        });
+        ctx_bufs.push((id, m));
+    }
+    for &(id, va) in globals {
+        promote.push(PromoteEntry {
+            buffer_id: id,
+            gpu_va: va,
+            gpu_pa: 0,
+            size: 0,
+            phys_attr: 0,
+            initialize: false,
+            nonmapped: false,
+        });
+    }
+    let msg = rmapi::promote_params(rmapi::ENGINE_GR0, u.client, channel, &promote)?;
+    tr.entries = promote;
+    rm.control(u.subdevice, cmd::PROMOTE_CTX, &msg)?;
+    tr.stage = C135Stage::Promoted;
+
+    let compute = rm.alloc(channel, class::COMPUTE, &[])?;
+    tr.stage = C135Stage::Compute;
+
+    // The step `os-304` stopped at.
+    let chid = match tr.variant {
+        C135Variant::N => {
+            match rm.control_raw(
+                channel,
+                cmd::WORK_SUBMIT_TOKEN,
+                &rmapi::work_submit_token_request(),
+            ) {
+                Ok((0, p)) => {
+                    let id = rmapi::parse_work_submit_token(&p)?;
+                    tr.token = C135Token::FromRm(id);
+                    id
+                }
+                // Refused in a whole reply: what it carried is recorded,
+                // never used.
+                Ok((status, p)) => {
+                    tr.token = C135Token::Refused {
+                        status,
+                        reply: rmapi::parse_work_submit_token(&p).ok(),
+                    };
+                    return Err(GpuError::HardwareFault { code: status });
+                }
+                // Refused in the RPC header: no parameters came back.
+                Err(GpuError::HardwareFault { code }) => {
+                    tr.token = C135Token::Refused {
+                        status: code,
+                        reply: None,
+                    };
+                    return Err(GpuError::HardwareFault { code });
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        C135Variant::F => {
+            tr.token = C135Token::Chosen(C135_F_CHID);
+            C135_F_CHID
+        }
+    };
+    let doorbell_token = rmapi::doorbell_token(chid, runlist)?;
+    tr.stage = C135Stage::Token;
+
+    rm.control(
+        channel_group,
+        cmd::TSG_SCHEDULE,
+        &rmapi::schedule_params(true),
+    )?;
+    tr.stage = C135Stage::Scheduled;
+    let next_handle = rm.next;
+    Ok((
+        ComputeGroup {
+            channel_group,
+            ctxshare,
+            subctx_id,
+            next_handle,
+        },
+        WorkChannel {
+            channel,
+            compute,
+            ring,
+            entries,
+            userd_offset: setup.userd_offset(),
+            inst_pa,
+            mthd_pa,
+            notifier_pa: 0,
+            ctx_bufs,
+            chid,
+            doorbell_token,
+            next_handle,
+        },
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1110,7 +1606,8 @@ mod tests {
                 (w.channel, w.compute, w.next_handle),
                 (0xcf00_000d, 0xcf00_000e, 0xcf00_000f)
             );
-            // The golden channel got id 0, this one 1; GR0 is on runlist 0 (SIM).
+            // The golden channel fixes id 3 with its flags; this one gets the
+            // model's first free id, 1 (SIM rule); GR0 is on runlist 0 (SIM).
             assert_eq!((w.chid, w.doorbell_token), (1, 1));
             (g, u, w)
         };
@@ -3880,5 +4377,687 @@ mod tests {
             assert_eq!(mem.writer().0.read_u64(userd + (off & !7)).unwrap(), 0);
         }
         assert_eq!(rmapi::doorbell_token(w.chid, 0).unwrap(), w.doorbell_token);
+    }
+
+    // ── C-135 (SIMULARE): form B directly; no error notifier; tries N, F ──
+
+    use gpu_sim::fake_rm::TokenRule;
+
+    /// Golden image + working client, with the two hypotheses to play.
+    fn c135_base(promote: PromoteRule, token: TokenRule) -> (Direct, Mem, GoldenImage, UserSpace) {
+        let (mut d, mem, g, u) = c133_base(promote);
+        d.0.token_rule = token;
+        (d, mem, g, u)
+    }
+
+    fn invalid_state() -> GpuError {
+        GpuError::HardwareFault {
+            code: status::INVALID_STATE,
+        }
+    }
+
+    /// The model playing "the VAs of the global buffers are needed" + "the
+    /// error notifier must be video memory" gives, for `--i9 c133`, exactly
+    /// what the board gave in `os-304`: A refused at its promotion with
+    /// `0x57`, B past the promotion and the compute object, then `0x40` at
+    /// `GET_WORK_SUBMIT_TOKEN`; the group's schedule is never sent. Same
+    /// handles as in the board's journal.
+    #[test]
+    fn c135_the_hypothesis_model_reproduces_os304() {
+        let (mut d, mut mem, g, u) =
+            c135_base(PromoteRule::GlobalsNeeded, TokenRule::NotifierNotVram);
+        let controls0 = d.0.log.controls.len();
+        let mut rep = C133Report::default();
+        let r = open_work_channel_c133(&mut d, &mut mem, &u, &g, &mut rep);
+        assert_eq!(r, Err(invalid_state()));
+        assert_eq!(rep.passed, None);
+        assert_eq!(rep.tries.len(), 2);
+        let (a, b) = (&rep.tries[0], &rep.tries[1]);
+        assert_eq!(
+            (a.stage, a.refusal),
+            (C133Stage::Channel, Some(status::OBJECT_NOT_FOUND))
+        );
+        assert_eq!(
+            (b.stage, b.refusal),
+            (C133Stage::Compute, Some(status::INVALID_STATE))
+        );
+        assert_eq!(
+            (a.channel_group, a.channel, b.channel_group, b.channel),
+            (0xcf00_000b, 0xcf00_000d, 0xcf00_000e, 0xcf00_0010)
+        );
+        assert_eq!(
+            d.0.log.controls[controls0..],
+            [
+                (c_cmd::PROMOTE_CTX, status::OBJECT_NOT_FOUND),
+                (c_cmd::PROMOTE_CTX, status::OK),
+                (c_cmd::WORK_SUBMIT_TOKEN, status::INVALID_STATE),
+            ]
+        );
+        assert!(!d.0.is_scheduled(a.channel_group) && !d.0.is_scheduled(b.channel_group));
+        // What B's channel told RM about its error notifier (what os-304 sent).
+        let f = d.0.channel_facts(b.channel).unwrap();
+        assert_ne!(f.h_object_error, 0);
+        assert_eq!(
+            (f.internal_flags, f.notifier_space, f.notifier_size, f.flags),
+            (0, 0, 0xecc, 0)
+        );
+    }
+
+    /// Try N on the model that reproduces os-304 (and on the lenient one):
+    /// ONE group; the channel says "no error notifier"; form B's promotion
+    /// before the compute object; GSP-RM's token is accepted; the group is
+    /// scheduled. No second try.
+    #[test]
+    fn c135_try_n_passes_where_os304_stopped() {
+        for (promote, token) in [
+            (PromoteRule::GlobalsNeeded, TokenRule::NotifierNotVram),
+            (PromoteRule::Lenient, TokenRule::Lenient),
+        ] {
+            let (mut d, mut mem, g, u) = c135_base(promote, token);
+            let (allocs0, controls0) = (d.0.log.allocs.len(), d.0.log.controls.len());
+            let mut rep = C135Report::default();
+            let (cg, w) = open_work_channel_c135(&mut d, &mut mem, &u, &g, &mut rep).unwrap();
+            assert_eq!(
+                d.0.log.allocs[allocs0..],
+                [
+                    (c::CHANNEL_GROUP, status::OK),
+                    (c::CONTEXT_SHARE, status::OK),
+                    (c::CHANNEL_GPFIFO, status::OK),
+                    (c::COMPUTE, status::OK),
+                ]
+            );
+            assert_eq!(
+                d.0.log.controls[controls0..],
+                [
+                    (c_cmd::PROMOTE_CTX, status::OK),
+                    (c_cmd::WORK_SUBMIT_TOKEN, status::OK),
+                    (c_cmd::TSG_SCHEDULE, status::OK),
+                ]
+            );
+            assert_eq!(rep.passed, Some(C135Variant::N));
+            assert_eq!(rep.tries.len(), 1);
+            let t = &rep.tries[0];
+            assert_eq!(
+                (t.variant, t.stage, t.refusal),
+                (C135Variant::N, C135Stage::Scheduled, None)
+            );
+            assert_eq!(
+                (t.channel_group, t.channel, w.compute),
+                (0xcf00_000b, 0xcf00_000d, 0xcf00_000e)
+            );
+            assert_eq!((cg.channel_group, w.channel), (t.channel_group, t.channel));
+            // The channel has no error notifier, said explicitly, and lets
+            // GSP-RM choose its id.
+            let f = d.0.channel_facts(w.channel).unwrap();
+            assert_eq!(
+                (
+                    f.h_object_error,
+                    f.internal_flags,
+                    f.notifier_space,
+                    f.notifier_size,
+                    f.flags
+                ),
+                (0, rmapi::internal_flags::NO_NOTIFIERS, 0, 0, 0)
+            );
+            assert_eq!(w.notifier_pa, 0);
+            // The token is GSP-RM's channel id (+ GR0's runlist, 0 in the model).
+            let id = d.0.chid(w.channel).unwrap();
+            assert_eq!(t.token, C135Token::FromRm(id));
+            assert_eq!((w.chid, w.doorbell_token), (id, id));
+            assert_ne!(id, 0);
+            // Form B: MAIN and PATCH with PA + VA, then the golden's VAs.
+            assert_eq!(
+                t.entries.iter().map(|e| e.buffer_id).collect::<Vec<_>>(),
+                [0, 2, 9, 10]
+            );
+            for (e, (id, m)) in t.entries[..2].iter().zip(&w.ctx_bufs) {
+                assert_eq!((e.buffer_id, e.gpu_va, e.gpu_pa), (*id, m.va, m.pa));
+                assert!(e.initialize && !e.nonmapped && e.size != 0);
+                assert_eq!(e.phys_attr, PROMOTE_PHYS_ATTR);
+                let tr = translate(&mem.writer().0, mem.root(), m.va).unwrap();
+                assert_eq!(tr.pa, m.pa);
+            }
+            for e in &t.entries[2..] {
+                let (_, m) = g.gr_bufs.iter().find(|(x, _)| x.id == e.buffer_id).unwrap();
+                assert_eq!((e.gpu_va, e.gpu_pa, e.size, e.phys_attr), (m.va, 0, 0, 0));
+                assert!(!e.initialize && !e.nonmapped);
+                let tr = translate(&mem.writer().0, mem.root(), m.va).unwrap();
+                assert_eq!(tr.pa, m.pa);
+            }
+            assert_eq!(
+                w.ctx_bufs.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
+                C135_BUFFERS
+            );
+            assert_eq!(d.0.promoted(w.channel), [0, 2, 9, 10]);
+            assert!(d.0.is_scheduled(cg.channel_group));
+            assert_eq!(d.0.parent_of(w.channel), Some(cg.channel_group));
+            assert_eq!(d.0.parent_of(w.compute), Some(w.channel));
+            assert!(cg.next_handle == w.next_handle && w.next_handle > w.compute);
+            // USERD zeroed before the channel existed.
+            let userd = w.ring.pa + w.userd_offset;
+            for off in (0..USERD_SIZE).step_by(8) {
+                assert_eq!(mem.writer().0.read_u64(userd + off).unwrap(), 0);
+            }
+        }
+    }
+
+    /// The token control refused for another reason (the reply's token field
+    /// untouched): try F runs in a NEW group, names channel id 8 in the
+    /// channel's flags, computes the token itself and never asks GSP-RM;
+    /// then the group is scheduled. N's group is never scheduled.
+    #[test]
+    fn c135_try_f_names_its_channel_id_when_the_token_is_refused() {
+        let (mut d, mut mem, g, u) = c135_base(PromoteRule::GlobalsNeeded, TokenRule::RefusedNoId);
+        let controls0 = d.0.log.controls.len();
+        let mut rep = C135Report::default();
+        let (cg, w) = open_work_channel_c135(&mut d, &mut mem, &u, &g, &mut rep).unwrap();
+        assert_eq!(rep.passed, Some(C135Variant::F));
+        assert_eq!(rep.tries.len(), 2);
+        let (n, f) = (&rep.tries[0], &rep.tries[1]);
+        assert_eq!(
+            (n.variant, n.stage, n.refusal),
+            (
+                C135Variant::N,
+                C135Stage::Compute,
+                Some(status::INVALID_STATE)
+            )
+        );
+        // The refused reply still had what we sent (0xffffffff): recorded.
+        assert_eq!(
+            n.token,
+            C135Token::Refused {
+                status: status::INVALID_STATE,
+                reply: Some(u32::MAX)
+            }
+        );
+        assert_eq!(
+            (f.variant, f.stage, f.refusal, f.token),
+            (
+                C135Variant::F,
+                C135Stage::Scheduled,
+                None,
+                C135Token::Chosen(C135_F_CHID)
+            )
+        );
+        // One token control in the whole run (N's); F: promotion + schedule.
+        assert_eq!(
+            d.0.log.controls[controls0..],
+            [
+                (c_cmd::PROMOTE_CTX, status::OK),
+                (c_cmd::WORK_SUBMIT_TOKEN, status::INVALID_STATE),
+                (c_cmd::PROMOTE_CTX, status::OK),
+                (c_cmd::TSG_SCHEDULE, status::OK),
+            ]
+        );
+        // New group, new channel, handles growing; the returned ones are F's.
+        assert_eq!(
+            (n.channel_group, n.channel, f.channel_group, f.channel),
+            (0xcf00_000b, 0xcf00_000d, 0xcf00_000f, 0xcf00_0011)
+        );
+        assert_eq!((cg.channel_group, w.channel), (f.channel_group, f.channel));
+        assert!(!d.0.is_scheduled(n.channel_group));
+        assert!(d.0.is_scheduled(f.channel_group));
+        // GSP-RM (the model) gave the channel exactly the id we named.
+        assert_eq!(C135_F_CHID, 8);
+        assert_eq!(d.0.chid(w.channel), Some(C135_F_CHID));
+        assert_ne!(d.0.chid(n.channel), Some(C135_F_CHID));
+        let facts = d.0.channel_facts(w.channel).unwrap();
+        assert_eq!(facts.flags, 0x0020_1000);
+        assert_eq!(rmapi::chid_of_flags(facts.flags), Some(C135_F_CHID));
+        assert_eq!(
+            (
+                facts.h_object_error,
+                facts.internal_flags,
+                facts.notifier_size
+            ),
+            (0, rmapi::internal_flags::NO_NOTIFIERS, 0)
+        );
+        // The token: runlist (0 in the model) and the channel id.
+        assert_eq!((w.chid, w.doorbell_token), (C135_F_CHID, C135_F_CHID));
+        assert_eq!(
+            rmapi::doorbell_token(C135_F_CHID, 5).unwrap(),
+            5 << 16 | C135_F_CHID
+        );
+        // Both tries sent form B; they do not share memory.
+        for t in &rep.tries {
+            assert_eq!(
+                t.entries.iter().map(|e| e.buffer_id).collect::<Vec<_>>(),
+                [0, 2, 9, 10]
+            );
+        }
+        let (mn, mf) = (n.entries[0], f.entries[0]);
+        assert!(mn.gpu_pa + mn.size <= mf.gpu_pa || mf.gpu_pa + mf.size <= mn.gpu_pa);
+        assert_eq!(w.notifier_pa, 0);
+    }
+
+    /// What a refused token control carried is recorded and NEVER used:
+    /// (1) refused in a whole reply that already holds a channel id — the
+    /// id is in the report, the channel that passes is try F's with its own
+    /// id; (2) refused in the RPC header — no reply to record.
+    #[test]
+    fn c135_a_refused_token_reply_is_recorded_never_used() {
+        let (mut d, mut mem, g, u) =
+            c135_base(PromoteRule::GlobalsNeeded, TokenRule::RefusedAfterId);
+        let mut rep = C135Report::default();
+        let (_, w) = open_work_channel_c135(&mut d, &mut mem, &u, &g, &mut rep).unwrap();
+        let n = &rep.tries[0];
+        let n_id = d.0.chid(n.channel).unwrap();
+        assert_eq!(
+            n.token,
+            C135Token::Refused {
+                status: status::INVALID_STATE,
+                reply: Some(n_id)
+            }
+        );
+        assert_eq!(rep.passed, Some(C135Variant::F));
+        assert_ne!(w.chid, n_id);
+        assert_eq!(w.chid, C135_F_CHID);
+        assert_ne!(w.channel, n.channel);
+
+        // (2) The refusal arrives as the RPC's own result.
+        struct HeaderRefusal(Direct);
+        impl RmTransport for HeaderRefusal {
+            fn call(&mut self, f: u32, p: &[u8]) -> GpuResult<Vec<u8>> {
+                if f == function::GSP_RM_CONTROL
+                    && super::super::get_u32(p, 8) == cmd::WORK_SUBMIT_TOKEN
+                {
+                    return Err(GpuError::HardwareFault {
+                        code: status::INVALID_STATE,
+                    });
+                }
+                self.0.call(f, p)
+            }
+        }
+        let (d, mut mem, g, u) = c135_base(PromoteRule::Lenient, TokenRule::Lenient);
+        let mut t = HeaderRefusal(d);
+        let mut rep = C135Report::default();
+        let (_, w) = open_work_channel_c135(&mut t, &mut mem, &u, &g, &mut rep).unwrap();
+        assert_eq!(
+            rep.tries[0].token,
+            C135Token::Refused {
+                status: status::INVALID_STATE,
+                reply: None
+            }
+        );
+        assert_eq!(rep.passed, Some(C135Variant::F));
+        assert_eq!(w.chid, C135_F_CHID);
+    }
+
+    /// Only a refused token control of try N leads to try F. Every other
+    /// refusal stops at once with the step in the report — also a refused
+    /// promotion (form B passed on the board: a refusal would be news) —
+    /// and so does a transport failure at the token. In try F every
+    /// refusal stops.
+    #[test]
+    fn c135_other_failures_stop_at_once() {
+        /// Fails the `nth` (from 1) message of this kind.
+        struct FailNth(Direct, u32, u32, u32, GpuError);
+        impl RmTransport for FailNth {
+            fn call(&mut self, f: u32, p: &[u8]) -> GpuResult<Vec<u8>> {
+                let class_or_cmd = if f == function::GSP_RM_ALLOC {
+                    super::super::get_u32(p, 12)
+                } else {
+                    super::super::get_u32(p, 8)
+                };
+                if f == self.1 && class_or_cmd == self.2 {
+                    self.3 -= 1;
+                    if self.3 == 0 {
+                        return Err(self.4);
+                    }
+                }
+                self.0.call(f, p)
+            }
+        }
+        let fault = GpuError::HardwareFault { code: 0x1f };
+        let timeout = GpuError::Timeout { waited_us: 5 };
+        let (alloc, control) = (function::GSP_RM_ALLOC, function::GSP_RM_CONTROL);
+        // Try N.
+        for (f, what, err, stage) in [
+            (alloc, c::CHANNEL_GROUP, fault, C135Stage::Started),
+            (alloc, c::CONTEXT_SHARE, fault, C135Stage::Started),
+            (alloc, c::CHANNEL_GPFIFO, fault, C135Stage::Group),
+            (control, cmd::PROMOTE_CTX, fault, C135Stage::Channel),
+            (alloc, c::COMPUTE, fault, C135Stage::Promoted),
+            (control, cmd::WORK_SUBMIT_TOKEN, timeout, C135Stage::Compute),
+            (control, cmd::TSG_SCHEDULE, fault, C135Stage::Token),
+        ] {
+            let (d, mut mem, g, u) = c135_base(PromoteRule::Lenient, TokenRule::Lenient);
+            let mut t = FailNth(d, f, what, 1, err);
+            let mut rep = C135Report::default();
+            let r = open_work_channel_c135(&mut t, &mut mem, &u, &g, &mut rep);
+            assert_eq!(r, Err(err), "{what:#x}");
+            assert_eq!(rep.tries.len(), 1, "{what:#x}");
+            let tr = &rep.tries[0];
+            assert_eq!(tr.stage, stage, "{what:#x}");
+            assert_eq!(
+                tr.refusal,
+                matches!(err, GpuError::HardwareFault { .. }).then_some(0x1f)
+            );
+            // A timeout is not a refusal: nothing is recorded as one.
+            if what == cmd::WORK_SUBMIT_TOKEN {
+                assert_eq!(tr.token, C135Token::NotReached);
+            }
+            if stage == C135Stage::Token {
+                assert!(matches!(tr.token, C135Token::FromRm(_)));
+            }
+            assert_eq!(rep.passed, None);
+        }
+        // Try F (after N's token control was refused by the model).
+        for (f, what, nth, stage) in [
+            (alloc, c::CHANNEL_GROUP, 2, C135Stage::Started),
+            (alloc, c::CHANNEL_GPFIFO, 2, C135Stage::Group),
+            (control, cmd::PROMOTE_CTX, 2, C135Stage::Channel),
+            (alloc, c::COMPUTE, 2, C135Stage::Promoted),
+            (control, cmd::TSG_SCHEDULE, 1, C135Stage::Token),
+        ] {
+            let (d, mut mem, g, u) = c135_base(PromoteRule::Lenient, TokenRule::RefusedNoId);
+            let mut t = FailNth(d, f, what, nth, fault);
+            let mut rep = C135Report::default();
+            let r = open_work_channel_c135(&mut t, &mut mem, &u, &g, &mut rep);
+            assert_eq!(r, Err(fault), "{what:#x}");
+            assert_eq!(rep.tries.len(), 2, "{what:#x}");
+            assert_eq!(rep.tries[0].refusal, Some(status::INVALID_STATE));
+            assert_eq!(rep.tries[1].stage, stage, "{what:#x}");
+            assert_eq!(rep.tries[1].refusal, Some(0x1f));
+            assert_eq!(rep.passed, None);
+            if stage == C135Stage::Token {
+                assert_eq!(rep.tries[1].token, C135Token::Chosen(C135_F_CHID));
+                assert!(!t.0.0.is_scheduled(rep.tries[1].channel_group));
+            }
+        }
+    }
+
+    /// The id try F names is refused when it is in use (here: channels made
+    /// before it filled the ids up to 8): RM's refusal is the result, never
+    /// a guess of another id.
+    #[test]
+    fn c135_try_f_in_use_channel_id_is_refused_by_rm() {
+        let (mut d, mut mem, g, u) = c135_base(PromoteRule::Lenient, TokenRule::RefusedNoId);
+        // Seven working channels (ids 1, 2, 4, 5, 6, 7, 8 in the model: 3 is
+        // the golden channel's).
+        let cg = open_compute_group(&mut d, &u).unwrap();
+        let mut next = cg.next_handle;
+        for _ in 0..7 {
+            let mut cgi = cg;
+            cgi.next_handle = next;
+            let w = open_work_channel_cleared(&mut d, &mut mem, &u, &cgi, &g);
+            // The token control is refused by this model: the channel exists
+            // (its id is taken) even though the old path stops there.
+            assert_eq!(w, Err(invalid_state()));
+            next += 2;
+        }
+        let taken: Vec<u32> = (0..7)
+            .map(|i| d.0.chid(cg.next_handle + 2 * i).unwrap())
+            .collect();
+        assert_eq!(taken, [1, 2, 4, 5, 6, 7, 8]);
+        let mut u2 = u;
+        u2.next_handle = next;
+        let mut rep = C135Report::default();
+        let r = open_work_channel_c135(&mut d, &mut mem, &u2, &g, &mut rep);
+        assert_eq!(
+            r,
+            Err(GpuError::HardwareFault {
+                code: status::NO_FREE_FIFOS
+            })
+        );
+        assert_eq!(rep.tries.len(), 2);
+        assert_eq!(
+            (
+                rep.tries[1].stage,
+                rep.tries[1].refusal,
+                rep.tries[1].channel
+            ),
+            (C135Stage::Group, Some(status::NO_FREE_FIFOS), 0)
+        );
+        assert_eq!(rep.passed, None);
+    }
+
+    /// Mistakes on our side send nothing. C-135 does not need the PM buffer
+    /// (form B has none).
+    #[test]
+    fn c135_bad_setup_sends_nothing() {
+        let (mut d, mut mem, g, u) = c135_base(PromoteRule::Lenient, TokenRule::Lenient);
+        let sent = (d.0.log.allocs.len(), d.0.log.controls.len());
+        let mut rep = C135Report::default();
+
+        let mut bad_u = u;
+        bad_u.root = 0x123;
+        assert!(open_work_channel_c135(&mut d, &mut mem, &bad_u, &g, &mut rep).is_err());
+
+        let mut no_runlist = g.clone();
+        no_runlist.runlists.retain(|&(e, _)| e != rmapi::ENGINE_GR0);
+        assert!(open_work_channel_c135(&mut d, &mut mem, &u, &no_runlist, &mut rep).is_err());
+
+        // A runlist the doorbell cannot carry: try F's token is checked
+        // before try N starts.
+        let mut big_runlist = g.clone();
+        for r in &mut big_runlist.runlists {
+            if r.0 == rmapi::ENGINE_GR0 {
+                r.1 = 0x80;
+            }
+        }
+        assert!(open_work_channel_c135(&mut d, &mut mem, &u, &big_runlist, &mut rep).is_err());
+
+        for id in [0u16, 2, 9, 10] {
+            let mut missing = g.clone();
+            missing.gr_bufs.retain(|(b, _)| b.id != id);
+            assert!(
+                open_work_channel_c135(&mut d, &mut mem, &u, &missing, &mut rep).is_err(),
+                "{id}"
+            );
+        }
+        let mut unmapped = g.clone();
+        for (b, m) in &mut unmapped.gr_bufs {
+            if b.id == 9 {
+                m.va = 0;
+            }
+        }
+        assert!(open_work_channel_c135(&mut d, &mut mem, &u, &unmapped, &mut rep).is_err());
+
+        assert_eq!((d.0.log.allocs.len(), d.0.log.controls.len()), sent);
+        assert!(rep.tries.is_empty());
+
+        // Without the PM buffer in the golden image it still works.
+        let mut no_pm = g.clone();
+        no_pm.gr_bufs.retain(|(b, _)| b.id != 1);
+        let (_, w) = open_work_channel_c135(&mut d, &mut mem, &u, &no_pm, &mut rep).unwrap();
+        assert!(w.ctx_bufs.iter().all(|(id, _)| *id != 1));
+    }
+
+    /// `--i9 c135` off changes nothing: on the default model the old
+    /// functions and `--i9 c133` send what they sent, and their channel
+    /// still describes the error notifier as before (what os-304 sent).
+    #[test]
+    fn c135_off_changes_nothing() {
+        assert_eq!(FakeRm::new().token_rule, TokenRule::Lenient);
+        let (mut d, mut mem, g, u, cg) = grouped();
+        let w = open_work_channel_cleared(&mut d, &mut mem, &u, &cg, &g).unwrap();
+        let f = d.0.channel_facts(w.channel).unwrap();
+        assert_ne!(f.h_object_error, 0);
+        assert_eq!(
+            (f.internal_flags, f.notifier_space, f.notifier_size, f.flags),
+            (0, 0, 0xecc, 0)
+        );
+        assert_ne!(w.notifier_pa, 0);
+        assert_eq!(w.ctx_bufs.len(), 3);
+        let n = d.0.log.controls.len();
+        assert_eq!(
+            d.0.log.controls[n - 4..],
+            [
+                (c_cmd::PROMOTE_CTX, status::OK),
+                (c_cmd::PROMOTE_CTX, status::OK),
+                (c_cmd::WORK_SUBMIT_TOKEN, status::OK),
+                (c_cmd::TSG_SCHEDULE, status::OK),
+            ]
+        );
+        // `--i9 c133` on the default model: still try A, with the notifier
+        // described as before.
+        let (mut d, mut mem, g, u) = c133_base(PromoteRule::Lenient);
+        let mut rep = C133Report::default();
+        let (_, w) = open_work_channel_c133(&mut d, &mut mem, &u, &g, &mut rep).unwrap();
+        assert_eq!(rep.passed, Some(C133Variant::A));
+        let f = d.0.channel_facts(w.channel).unwrap();
+        assert_eq!((f.internal_flags, f.notifier_size), (0, 0xecc));
+        assert_ne!(f.h_object_error, 0);
+        // The golden channel keeps its own flags and gets the id they fix.
+        assert_eq!(d.0.chid(g.channel), Some(3));
+    }
+
+    /// The whole report reaches the journal on every road: both tries, what
+    /// each sent, the token (where it came from, or what the refusal
+    /// carried), where each stopped, which one passed.
+    #[test]
+    fn c135_report_reaches_the_journal() {
+        use journal_rows_c135 as n;
+        let rows = |rep: &C135Report| {
+            let mut j = Journal::new(256);
+            rep.journal(&mut j);
+            let values: Vec<(&'static str, u32)> = j
+                .events()
+                .filter_map(|e| match e {
+                    gpu_core::diag::Event::Value { what, value } => Some((*what, *value)),
+                    _ => None,
+                })
+                .collect();
+            let texts: Vec<alloc::string::String> = j
+                .events()
+                .filter_map(|e| match e {
+                    gpu_core::diag::Event::Text { what, len, bytes }
+                        if *what == n::REFUSAL_NAME =>
+                    {
+                        Some(
+                            core::str::from_utf8(&bytes[..*len as usize])
+                                .unwrap()
+                                .into(),
+                        )
+                    }
+                    _ => None,
+                })
+                .collect();
+            let notes = j
+                .events()
+                .filter(|e| matches!(e, gpu_core::diag::Event::Note(t) if *t == n::TOKEN_NO_REPLY))
+                .count();
+            (j.len(), values, texts, notes)
+        };
+        let of = |v: &[(&'static str, u32)], what: &str| -> Vec<u32> {
+            v.iter().filter(|x| x.0 == what).map(|x| x.1).collect()
+        };
+
+        // N passes: one try.
+        let (mut d, mut mem, g, u) =
+            c135_base(PromoteRule::GlobalsNeeded, TokenRule::NotifierNotVram);
+        let mut rep = C135Report::default();
+        let (_, w) = open_work_channel_c135(&mut d, &mut mem, &u, &g, &mut rep).unwrap();
+        let (len, v, texts, notes) = rows(&rep);
+        assert_eq!(v[0], (n::TRIES, 1));
+        assert_eq!(v.last(), Some(&(n::PASSED, 1)));
+        assert_eq!(of(&v, n::BUF_ID), [0, 2, 9, 10]);
+        assert_eq!(of(&v, n::BUF_FLAGS), [1, 1, 0, 0]);
+        assert_eq!(of(&v, n::TOKEN_KIND), [1]);
+        assert_eq!(of(&v, n::TOKEN_CHID), [w.chid]);
+        assert_eq!(of(&v, n::STAGE), [6]);
+        assert!(of(&v, n::REFUSAL).is_empty() && texts.is_empty() && notes == 0);
+        assert_eq!(len, 1 + 4 + 4 * 5 + 2 + 1 + 1);
+
+        // N's token refused (whole reply), F passes: two tries.
+        let (mut d, mut mem, g, u) =
+            c135_base(PromoteRule::GlobalsNeeded, TokenRule::RefusedAfterId);
+        let mut rep = C135Report::default();
+        open_work_channel_c135(&mut d, &mut mem, &u, &g, &mut rep).unwrap();
+        let n_id = d.0.chid(rep.tries[0].channel).unwrap();
+        let (len, v, texts, notes) = rows(&rep);
+        assert_eq!(v[0], (n::TRIES, 2));
+        assert_eq!(v.last(), Some(&(n::PASSED, 2)));
+        assert_eq!(of(&v, n::VARIANT), [1, 2]);
+        assert_eq!(of(&v, n::BUF_ID), [0, 2, 9, 10, 0, 2, 9, 10]);
+        assert_eq!(of(&v, n::TOKEN_KIND), [2, 3]);
+        assert_eq!(of(&v, n::TOKEN_STATUS), [0x40]);
+        assert_eq!(of(&v, n::TOKEN_REPLY), [n_id]);
+        assert_eq!(of(&v, n::TOKEN_CHID), [C135_F_CHID]);
+        assert_eq!(of(&v, n::STAGE), [4, 6]);
+        assert_eq!(of(&v, n::REFUSAL), [0x40]);
+        assert_eq!(texts, ["NV_ERR_INVALID_STATE"]);
+        assert_eq!(notes, 0);
+        // The longest report: 62 rows.
+        assert_eq!(len, 1 + (4 + 20 + 3 + 1 + 2) + (4 + 20 + 2 + 1) + 1);
+        assert!(len <= 64);
+
+        // A refusal in the RPC header says so in a note; a failed try that
+        // never reached the token says "not reached".
+        let mut rep = rep.clone();
+        rep.tries[0].token = C135Token::Refused {
+            status: 0x40,
+            reply: None,
+        };
+        rep.tries[1].token = C135Token::NotReached;
+        rep.tries[1].stage = C135Stage::Group;
+        rep.tries[1].refusal = Some(status::NO_FREE_FIFOS);
+        rep.passed = None;
+        let (_, v, texts, notes) = rows(&rep);
+        assert_eq!(notes, 1);
+        assert!(of(&v, n::TOKEN_REPLY).is_empty());
+        assert_eq!(of(&v, n::TOKEN_KIND), [2, 0]);
+        assert_eq!(of(&v, n::STAGE), [4, 1]);
+        assert_eq!(texts, ["NV_ERR_INVALID_STATE", "NV_ERR_NO_FREE_FIFOS"]);
+        assert_eq!(v.last(), Some(&(n::PASSED, 0)));
+    }
+
+    /// C-135 through the real queues (the transport the board uses, with
+    /// the simulated GSP): golden image, working client, then try N on the
+    /// model that reproduces os-304. The refused-reply path works through
+    /// the queues too (the reply comes back whole, status in its payload).
+    #[test]
+    fn c135_through_the_queues() {
+        for (token, want) in [
+            (TokenRule::NotifierNotVram, C135Variant::N),
+            (TokenRule::RefusedAfterId, C135Variant::F),
+        ] {
+            let l = QueueLayout::standard();
+            let mut shm = alloc::vec![0u8; l.total_size];
+            let pages: Vec<u64> = (0..l.page_table_entries as u64)
+                .map(|i| 0x0500_0000 + i * 0x1000)
+                .collect();
+            let mut q = CpuQueues::init(&mut shm, l, &pages).unwrap();
+            let mut gsp = SimGsp::start(&mut shm, l.cmd_queue_offset, l.stat_queue_offset);
+            q.link_rx(&shm).unwrap();
+            let mut rm = FakeRm::new();
+            rm.promote_rule = PromoteRule::GlobalsNeeded;
+            rm.token_rule = token;
+            let mut clock = SimClock::default();
+            let vram = 8u64 << 30;
+            let mut mem =
+                GpuMemory::new(64 << 20, vram - (256 << 20), Sim(SimVram::new(vram))).unwrap();
+            let mut rep = C135Report::default();
+            let (cg, w) = {
+                let mut t = QueueTransport {
+                    q: &mut q,
+                    mem: &mut shm,
+                    clock: &mut clock,
+                    timeout_us: RM_REPLY_US,
+                    poll: |m: &mut dyn SharedMem| {
+                        gsp.service_with(m, |f, p| rm.handle(f, p));
+                    },
+                    events: Vec::new(),
+                };
+                let g = init_golden_image(&mut t, &mut mem).unwrap();
+                let u = open_user_space(&mut t, g.next_handle(), mem.root()).unwrap();
+                open_work_channel_c135(&mut t, &mut mem, &u, &g, &mut rep).unwrap()
+            };
+            assert_eq!(rep.passed, Some(want));
+            assert!(rm.is_scheduled(cg.channel_group));
+            assert_eq!(rm.chid(w.channel), Some(w.chid));
+            if want == C135Variant::F {
+                let n_id = rm.chid(rep.tries[0].channel).unwrap();
+                assert_eq!(
+                    rep.tries[0].token,
+                    C135Token::Refused {
+                        status: status::INVALID_STATE,
+                        reply: Some(n_id)
+                    }
+                );
+                assert_eq!(w.chid, C135_F_CHID);
+            }
+        }
     }
 }
