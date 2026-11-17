@@ -223,6 +223,27 @@ pub struct RmLog {
     pub page_dirs: Vec<(u32, u32)>,
 }
 
+/// C-133: how the model answers `PROMOTE_CTX` for a channel **inside a
+/// channel group**. Each rule other than `Lenient` is the model of one
+/// **hypothesis** about why the board answered `0x57` in `os-302` /
+/// `os-303` (`docs/os-303_ANALIZA_I9.md`) — none is knowledge about
+/// GSP-RM; they exist so the C-133 tries can be tested against each case.
+/// All of them accept a physical-only message (as the board did).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PromoteRule {
+    /// Any well-formed message is accepted (the model before C-133).
+    #[default]
+    Lenient,
+    /// Hypothesis (a): a message that only carries VAs (no entry
+    /// initializes a buffer) is refused with `OBJECT_NOT_FOUND`.
+    SplitRefused,
+    /// Hypothesis (c): a message that carries VAs must also carry the VA
+    /// of FECS_EVENT (9) and PRIV_ACCESS_MAP (10), else `OBJECT_NOT_FOUND`.
+    GlobalsNeeded,
+    /// Neither try helps: any message with a VA is `OBJECT_NOT_FOUND`.
+    VaRefused,
+}
+
 /// SIMULARE: the resource manager behind the queues.
 #[derive(Clone, Debug, Default)]
 pub struct FakeRm {
@@ -245,6 +266,9 @@ pub struct FakeRm {
     /// C-125: answer `GR_GET_CTX_BUFFER_INFO` with this status instead of
     /// the list (e.g. `NOT_SUPPORTED`: GSP-RM may not have this control).
     pub refuse_ctx_buffer_info: Option<u32>,
+    /// C-133: the hypothesis this model plays for `PROMOTE_CTX` on a
+    /// channel in a channel group (default: accept, as before).
+    pub promote_rule: PromoteRule,
 }
 
 fn rd32(b: &[u8], o: usize) -> u32 {
@@ -883,6 +907,12 @@ impl FakeRm {
         if !self.reserved_pdes_copied {
             return status::INVALID_STATE; // the channel's VA space is not usable yet
         }
+        let in_tsg = self
+            .objects
+            .get(&chan)
+            .and_then(|o| self.objects.get(&o.parent))
+            .is_some_and(|o| o.class == class::CHANNEL_GROUP);
+        let (mut any_va, mut any_init, mut vas) = (false, false, Vec::new());
         let mut ids = Vec::new();
         for i in 0..n {
             let e = 48 + i * 32;
@@ -903,6 +933,23 @@ impl FakeRm {
                 return status::INVALID_ARGUMENT;
             }
             ids.push(id);
+            any_init |= init;
+            if !nonmapped {
+                any_va = true;
+                vas.push(id);
+            }
+        }
+        // C-133: the hypothesis being played (see `PromoteRule`).
+        let refused = in_tsg
+            && any_va
+            && match self.promote_rule {
+                PromoteRule::Lenient => false,
+                PromoteRule::SplitRefused => !any_init,
+                PromoteRule::GlobalsNeeded => !(vas.contains(&9) && vas.contains(&10)),
+                PromoteRule::VaRefused => true,
+            };
+        if refused {
+            return status::OBJECT_NOT_FOUND;
         }
         self.promoted.entry(chan).or_default().extend(ids);
         status::OK

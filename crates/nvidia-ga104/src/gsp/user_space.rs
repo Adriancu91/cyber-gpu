@@ -58,6 +58,15 @@
 //! `nv_gpu_ops.c` `_nvGpuOpsRetainChannelResources`) and only **records** the
 //! answer ([`I9Report`]) — a refusal is recorded too and the chain goes on.
 //! Sources read as specification (MIT), nothing copied.
+//!
+//! C-133 (also SIMULARE only; Adrian, 17 Nov 2026 14:00): after `os-303`
+//! (C-125 changed nothing: still `0x57`), [`open_work_channel_c133`] sends
+//! the promotion as **one** message (PA + VA per entry) **before** the
+//! compute object — the form of the golden image (which passes on the
+//! board), of nouveau on 570.144 and of NVIDIA's kernel RM — in two tries
+//! (A: MAIN, PM, PATCH; B: MAIN, PATCH + the VA of FECS_EVENT and
+//! PRIV_ACCESS_MAP), each in a new channel group. Analysis:
+//! `docs/os-303_ANALIZA_I9.md`. The other functions are unchanged.
 
 use gpu_core::error::{GpuError, GpuResult};
 
@@ -650,6 +659,381 @@ fn open_channel<T: RmTransport + ?Sized, M: GoldenMemory + ?Sized>(
         doorbell_token,
         next_handle,
     })
+}
+
+// ───────────────────────── C-133 (SIMULARE only) ─────────────────────────
+//
+// After `os-303` (C-125 = V2 + V3: I9 still refused at the **virtual-only**
+// `PROMOTE_CTX` with `0x57`; V3 refused with `0x31`), the comparison with
+// the two open implementations that start channels on GSP-RM **570.144**
+// (`docs/os-303_ANALIZA_I9.md`) found what our working channel does and
+// neither of them does: it splits the promotion in two messages (physical
+// half, then a virtual-only half) and sends them *after* the compute
+// object. What works on this very board is the other form — the golden
+// image (I8e): **one** `PROMOTE_CTX`, each entry with PA and VA together,
+// *before* the object — which is also the form of nouveau
+// (`nvkm/subdev/gsp/rm/r535/gr.c` `r535_gr_promote_ctx`, used by `r570`
+// for 570.144) and of NVIDIA's own kernel RM when UVM does not own the VA
+// space (`kernel_graphics_object.c` `kgrobjPromoteContext`). Sources MIT,
+// read as the specification; nothing copied.
+//
+// Two tries, each in a **new** channel group (a refused try leaves a group
+// that was never scheduled: it runs nothing), the second only if GSP-RM
+// refuses the first one's `PROMOTE_CTX`:
+// * **A** — one message, PA + VA, for MAIN, PM, PATCH (the same three
+//   buffers as before), then the compute object;
+// * **B** — one message, PA + VA, for MAIN and PATCH only (no PM, as
+//   nouveau), plus the VA of the global buffers FECS_EVENT and
+//   PRIV_ACCESS_MAP that the golden image already holds (VA only, as
+//   nouveau does for a channel that is not the golden one), then the
+//   compute object.
+// Nothing here has run on the board; nothing here writes a register.
+
+/// C-133: which form of the promotion a try used.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum C133Variant {
+    /// One message, PA + VA: MAIN, PM, PATCH; before the compute object.
+    A = 1,
+    /// One message: MAIN, PATCH (PA + VA) + FECS_EVENT, PRIV_ACCESS_MAP
+    /// (VA only, the golden image's); before the compute object.
+    B = 2,
+}
+
+/// C-133: the last step of a try that GSP-RM accepted.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum C133Stage {
+    /// Nothing accepted yet.
+    #[default]
+    Started = 0,
+    /// Channel group + context share.
+    Group = 1,
+    /// The GPFIFO channel.
+    Channel = 2,
+    /// The single `PROMOTE_CTX`.
+    Promoted = 3,
+    /// The compute object.
+    Compute = 4,
+    /// Work submit token + the group's schedule: I9 done.
+    Scheduled = 5,
+}
+
+/// C-133: one try, filled **as it goes** (readable after an error too).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct C133Try {
+    pub variant: C133Variant,
+    /// Handles GSP-RM accepted (0 = not reached).
+    pub channel_group: u32,
+    pub channel: u32,
+    /// The entries of the one `PROMOTE_CTX`, as sent (empty = not reached).
+    pub entries: Vec<PromoteEntry>,
+    pub stage: C133Stage,
+    /// GSP-RM's status for the step after `stage`, if it refused it.
+    pub refusal: Option<u32>,
+}
+
+/// C-133: everything the tries saw; journal it also when I9 fails.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct C133Report {
+    pub tries: Vec<C133Try>,
+    pub passed: Option<C133Variant>,
+}
+
+/// Global GR buffers whose VA try B adds (`FECS_EVENT`, `PRIV_ACCESS_MAP`):
+/// the two that both nouveau (per channel) and NVIDIA's kernel RM (compute
+/// object, `kgrobjGetPromoteIds_FWCLIENT`) promote next to MAIN and PATCH.
+pub const C133_GLOBAL_VAS: [u16; 2] = [9, 10];
+/// Per-channel buffers of try A and of try B.
+pub const C133_A_BUFFERS: [u16; 3] = [0, 1, 2];
+pub const C133_B_BUFFERS: [u16; 2] = [0, 2];
+
+/// Journal row names (C-133). Short ASCII, as the stick journal shows them.
+pub mod journal_rows_c133 {
+    pub const TRIES: &str = "i9 c133 incercari facute";
+    pub const VARIANT: &str = "i9 c133 incercarea (1 A: MAIN+PM+PATCH, 2 B: MAIN+PATCH+globale)";
+    pub const GROUP: &str = "i9 c133 grup de canale (handle)";
+    pub const CHANNEL: &str = "i9 c133 canal (handle)";
+    pub const ENTRIES: &str = "i9 c133 intrari in PROMOTE_CTX";
+    pub const BUF_ID: &str = "i9 c133 buf id";
+    pub const BUF_VA_HI: &str = "i9 c133 buf va hi";
+    pub const BUF_VA_LO: &str = "i9 c133 buf va lo";
+    pub const BUF_SIZE: &str = "i9 c133 buf marime (0 = doar VA)";
+    pub const BUF_FLAGS: &str = "i9 c133 buf b0 PA+init b1 nonmapped";
+    pub const STAGE: &str =
+        "i9 c133 ultimul pas acceptat (1 grup, 2 canal, 3 PROMOTE, 4 compute, 5 programat)";
+    pub const REFUSAL: &str = "i9 c133 refuz RM la pasul urmator (stare)";
+    pub const REFUSAL_NAME: &str = "i9 c133 refuz";
+    pub const PASSED: &str = "i9 c133 varianta reusita (0 niciuna, 1 A, 2 B)";
+}
+
+impl C133Report {
+    /// Writes the report as journal rows: what was sent in each try and
+    /// what GSP-RM answered. Nothing is judged here.
+    pub fn journal(&self, j: &mut Journal) {
+        use journal_rows_c133 as n;
+        j.push(Event::Value {
+            what: n::TRIES,
+            value: self.tries.len() as u32,
+        });
+        for t in &self.tries {
+            for (what, value) in [
+                (n::VARIANT, t.variant as u32),
+                (n::GROUP, t.channel_group),
+                (n::CHANNEL, t.channel),
+                (n::ENTRIES, t.entries.len() as u32),
+            ] {
+                j.push(Event::Value { what, value });
+            }
+            for e in &t.entries {
+                for (what, value) in [
+                    (n::BUF_ID, e.buffer_id as u32),
+                    (n::BUF_VA_HI, (e.gpu_va >> 32) as u32),
+                    (n::BUF_VA_LO, e.gpu_va as u32),
+                    (n::BUF_SIZE, sat32(e.size)),
+                    (
+                        n::BUF_FLAGS,
+                        e.initialize as u32 | (e.nonmapped as u32) << 1,
+                    ),
+                ] {
+                    j.push(Event::Value { what, value });
+                }
+            }
+            j.push(Event::Value {
+                what: n::STAGE,
+                value: t.stage as u32,
+            });
+            if let Some(code) = t.refusal {
+                j.push(Event::Value {
+                    what: n::REFUSAL,
+                    value: code,
+                });
+                j.push(Event::text(
+                    n::REFUSAL_NAME,
+                    nvidia_rm570::status_name(code).unwrap_or("?").as_bytes(),
+                ));
+            }
+        }
+        j.push(Event::Value {
+            what: n::PASSED,
+            value: self.passed.map_or(0, |v| v as u32),
+        });
+    }
+}
+
+/// C-133: opens the working channel with the promotion in **one** message
+/// before the compute object (try A, then — only if GSP-RM refuses A's
+/// `PROMOTE_CTX` — try B in a new channel group). Replaces the pair
+/// [`open_compute_group`] + [`open_work_channel_with`] for `--i9 c133`:
+/// it makes its own channel group(s) and returns the one the channel is in.
+/// `report` is filled as the steps go — read it (and
+/// [`C133Report::journal`] it) also when this returns an error. Any refusal
+/// other than of a try's `PROMOTE_CTX` (and any transport error) stops at
+/// once. USERD is zeroed before each channel (as
+/// [`open_work_channel_cleared`]). The doorbell is not rung here.
+pub fn open_work_channel_c133<T: RmTransport + ?Sized, M: GoldenMemory + ChannelMemory + ?Sized>(
+    t: &mut T,
+    mem: &mut M,
+    u: &UserSpace,
+    g: &GoldenImage,
+    report: &mut C133Report,
+) -> GpuResult<(ComputeGroup, WorkChannel)> {
+    *report = C133Report::default();
+    // Everything that can be wrong on our side is checked before the first
+    // message, so a bad setup sends nothing.
+    rmapi::check_root(u.root)?;
+    let runlist = g
+        .runlists
+        .iter()
+        .find(|&&(e, _)| e == rmapi::ENGINE_GR0)
+        .map(|&(_, r)| r)
+        .ok_or(GpuError::InvalidArgument(
+            "GSP-RM nu a raportat runlist-ul lui GR0",
+        ))?;
+    let find = |id: u16| {
+        g.gr_bufs
+            .iter()
+            .find(|(b, _)| b.id == id)
+            .ok_or(GpuError::InvalidArgument(
+                "imaginea golden nu are bufferul de context cerut",
+            ))
+    };
+    for id in C133_A_BUFFERS {
+        find(id)?;
+    }
+    let mut globals = Vec::with_capacity(C133_GLOBAL_VAS.len());
+    for id in C133_GLOBAL_VAS {
+        let (_, m) = find(id)?;
+        if m.va == 0 || !m.va.is_multiple_of(0x1000) {
+            return Err(GpuError::InvalidArgument(
+                "imaginea golden nu are VA pentru un buffer global",
+            ));
+        }
+        globals.push((id, m.va));
+    }
+
+    let mut next = u.next_handle;
+    let mut last = 0;
+    for variant in [C133Variant::A, C133Variant::B] {
+        report.tries.push(C133Try {
+            variant,
+            channel_group: 0,
+            channel: 0,
+            entries: Vec::new(),
+            stage: C133Stage::Started,
+            refusal: None,
+        });
+        let tr = report.tries.last_mut().expect("just pushed");
+        let mut rm = Rm {
+            t: &mut *t,
+            client: u.client,
+            next,
+        };
+        let r = c133_try(&mut rm, mem, u, g, runlist, &globals, tr);
+        next = rm.next;
+        match r {
+            Ok(done) => {
+                report.passed = Some(variant);
+                return Ok(done);
+            }
+            Err(GpuError::HardwareFault { code }) => {
+                tr.refusal = Some(code);
+                if tr.stage != C133Stage::Channel {
+                    // Not the promotion: nothing the other try would change.
+                    return Err(GpuError::HardwareFault { code });
+                }
+                last = code;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(GpuError::HardwareFault { code: last })
+}
+
+fn c133_try<T: RmTransport + ?Sized, M: GoldenMemory + ChannelMemory + ?Sized>(
+    rm: &mut Rm<'_, T>,
+    mem: &mut M,
+    u: &UserSpace,
+    g: &GoldenImage,
+    runlist: u32,
+    globals: &[(u16, u64)],
+    tr: &mut C133Try,
+) -> GpuResult<(ComputeGroup, WorkChannel)> {
+    // A new channel group and context share for this try (as I9d).
+    let channel_group = rm.alloc(
+        u.device,
+        class::CHANNEL_GROUP,
+        &rmapi::channel_group_params(u.vaspace)?,
+    )?;
+    let sent = rmapi::ctxshare_params(u.vaspace, rmapi::subcontext::ASYNC)?;
+    let (ctxshare, got) = rm.alloc_reply(channel_group, class::CONTEXT_SHARE, &sent)?;
+    let subctx_id = rmapi::parse_ctxshare_reply(&sent, &got)?;
+    tr.channel_group = channel_group;
+    tr.stage = C133Stage::Group;
+
+    // The channel, exactly as `open_work_channel_cleared` makes it.
+    let entries = rmapi::work_channel::ENTRIES;
+    let ring = mem.alloc_mapped(WorkChannelSetup::buffer_size(entries), 0x1000)?;
+    let inst_pa = mem.alloc_phys(rmapi::golden_channel::INSTANCE_SIZE, 0x1000)?;
+    let mthd_pa = mem.alloc_phys(rmapi::golden_channel::METHOD_BUFFER_SIZE, 0x1000)?;
+    let notifier_pa = mem.alloc_phys(0x1000, 0x1000)?;
+    let setup = WorkChannelSetup {
+        ring_va: ring.va,
+        ring_pa: ring.pa,
+        entries,
+        ctxshare,
+        inst_pa,
+        mthd_pa,
+        notifier_pa,
+    };
+    let params = rmapi::work_channel_params(&setup)?;
+    clear_userd(mem, ring.pa + setup.userd_offset())?;
+    let channel = rm.alloc(channel_group, class::CHANNEL_GPFIFO, &params)?;
+    tr.channel = channel;
+    tr.stage = C133Stage::Channel;
+
+    // ONE PROMOTE_CTX, PA and VA in the same entry, before the object.
+    let ids: &[u16] = match tr.variant {
+        C133Variant::A => &C133_A_BUFFERS,
+        C133Variant::B => &C133_B_BUFFERS,
+    };
+    let mut ctx_bufs = Vec::with_capacity(ids.len());
+    let mut promote = Vec::with_capacity(ids.len() + globals.len());
+    for &id in ids {
+        let (b, _) =
+            g.gr_bufs
+                .iter()
+                .find(|(b, _)| b.id == id)
+                .ok_or(GpuError::InvalidArgument(
+                    "imaginea golden nu are bufferul de context cerut",
+                ))?;
+        let m = mem.alloc_mapped(b.size, b.align)?;
+        promote.push(PromoteEntry {
+            buffer_id: id,
+            gpu_va: m.va,
+            gpu_pa: m.pa,
+            size: b.size,
+            phys_attr: PROMOTE_PHYS_ATTR,
+            initialize: true,
+            nonmapped: false,
+        });
+        ctx_bufs.push((id, m));
+    }
+    if tr.variant == C133Variant::B {
+        for &(id, va) in globals {
+            promote.push(PromoteEntry {
+                buffer_id: id,
+                gpu_va: va,
+                gpu_pa: 0,
+                size: 0,
+                phys_attr: 0,
+                initialize: false,
+                nonmapped: false,
+            });
+        }
+    }
+    let msg = rmapi::promote_params(rmapi::ENGINE_GR0, u.client, channel, &promote)?;
+    tr.entries = promote;
+    rm.control(u.subdevice, cmd::PROMOTE_CTX, &msg)?;
+    tr.stage = C133Stage::Promoted;
+
+    let compute = rm.alloc(channel, class::COMPUTE, &[])?;
+    tr.stage = C133Stage::Compute;
+
+    let got = rm.control(
+        channel,
+        cmd::WORK_SUBMIT_TOKEN,
+        &rmapi::work_submit_token_request(),
+    )?;
+    let chid = rmapi::parse_work_submit_token(&got)?;
+    let doorbell_token = rmapi::doorbell_token(chid, runlist)?;
+    rm.control(
+        channel_group,
+        cmd::TSG_SCHEDULE,
+        &rmapi::schedule_params(true),
+    )?;
+    tr.stage = C133Stage::Scheduled;
+    let next_handle = rm.next;
+    Ok((
+        ComputeGroup {
+            channel_group,
+            ctxshare,
+            subctx_id,
+            next_handle,
+        },
+        WorkChannel {
+            channel,
+            compute,
+            ring,
+            entries,
+            userd_offset: setup.userd_offset(),
+            inst_pa,
+            mthd_pa,
+            notifier_pa,
+            ctx_bufs,
+            chid,
+            doorbell_token,
+            next_handle,
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -3097,5 +3481,404 @@ mod tests {
         let mut empty = good;
         empty[8..12].copy_from_slice(&0u32.to_le_bytes());
         assert_eq!(rmapi::parse_ctx_buffer_info(&empty), Ok(Vec::new()));
+    }
+
+    // ── C-133 (SIMULARE): one PROMOTE_CTX, PA + VA, before the object ──
+
+    use gpu_sim::fake_rm::PromoteRule;
+
+    /// Golden image + working client (no group: C-133 makes its own).
+    fn c133_base(rule: PromoteRule) -> (Direct, Mem, GoldenImage, UserSpace) {
+        let (mut d, mem, g, u, _) = {
+            let mut d = Direct(FakeRm::new());
+            let vram = 8u64 << 30;
+            let mut mem =
+                GpuMemory::new(64 << 20, vram - (256 << 20), Sim(SimVram::new(vram))).unwrap();
+            let g = init_golden_image(&mut d, &mut mem).unwrap();
+            let u = open_user_space(&mut d, g.next_handle(), mem.root()).unwrap();
+            (d, mem, g, u, ())
+        };
+        d.0.promote_rule = rule;
+        (d, mem, g, u)
+    }
+
+    fn not_found() -> GpuError {
+        GpuError::HardwareFault {
+            code: status::OBJECT_NOT_FOUND,
+        }
+    }
+
+    /// The model playing hypothesis (a) or (c) reproduces the board: the
+    /// old path (and C-125) stops at the virtual-only `PROMOTE_CTX` with
+    /// `0x57`, after the physical half passed.
+    #[test]
+    fn c133_the_hypothesis_models_reproduce_os303() {
+        for rule in [
+            PromoteRule::SplitRefused,
+            PromoteRule::GlobalsNeeded,
+            PromoteRule::VaRefused,
+        ] {
+            let (mut d, mut mem, g, u) = c133_base(rule);
+            let cg = open_compute_group(&mut d, &u).unwrap();
+            let mut rep = I9Report::default();
+            let r =
+                open_work_channel_with(&mut d, &mut mem, &u, &cg, &g, I9Options::C125, &mut rep);
+            assert_eq!(r, Err(not_found()), "{rule:?}");
+            let n = d.0.log.controls.len();
+            assert_eq!(
+                d.0.log.controls[n - 2..],
+                [
+                    (c_cmd::PROMOTE_CTX, status::OK),
+                    (c_cmd::PROMOTE_CTX, status::OBJECT_NOT_FOUND)
+                ],
+                "{rule:?}"
+            );
+        }
+    }
+
+    /// Try A on the lenient model and on hypothesis (a): one group, one
+    /// channel, ONE promotion with PA + VA for MAIN, PM, PATCH, sent before
+    /// the compute object; then token and schedule. No second try.
+    #[test]
+    fn c133_try_a_is_one_message_before_the_object() {
+        for rule in [PromoteRule::Lenient, PromoteRule::SplitRefused] {
+            let (mut d, mut mem, g, u) = c133_base(rule);
+            let (allocs0, controls0) = (d.0.log.allocs.len(), d.0.log.controls.len());
+            let mut rep = C133Report::default();
+            let (cg, w) = open_work_channel_c133(&mut d, &mut mem, &u, &g, &mut rep).unwrap();
+            assert_eq!(
+                d.0.log.allocs[allocs0..],
+                [
+                    (c::CHANNEL_GROUP, status::OK),
+                    (c::CONTEXT_SHARE, status::OK),
+                    (c::CHANNEL_GPFIFO, status::OK),
+                    (c::COMPUTE, status::OK),
+                ]
+            );
+            assert_eq!(
+                d.0.log.controls[controls0..],
+                [
+                    (c_cmd::PROMOTE_CTX, status::OK),
+                    (c_cmd::WORK_SUBMIT_TOKEN, status::OK),
+                    (c_cmd::TSG_SCHEDULE, status::OK),
+                ]
+            );
+            assert_eq!(rep.passed, Some(C133Variant::A));
+            assert_eq!(rep.tries.len(), 1);
+            let t = &rep.tries[0];
+            assert_eq!((t.stage, t.refusal), (C133Stage::Scheduled, None));
+            assert_eq!((t.channel_group, t.channel), (cg.channel_group, w.channel));
+            // PA and VA together, initialize, not "nonmapped": the golden's form.
+            assert_eq!(t.entries.len(), 3);
+            for (e, (id, m)) in t.entries.iter().zip(&w.ctx_bufs) {
+                assert_eq!((e.buffer_id, e.gpu_va, e.gpu_pa), (*id, m.va, m.pa));
+                assert!(e.initialize && !e.nonmapped && e.size != 0 && e.gpu_va != 0);
+                assert_eq!(e.phys_attr, PROMOTE_PHYS_ATTR);
+                // The VA really maps the PA in the driver's page tables.
+                let tr = translate(&mem.writer().0, mem.root(), m.va).unwrap();
+                assert_eq!(tr.pa, m.pa);
+            }
+            assert_eq!(
+                w.ctx_bufs.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
+                C133_A_BUFFERS
+            );
+            assert!(d.0.is_scheduled(cg.channel_group));
+            assert_eq!(d.0.promoted(w.channel), [0, 1, 2]);
+            assert_eq!(d.0.parent_of(w.channel), Some(cg.channel_group));
+            assert_eq!(d.0.parent_of(w.compute), Some(w.channel));
+            assert!(w.next_handle > w.compute && cg.next_handle == w.next_handle);
+            // USERD was zeroed (GPGet = GPPut = 0).
+            assert_eq!(w.userd_offset, w.entries as u64 * 8);
+        }
+    }
+
+    /// Hypothesis (c): A is refused at its promotion with `0x57`; B runs in
+    /// a NEW group and passes; A's group is never scheduled and has no
+    /// compute object.
+    #[test]
+    fn c133_try_b_runs_in_a_new_group_after_a_is_refused() {
+        let (mut d, mut mem, g, u) = c133_base(PromoteRule::GlobalsNeeded);
+        let mut rep = C133Report::default();
+        let (cg, w) = open_work_channel_c133(&mut d, &mut mem, &u, &g, &mut rep).unwrap();
+        assert_eq!(rep.passed, Some(C133Variant::B));
+        assert_eq!(rep.tries.len(), 2);
+        let (a, b) = (&rep.tries[0], &rep.tries[1]);
+        assert_eq!(
+            (a.variant, a.stage, a.refusal),
+            (
+                C133Variant::A,
+                C133Stage::Channel,
+                Some(status::OBJECT_NOT_FOUND)
+            )
+        );
+        assert_eq!(
+            (b.variant, b.stage, b.refusal),
+            (C133Variant::B, C133Stage::Scheduled, None)
+        );
+        assert_ne!(a.channel_group, b.channel_group);
+        assert_ne!(a.channel, b.channel);
+        assert_eq!((cg.channel_group, w.channel), (b.channel_group, b.channel));
+        assert!(!d.0.is_scheduled(a.channel_group));
+        assert!(d.0.is_scheduled(b.channel_group));
+        assert!(d.0.promoted(a.channel).is_empty());
+        // B: MAIN and PATCH with PA + VA, then the golden's VA for 9 and 10.
+        assert_eq!(
+            b.entries.iter().map(|e| e.buffer_id).collect::<Vec<_>>(),
+            [0, 2, 9, 10]
+        );
+        for e in &b.entries[..2] {
+            assert!(e.initialize && !e.nonmapped && e.gpu_pa != 0 && e.gpu_va != 0);
+        }
+        for e in &b.entries[2..] {
+            let (_, m) = g.gr_bufs.iter().find(|(x, _)| x.id == e.buffer_id).unwrap();
+            assert_eq!((e.gpu_va, e.gpu_pa, e.size, e.phys_attr), (m.va, 0, 0, 0));
+            assert!(!e.initialize && !e.nonmapped);
+            // One set of page tables: the golden's VA resolves from our root.
+            let tr = translate(&mem.writer().0, mem.root(), m.va).unwrap();
+            assert_eq!(tr.pa, m.pa);
+        }
+        assert_eq!(
+            w.ctx_bufs.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
+            C133_B_BUFFERS
+        );
+        // The two tries do not share memory.
+        let (ma, mb) = (a.entries[0], b.entries[0]);
+        assert!(ma.gpu_pa + ma.size <= mb.gpu_pa || mb.gpu_pa + mb.size <= ma.gpu_pa);
+        // Handles keep growing over both tries.
+        assert!(b.channel_group > a.channel);
+    }
+
+    /// Neither try helps: the error is GSP-RM's `0x57`, and the report
+    /// (both tries, what was sent, where each stopped) reaches the journal.
+    #[test]
+    fn c133_both_refused_is_reported_whole() {
+        let (mut d, mut mem, g, u) = c133_base(PromoteRule::VaRefused);
+        let mut rep = C133Report::default();
+        let r = open_work_channel_c133(&mut d, &mut mem, &u, &g, &mut rep);
+        assert_eq!(r, Err(not_found()));
+        assert_eq!(rep.passed, None);
+        assert_eq!(rep.tries.len(), 2);
+        for t in &rep.tries {
+            assert_eq!(
+                (t.stage, t.refusal),
+                (C133Stage::Channel, Some(status::OBJECT_NOT_FOUND))
+            );
+            assert!(!d.0.is_scheduled(t.channel_group));
+            assert_ne!(t.channel, 0);
+        }
+        // No compute object was asked for on either channel.
+        assert!(
+            !d.0.log
+                .allocs
+                .iter()
+                .rev()
+                .take(6)
+                .any(|a| a.0 == c::COMPUTE)
+        );
+
+        let mut j = Journal::new(256);
+        rep.journal(&mut j);
+        let values: Vec<_> = j
+            .events()
+            .filter_map(|e| match e {
+                gpu_core::diag::Event::Value { what, value } => Some((*what, *value)),
+                _ => None,
+            })
+            .collect();
+        use journal_rows_c133 as n;
+        assert_eq!(values[0], (n::TRIES, 2));
+        assert_eq!(values.last(), Some(&(n::PASSED, 0)));
+        assert_eq!(
+            values
+                .iter()
+                .filter(|v| v.0 == n::BUF_ID)
+                .map(|v| v.1)
+                .collect::<Vec<_>>(),
+            [0, 1, 2, 0, 2, 9, 10]
+        );
+        assert_eq!(
+            values
+                .iter()
+                .filter(|v| v.0 == n::REFUSAL)
+                .map(|v| v.1)
+                .collect::<Vec<_>>(),
+            [0x57, 0x57]
+        );
+        assert_eq!(
+            values
+                .iter()
+                .filter(|v| v.0 == n::STAGE)
+                .map(|v| v.1)
+                .collect::<Vec<_>>(),
+            [2, 2]
+        );
+        let names: Vec<_> = j
+            .events()
+            .filter_map(|e| match e {
+                gpu_core::diag::Event::Text { what, len, bytes } if *what == n::REFUSAL_NAME => {
+                    Some(
+                        core::str::from_utf8(&bytes[..*len as usize])
+                            .unwrap()
+                            .to_owned(),
+                    )
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            names,
+            ["NV_ERR_OBJECT_NOT_FOUND", "NV_ERR_OBJECT_NOT_FOUND"]
+        );
+        // A passing report says which variant passed.
+        let (mut d, mut mem, g, u) = c133_base(PromoteRule::Lenient);
+        let mut rep = C133Report::default();
+        open_work_channel_c133(&mut d, &mut mem, &u, &g, &mut rep).unwrap();
+        let mut j = Journal::new(64);
+        rep.journal(&mut j);
+        assert!(j.events().any(
+            |e| matches!(e, gpu_core::diag::Event::Value { what, value: 1 } if *what == n::PASSED)
+        ));
+    }
+
+    /// A refusal that is not the promotion stops at once (no try B), and a
+    /// transport failure is never mistaken for a refusal.
+    #[test]
+    fn c133_other_failures_stop_without_a_second_try() {
+        struct FailAt(Direct, u32, u32, GpuError);
+        impl RmTransport for FailAt {
+            fn call(&mut self, f: u32, p: &[u8]) -> GpuResult<Vec<u8>> {
+                let class_or_cmd = if f == function::GSP_RM_ALLOC {
+                    super::super::get_u32(p, 12)
+                } else {
+                    super::super::get_u32(p, 8)
+                };
+                if f == self.1 && class_or_cmd == self.2 {
+                    return Err(self.3);
+                }
+                self.0.call(f, p)
+            }
+        }
+        let fault = GpuError::HardwareFault {
+            code: status::INVALID_STATE,
+        };
+        for (f, what, err, stage) in [
+            (
+                function::GSP_RM_ALLOC,
+                c::CHANNEL_GROUP,
+                fault,
+                C133Stage::Started,
+            ),
+            (
+                function::GSP_RM_ALLOC,
+                c::CHANNEL_GPFIFO,
+                fault,
+                C133Stage::Group,
+            ),
+            (
+                function::GSP_RM_ALLOC,
+                c::COMPUTE,
+                fault,
+                C133Stage::Promoted,
+            ),
+            (
+                function::GSP_RM_CONTROL,
+                cmd::TSG_SCHEDULE,
+                fault,
+                C133Stage::Compute,
+            ),
+            (
+                function::GSP_RM_CONTROL,
+                cmd::PROMOTE_CTX,
+                GpuError::Timeout { waited_us: 5 },
+                C133Stage::Channel,
+            ),
+        ] {
+            let (d, mut mem, g, u) = c133_base(PromoteRule::Lenient);
+            let mut t = FailAt(d, f, what, err);
+            let mut rep = C133Report::default();
+            let r = open_work_channel_c133(&mut t, &mut mem, &u, &g, &mut rep);
+            assert_eq!(r, Err(err));
+            assert_eq!(rep.tries.len(), 1, "{what:#x}");
+            assert_eq!(rep.tries[0].stage, stage, "{what:#x}");
+            assert_eq!(
+                rep.tries[0].refusal,
+                matches!(err, GpuError::HardwareFault { .. }).then_some(status::INVALID_STATE)
+            );
+            assert_eq!(rep.passed, None);
+        }
+    }
+
+    /// Mistakes on our side send nothing: a bad root, a golden image
+    /// without GR0's runlist, without a per-channel buffer or without a
+    /// mapped global buffer (try B's VAs are checked before try A starts).
+    #[test]
+    fn c133_bad_setup_sends_nothing() {
+        let (mut d, mut mem, g, u) = c133_base(PromoteRule::Lenient);
+        let sent = (d.0.log.allocs.len(), d.0.log.controls.len());
+        let mut rep = C133Report::default();
+
+        let mut bad_u = u;
+        bad_u.root = 0x123;
+        assert!(open_work_channel_c133(&mut d, &mut mem, &bad_u, &g, &mut rep).is_err());
+
+        let mut no_runlist = g.clone();
+        no_runlist.runlists.retain(|&(e, _)| e != rmapi::ENGINE_GR0);
+        assert!(open_work_channel_c133(&mut d, &mut mem, &u, &no_runlist, &mut rep).is_err());
+
+        for id in [0u16, 1, 2, 9, 10] {
+            let mut missing = g.clone();
+            missing.gr_bufs.retain(|(b, _)| b.id != id);
+            assert!(
+                open_work_channel_c133(&mut d, &mut mem, &u, &missing, &mut rep).is_err(),
+                "{id}"
+            );
+        }
+        let mut unmapped = g.clone();
+        for (b, m) in &mut unmapped.gr_bufs {
+            if b.id == 10 {
+                m.va = 0;
+            }
+        }
+        assert!(open_work_channel_c133(&mut d, &mut mem, &u, &unmapped, &mut rep).is_err());
+
+        assert_eq!((d.0.log.allocs.len(), d.0.log.controls.len()), sent);
+        assert!(rep.tries.is_empty());
+    }
+
+    /// `--i9 c133` off changes nothing: the old functions send exactly what
+    /// they sent before C-133 on the default model (the rule is `Lenient`).
+    #[test]
+    fn c133_off_changes_nothing() {
+        assert_eq!(FakeRm::new().promote_rule, PromoteRule::Lenient);
+        let (mut d0, mut mem0, g, u, cg) = grouped();
+        let w0 = open_work_channel_cleared(&mut d0, &mut mem0, &u, &cg, &g).unwrap();
+        let n = d0.0.log.controls.len();
+        // Still the split promotion after the object (what os-302 sent).
+        assert_eq!(
+            d0.0.log.controls[n - 4..],
+            [
+                (c_cmd::PROMOTE_CTX, status::OK),
+                (c_cmd::PROMOTE_CTX, status::OK),
+                (c_cmd::WORK_SUBMIT_TOKEN, status::OK),
+                (c_cmd::TSG_SCHEDULE, status::OK),
+            ]
+        );
+        assert_eq!(d0.0.log.allocs.last(), Some(&(c::COMPUTE, status::OK)));
+        assert_eq!(w0.ctx_bufs.len(), 3);
+    }
+
+    /// The channel that passes (here try B) starts with USERD all zero and
+    /// a doorbell token built from GSP-RM's channel id and GR0's runlist.
+    #[test]
+    fn c133_userd_is_zero_and_the_token_is_from_rm() {
+        let (mut d, mut mem, g, u) = c133_base(PromoteRule::GlobalsNeeded);
+        let mut rep = C133Report::default();
+        let (_, w) = open_work_channel_c133(&mut d, &mut mem, &u, &g, &mut rep).unwrap();
+        // USERD of the passing channel is all zero before any work.
+        let userd = w.ring.pa + w.userd_offset;
+        for off in (0..USERD_SIZE).step_by(4) {
+            assert_eq!(mem.writer().0.read_u64(userd + (off & !7)).unwrap(), 0);
+        }
+        assert_eq!(rmapi::doorbell_token(w.chid, 0).unwrap(), w.doorbell_token);
     }
 }
