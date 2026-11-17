@@ -283,3 +283,17 @@ context — doar ideea; codul nostru (`mmu::encode_pte_privileged`, `user_space:
 hub (`idei/2026-11-16_cercetare-i9-promote-ctx.md`, centrul de comandă). Valorile din `gpu_sim::fake_rm::SIM_CHANNEL_CTX_BUFFERS` sunt SIM. Niciun octet de
 firmware NVIDIA citit sau copiat; adresele NOCAT din jurnal nu au fost căutate în firmware.
 
+
+**Sesiunea 107 (17 nov, ~14:20), C-133 (I9 după `os-303`: promovarea într-un singur mesaj):** surse citite ca specificație, **nimic copiat** — NVIDIA
+open-gpu-kernel-modules **570.144** (MIT): `kernel_graphics_object.c` (`kgrobjPromoteContext`, `kgrobjGetPromoteIds_FWCLIENT`: un mesaj cu PA + VA, lista
+pentru compute), `kernel_graphics_context.c` (`kgrctxPrepareInitializeCtxBuffer`, `kgrctxPreparePromoteCtxBuffer`, `kgrctxGetCtxBuffers` — de unde vine
+`NV_ERR_INVALID_OBJECT` la V3, `kgrctxFromKernelChannel`), `kernel_graphics.c` (`subdeviceCtrlCmdKGrGetCtxBufferInfo`), `kernel_channel.c`
+(`kchannelConstruct`: tipurile notificatoarelor din `internalFlags`, regulile TSG / context share), `kernel_channel_group_api.c` (`hVASpace` în TSG, modul
+legacy), `kernel_ctxshare.c`, `nv_gpu_ops.c` (`_nvGpuOpsRetainChannelResources`, `nvGpuOpsBindChannelResources`), `alloc_free.c` (constructorul înaintea
+RPC-ului de alocare), `vaddr_list.c` (când întoarce `NV_ERR_OBJECT_NOT_FOUND`), `ctrl2080gpu.h` (descrierea `PROMOTE_CTX`), `nvos.h`, `g_kernel_channel_nvoc.h`,
+`g_gpu_vaspace_nvoc.h`. **nouveau** (Linux, ramura principală la 17 nov 2026; fișierele citite poartă licența MIT): `nvkm/subdev/gsp/rm/r535/gr.c`
+(`r535_gr_promote_ctx`: un mesaj, PA + VA, globalele doar cu VA pentru un canal care nu e cel golden, fără PM), `r535/fifo.c` + `r570/fifo.c` (alocarea
+canalului), `r535/vmm.c` (spațiul de adrese), `r570/gr.c` (promovarea înaintea obiectului), `nvkm/subdev/gsp/ga102.c` (GA104 ↔ firmware 570.144).
+**tinygrad** (MIT, commit `9ecf871`): `runtime/ops_nv.py`, `runtime/support/nv/ip.py`, `nvdev.py` (firmware 570.190). Codul nostru
+(`user_space::open_work_channel_c133`, `C133Report`, `gpu_sim::fake_rm::PromoteRule`) e scris de noi; `PromoteRule` modelează **ipoteze**, nu placa. Niciun
+octet de firmware NVIDIA citit sau copiat; adresele NOCAT din jurnale nu au fost căutate în firmware. Niciun cod GPL citit pentru această sesiune.

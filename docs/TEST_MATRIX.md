@@ -1,5 +1,20 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 107 (17 nov 2026, ~14:20, cloud, fără placă) — C-133: I9 cu promovarea într-un singur mesaj PA + VA înaintea obiectului compute (`open_work_channel_c133`, încercările A și B), după `os-303` (I9 tot `0x57`), toate SIMULARE
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T130a | modelul care joacă ipotezele (a), (c) și „niciuna” (`fake_rm::PromoteRule`) reproduce `os-303` pe drumul vechi: fizicul trece, mesajul doar-VA primește `0x57` (și cu `--i9 c125`) | `cargo test -p nvidia-ga104 c133_the_hypothesis` | conform | conform | PASS (SIMULARE) |
+| T130b | încercarea A (model permisiv și ipoteza (a)): TSG, context share, canal, **un singur** `PROMOTE_CTX` (MAIN, PM, PATCH cu PA + VA, `bInitialize`, fără `bNonmapped`) **înaintea** obiectului compute, apoi token și programare; VA-urile rezolvă PA-urile în tabelele noastre (walker independent); fără a doua încercare | `cargo test -p nvidia-ga104 c133_try_a` | conform | conform | PASS (SIMULARE) |
+| T130c | ipoteza (c): A refuzată cu `0x57` la `PROMOTE_CTX` → B în **grup nou**: MAIN + PATCH (PA + VA) + FECS_EVENT și PRIV_ACCESS_MAP doar cu VA-ul din golden (rezolvat din rădăcina noastră); grupul lui A neprogramat, fără obiect; memorie și handle-uri separate | `cargo test -p nvidia-ga104 c133_try_b` | conform | conform | PASS (SIMULARE) |
+| T130d | ambele refuzate: eroarea e `0x57` de la RM; raportul are ambele încercări (ce s-a trimis, unde s-a oprit) și ajunge în jurnal (51 de rânduri, numele `NV_ERR_OBJECT_NOT_FOUND`); un raport reușit spune varianta | `cargo test -p nvidia-ga104 c133_both_refused` | conform | conform | PASS (SIMULARE) |
+| T130e | alt refuz decât al promovării (grup, canal, compute, programare) sau timeout la `PROMOTE_CTX`: oprire imediată, **fără** B, cu pasul notat | `cargo test -p nvidia-ga104 c133_other_failures` | conform | conform | PASS (SIMULARE) |
+| T130f | greșeli de partea noastră (rădăcină greșită, golden fără runlist GR0, fără un buffer per canal, fără VA la un buffer global) nu trimit niciun mesaj | `cargo test -p nvidia-ga104 c133_bad_setup` | conform | conform | PASS (SIMULARE) |
+| T130g | fără opțiune nimic nu se schimbă: drumul vechi trimite tot cele 2 `PROMOTE_CTX` după obiect; regula implicită a modelului e cea de dinainte | `cargo test -p nvidia-ga104 c133_off` (+ `c125_off_sends`) | conform | conform | PASS (SIMULARE) |
+| T130h | canalul reușit (aici B): USERD zero, token din răspunsul RM + runlist-ul GR0 | `cargo test -p nvidia-ga104 c133_userd` | conform | conform | PASS (SIMULARE) |
+| T130i | tot pachetul | `sh tools/check.sh` | 493 PASS | **493 PASS** (485 → +8), 4 ignorate; format, clippy `-D warnings`, build no_std | PASS |
+| — | `--i9 c133` pe RTX 3070 Ti | — | — | — | NOT TESTED (fereastra cu Adrian) |
+
 ## Rezultate — sesiunea 103 (16 nov 2026, ~19:30, cloud, fără placă) — C-125: I9 V2 (PTE privilegiat) + V3 (lista bufferelor de la RM), după `os-302` (I9 = `0x57`), toate SIMULARE
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |

@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 107 — 17 noiembrie 2026, ~14:15–15:10 (ora României), în cloud, FĂRĂ placă — **OPRIREA SE RIDICĂ** (C-133); jurnalul `os-303` analizat; **C-133 făcut în SIMULARE: `--i9 c133`**
+
+Pornită de Adrian (comanda C-133, 14:05). Date noi: `os-303` (17 nov ~13:40, workstation, `gpu lant --i9 c125`, cyber-gpu `239f986`): I0–I8 + golden TREC;
+V2 aplicat; **V3 refuzat `0x31` `NV_ERR_INVALID_OBJECT`**; **I9 tot `0x57`** la `PROMOTE_CTX` virtual, cu aceleași 2 ASSERT ca la `os-302`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Analiza (C-133 pașii 1–2) | Secvența noastră pusă lângă golden-ul nostru, tinygrad (570.190), nouveau `r535`/`r570` (570.144) și RM-ul NVIDIA 570.144 — `docs/os-303_ANALIZA_I9.md` (tabel câmp cu câmp, 6 ipoteze cu pro/contra). Găsit: tot ce merge pe 570.144 — **inclusiv golden-ul nostru de pe placă** — promovează **într-un singur mesaj PA + VA, înaintea obiectului compute**; noi (ca tinygrad) în două mesaje, după obiect. Refuzul V3 explicat (RM-ul de pe CPU ține descriptorul MAIN; GSP-RM singur nu-l are); cele 2 ASSERT de la alocarea canalului explicate (`internalFlags` = tip de notificator necunoscut, inofensiv) | DEDUS (surse MIT citite; nimic copiat) |
+| Reparația (pasul 3) | `user_space::open_work_channel_c133` + `C133Report` (doar adăugări): **A** = un mesaj PA + VA (MAIN, PM, PATCH) înaintea obiectului; **B** (doar dacă A e refuzată la `PROMOTE_CTX`, în grup nou) = MAIN + PATCH + VA-urile FECS_EVENT și PRIV_ACCESS_MAP din golden. Raportul complet ajunge în jurnal și pe drumul de eșec. `gpu_sim::fake_rm::PromoteRule` joacă ipotezele (nu placa) | PASS (SIMULARE), T130a–h |
+| Documente | `docs/os-303_ANALIZA_I9.md`; TEST_MATRIX T130; PROVENANCE; nota pentru OS `integration/cyber-universe/C-133_i9-un-singur-mesaj.md` | — |
+| Verificări | `tools/check.sh` (Rust 1.97.0): format, clippy `-D warnings`, **493 teste** (485 → +8; 4 ignorate), build no_std | PASS (SIMULARE) |
+| Pe RTX 3070 Ti | `--i9 c133` | NOT TESTED (fereastra cu Adrian) |
+
+Interfața publică: doar adăugări (`user_space::{open_work_channel_c133, C133Report, C133Try, C133Variant, C133Stage, journal_rows_c133, C133_A_BUFFERS,
+C133_B_BUFFERS, C133_GLOBAL_VAS}`, `gpu_sim::fake_rm::{PromoteRule, FakeRm::promote_rule}`). `gpu lant` fără opțiune și `--i9 c125` trimit exact ce trimiteau.
+**Cât de sigur:** mediu — cam 50–60 % că I9 trece cu `c133` (A acoperă ipotezele (a) + (d), B adaugă (c) + PM; ipoteza (b), TSG / spațiul extern, nu e atinsă).
+
+**Următorul pas:** (1) OS-ul leagă commit-ul acestei sesiuni și adaugă `gpu lant --i9 c133` (nota din `integration/`); (2) **Adrian, în fereastra pe
+workstation:** stick nou + `github.token` → pornire la rece → `gpu lant --i9 c133` → DA → `trimite`; (3) noi, după jurnal (`os-303_ANALIZA_I9.md` §6):
+A sau B trece → **I10 (add64)**; ambele `0x57` → canal ca nouveau (fără TSG), cu „da” nou. Separat: DA/NU pentru pasul 3 pe laptop.
+**Regula 8:** 107 are pas — oprirea din sesiunea 106 e ridicată.
+
+---
 ## Sesiunea 106 — 17 noiembrie 2026, ~13:25–13:40 (ora României), în cloud, FĂRĂ placă — **OPRIT: necesită analiza lui Adrian** (regula 8: sesiunile 104, 105 și 106 fără niciun pas)
 
 Pornită de programare. În hub, de la sesiunea 105 (07:35): Kronos (stare), OS-ul „nimic nou; OPRIT (os-303)” (08:45, 11:45) și **C-132** (Kronos: S124 pe placă doar după testul lui Adrian cu `os-303`, care vine după S119 — nu e comandă pentru noi, dar confirmă ordinea: întâi S119, apoi fereastra noastră).
