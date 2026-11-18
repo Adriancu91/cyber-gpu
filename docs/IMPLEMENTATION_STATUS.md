@@ -1,5 +1,37 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 112 — 18 noiembrie 2026, ~12:30–15:00 (ora României), în cloud, FĂRĂ placă — jurnalul `os-305` analizat (**I9–I13 au trecut pe placă**; I14 = alt simbol); **C-139 făcut în SIMULARE**: reparația, scara și diagnosticul din jurnal
+
+Pornită de Adrian (comanda C-139, ~12:30). „OPRIT” din sesiunea 111 s-a ridicat singur: jurnal nou în `rezultate/` + comandă nouă. Date noi: `os-305`
+(18 nov, workstation, `gpu lant --i9 c135`, cyber-gpu `f732365`): I9 TRECE (varianta N), apoi **primele calcule pe placă**: `i10-add64`,
+`i10-cost-lansare`, `i11-copiere`, `i12-q8-matvec`, `i13-strat` — toate ok; `i14-simbol`: **ESEC**, „argmax diferit de vectorii lui Kronos”.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Analiza (C-139 pasul 1) | `docs/os-305_ANALIZA_I14.md`. Din jurnal + codul OS de la `os-305`: a căzut **primul simbol** al primului text (65, poziția 0); toate cele 36 de lansări s-au terminat; toate logit-urile citite din RAM erau finite; argmax-ul față de `vectori.json` e verificat **înaintea** judecății față de procesor, deci jurnalul nu are nicio cifră a plăcii. **Nu e rotunjire:** marja top1–top2 e 0,2849 la poziția căzută și cel puțin 0,0281 la toate cele 29 de poziții (toleranța: 1e-3). Diferențele I13 → I14, punct cu punct (lista din C-139). Ipoteze: **I1 date vechi citite în aceeași trimitere ~55 %** (I14 e primul pas care recitește o adresă rescrisă; golim cache-urile o singură dată pe trimitere; documentația PTX și tinygrad cer golirea între lansări dependente), I2 programul `embed` ~15 %, I3 o formă mică nerulată ~10 %, I4 copierea în RAM ~5 %, altceva ~15 % | DEDUS / IPOTEZĂ (nimic măsurat) |
+| Reparația (pasul 3) | `transfer::encode_sequence_fresh`: aceeași secvență + `INVALIDATE_SHADER_CACHES_NO_WFI` înaintea **fiecărei** lansări (aceeași metodă și valoare pe care placa le-a primit deja; niciun registru nou). Rezerve: o trimitere pe strat (regimul I13), embedding-ul scris de driver, logit-urile citite din VRAM — ultimele două sunt **ocoliri**: textele rulează, pasul rămâne ESEC | PASS (SIMULARE) |
+| Diagnosticul (pasul 2) | modul nou `nvidia_ga104::kronos_diag`: `ladder` (primul simbol ca la `os-305`, apoi cu reparația, apoi rezervele și prefixele — alege felul textelor), `send_token`, `explain` / `locate` (la un simbol de text care nu trece). După fiecare probă memoria e citită înapoi și fiecare lansare e judecată față de model, față de **intrările plăcii** și față de **valorile vechi** ale intrărilor. Rânduri `i14d …` în jurnal: poziția, argmax placă / vectori / procesor, primele 8 logit-uri ale plăcii și ale procesorului, abaterea maximă, etapa. Citite cu `verifica_jurnal_lant` și `analiza_i14` | PASS (SIMULARE) |
+| Modelul ipotezei | `gpu_sim::cmdproc::CommandProcessor::model_stale_reads` (oprit implicit): cu el, I11, I12 și I13 trec, iar I14 trimis ca la `os-305` cade cu logit-uri finite și alt argmax (modelul de control real: 12536 în loc de 10337) — tabloul plăcii; reparația dă exact vectorii lui Kronos pe cele 3 texte | PASS (SIMULARE; ipoteză, nu măsurătoare) |
+| Documente | `docs/os-305_ANALIZA_I14.md` (§9: ce înseamnă fiecare rezultat al testului următor); nota pentru OS `integration/cyber-universe/C-139_i14-diagnostic-si-reparatie.md`; TEST_MATRIX T132; PROVENANCE; COMPATIBILITATE_FIRMWARE (invalidarea cache-urilor, câmpurile QMD) | — |
+| Verificări | `tools/check.sh` (Rust 1.97.0): format, clippy `-D warnings`, **529 teste** (507 → +22; 6 ignorate, 4 → +2 — cele cu vectorii din hubul privat, trec local), build no_std; testele diagnosticului rulate și în build de depanare; **CI VERDE pe `265035e`** (rularea 44302184027) | PASS (SIMULARE) |
+| Pe RTX 3070 Ti | scara + reparația la `i14-simbol` | NOT TESTED (fereastra cu Adrian, după `os-306`) |
+
+Interfața publică: doar adăugări (`transfer::{encode_sequence_fresh, sequence_words_fresh}`; modulul `kronos_diag`: `SeqMode`, `EmbedBy`, `Way`,
+`TokenIo`, `submissions`, `encode`, `words`, `push_bytes`, `driver_embedding`, `send_token`, `LogitReport`, `logit_report`, `StageCheck`, `Stale`,
+`Verdict`, `Probe`, `ProbeCtx`, `Board`, `read_board`, `examine`, `probe`, `Explained`, `explain`, `Ladder`, `ladder`, `locate`, `rows`,
+`ParsedProbe`, `ParsedDiag`, `parse_journal`; `kronos_layer::copy_launch`; `gpu_compute::layer::{LayerTrace, trace_gpu, attention_gpu}`,
+`gpu_compute::model::{TokenTrace, trace_gpu}`; `gpu_sim::cmdproc::CommandProcessor::{model_stale_reads, stale_bytes_served}`). Nimic redenumit sau
+șters; OS-ul fixat pe `f732365` compilează neschimbat. `gpu lant` trimite exact ce trimitea până când OS-ul leagă nota C-139.
+**Cât de sigur:** că I14 trece de tot la `os-306` ~50 %; că, dacă nu trece, jurnalul numește etapa greșită >90 % (diagnosticul nu depinde de ipoteză).
+**Ce nu s-a făcut:** câmpurile QMD (`SM_GLOBAL_CACHING_ENABLE`, biții de invalidare) rămân nesetate — le atingem doar dacă placa arată că trebuie.
+
+**Următorul pas:** (1) OS-ul leagă commit-ul acestei sesiuni și nota C-139 → `os-306` (cerut de centrul de comandă); (2) **Adrian, în fereastra pe
+workstation:** stick nou → pornire la rece → `gpu lant --i9 c135` → DA → `trimite`; (3) noi, după jurnal (`os-305_ANALIZA_I14.md` §9): reparația
+trece → I14 e trecut pe placă și urmează #513 (`kronos --gpu`, cu zona de comenzi de 32 KiB); altfel jurnalul spune ce program sau ce fel de trimitere
+e de reparat. Separat: DA/NU pentru pasul 3 pe laptop.
+**Regula 8:** 112 are pas (analiză + cod).
+
+---
 ## Sesiunea 111 — 18 noiembrie 2026, ~07:20–07:35 (ora României), în cloud, FĂRĂ placă — **OPRIT: necesită analiza lui Adrian** (regula 8: sesiunile 109, 110 și 111 fără niciun pas)
 
 Pornită de programare. În hub, de la sesiunea 110 (01:35): doar Kronos (stare) și OS-ul „OPRIT (regula 5), nimic nou (os-305)” (02:45, 05:45).

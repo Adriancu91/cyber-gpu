@@ -1,7 +1,7 @@
 //! C-139 (after os-305: I9–I13 pass on the board, `i14-simbol` fails with "argmax diferit de vectorii lui Kronos"
 //! and nothing else reaches the stick journal) — **where** a token goes wrong, written into the journal.
 //!
-//! Three things, all driven through three small operations the caller implements ([`TokenIo`]: send a list of
+//! Everything is driven through three small operations the caller implements ([`TokenIo`]: send a list of
 //! launches as one submission; read words of GPU memory back; write a few words — plus the journal the rows go in):
 //!
 //! - [`SeqMode`] / [`Way`]: how the launches of one token are sent. `Once` is what os-305 ran (C-83: the shader
@@ -14,12 +14,19 @@
 //!   (`gpu_compute::model::trace_gpu`, the program models), (b) with the launch's model fed with the **board's own
 //!   inputs** (does the output follow from what is in memory?), and (c), when it does not, with the model fed with an
 //!   **older version** of an input (the value the same address held earlier in the token) — the signature of a
-//!   stale read. The first stage outside the tolerance and its kind are the [`Verdict`].
+//!   stale read. The first stage outside the tolerance that proves something, and what it proves, are the
+//!   [`Verdict`].
 //! - [`ladder`]: the first token of a control text in the three modes, then — only if none passes — prefixes of the
 //!   launch list (the embedding alone; if it is the wrong one, the token again with the driver's embedding; then
 //!   each layer with its input still in place), until the stage is named. Its answer is the [`Way`] the texts run in.
+//! - [`send_token`]: one token of a text in the chosen way.
 //! - [`explain`]: after a token of the caller's own run fails, memory as that token left it, judged (nothing sent);
-//!   it also tells when only the copy of the logits into RAM is wrong ([`Explained::vram_pass`]).
+//!   it also tells when only the copy of the logits into RAM is wrong ([`Explained::vram_pass`]). [`locate`]: the
+//!   prefixes at that position, when the error entered in a layer whose vectors are gone.
+//!
+//! A way of SENDING the same launches (`EachLaunch`, `PerLayer`) is a repair. Going AROUND a launch that is wrong on
+//! the board (the driver's embedding, the logits read from VRAM) is not: the texts may run that way for what they
+//! tell, but the caller's step has not passed.
 //!
 //! Everything is journaled ([`Probe::journal`], [`LogitReport::journal`]) with fixed row names ([`rows`]) and read
 //! back from a stick journal by [`parse_journal`].
