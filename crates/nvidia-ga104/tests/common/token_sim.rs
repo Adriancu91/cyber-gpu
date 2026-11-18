@@ -12,7 +12,7 @@ use gpu_sim::cmdproc::{
     copy_b128_on_cpu, embed_on_cpu, gelu_on_cpu, layernorm_on_cpu, q8_matvec_on_cpu, vadd_on_cpu,
 };
 use nvidia_ga104::gsp::golden::{GoldenMemory, Mapping};
-use nvidia_ga104::kronos_diag::{self as kd, EmbedBy, SeqMode, TokenIo, Way};
+use nvidia_ga104::kronos_diag::{self as kd, SeqMode, TokenIo, Way};
 use nvidia_ga104::kronos_layer::{self as kl, Launch, LayerVas, PROGRAMS, Prog, WeightVas};
 use nvidia_ga104::kronos_model::{self as km, ModelVas, OwnedModel};
 use nvidia_ga104::mmu::SysMapping;
@@ -180,32 +180,17 @@ impl<'a> TokenSim<'a> {
         v
     }
 
-    /// Sends `list` (a token's launches, plus whatever the caller appended) in `way`: the embedding written by the
-    /// driver first when the way says so, then the submissions.
-    fn send(&mut self, list: &[Launch], token: usize, pos: usize, way: Way) -> GpuResult<()> {
-        let m = self.m;
-        if way.embed == EmbedBy::Driver {
-            let x = kd::driver_embedding(&m.weights(), token, pos)?;
-            self.write(self.vas.layers[0].x, &x)?;
-        }
-        for r in way.submissions(m.layers.len(), list.len()) {
-            self.submit(&list[r.clone()], r.start, way.mode)?;
-        }
-        Ok(())
-    }
-
-    /// The whole token in `way` (a `SeqMode` = that mode with the program's embedding); the logits read back from
-    /// VRAM.
+    /// The whole token in `way` (a `SeqMode` = that mode with the program's embedding), sent with
+    /// `kronos_diag::send_token`; the logits read back from VRAM.
     pub fn run_token(
         &mut self,
         token: usize,
         pos: usize,
         way: impl Into<Way>,
     ) -> GpuResult<Vec<f32>> {
-        let m = self.m;
-        let list = km::token_launches(&m.shape, m.vocab, m.context, &self.vas, token, pos)?;
-        self.send(&list, token, pos, way.into())?;
-        let got = self.read(&[(self.vas.logits, m.vocab)])?;
+        let (m, vas) = (self.m, self.vas.clone());
+        kd::send_token(self, &m.weights(), &vas, token, pos, way.into(), &[])?;
+        let got = self.read(&[(vas.logits, m.vocab)])?;
         Ok(got[0].iter().map(|&b| f32::from_bits(b)).collect())
     }
 
@@ -217,12 +202,11 @@ impl<'a> TokenSim<'a> {
         pos: usize,
         way: impl Into<Way>,
     ) -> GpuResult<Vec<f32>> {
-        let m = self.m;
+        let (m, vas) = (self.m, self.vas.clone());
         let bytes = (4 * m.vocab as u64).next_multiple_of(16);
-        let mut list = km::token_launches(&m.shape, m.vocab, m.context, &self.vas, token, pos)?;
-        list.push(kl::copy_launch(self.vas.logits, self.host.va, bytes)?);
+        let down = kl::copy_launch(vas.logits, self.host.va, bytes)?;
         sys_write(&mut self.r.sys, &self.host, &vec![0xee; bytes as usize]);
-        self.send(&list, token, pos, way.into())?;
+        kd::send_token(self, &m.weights(), &vas, token, pos, way.into(), &[down])?;
         Ok(self.ram_logits())
     }
 

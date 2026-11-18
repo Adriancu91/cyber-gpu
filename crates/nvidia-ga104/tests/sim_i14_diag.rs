@@ -19,7 +19,9 @@ use gpu_compute::layer::{self, Shape};
 use gpu_compute::model::{self, Caches};
 use gpu_core::diag::Journal;
 use gpu_core::error::{GpuError, GpuResult};
-use gpu_sim::cmdproc::{Launch as SimLaunch, embed_on_cpu, gelu_on_cpu, vadd_on_cpu};
+use gpu_sim::cmdproc::{
+    Launch as SimLaunch, attention_on_cpu, copy_b128_on_cpu, embed_on_cpu, gelu_on_cpu, vadd_on_cpu,
+};
 use nvidia_ga104::kronos_diag::{
     self as kd, EMBED, EmbedBy, FINAL, Ladder, ProbeCtx, SeqMode, Stale, TokenIo, Verdict, Way,
 };
@@ -372,18 +374,28 @@ fn a_wrong_launch_is_named_by_the_prefixes() {
     assert_eq!(
         shape_of(&l),
         [
-            (1, 0, 35, 4),
-            (2, 0, 35, 4),
-            (3, 0, 35, 4),
+            (1, 0, 35, 3),
+            (2, 0, 35, 3),
+            (3, 0, 35, 3),
             (3, 0, 1, 1),
             (3, 0, 16, 3)
         ]
     );
-    // The whole tokens only see that layer 1 started from a wrong x ("inherited").
-    let whole = l.probes[0].first_bad().unwrap();
-    assert_eq!((whole.layer, whole.launch), (1, 0));
-    assert_eq!((whole.local, whole.stale), (None, None));
-    // The prefix sees the launch itself: its output does not follow from its input.
+    // The whole tokens: layer 1 started from a wrong x (LayerNorm 1 only passed it on — its input is no longer in
+    // memory), but the same program is wrong in layer 1 too, and there its input IS in memory: named at once.
+    let whole = &l.probes[0];
+    let first = whole.stages.iter().find(|s| !s.ok).unwrap();
+    assert_eq!((first.layer, first.launch), (1, 0));
+    assert_eq!((first.local, first.stale), (None, None));
+    let named = whole.first_bad().unwrap();
+    assert_eq!(
+        (named.layer, named.launch, named.name()),
+        (1, 12, "gelu"),
+        "{}",
+        whole.summary()
+    );
+    assert!(matches!(named.local, Some((d, false)) if (d - 0.5).abs() < 1e-3));
+    // The prefix sees the first wrong launch itself: its output does not follow from its input.
     let p = l.probes.last().unwrap();
     let bad = p.first_bad().unwrap();
     assert_eq!((bad.layer, bad.launch, bad.name()), (0, 12, "gelu"));
@@ -400,15 +412,51 @@ fn a_wrong_launch_is_named_by_the_prefixes() {
     assert!(text.contains("gelu (stratul 0, lansarea 12)"), "{text}");
     assert!(text.contains("niciun mod nu a trecut"), "{text}");
 
-    // A launch wrong only in the SECOND layer (`fb = f + bfc` there): layer 0's prefix is clean, layer 1's names it.
+    // A launch wrong only in the FIRST layer (`fb = f + bfc` there): after a whole token its vectors are gone
+    // (layer 1 reused the scratch) and layer 1's launches are all right given their inputs — "inherited"; the
+    // prefix of layer 0 names it.
+    let mut s = with_model(&m, Prog::Vadd, vadd_wrong_at_the_marked_bias);
+    WRONG_BIAS.with(|b| b.set(s.vas.layers[0].bfc));
+    let (l, j) = ladder_of(&mut s, &m);
+    assert_eq!(l.chosen, None);
+    assert_eq!(
+        shape_of(&l),
+        [
+            (1, 0, 35, 4),
+            (2, 0, 35, 4),
+            (3, 0, 35, 4),
+            (3, 0, 1, 1),
+            (3, 0, 16, 3)
+        ]
+    );
+    let whole = l.probes[0].first_bad().unwrap();
+    assert_eq!((whole.layer, whole.launch), (1, 0));
+    assert_eq!((whole.local, whole.stale), (None, None));
+    let bad = l.probes.last().unwrap().first_bad().unwrap();
+    assert_eq!((bad.layer, bad.launch, bad.name()), (0, 11, "f + bfc"));
+    let text = kd::parse_journal(&journal_text(&j)).lines().join("\n");
+    assert!(text.contains("EROARE MOSTENITA"), "{text}");
+    assert!(text.contains("f + bfc (stratul 0, lansarea 11)"), "{text}");
+
+    // The same launch wrong only in the SECOND layer: the whole tokens name it (the last layer's vectors are all in
+    // memory); layer 0's prefix is clean, layer 1's names it again.
     let mut s = with_model(&m, Prog::Vadd, vadd_wrong_at_the_marked_bias);
     WRONG_BIAS.with(|b| b.set(s.vas.layers[1].bfc));
     let (l, _) = ladder_of(&mut s, &m);
     assert_eq!(l.chosen, None);
     assert_eq!(
-        shape_of(&l)[3..],
-        [(3, 0, 1, 1), (3, 0, 16, 1), (3, 0, 32, 3)]
+        shape_of(&l),
+        [
+            (1, 0, 35, 3),
+            (2, 0, 35, 3),
+            (3, 0, 35, 3),
+            (3, 0, 1, 1),
+            (3, 0, 16, 1),
+            (3, 0, 32, 3)
+        ]
     );
+    let whole = l.probes[0].first_bad().unwrap();
+    assert_eq!((whole.layer, whole.launch), (1, 11));
     let p = l.probes.last().unwrap();
     let bad = p.first_bad().unwrap();
     assert_eq!((bad.layer, bad.launch, bad.name()), (1, 11, "f + bfc"));
@@ -518,7 +566,7 @@ fn a_wrong_embedding_is_replaced_by_the_drivers() {
     assert_eq!(l.chosen, None);
     assert_eq!(
         shape_of(&l)[3..],
-        [(3, 0, 1, 3), (2, 1, 35, 4), (3, 1, 35, 4), (3, 1, 16, 3)]
+        [(3, 0, 1, 3), (2, 1, 35, 3), (3, 1, 35, 3), (3, 1, 16, 3)]
     );
     let p = l.probes.last().unwrap();
     assert_eq!(p.way.unwrap().embed, EmbedBy::Driver);
@@ -707,6 +755,264 @@ fn a_text_in_the_chosen_mode() {
             stop.line()
         );
     }
+}
+
+// ------------------------------------------------------------------ the step, as the note for the OS describes it
+
+/// Where the step reads a token's logits from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum LogitsFrom {
+    /// The OS's RAM buffer, after the copy down (one more launch).
+    Ram,
+    /// VRAM, through the window (no copy launch).
+    Vram,
+}
+
+/// How `i14-simbol` ends (`integration/cyber-universe/C-139_i14-diagnostic-si-reparatie.md`).
+#[derive(Debug, PartialEq)]
+enum StepEnd {
+    /// Every text passed in this way.
+    Trece(Way),
+    /// The texts pass with the logits read from VRAM: only their copy into RAM is wrong (the step reports ESEC).
+    CopiereGresita(Way),
+    /// Not passing; what and where is in the journal.
+    Esec,
+}
+
+/// One position for `Generation`: the token in the chosen way, the logits from RAM or from VRAM.
+struct StepRunner<'s, 'm> {
+    s: &'s mut TokenSim<'m>,
+    way: Way,
+    from: LogitsFrom,
+}
+
+impl TokenRunner for StepRunner<'_, '_> {
+    fn run_token(&mut self, token: usize, pos: usize) -> GpuResult<TokenOutput> {
+        let logits = match self.from {
+            LogitsFrom::Ram => self.s.run_token_ram(token, pos, self.way)?,
+            LogitsFrom::Vram => self.s.run_token(token, pos, self.way)?,
+        };
+        let t = 1000 * (self.s.submissions.len() as u64 + 1);
+        Ok(TokenOutput {
+            logits,
+            start_ns: t,
+            end_ns: t + 500,
+            busy_ns: 400,
+        })
+    }
+}
+
+/// The whole step as the note describes it: (1) the ladder on the first token of the first text; (2) the texts in
+/// the chosen way, every position judged against the CPU engine; (3) at the first position that does not pass,
+/// memory as that token left it is explained in the journal — if only the copy into RAM is wrong the text starts
+/// again with the logits read from VRAM, if the error was inherited the launch is located.
+fn step(s: &mut TokenSim<'_>, m: &OwnedModel, texts: &[&[usize]], j: &mut Journal) -> StepEnd {
+    let w = m.weights();
+    let vas = s.vas.clone();
+    let (layers, e) = (m.layers.len(), m.shape.e);
+    // 1. The ladder.
+    let tok = texts[0][0];
+    let cpu = model::step_cpu(&w, &mut Caches::new(layers, e), tok, 0).unwrap();
+    let prev = Caches::new(layers, e);
+    let ctx = ProbeCtx {
+        w: &w,
+        vas: &vas,
+        prev: &prev,
+        token: tok,
+        pos: 0,
+        cpu_logits: &cpu,
+        want: model::argmax(&cpu),
+    };
+    let Some(way) = kd::ladder(s, &ctx, j).chosen else {
+        return StepEnd::Esec;
+    };
+    // 2. The texts.
+    let mut from = LogitsFrom::Ram;
+    for t in texts {
+        loop {
+            let mut check = Cpu {
+                w: m.weights(),
+                c: Caches::new(layers, e),
+            };
+            let mut g = Generation::new(GenPlan::new(t, 3, m.vocab, m.context).unwrap());
+            let stop = g
+                .run(&mut StepRunner { s, way, from }, Some(&mut check))
+                .clone();
+            let pos = match stop {
+                Stop::Gata => break,
+                Stop::NuTrece { pos, .. } | Stop::LogitiNefiniti { pos } => pos,
+                _ => return StepEnd::Esec,
+            };
+            // 3. What that token left in memory. The CPU engine's caches hold the rows of the earlier positions
+            //    (the row of `pos` is rewritten with the same values by asking again).
+            let tok = g.seq[pos];
+            let cpu = check.cpu_logits(tok, pos).unwrap();
+            let ctx = ProbeCtx {
+                w: &w,
+                vas: &vas,
+                prev: &check.c,
+                token: tok,
+                pos,
+                cpu_logits: &cpu,
+                want: None,
+            };
+            let read = match from {
+                LogitsFrom::Ram => s.ram_logits(),
+                LogitsFrom::Vram => {
+                    let got = s.read(&[(vas.logits, m.vocab)]).unwrap();
+                    got[0].iter().map(|&b| f32::from_bits(b)).collect()
+                }
+            };
+            let ex = kd::explain(s, &ctx, &read, j);
+            if ex.vram_pass && from == LogitsFrom::Ram {
+                from = LogitsFrom::Vram;
+                continue;
+            }
+            if matches!(ex.probe.verdict, Verdict::Mostenit(_)) {
+                kd::locate(s, &ctx, way.embed, j);
+            }
+            return StepEnd::Esec;
+        }
+    }
+    match from {
+        LogitsFrom::Ram => StepEnd::Trece(way),
+        LogitsFrom::Vram => StepEnd::CopiereGresita(way),
+    }
+}
+
+thread_local! {
+    /// The VA the marked wrong programs below look for (a cache of one layer, or the RAM buffer of the logits).
+    static MARK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The copy program, except that nothing reaches the marked destination (the OS's RAM buffer).
+fn copy_not_into_the_marked_buffer(l: &mut SimLaunch<'_>) -> GpuResult<()> {
+    if l.mem.read_u64(l.cbuf0 + 0x30)? == MARK.with(|m| m.get()) {
+        return Ok(());
+    }
+    copy_b128_on_cpu(l)
+}
+
+/// The attention, wrong in one element from the second position on, where its key cache is the marked one (one
+/// layer): the first token of a text passes, a later one does not.
+fn attention_wrong_later_at_the_marked_cache(l: &mut SimLaunch<'_>) -> GpuResult<()> {
+    attention_on_cpu(l)?;
+    let later = l.mem.read_u32(l.cbuf0 + 0x48)? > 1;
+    if later && l.mem.read_u64(l.cbuf0 + 0x30)? == MARK.with(|m| m.get()) {
+        let o = l.mem.read_u64(l.cbuf0 + 0x40)?;
+        let v = f32::from_bits(l.mem.read_u32(o + 16)?);
+        l.mem.write_u32(o + 16, (v + 0.5).to_bits());
+    }
+    Ok(())
+}
+
+/// The step from its first submission to its verdict, on a healthy model, under the hypothesis and with each kind
+/// of fault the diagnosis tells apart.
+#[test]
+fn the_step_as_the_note_describes_it() {
+    let m = small();
+    let texts: [&[usize]; 2] = [&[TOKEN, 17, 300], &[9, 400]];
+    // 2 texts: 3 + 2 prompt positions and 3 generated tokens each = (3 + 2) + (2 + 2) positions.
+    let positions = 9;
+
+    // Healthy memory and under the hypothesis: the repair is chosen, every text passes, nothing is explained.
+    for line in [0u64, 4, 128] {
+        let mut s = TokenSim::new(&m, line);
+        let mut j = Journal::new(8192);
+        assert_eq!(
+            step(&mut s, &m, &texts, &mut j),
+            StepEnd::Trece(Way::REPAIR),
+            "linie {line}"
+        );
+        // The ladder (control + repair, 35 launches each), then 36 launches per position.
+        assert_eq!(s.submissions.len(), 2 + positions, "linie {line}");
+        assert!(s.submissions[2..].iter().all(|&n| n == 36));
+        let d = kd::parse_journal(&journal_text(&j));
+        assert_eq!(d.probes.len(), 2, "doar scara");
+        assert_eq!(d.probes[0].verdict, if line == 0 { 1 } else { 2 });
+    }
+
+    // The copy into RAM never arrives: the ladder passes (it reads VRAM), the first position read from RAM does
+    // not; the explanation tells the two apart and the texts go on with the logits from VRAM.
+    let mut s = with_model(&m, Prog::Copy, copy_not_into_the_marked_buffer);
+    MARK.with(|k| k.set(s.host.va));
+    let mut j = Journal::new(8192);
+    assert_eq!(
+        step(&mut s, &m, &texts, &mut j),
+        StepEnd::CopiereGresita(Way::REPAIR)
+    );
+    // Ladder, the one position read from RAM, then every position again without the copy launch.
+    assert_eq!(s.submissions.len(), 2 + 1 + positions);
+    assert_eq!(s.submissions[2], 36);
+    assert!(s.submissions[3..].iter().all(|&n| n == 35));
+    let d = kd::parse_journal(&journal_text(&j));
+    assert_eq!(d.probes.len(), 3);
+    let ex = &d.probes[2];
+    assert_eq!((ex.mode, ex.verdict), (0, 6));
+    assert_eq!((ex.ram_diff, ex.fill), (Some(512), Some(512)));
+    assert_eq!(ex.argmax_board, Some(0), "umplutura: argmax 0");
+    let text = d.lines().join("\n");
+    assert!(
+        text.contains("etapele sunt bune, dar logit-urile citite (din RAM) nu trec"),
+        "{text}"
+    );
+
+    // The program `embed` wrong: the texts run with the driver's embedding.
+    let mut s = with_model(&m, Prog::Embed, embed_wrong);
+    let mut j = Journal::new(8192);
+    assert_eq!(
+        step(&mut s, &m, &texts, &mut j),
+        StepEnd::Trece(Way::REPAIR.with_driver_embedding())
+    );
+    assert!(s.submissions[7..].iter().all(|&n| n == 35), "36 fara embed");
+
+    // A launch wrong at every position: the ladder names it and no text is sent.
+    let mut s = with_model(&m, Prog::Gelu, gelu_wrong);
+    let mut j = Journal::new(8192);
+    assert_eq!(step(&mut s, &m, &texts, &mut j), StepEnd::Esec);
+    assert_eq!(s.submissions, [35, 35, 17, 16, 2, 1, 16]);
+
+    // A launch wrong only from the second position on, in the last layer: the ladder passes, the text stops at
+    // position 1 and the explanation names the launch (its inputs are still in memory).
+    let mut s = with_model(
+        &m,
+        Prog::Attention,
+        attention_wrong_later_at_the_marked_cache,
+    );
+    MARK.with(|k| k.set(s.vas.layers[1].kc));
+    let mut j = Journal::new(8192);
+    assert_eq!(step(&mut s, &m, &texts, &mut j), StepEnd::Esec);
+    assert_eq!(s.submissions, [35, 35, 36, 36], "nimic trimis dupa esec");
+    let d = kd::parse_journal(&journal_text(&j));
+    let ex = d.probes.last().unwrap();
+    assert_eq!((ex.mode, ex.verdict, ex.pos), (0, 3, Some(1)));
+    let text = d.lines().join("\n");
+    assert!(text.contains("atentie (stratul 1, lansarea 5)"), "{text}");
+    assert!(text.contains("NU urmeaza din ele"), "{text}");
+
+    // The same in a layer whose vectors are gone after the whole token (3 layers, the middle one): the explanation
+    // can only say "inherited"; the prefixes at that position name the launch.
+    let m3 = km::test_model(m.shape, 3, 512, 32, 9).unwrap();
+    let mut s = with_model(
+        &m3,
+        Prog::Attention,
+        attention_wrong_later_at_the_marked_cache,
+    );
+    MARK.with(|k| k.set(s.vas.layers[1].kc));
+    let mut j = Journal::new(8192);
+    assert_eq!(step(&mut s, &m3, &texts, &mut j), StepEnd::Esec);
+    // Ladder (51 + 51), two positions (52 each), then the prefixes: the embedding, layer 0, layers 0 + 1.
+    assert_eq!(s.submissions, [51, 51, 52, 52, 1, 16, 17, 15]);
+    let d = kd::parse_journal(&journal_text(&j));
+    let v: Vec<(u32, u32, u32)> = d.probes[2..]
+        .iter()
+        .map(|p| (p.mode, p.launches, p.verdict))
+        .collect();
+    assert_eq!(v, [(0, 51, 4), (3, 1, 1), (3, 16, 1), (3, 32, 3)]);
+    assert!(d.probes[3..].iter().all(|p| p.pos == Some(1)));
+    let text = d.lines().join("\n");
+    assert!(text.contains("EROARE MOSTENITA"), "{text}");
+    assert!(text.contains("atentie (stratul 1, lansarea 5)"), "{text}");
 }
 
 /// A later position (the caches hold earlier rows): the diagnosis of a whole token and of a prefix agree with the

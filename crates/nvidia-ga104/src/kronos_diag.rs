@@ -244,6 +244,45 @@ pub trait TokenIo {
     fn write(&mut self, va: u64, words: &[u32]) -> GpuResult<()>;
 }
 
+/// Sends `list` (the first launches of a token's list, slots = their indices) in `way`: the embedding written by
+/// the driver first, if the way says so, then the way's submissions.
+fn send<I: TokenIo + ?Sized>(
+    io: &mut I,
+    w: &ModelWeights<'_>,
+    vas: &ModelVas,
+    list: &[Launch],
+    token: usize,
+    pos: usize,
+    way: Way,
+) -> GpuResult<()> {
+    vas.check()?;
+    if way.embed == EmbedBy::Driver {
+        io.write(vas.layers[0].x, &driver_embedding(w, token, pos)?)?;
+    }
+    for r in way.submissions(w.layers.len(), list.len()) {
+        io.submit(&list[r.clone()], r.start, way.mode)?;
+    }
+    Ok(())
+}
+
+/// One whole token in `way`, as the texts run it once [`ladder`] chose the way: the model's launches
+/// ([`km::token_launches`]) followed by `extra` (e.g. the copy of the logits down into RAM,
+/// `kronos_layer::copy_launch`), the driver's embedding written first when the way says so, split into the way's
+/// submissions. The launch area needs `launches_per_token(layers) + extra.len()` slots.
+pub fn send_token<I: TokenIo + ?Sized>(
+    io: &mut I,
+    w: &ModelWeights<'_>,
+    vas: &ModelVas,
+    token: usize,
+    pos: usize,
+    way: Way,
+    extra: &[Launch],
+) -> GpuResult<()> {
+    let mut list = km::token_launches(&w.shape, w.vocab, w.context, vas, token, pos)?;
+    list.extend_from_slice(extra);
+    send(io, w, vas, &list, token, pos, way)
+}
+
 // ------------------------------------------------------------------------------------------------ the logits
 
 /// What the logits of one position say, next to the CPU engine's (and Kronos's vectors, for a control text).
@@ -560,14 +599,15 @@ pub enum Verdict {
     /// A whole token: the logits pass against the CPU engine and the greedy token is the wanted one (what the step
     /// itself asks of a token). A prefix: every stage in memory is inside the stage tolerance.
     Curat,
-    /// The first stage outside the tolerance (`stages[i]`) is what its launch gives with an **older** value of an
-    /// input: the launch read stale data.
+    /// `stages[i]` — the first stage outside the tolerance that proves something — is what its launch gives with an
+    /// **older** value of an input: the launch read stale data.
     DateVechi(usize),
-    /// The first stage outside the tolerance does not follow from the inputs now in memory and matches no older
-    /// value: the launch itself (program, arguments, shape) is wrong on the board.
+    /// `stages[i]` — the first stage outside the tolerance that proves something — does not follow from the inputs
+    /// now in memory and matches no older value: the launch itself (program, arguments, shape) is wrong on the board.
     LansareGresita(usize),
-    /// The first stage outside the tolerance follows from its inputs (or they are no longer in memory): the error
-    /// entered before it, in a launch this run no longer shows.
+    /// The first stage outside the tolerance (`stages[i]`) follows from its inputs (or they are no longer in memory)
+    /// and no later stage proves anything: the error entered before it, in a launch this run no longer shows
+    /// ([`locate`] finds it).
     Mostenit(usize),
     /// Every stage in memory is fine but the logits do not pass (only for logits the caller read elsewhere, e.g.
     /// from RAM after the copy down).
@@ -1174,17 +1214,21 @@ pub fn examine(c: &ProbeCtx<'_>, way: Option<Way>, done: usize, b: &Board) -> Pr
     let verdict = match (&logits, first_bad) {
         (Some(l), _) if l.passes => Verdict::Curat,
         (_, Some(i)) => {
-            let s = &stages[i];
-            if s.stale.is_some() {
-                Verdict::DateVechi(i)
-            } else if matches!(s.local, Some((_, false))) {
-                Verdict::LansareGresita(i)
-            } else if let Some(k) = stages.iter().position(|s| s.stale.is_some()) {
-                // The first stage outside only inherited its error, but a later one proves a stale read.
-                Verdict::DateVechi(k)
-            } else {
-                Verdict::Mostenit(i)
-            }
+            // The first stage outside the tolerance that PROVES something: its output is what an older input gives
+            // (a stale read), or it does not follow from the inputs now in memory (the launch itself). The stages
+            // outside before it only passed a wrong input on (or their inputs are no longer in memory).
+            let proven = stages.iter().enumerate().skip(i).find_map(|(k, s)| {
+                if s.ok {
+                    None
+                } else if s.stale.is_some() {
+                    Some(Verdict::DateVechi(k))
+                } else if matches!(s.local, Some((_, false))) {
+                    Some(Verdict::LansareGresita(k))
+                } else {
+                    None
+                }
+            });
+            proven.unwrap_or(Verdict::Mostenit(i))
         }
         (Some(_), None) => Verdict::DoarLogiti,
         (None, None) => Verdict::Curat,
@@ -1214,7 +1258,6 @@ pub fn probe<I: TokenIo + ?Sized>(io: &mut I, c: &ProbeCtx<'_>, way: Way, done: 
         ram_diff: None,
         verdict: Verdict::Neterminat(err),
     };
-    let layers = c.w.layers.len();
     let list = match km::token_launches(&c.w.shape, c.w.vocab, c.w.context, c.vas, c.token, c.pos) {
         Ok(l) => l,
         Err(err) => return fail(err),
@@ -1228,17 +1271,8 @@ pub fn probe<I: TokenIo + ?Sized>(io: &mut I, c: &ProbeCtx<'_>, way: Way, done: 
             "diagnostic: dupa embedding-ul scris de driver trebuie o lansare",
         ));
     }
-    if way.embed == EmbedBy::Driver {
-        let written =
-            driver_embedding(c.w, c.token, c.pos).and_then(|x| io.write(c.vas.layers[0].x, &x));
-        if let Err(err) = written {
-            return fail(err);
-        }
-    }
-    for r in way.submissions(layers, done) {
-        if let Err(err) = io.submit(&list[r.clone()], r.start, way.mode) {
-            return fail(err);
-        }
+    if let Err(err) = send(io, c.w, c.vas, &list[..done], c.token, c.pos, way) {
+        return fail(err);
     }
     match read_board(io, c, done) {
         Ok(b) => examine(c, Some(way), done, &b),
@@ -1388,6 +1422,45 @@ fn first_clean<I: TokenIo + ?Sized>(
     Ok(None)
 }
 
+/// Every layer up to its 15th launch, each prefix sent from the token's start in `way` (its input still in x, so
+/// each of its launches is judged against its own inputs), until one is not clean.
+fn layer_prefixes<I: TokenIo + ?Sized>(
+    io: &mut I,
+    c: &ProbeCtx<'_>,
+    j: &mut Journal,
+    probes: &mut Vec<Probe>,
+    way: Way,
+) {
+    for l in 0..c.w.layers.len() {
+        let done = 1 + LAUNCHES_PER_TOKEN * l + LAUNCHES_PER_TOKEN - 1;
+        if !matches!(run(io, c, j, probes, way, done), Ran::Clean) {
+            break;
+        }
+    }
+}
+
+/// Which launch is wrong at this (token, position), when a whole token of a text did not pass and [`explain`] only
+/// says the error was inherited (it entered in a layer whose vectors were overwritten since): prefixes of the
+/// token's list, one submission per layer — the embedding alone (when the program writes it), then every layer up
+/// to its 15th launch — until one is not clean; that probe names the launch. Every probe is journaled. The cache
+/// rows of the earlier positions must still be in memory as those positions left them.
+pub fn locate<I: TokenIo + ?Sized>(
+    io: &mut I,
+    c: &ProbeCtx<'_>,
+    embed: EmbedBy,
+    j: &mut Journal,
+) -> Vec<Probe> {
+    let way = Way {
+        mode: SeqMode::PerLayer,
+        embed,
+    };
+    let mut probes = Vec::new();
+    if embed == EmbedBy::Driver || matches!(run(io, c, j, &mut probes, way, 1), Ran::Clean) {
+        layer_prefixes(io, c, j, &mut probes, way);
+    }
+    probes
+}
+
 /// The first token of a control text, sent several ways, before the texts run:
 /// 1. [`Way::OS_305`] — exactly what failed in os-305 (a **control**: it tells whether that failure is still there
 ///    and at which stage; it does not decide anything);
@@ -1400,8 +1473,7 @@ fn first_clean<I: TokenIo + ?Sized>(
 ///
 /// A submission that does not finish stops everything at once. Every probe is journaled as it ends, then the choice.
 pub fn ladder<I: TokenIo + ?Sized>(io: &mut I, c: &ProbeCtx<'_>, j: &mut Journal) -> Ladder {
-    let layers = c.w.layers.len();
-    let n = km::launches_per_token(layers);
+    let n = km::launches_per_token(c.w.layers.len());
     let mut probes: Vec<Probe> = Vec::new();
     let per_layer = Way::of(SeqMode::PerLayer);
     let chosen = 'all: {
@@ -1430,12 +1502,7 @@ pub fn ladder<I: TokenIo + ?Sized>(io: &mut I, c: &ProbeCtx<'_>, j: &mut Journal
             }
             Ran::Clean | Ran::Bad { .. } => {}
         }
-        for l in 0..layers {
-            let done = 1 + LAUNCHES_PER_TOKEN * l + LAUNCHES_PER_TOKEN - 1;
-            if !matches!(run(io, c, j, &mut probes, prefix_way, done), Ran::Clean) {
-                break;
-            }
-        }
+        layer_prefixes(io, c, j, &mut probes, prefix_way);
         None
     };
     val(j, rows::CHOSEN, chosen.map_or(0, |w| w.mode as u32));
