@@ -1,5 +1,23 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 114 — 19 noiembrie 2026, ~01:25–01:40 (ora României), în cloud, FĂRĂ placă — **oprire scurtă: nimic de făcut fără placă**
+
+Pornită de programare. În hub, de la sesiunea 113: OS-ul a scos **`os-307`** (C-141 + C-143, legat de `3a23dc0` = vârful nostru), Kronos are placa
+în noaptea asta (C-144, S126). **Nicio comandă nouă pentru cyber-gpu**, **niciun jurnal nou în `rezultate/`** (ultimul: `os-306`). Nu s-a inventat lucru.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Verificări la pornire | `tools/check.sh` (Rust 1.97.0): format, clippy `-D warnings`, 538 teste (6 ignorate), build no_std | PASS (SIMULARE) |
+| CI | vârful `3a23dc0`, rularea 44361418849 | VERDE |
+| Copia C-34 | deja la `3a23dc0` | la zi |
+| Cod / documentație | — | — |
+| Pe RTX 3070 Ti | `kronos --gpu` cu #513 (`os-307`), contoarele `kv`, proba FLR | NOT TESTED (fereastra cu Adrian, după S126) |
+
+**Următorul pas:** neschimbat — **Adrian, în fereastră (după S126):** stick `os-307` + #513 → `gpu lant --i9 c135` → `kronos --gpu` → DA → `trimite`;
+DA/NU pentru proba FLR (`docs/C-142_K513_VITEZA_FLR.md` §4); apoi noi, după jurnal: cifrele `kv`.
+**Regula 8:** 114 fără pas (1 din 3; 112 și 113 au avut pas).
+
+---
 ## Sesiunea 113 — 18 noiembrie 2026, ~19:25–20:00 (ora României), în cloud, FĂRĂ placă — **C-142 făcut în SIMULARE**: forma lui #513 pe canalul simulat, limitele, contoarele de viteză; analiza FLR (trei surse)
 
 Pornită de programare. Date noi de la sesiunea 112: **`os-306` — I14 TRECE pe placa reală** (de două ori, jurnalele 008 și 009: proba 1 „o invalidare” =
