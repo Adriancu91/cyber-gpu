@@ -2,7 +2,7 @@
 //! and nothing else reaches the stick journal) — **where** a token goes wrong, written into the journal.
 //!
 //! Three things, all driven through three small operations the caller implements ([`TokenIo`]: send a list of
-//! launches as one submission; read words of GPU memory back; write a few words):
+//! launches as one submission; read words of GPU memory back; write a few words — plus the journal the rows go in):
 //!
 //! - [`SeqMode`] / [`Way`]: how the launches of one token are sent. `Once` is what os-305 ran (C-83: the shader
 //!   caches invalidated once per submission); `EachLaunch` is the repair (`transfer::encode_sequence_fresh`);
@@ -87,7 +87,8 @@ pub enum EmbedBy {
     /// Launch 0 of the token's list: the program `embed` (the one program I13 never ran on the board).
     Program = 0,
     /// The driver computes it ([`driver_embedding`]: E multiply-adds) and writes it at `x` before the first
-    /// submission, as I13 wrote its x; launch 0 is not sent.
+    /// submission, as I13 wrote its x; launch 0 is not sent. A way AROUND a program that is wrong on the board: the
+    /// rest of the token can still be judged, but a step that needed it has not passed.
     Driver = 1,
 }
 
@@ -242,6 +243,10 @@ pub trait TokenIo {
     /// Writes `words` at GPU VA `va` (VRAM through the window; only used for the embedding written by the driver,
     /// E words at `x`). It may be queued, but must be in memory before the next [`Self::submit`] runs.
     fn write(&mut self, va: u64, words: &[u32]) -> GpuResult<()>;
+
+    /// The journal the rows of the diagnosis go into — the one the caller's own accesses are written in (on the
+    /// board: the stick journal), so a probe's rows follow the accesses of its submissions, in order.
+    fn journal(&mut self) -> &mut Journal;
 }
 
 /// Sends `list` (the first launches of a token's list, slots = their indices) in `way`: the embedding written by
@@ -1295,13 +1300,8 @@ pub struct Explained {
 
 /// After a token of the caller's own run did not pass: memory **as that token left it** is read back and judged
 /// (nothing is sent), next to the logits the caller read (`ram_logits`, e.g. from RAM after the copy down). The
-/// rows go to the journal; the probe is returned for the screen.
-pub fn explain<I: TokenIo + ?Sized>(
-    io: &mut I,
-    c: &ProbeCtx<'_>,
-    ram_logits: &[f32],
-    j: &mut Journal,
-) -> Explained {
+/// rows go to the journal ([`TokenIo::journal`]); the probe is returned for the screen.
+pub fn explain<I: TokenIo + ?Sized>(io: &mut I, c: &ProbeCtx<'_>, ram_logits: &[f32]) -> Explained {
     let n = km::launches_per_token(c.w.layers.len());
     let (mut p, vram) = match read_board(io, c, n) {
         Ok(b) => {
@@ -1338,7 +1338,7 @@ pub fn explain<I: TokenIo + ?Sized>(
         p.verdict = Verdict::DoarLogiti;
     }
     p.logits = Some(ram);
-    p.journal(j);
+    p.journal(io.journal());
     Explained {
         probe: p,
         vram_logits: vram,
@@ -1351,7 +1351,8 @@ pub fn explain<I: TokenIo + ?Sized>(
 pub struct Ladder {
     pub probes: Vec<Probe>,
     /// How the texts should be sent: the first way whose whole token passed (never [`Way::OS_305`], which is only
-    /// the control).
+    /// the control). With `embed == EmbedBy::Driver` the program `embed` is wrong on the board: the texts are worth
+    /// running for what they tell, but the caller's step has not passed.
     pub chosen: Option<Way>,
 }
 
@@ -1383,13 +1384,12 @@ enum Ran {
 fn run<I: TokenIo + ?Sized>(
     io: &mut I,
     c: &ProbeCtx<'_>,
-    j: &mut Journal,
     probes: &mut Vec<Probe>,
     way: Way,
     done: usize,
 ) -> Ran {
     let p = probe(io, c, way, done);
-    p.journal(j);
+    p.journal(io.journal());
     let r = if p.passes() {
         Ran::Clean
     } else if matches!(p.verdict, Verdict::Neterminat(_)) {
@@ -1407,13 +1407,12 @@ fn run<I: TokenIo + ?Sized>(
 fn first_clean<I: TokenIo + ?Sized>(
     io: &mut I,
     c: &ProbeCtx<'_>,
-    j: &mut Journal,
     probes: &mut Vec<Probe>,
     ways: [Way; 2],
 ) -> Result<Option<Way>, ()> {
     let n = km::launches_per_token(c.w.layers.len());
     for way in ways {
-        match run(io, c, j, probes, way, n) {
+        match run(io, c, probes, way, n) {
             Ran::Clean => return Ok(Some(way)),
             Ran::Dead => return Err(()),
             Ran::Bad { .. } => {}
@@ -1427,13 +1426,12 @@ fn first_clean<I: TokenIo + ?Sized>(
 fn layer_prefixes<I: TokenIo + ?Sized>(
     io: &mut I,
     c: &ProbeCtx<'_>,
-    j: &mut Journal,
     probes: &mut Vec<Probe>,
     way: Way,
 ) {
     for l in 0..c.w.layers.len() {
         let done = 1 + LAUNCHES_PER_TOKEN * l + LAUNCHES_PER_TOKEN - 1;
-        if !matches!(run(io, c, j, probes, way, done), Ran::Clean) {
+        if !matches!(run(io, c, probes, way, done), Ran::Clean) {
             break;
         }
     }
@@ -1444,19 +1442,14 @@ fn layer_prefixes<I: TokenIo + ?Sized>(
 /// token's list, one submission per layer — the embedding alone (when the program writes it), then every layer up
 /// to its 15th launch — until one is not clean; that probe names the launch. Every probe is journaled. The cache
 /// rows of the earlier positions must still be in memory as those positions left them.
-pub fn locate<I: TokenIo + ?Sized>(
-    io: &mut I,
-    c: &ProbeCtx<'_>,
-    embed: EmbedBy,
-    j: &mut Journal,
-) -> Vec<Probe> {
+pub fn locate<I: TokenIo + ?Sized>(io: &mut I, c: &ProbeCtx<'_>, embed: EmbedBy) -> Vec<Probe> {
     let way = Way {
         mode: SeqMode::PerLayer,
         embed,
     };
     let mut probes = Vec::new();
-    if embed == EmbedBy::Driver || matches!(run(io, c, j, &mut probes, way, 1), Ran::Clean) {
-        layer_prefixes(io, c, j, &mut probes, way);
+    if embed == EmbedBy::Driver || matches!(run(io, c, &mut probes, way, 1), Ran::Clean) {
+        layer_prefixes(io, c, &mut probes, way);
     }
     probes
 }
@@ -1472,29 +1465,29 @@ pub fn locate<I: TokenIo + ?Sized>(
 ///    names the launch.
 ///
 /// A submission that does not finish stops everything at once. Every probe is journaled as it ends, then the choice.
-pub fn ladder<I: TokenIo + ?Sized>(io: &mut I, c: &ProbeCtx<'_>, j: &mut Journal) -> Ladder {
+pub fn ladder<I: TokenIo + ?Sized>(io: &mut I, c: &ProbeCtx<'_>) -> Ladder {
     let n = km::launches_per_token(c.w.layers.len());
     let mut probes: Vec<Probe> = Vec::new();
     let per_layer = Way::of(SeqMode::PerLayer);
     let chosen = 'all: {
-        if matches!(run(io, c, j, &mut probes, Way::OS_305, n), Ran::Dead) {
+        if matches!(run(io, c, &mut probes, Way::OS_305, n), Ran::Dead) {
             break 'all None;
         }
-        match first_clean(io, c, j, &mut probes, [Way::REPAIR, per_layer]) {
+        match first_clean(io, c, &mut probes, [Way::REPAIR, per_layer]) {
             Ok(None) => {}
             Ok(way) => break 'all way,
             Err(()) => break 'all None,
         }
         // Nothing passes: which launch? First the embedding alone.
         let mut prefix_way = per_layer;
-        match run(io, c, j, &mut probes, per_layer, 1) {
+        match run(io, c, &mut probes, per_layer, 1) {
             Ran::Dead => break 'all None,
             Ran::Bad { embedding: true } => {
                 let ways = [
                     Way::REPAIR.with_driver_embedding(),
                     per_layer.with_driver_embedding(),
                 ];
-                match first_clean(io, c, j, &mut probes, ways) {
+                match first_clean(io, c, &mut probes, ways) {
                     Ok(None) => prefix_way = per_layer.with_driver_embedding(),
                     Ok(way) => break 'all way,
                     Err(()) => break 'all None,
@@ -1502,9 +1495,10 @@ pub fn ladder<I: TokenIo + ?Sized>(io: &mut I, c: &ProbeCtx<'_>, j: &mut Journal
             }
             Ran::Clean | Ran::Bad { .. } => {}
         }
-        layer_prefixes(io, c, j, &mut probes, prefix_way);
+        layer_prefixes(io, c, &mut probes, prefix_way);
         None
     };
+    let j = io.journal();
     val(j, rows::CHOSEN, chosen.map_or(0, |w| w.mode as u32));
     val(j, rows::CHOSEN_EMBED, chosen.map_or(0, |w| w.embed as u32));
     Ladder { probes, chosen }

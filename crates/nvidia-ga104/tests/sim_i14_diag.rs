@@ -17,7 +17,6 @@ use common::put_bytes;
 use common::token_sim::TokenSim;
 use gpu_compute::layer::{self, Shape};
 use gpu_compute::model::{self, Caches};
-use gpu_core::diag::Journal;
 use gpu_core::error::{GpuError, GpuResult};
 use gpu_sim::cmdproc::{
     Launch as SimLaunch, attention_on_cpu, copy_b128_on_cpu, embed_on_cpu, gelu_on_cpu, vadd_on_cpu,
@@ -56,7 +55,8 @@ fn first_token(m: &OwnedModel) -> (Vec<f32>, Caches) {
     (cpu, Caches::new(m.layers.len(), m.shape.e))
 }
 
-fn ladder_of(s: &mut TokenSim<'_>, m: &OwnedModel) -> (Ladder, Journal) {
+/// The ladder on the first token, and the rows it wrote, as the OS prints them on the stick.
+fn ladder_of(s: &mut TokenSim<'_>, m: &OwnedModel) -> (Ladder, String) {
     let (cpu, prev) = first_token(m);
     let w = m.weights();
     let vas = s.vas.clone();
@@ -69,16 +69,8 @@ fn ladder_of(s: &mut TokenSim<'_>, m: &OwnedModel) -> (Ladder, Journal) {
         cpu_logits: &cpu,
         want: model::argmax(&cpu),
     };
-    let mut j = Journal::new(4096);
-    let l = kd::ladder(s, &ctx, &mut j);
-    (l, j)
-}
-
-fn journal_text(j: &Journal) -> String {
-    j.events()
-        .enumerate()
-        .map(|(i, e)| format!("[  126.{i:06}] gpu: {e}\n"))
-        .collect()
+    let l = kd::ladder(s, &ctx);
+    (l, s.take_journal_text())
 }
 
 /// The picture of the board under the hypothesis: one layer per submission passes (I13), a whole token in one
@@ -206,7 +198,7 @@ fn the_ladder_confirms_stale_data_and_picks_the_repair() {
     assert_eq!(l.probes[1].stages.len(), 20);
 
     // The journal says the same when read back from the stick.
-    let d = kd::parse_journal(&journal_text(&j));
+    let d = kd::parse_journal(&j);
     assert_eq!((d.chosen, d.chosen_embed), (Some(2), Some(0)));
     assert_eq!(d.probes.len(), 2);
     assert_eq!((d.probes[0].mode, d.probes[0].verdict), (1, 2));
@@ -225,7 +217,7 @@ fn the_ladder_confirms_stale_data_and_picks_the_repair() {
     assert!(text.contains("modul ales pentru texte: invalidare inaintea fiecarei lansari"));
     assert!(!text.contains("scris de driver"), "{text}");
     // No row of the diagnosis looks like a step line or a register access to the chain's journal checker.
-    for line in journal_text(&j).lines() {
+    for line in j.lines() {
         assert_eq!(nvidia_ga104::chain_log::parse_step(line), None, "{line}");
         assert!(
             !matches!(
@@ -295,6 +287,9 @@ impl TokenIo for Deaf<'_> {
     fn write(&mut self, va: u64, words: &[u32]) -> GpuResult<()> {
         self.0.write(va, words)
     }
+    fn journal(&mut self) -> &mut gpu_core::diag::Journal {
+        self.0.journal()
+    }
 }
 
 /// If the invalidate method does not help, one submission per layer (I13's regime) is tried and chosen.
@@ -314,8 +309,7 @@ fn the_ladder_falls_back_to_one_submission_per_layer() {
         cpu_logits: &cpu,
         want: None,
     };
-    let mut j = Journal::new(4096);
-    let l = kd::ladder(&mut io, &ctx, &mut j);
+    let l = kd::ladder(&mut io, &ctx);
     assert_eq!(l.chosen, Some(Way::of(SeqMode::PerLayer)));
     let v: Vec<u32> = l.probes.iter().map(|p| p.verdict.code()).collect();
     assert_eq!(v, [2, 2, 1]);
@@ -405,7 +399,7 @@ fn a_wrong_launch_is_named_by_the_prefixes() {
     let at = p.verdict.stage().unwrap();
     assert!(p.stages[..at].iter().all(|s| s.ok));
     assert_eq!(p.stages[0].layer, EMBED);
-    let d = kd::parse_journal(&journal_text(&j));
+    let d = kd::parse_journal(&j);
     assert_eq!((d.chosen, d.chosen_embed), (Some(0), Some(0)));
     let text = d.lines().join("\n");
     assert!(text.contains("LANSARE GRESITA"), "{text}");
@@ -434,7 +428,7 @@ fn a_wrong_launch_is_named_by_the_prefixes() {
     assert_eq!((whole.local, whole.stale), (None, None));
     let bad = l.probes.last().unwrap().first_bad().unwrap();
     assert_eq!((bad.layer, bad.launch, bad.name()), (0, 11, "f + bfc"));
-    let text = kd::parse_journal(&journal_text(&j)).lines().join("\n");
+    let text = kd::parse_journal(&j).lines().join("\n");
     assert!(text.contains("EROARE MOSTENITA"), "{text}");
     assert!(text.contains("f + bfc (stratul 0, lansarea 11)"), "{text}");
 
@@ -522,7 +516,7 @@ fn a_wrong_embedding_is_replaced_by_the_drivers() {
             .unwrap()
             .contains("embedding scris de driver")
     );
-    let d = kd::parse_journal(&journal_text(&j));
+    let d = kd::parse_journal(&j);
     assert_eq!((d.chosen, d.chosen_embed), (Some(2), Some(1)));
     assert_eq!(d.probes[4].embed_by, 1);
     let text = d.lines().join("\n");
@@ -588,7 +582,7 @@ fn a_submission_that_does_not_finish_stops_the_ladder() {
         s.submissions.is_empty(),
         "nimic nu s-a terminat, nimic nou trimis"
     );
-    let d = kd::parse_journal(&journal_text(&j));
+    let d = kd::parse_journal(&j);
     assert_eq!(
         (d.probes.len(), d.probes[0].verdict, d.chosen),
         (1, 5, Some(0))
@@ -615,8 +609,8 @@ fn explaining_a_token_that_already_ran() {
         cpu_logits: &cpu,
         want: model::argmax(&cpu),
     };
-    let mut j = Journal::new(1024);
-    let ex = kd::explain(&mut s, &ctx, &ram, &mut j);
+    let ex = kd::explain(&mut s, &ctx, &ram);
+    let j = s.take_journal_text();
     assert_eq!(s.submissions.len(), before, "nimic trimis");
     assert!(!ex.vram_pass, "logit-urile din VRAM sunt la fel de gresite");
     assert_eq!(ex.vram_logits.as_deref(), Some(&ram[..]));
@@ -628,7 +622,7 @@ fn explaining_a_token_that_already_ran() {
         p.summary()
     );
     assert_eq!(p.ram_diff, Some(0), "copierea in RAM a adus ce era in VRAM");
-    let d = kd::parse_journal(&journal_text(&j));
+    let d = kd::parse_journal(&j);
     assert_eq!((d.probes[0].mode, d.probes[0].verdict), (0, 2));
     assert_eq!(d.probes[0].ram_diff, Some(0));
     assert_eq!(d.probes[0].logits_board.len(), 8);
@@ -640,8 +634,8 @@ fn explaining_a_token_that_already_ran() {
     let fill = vec![f32::from_bits(kd::RAM_FILL); m.vocab];
     let vas = s.vas.clone();
     let ctx = ProbeCtx { vas: &vas, ..ctx };
-    let mut j = Journal::new(1024);
-    let ex = kd::explain(&mut s, &ctx, &fill, &mut j);
+    let ex = kd::explain(&mut s, &ctx, &fill);
+    let j = s.take_journal_text();
     // Only the copy is wrong: the logits in VRAM pass, and the step may go on with them.
     assert!(ex.vram_pass);
     let vram = ex.vram_logits.unwrap();
@@ -652,7 +646,7 @@ fn explaining_a_token_that_already_ran() {
     assert_eq!(p.ram_diff, Some(m.vocab));
     let lg = p.logits.unwrap();
     assert_eq!((lg.fill, lg.board), (m.vocab, Some(0)));
-    let text = kd::parse_journal(&journal_text(&j)).lines().join("\n");
+    let text = kd::parse_journal(&j).lines().join("\n");
     assert!(text.contains("512 ramase cu umplutura"), "{text}");
     assert!(
         text.contains("512 valori diferite de cele din VRAM"),
@@ -771,10 +765,16 @@ enum LogitsFrom {
 /// How `i14-simbol` ends (`integration/cyber-universe/C-139_i14-diagnostic-si-reparatie.md`).
 #[derive(Debug, PartialEq)]
 enum StepEnd {
-    /// Every text passed in this way.
-    Trece(Way),
-    /// The texts pass with the logits read from VRAM: only their copy into RAM is wrong (the step reports ESEC).
-    CopiereGresita(Way),
+    /// Every text passed with every launch on the board, sent in this mode: the step is `ok`.
+    Trece(SeqMode),
+    /// The texts pass only AROUND a launch that is wrong on the board — the program `embed` (the driver wrote the
+    /// embedding) and / or the copy of the logits into RAM (they were read from VRAM): the step reports ESEC with
+    /// that reason; the texts were run to the end only for what they tell.
+    Ocolit {
+        mode: SeqMode,
+        embed_gresit: bool,
+        copiere_gresita: bool,
+    },
     /// Not passing; what and where is in the journal.
     Esec,
 }
@@ -806,7 +806,7 @@ impl TokenRunner for StepRunner<'_, '_> {
 /// the chosen way, every position judged against the CPU engine; (3) at the first position that does not pass,
 /// memory as that token left it is explained in the journal — if only the copy into RAM is wrong the text starts
 /// again with the logits read from VRAM, if the error was inherited the launch is located.
-fn step(s: &mut TokenSim<'_>, m: &OwnedModel, texts: &[&[usize]], j: &mut Journal) -> StepEnd {
+fn step(s: &mut TokenSim<'_>, m: &OwnedModel, texts: &[&[usize]]) -> StepEnd {
     let w = m.weights();
     let vas = s.vas.clone();
     let (layers, e) = (m.layers.len(), m.shape.e);
@@ -823,7 +823,7 @@ fn step(s: &mut TokenSim<'_>, m: &OwnedModel, texts: &[&[usize]], j: &mut Journa
         cpu_logits: &cpu,
         want: model::argmax(&cpu),
     };
-    let Some(way) = kd::ladder(s, &ctx, j).chosen else {
+    let Some(way) = kd::ladder(s, &ctx).chosen else {
         return StepEnd::Esec;
     };
     // 2. The texts.
@@ -863,20 +863,26 @@ fn step(s: &mut TokenSim<'_>, m: &OwnedModel, texts: &[&[usize]], j: &mut Journa
                     got[0].iter().map(|&b| f32::from_bits(b)).collect()
                 }
             };
-            let ex = kd::explain(s, &ctx, &read, j);
+            let ex = kd::explain(s, &ctx, &read);
             if ex.vram_pass && from == LogitsFrom::Ram {
                 from = LogitsFrom::Vram;
                 continue;
             }
             if matches!(ex.probe.verdict, Verdict::Mostenit(_)) {
-                kd::locate(s, &ctx, way.embed, j);
+                kd::locate(s, &ctx, way.embed);
             }
             return StepEnd::Esec;
         }
     }
-    match from {
-        LogitsFrom::Ram => StepEnd::Trece(way),
-        LogitsFrom::Vram => StepEnd::CopiereGresita(way),
+    let (embed_gresit, copiere_gresita) = (way.embed == EmbedBy::Driver, from == LogitsFrom::Vram);
+    if embed_gresit || copiere_gresita {
+        StepEnd::Ocolit {
+            mode: way.mode,
+            embed_gresit,
+            copiere_gresita,
+        }
+    } else {
+        StepEnd::Trece(way.mode)
     }
 }
 
@@ -918,16 +924,15 @@ fn the_step_as_the_note_describes_it() {
     // Healthy memory and under the hypothesis: the repair is chosen, every text passes, nothing is explained.
     for line in [0u64, 4, 128] {
         let mut s = TokenSim::new(&m, line);
-        let mut j = Journal::new(8192);
         assert_eq!(
-            step(&mut s, &m, &texts, &mut j),
-            StepEnd::Trece(Way::REPAIR),
+            step(&mut s, &m, &texts),
+            StepEnd::Trece(SeqMode::EachLaunch),
             "linie {line}"
         );
         // The ladder (control + repair, 35 launches each), then 36 launches per position.
         assert_eq!(s.submissions.len(), 2 + positions, "linie {line}");
         assert!(s.submissions[2..].iter().all(|&n| n == 36));
-        let d = kd::parse_journal(&journal_text(&j));
+        let d = kd::parse_journal(&s.take_journal_text());
         assert_eq!(d.probes.len(), 2, "doar scara");
         assert_eq!(d.probes[0].verdict, if line == 0 { 1 } else { 2 });
     }
@@ -936,16 +941,19 @@ fn the_step_as_the_note_describes_it() {
     // not; the explanation tells the two apart and the texts go on with the logits from VRAM.
     let mut s = with_model(&m, Prog::Copy, copy_not_into_the_marked_buffer);
     MARK.with(|k| k.set(s.host.va));
-    let mut j = Journal::new(8192);
     assert_eq!(
-        step(&mut s, &m, &texts, &mut j),
-        StepEnd::CopiereGresita(Way::REPAIR)
+        step(&mut s, &m, &texts),
+        StepEnd::Ocolit {
+            mode: SeqMode::EachLaunch,
+            embed_gresit: false,
+            copiere_gresita: true
+        }
     );
     // Ladder, the one position read from RAM, then every position again without the copy launch.
     assert_eq!(s.submissions.len(), 2 + 1 + positions);
     assert_eq!(s.submissions[2], 36);
     assert!(s.submissions[3..].iter().all(|&n| n == 35));
-    let d = kd::parse_journal(&journal_text(&j));
+    let d = kd::parse_journal(&s.take_journal_text());
     assert_eq!(d.probes.len(), 3);
     let ex = &d.probes[2];
     assert_eq!((ex.mode, ex.verdict), (0, 6));
@@ -957,19 +965,21 @@ fn the_step_as_the_note_describes_it() {
         "{text}"
     );
 
-    // The program `embed` wrong: the texts run with the driver's embedding.
+    // The program `embed` wrong: the texts run with the driver's embedding (and the step says why it is not ok).
     let mut s = with_model(&m, Prog::Embed, embed_wrong);
-    let mut j = Journal::new(8192);
     assert_eq!(
-        step(&mut s, &m, &texts, &mut j),
-        StepEnd::Trece(Way::REPAIR.with_driver_embedding())
+        step(&mut s, &m, &texts),
+        StepEnd::Ocolit {
+            mode: SeqMode::EachLaunch,
+            embed_gresit: true,
+            copiere_gresita: false
+        }
     );
     assert!(s.submissions[7..].iter().all(|&n| n == 35), "36 fara embed");
 
     // A launch wrong at every position: the ladder names it and no text is sent.
     let mut s = with_model(&m, Prog::Gelu, gelu_wrong);
-    let mut j = Journal::new(8192);
-    assert_eq!(step(&mut s, &m, &texts, &mut j), StepEnd::Esec);
+    assert_eq!(step(&mut s, &m, &texts), StepEnd::Esec);
     assert_eq!(s.submissions, [35, 35, 17, 16, 2, 1, 16]);
 
     // A launch wrong only from the second position on, in the last layer: the ladder passes, the text stops at
@@ -980,10 +990,9 @@ fn the_step_as_the_note_describes_it() {
         attention_wrong_later_at_the_marked_cache,
     );
     MARK.with(|k| k.set(s.vas.layers[1].kc));
-    let mut j = Journal::new(8192);
-    assert_eq!(step(&mut s, &m, &texts, &mut j), StepEnd::Esec);
+    assert_eq!(step(&mut s, &m, &texts), StepEnd::Esec);
     assert_eq!(s.submissions, [35, 35, 36, 36], "nimic trimis dupa esec");
-    let d = kd::parse_journal(&journal_text(&j));
+    let d = kd::parse_journal(&s.take_journal_text());
     let ex = d.probes.last().unwrap();
     assert_eq!((ex.mode, ex.verdict, ex.pos), (0, 3, Some(1)));
     let text = d.lines().join("\n");
@@ -999,11 +1008,10 @@ fn the_step_as_the_note_describes_it() {
         attention_wrong_later_at_the_marked_cache,
     );
     MARK.with(|k| k.set(s.vas.layers[1].kc));
-    let mut j = Journal::new(8192);
-    assert_eq!(step(&mut s, &m3, &texts, &mut j), StepEnd::Esec);
+    assert_eq!(step(&mut s, &m3, &texts), StepEnd::Esec);
     // Ladder (51 + 51), two positions (52 each), then the prefixes: the embedding, layer 0, layers 0 + 1.
     assert_eq!(s.submissions, [51, 51, 52, 52, 1, 16, 17, 15]);
-    let d = kd::parse_journal(&journal_text(&j));
+    let d = kd::parse_journal(&s.take_journal_text());
     let v: Vec<(u32, u32, u32)> = d.probes[2..]
         .iter()
         .map(|p| (p.mode, p.launches, p.verdict))
@@ -1101,8 +1109,8 @@ fn kgr1_control_model_under_the_hypothesis() {
         cpu_logits: &cpu,
         want: Some(want),
     };
-    let mut j = Journal::new(4096);
-    let l = kd::ladder(&mut s, &ctx, &mut j);
+    let l = kd::ladder(&mut s, &ctx);
+    let j = s.take_journal_text();
     assert_eq!(l.chosen, Some(Way::REPAIR));
     let lg = l.probes[0].logits.as_ref().unwrap();
     eprintln!("SIMULARE (ipoteza): {}", lg.line());
@@ -1112,7 +1120,10 @@ fn kgr1_control_model_under_the_hypothesis() {
     assert!(lg.board.is_some() && lg.board != Some(want));
     // How far a rounding difference is from changing this token: not the cause.
     assert!(lg.cpu_margin > 0.28, "{}", lg.cpu_margin);
-    eprintln!("SIMULARE: {} randuri de jurnal pentru scara", j.len());
+    eprintln!(
+        "SIMULARE: {} randuri de jurnal pentru scara",
+        j.lines().count()
+    );
 
     // The three control texts with the repair, the logits copied down into RAM as the OS does.
     for t in &vs {
@@ -1136,6 +1147,16 @@ fn kgr1_control_model_under_the_hypothesis() {
         assert!(max_abs(&last, &t.logits) <= VECTOR_TOL, "{}", t.text);
         assert_eq!(s.stale_bytes(), 0);
     }
+
+    // The fallback mode on the real model, under the hypothesis: one submission per layer gives the CPU's logits.
+    let mut s = TokenSim::new(&m, 128);
+    let got = s.run_token(tok, 0, SeqMode::PerLayer).unwrap();
+    let r = kd::logit_report(tok, 0, &got, &cpu, Some(want));
+    assert!(r.passes, "{}", r.line());
+    assert_eq!(
+        (s.submissions.clone(), s.stale_bytes()),
+        (vec![17, 16, 2], 0)
+    );
 
     // The first text again with the embedding written by the driver (the fallback if the program `embed` is the
     // wrong one on the board): the same greedy tokens at every position, launch 0 never sent.

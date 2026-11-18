@@ -6,6 +6,7 @@
 //! about the board.
 #![allow(dead_code)]
 
+use gpu_core::diag::Journal;
 use gpu_core::error::{GpuError, GpuResult};
 use gpu_sim::cmdproc::{
     ATTENTION_NEEDS, LAYERNORM_NEEDS, Needs, ProgramFn, Q8_MATVEC_NEEDS, attention_on_cpu,
@@ -22,6 +23,9 @@ use nvidia_ga104::transfer;
 use super::{
     Rig, dma_pages, get_bytes, gpu_runs, put_bytes, rig_with_push, span, sys_read, sys_write,
 };
+
+/// Rows the rig's journal keeps (the longest diagnosis of the tests fits several times).
+pub const JOURNAL_ROWS: usize = 16384;
 
 pub const NONE: Needs = Needs {
     shared_bytes: 0,
@@ -60,6 +64,8 @@ pub struct TokenSim<'a> {
     next_payload: u32,
     /// Doorbells so far, and the launches of each.
     pub submissions: Vec<usize>,
+    /// Where the diagnosis writes its rows (on the board: the stick journal).
+    pub journal: Journal,
 }
 
 impl<'a> TokenSim<'a> {
@@ -170,6 +176,7 @@ impl<'a> TokenSim<'a> {
             models: MODELS.to_vec(),
             next_payload: 0x1_0000,
             submissions: Vec::new(),
+            journal: Journal::new(JOURNAL_ROWS),
         }
     }
 
@@ -215,6 +222,15 @@ impl<'a> TokenSim<'a> {
         sys_read(&self.r.sys, &self.host, 4 * self.m.vocab as u64)
             .chunks(4)
             .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+            .collect()
+    }
+
+    /// The rows written so far, as the OS prints them on the stick; the journal starts again empty.
+    pub fn take_journal_text(&mut self) -> String {
+        let j = std::mem::replace(&mut self.journal, Journal::new(JOURNAL_ROWS));
+        j.events()
+            .enumerate()
+            .map(|(i, e)| format!("[  126.{i:06}] gpu: {e}\n"))
             .collect()
     }
 
@@ -318,5 +334,9 @@ impl TokenIo for TokenSim<'_> {
             ))?;
         put_bytes(self.r.mem.writer_mut(), m.pa + (va - m.va), &bytes);
         Ok(())
+    }
+
+    fn journal(&mut self) -> &mut Journal {
+        &mut self.journal
     }
 }

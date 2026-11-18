@@ -88,6 +88,10 @@ fn signatures(m: &OwnedModel, tok: usize) -> Vec<Signature> {
             run(m, tok, 128, embed_on_cpu, SeqMode::EachLaunch),
         ),
         sig(
+            "aceeasi ipoteza, cu o trimitere pe strat (ca la I13)",
+            run(m, tok, 128, embed_on_cpu, SeqMode::PerLayer),
+        ),
+        sig(
             "logit-urile necopiate in RAM (umplutura 0xEE ramasa)",
             vec![f32::from_bits(kd::RAM_FILL); m.vocab],
         ),
