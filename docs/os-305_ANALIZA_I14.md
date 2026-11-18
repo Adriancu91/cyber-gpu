@@ -12,14 +12,14 @@ Nota pentru OS: `integration/cyber-universe/C-139_i14-diagnostic-si-reparatie.md
   înmulțire matrice × vector (I12) și un strat întreg de transformer (I13). La I14 — un **simbol întreg** al modelului mic de control — placa a
   terminat tot ce i-am cerut (nicio blocare, nicio eroare), dar a ales **alt simbol** decât Kronos. Atât știm din jurnal: numerele plăcii nu au ajuns pe stick.
 - **Nu e rotunjire.** Pe procesor, primul simbol e ales cu o distanță de 0,28 față de al doilea; toleranța noastră e 0,001. Ca să iasă alt simbol,
-  numerele plăcii au fost greșite de cel puțin o sută de ori mai mult decât orice rotunjire.
+  cel puțin un număr al plăcii a fost greșit de peste o sută de ori mai mult decât toleranța.
 - **Cauza cea mai probabilă (cam 55 %): placa a citit numere vechi.** Un simbol trece prin două straturi care folosesc **aceeași zonă de lucru**.
   Stratul 2 trebuia să citească ce a scris stratul 1, dar placa ține minte ce a citit mai devreme (o memorie rapidă, „cache”) și noi îi spuneam să uite
   o singură dată, la începutul simbolului. I14 e primul pas în care aceeași adresă e citită, rescrisă și citită din nou în aceeași trimitere — de aceea
   I13 (un singur strat) a trecut. Documentația NVIDIA spune că driverul trebuie să golească această memorie între calcule care depind unul de altul;
   driverul deschis tinygrad o face la fiecare lansare.
-- **Reparația:** îi spunem plăcii să uite **înaintea fiecărui calcul**, cu aceeași comandă pe care placa a primit-o deja de zeci de ori. În simulare,
-  pe această ipoteză, felul vechi greșește exact ca pe placă, iar cel reparat dă simbolurile lui Kronos.
+- **Reparația:** îi spunem plăcii să uite **înaintea fiecărui calcul**, cu aceeași comandă pe care placa a primit-o deja la fiecare trimitere de la
+  I10 încoace (niciun registru nou). În simulare, pe această ipoteză, felul vechi greșește ca pe placă, iar cel reparat dă simbolurile lui Kronos.
 - **Fiindcă fără placă nu putem fi siguri**, testul următor nu pariază pe o singură explicație. Înaintea textelor rulează primul simbol în mai multe
   feluri și **scrie în jurnal unde apare primul număr greșit**: ce calcul, în ce strat, cu cât, și dacă e „număr vechi” sau calcul greșit. Dacă un fel
   trece, textele rulează așa mai departe, în aceeași pornire. Dacă e greșit un singur calcul care poate fi ocolit (citirea simbolului sau copierea
@@ -75,7 +75,7 @@ Lista din C-139, punct cu punct. „Poate da simptomul?” = toate logit-urile f
 |---|---|---|---|
 | Citirea simbolului (embedding) | x scris de driver prin fereastră | programul `embed` — **prima lui rulare pe placă** | da → ipoteza I2 |
 | Al doilea strat | un singur strat pe trimitere | stratul 2 **refolosește zona de lucru** a stratului 1 în aceeași trimitere: x, h, qkv, … sunt citite, rescrise și citite din nou | da → **ipoteza I1** |
-| Norma finală | — | același program `layernorm`, dar citește x a cincea oară (x a fost rescris de 3 ori) | doar prin I1 (programul a rulat la I13) |
+| Norma finală | — | același program `layernorm`, dar citește x a cincea oară (x a fost scris de 3 ori) | doar prin I1 (programul a rulat la I13) |
 | Capul de ieșire 16 384 × 32 | `q8_matvec` cu 3072×768, 2304×768, 768×768, 768×3072 | 16 384 de rânduri × **un singur bloc Q8** pe rând (doar firul 0 al fiecărui grup lucrează) | da → I3 (formă nerulată) |
 | Copierea logit-urilor în RAM (arena DMA) | I11: 8 MiB; I12: y | 64 KiB, a 36-a lansare, sursa scrisă de lansarea dinainte | da → I4: tamponul rămâne cu umplutura `0xEE` = −3,7·10²⁸ la fiecare logit, finit, argmax 0 |
 | Ordinea `run_records` / sonerie | cel mult 16 lansări pe trimitere | 36 de lansări + 37 de înregistrări într-o trimitere, **o singură golire de cache** la început | ordinea e bună (înregistrările au sosit); golirea unică = I1 |
@@ -170,7 +170,7 @@ la zi până la următoarea invalidare. Pe **modelul de control real** (`mic_q8_
 
 Primele 8 logit-uri pe I1 (ca la `os-305`): `1,369 1,730 2,659 −3,683 2,287 −0,535 0,628 1,508`; pe procesor: `−0,558 1,837 1,275 −3,722 0,134 0,016 −0,982 2,072`.
 Aceste semnături sunt aici ca să poată fi comparate cu numerele plăcii din jurnalul următor (`analiza_i14 <gpu-jurnal.txt>` le compară singură).
-Pe placă staleness-ul real depinde de ce procesor (SM) rulează fiecare grup, deci numerele plăcii pot diferi de ale modelului chiar dacă I1 e adevărată;
+Pe placă, ce valori rămân vechi depinde de ce procesor (SM) rulează fiecare grup, deci numerele plăcii pot diferi de ale modelului chiar dacă I1 e adevărată;
 ce contează e **verdictul pe etape**, nu potrivirea cifrelor.
 
 ## 7. Reparația și plasele de siguranță (cod nou, doar adăugări)
