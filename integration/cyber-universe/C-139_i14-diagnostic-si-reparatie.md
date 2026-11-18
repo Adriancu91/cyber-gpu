@@ -148,7 +148,8 @@ cargo run --release -p nvidia-ga104 --example analiza_i14 -- <gpu-jurnal.txt>   
 
 - Cu modelul de GPU neschimbat: scara = 2 probe care trec, `chosen = Way::REPAIR`, textele trec ca înainte.
 - Cu `CommandProcessor::model_stale_reads(128)` (ipoteza): proba de control = „DATE VECHI”, etapa „normalizare 1 (stratul 1, lansarea 0)”, cu
-  valoarea veche a lui x; reparația trece; textele trec. Așa arată „ca pe placă, dacă ipoteza e adevărată”.
+  valoarea veche a lui x; reparația trece; textele trec. Așa arată „ca pe placă, dacă ipoteza e adevărată”. (Pe placă verdictul poate spune și
+  „o parte din ieșire” — cache-urile sunt pe fiecare procesor al plăcii; modelul are unul singur.)
 - Testele noastre plantează și: `embed` greșit, o lansare greșită în primul / al doilea strat, o lansare greșită doar de la poziția 1, copierea în
   RAM care nu ajunge, o trimitere care nu se termină — le puteți relua cu aceleași funcții greșite (`tests/sim_i14_diag.rs`).
 

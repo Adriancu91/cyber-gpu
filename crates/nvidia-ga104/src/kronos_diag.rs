@@ -409,7 +409,7 @@ pub mod rows {
     pub const STAGE: &str = "i14d etapa (strat << 8 | lansare; fe = embedding, ff = final)";
     pub const STAGE_NAME: &str = "i14d etapa nume";
     pub const STAGE_DEV: &str = "i14d etapa abatere fata de model (f32)";
-    pub const STAGE_FLAGS: &str = "i14d etapa stare (b0 in toleranta, b1 verificata local, b2 local ok, b3 date vechi, b8-15 din stratul / fe embedding)";
+    pub const STAGE_FLAGS: &str = "i14d etapa stare (b0 in toleranta, b1 verificata local, b2 local ok, b3 date vechi, b4 doar o parte, b8-15 din stratul / fe embedding)";
     pub const STAGE_LOCAL: &str = "i14d etapa abatere fata de intrarile placii (f32)";
     pub const ARGMAX_BOARD: &str = "i14d argmax placa (ffffffff = niciunul)";
     pub const ARGMAX_CPU: &str = "i14d argmax procesor";
@@ -533,8 +533,13 @@ pub fn stage_name(layer: u8, launch: u8) -> &'static str {
 /// Where an older value came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stale {
-    /// The layer whose version of the input reproduces the output ([`EMBED`]: x as the embedding wrote it).
+    /// The layer whose version of the input reproduces the output ([`EMBED`]: x as the embedding wrote it); for a
+    /// partial match, the newest version any element needs.
     pub from: u8,
+    /// Only a part of the output (some elements, rows or heads) is what the old value gives; every other element
+    /// follows from the inputs now in memory. What a board looks like where each processor (SM) has its own cache
+    /// and only some of them held the old line.
+    pub partial: bool,
 }
 
 /// One launch's output, judged.
@@ -570,7 +575,7 @@ impl StageCheck {
             f |= 2 | (ok as u32) << 2;
         }
         if let Some(s) = self.stale {
-            f |= 8 | (s.from as u32) << 8;
+            f |= 8 | (s.partial as u32) << 4 | (s.from as u32) << 8;
         }
         f
     }
@@ -588,12 +593,26 @@ impl StageCheck {
             None => String::new(),
         };
         let stale = match self.stale {
-            Some(Stale { from: EMBED }) => {
-                String::from("; iese exact cu valoarea VECHE a lui x (cea scrisa de embedding)")
-            }
-            Some(Stale { from }) => {
-                format!("; iese exact cu valorile VECHI ale intrarii (cele din stratul {from})")
-            }
+            Some(Stale {
+                from: EMBED,
+                partial: false,
+            }) => String::from("; iese exact cu valoarea VECHE a lui x (cea scrisa de embedding)"),
+            Some(Stale {
+                from,
+                partial: false,
+            }) => format!("; iese exact cu valorile VECHI ale intrarii (cele din stratul {from})"),
+            Some(Stale {
+                from: EMBED,
+                partial: true,
+            }) => String::from(
+                "; o parte din iesire e ce da valoarea VECHE a lui x (cea scrisa de embedding), restul urmeaza din intrarile de acum",
+            ),
+            Some(Stale {
+                from,
+                partial: true,
+            }) => format!(
+                "; o parte din iesire e ce dau valorile VECHI ale intrarii (cele din stratul {from}), restul urmeaza din intrarile de acum"
+            ),
             None => String::new(),
         };
         format!(
@@ -1010,6 +1029,38 @@ fn inputs_of(t: &LayerTrace, s: usize) -> (&[f32], &[f32]) {
     }
 }
 
+/// What older versions of its inputs make of a launch's output `got`. `olds`: what the launch gives with each
+/// older version (newest first); `fresh`: what it gives with the inputs now in memory (or, when they are gone, what
+/// it should have written). Either the whole output is one old version's, or — element by element — it is the
+/// fresh one's or an old one's, with at least one element that only an old version explains (partial).
+fn stale_of(got: &[f32], fresh: &[f32], olds: &[(u8, Vec<f32>)]) -> Option<Stale> {
+    if let Some(&(from, _)) = olds.iter().find(|(_, o)| act(got, o).1) {
+        return Some(Stale {
+            from,
+            partial: false,
+        });
+    }
+    if got.len() != fresh.len() || olds.iter().any(|(_, o)| o.len() != got.len()) {
+        return None;
+    }
+    let close = |g: f32, w: f32| {
+        g.is_finite() && w.is_finite() && (g - w).abs() <= TOL_ABS + TOL_REL * w.abs()
+    };
+    let mut newest: Option<usize> = None;
+    for (i, &g) in got.iter().enumerate() {
+        if close(g, fresh[i]) {
+            continue;
+        }
+        // An element that neither the inputs in memory nor an old version explain: not (only) a stale read.
+        let k = olds.iter().position(|(_, o)| close(g, o[i]))?;
+        newest = Some(newest.map_or(k, |n| n.min(k)));
+    }
+    newest.map(|k| Stale {
+        from: olds[k].0,
+        partial: true,
+    })
+}
+
 /// Judges what is in memory after `done` launches of the token (pure: nothing is sent or read here).
 pub fn examine(c: &ProbeCtx<'_>, way: Option<Way>, done: usize, b: &Board) -> Probe {
     let fail = |err: GpuError| Probe {
@@ -1095,12 +1146,13 @@ pub fn examine(c: &ProbeCtx<'_>, way: Option<Way>, done: usize, b: &Board) -> Pr
                 // The row an earlier layer's `qkvb` would have given (the copy read stale data)?
                 let stale = (!path.1)
                     .then(|| {
-                        (0..j)
+                        let olds: Vec<(u8, Vec<f32>)> = (0..j)
                             .rev()
-                            .find(|&i| act(row, expected(&trace.layers[i], e, s)).1)
+                            .map(|i| (i as u8, expected(&trace.layers[i], e, s).to_vec()))
+                            .collect();
+                        stale_of(row, expected(t, e, s), &olds)
                     })
-                    .flatten()
-                    .map(|i| Stale { from: i as u8 });
+                    .flatten();
                 push(j as u8, s, path, None, stale);
             }
         }
@@ -1138,8 +1190,10 @@ pub fn examine(c: &ProbeCtx<'_>, way: Option<Way>, done: usize, b: &Board) -> Pr
                 14 => Some((sc.out(13), &[])),
                 _ => Some((sc.out(8), sc.out(14))),
             };
-            let local =
-                board_in.map(|(a, b2)| act(got, &model_of(s, sh, w, a, b2, &kc, &vc, c.pos)));
+            // What the launch gives with the board's own inputs.
+            let from_board: Option<Vec<f32>> =
+                board_in.map(|(a, b2)| model_of(s, sh, w, a, b2, &kc, &vc, c.pos));
+            let local = from_board.as_deref().map(|m| act(got, m));
             // Older versions of the inputs: looked for only when the stage is outside the tolerance AND does not
             // follow from the inputs now in memory (an output that follows from them read nothing stale; and at
             // position 0 the attention does not depend on its query at all, so an old query would "match" too).
@@ -1174,10 +1228,13 @@ pub fn examine(c: &ProbeCtx<'_>, way: Option<Way>, done: usize, b: &Board) -> Pr
                 for &(from, b2) in olds_b.iter().rev() {
                     tries.push((from, cur_a, b2));
                 }
-                stale = tries
+                let olds: Vec<(u8, Vec<f32>)> = tries
                     .into_iter()
-                    .find(|&(_, a, b2)| act(got, &model_of(s, sh, w, a, b2, &kc, &vc, c.pos)).1)
-                    .map(|(from, _, _)| Stale { from });
+                    .map(|(from, a, b2)| (from, model_of(s, sh, w, a, b2, &kc, &vc, c.pos)))
+                    .collect();
+                // Inputs no longer in memory (x after the layer's last launch): what it should have written.
+                let fresh = from_board.as_deref().unwrap_or(expected(t, e, s));
+                stale = stale_of(got, fresh, &olds);
             }
             push(l as u8, s, path, local, stale);
         }
@@ -1185,24 +1242,21 @@ pub fn examine(c: &ProbeCtx<'_>, way: Option<Way>, done: usize, b: &Board) -> Pr
     // The final LayerNorm and the logits.
     if fin >= 1 {
         let path = act(&b.h_final, &trace.h_final);
-        let local = act(
-            &b.h_final,
-            &layer::layernorm_gpu(x_board, c.w.ln_g, c.w.ln_b, sh.eps),
-        );
+        let ln = |x: &[f32]| layer::layernorm_gpu(x, c.w.ln_g, c.w.ln_b, sh.eps);
+        let from_board = ln(x_board);
+        let local = act(&b.h_final, &from_board);
         let stale = (!path.1 && !local.1)
             .then(|| {
-                let mut olds = x_before(layers);
-                olds.pop();
-                olds.into_iter().rev().find(|&(_, x)| {
-                    act(
-                        &b.h_final,
-                        &layer::layernorm_gpu(x, c.w.ln_g, c.w.ln_b, sh.eps),
-                    )
-                    .1
-                })
+                let mut xs = x_before(layers);
+                xs.pop();
+                let olds: Vec<(u8, Vec<f32>)> = xs
+                    .into_iter()
+                    .rev()
+                    .map(|(from, x)| (from, ln(x)))
+                    .collect();
+                stale_of(&b.h_final, &from_board, &olds)
             })
-            .flatten()
-            .map(|(from, _)| Stale { from });
+            .flatten();
         push(FINAL, 0, path, Some(local), stale);
     }
     let mut logits = None;
@@ -1744,11 +1798,21 @@ impl ParsedProbe {
                 ));
             }
             if flags & 8 != 0 {
+                let part = if flags & 16 != 0 {
+                    "; O PARTE din iesire"
+                } else {
+                    ";"
+                };
                 match (flags >> 8) as u8 {
-                    EMBED => t.push_str("; = rezultatul cu x VECHI (cel scris de embedding)"),
-                    l => t.push_str(&format!(
-                        "; = rezultatul cu intrarea VECHE (din stratul {l})"
+                    EMBED => t.push_str(&format!(
+                        "{part} = rezultatul cu x VECHI (cel scris de embedding)"
                     )),
+                    l => t.push_str(&format!(
+                        "{part} = rezultatul cu intrarea VECHE (din stratul {l})"
+                    )),
+                }
+                if flags & 16 != 0 {
+                    t.push_str(", restul urmeaza din intrarile de acum");
                 }
             }
             out.push(t);
@@ -1986,7 +2050,10 @@ mod tests {
                     dev: 0.5,
                     ok: false,
                     local: Some((0.5, false)),
-                    stale: Some(Stale { from: 0 })
+                    stale: Some(Stale {
+                        from: 0,
+                        partial: false
+                    })
                 },
                 StageCheck {
                     layer: FINAL,
@@ -1994,7 +2061,10 @@ mod tests {
                     dev: 0.75,
                     ok: false,
                     local: Some((0.0, true)),
-                    stale: Some(Stale { from: EMBED })
+                    stale: Some(Stale {
+                        from: EMBED,
+                        partial: true
+                    })
                 },
             ],
             logits: Some(r.clone()),
@@ -2027,13 +2097,19 @@ mod tests {
         assert_eq!(q.stages.len(), 2);
         assert_eq!(q.stages[0], (0x101, 0.5, 0b1010, Some(0.5)));
         assert_eq!(q.stages[1].0, 0xff00);
-        assert_eq!(q.stages[1].2, 0xfe00 | 0b1110);
+        assert_eq!(q.stages[1].2, 0xfe00 | 0b1_1110, "date vechi, doar o parte");
         assert_eq!(q.summary, p.summary());
         let lines = d.lines().join("\n");
         assert!(lines.contains("DATE VECHI"), "{lines}");
         assert!(lines.contains("stratul 1, lansarea 1"), "{lines}");
         assert!(lines.contains("intrarea VECHE (din stratul 0)"), "{lines}");
-        assert!(lines.contains("x VECHI"), "{lines}");
+        assert!(
+            lines.contains(
+                "; O PARTE din iesire = rezultatul cu x VECHI (cel scris de embedding), restul urmeaza din intrarile de acum"
+            ),
+            "{lines}"
+        );
+        assert!(p.stages[2].line().contains("o parte din iesire"));
         assert!(
             lines.contains(
                 "proba cu invalidare inaintea fiecarei lansari, embedding scris de driver (34 lansari)"

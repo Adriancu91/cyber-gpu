@@ -19,7 +19,8 @@ use gpu_compute::layer::{self, Shape};
 use gpu_compute::model::{self, Caches};
 use gpu_core::error::{GpuError, GpuResult};
 use gpu_sim::cmdproc::{
-    Launch as SimLaunch, attention_on_cpu, copy_b128_on_cpu, embed_on_cpu, gelu_on_cpu, vadd_on_cpu,
+    Launch as SimLaunch, attention_on_cpu, copy_b128_on_cpu, embed_on_cpu, gelu_on_cpu,
+    layernorm_on_cpu, q8_matvec_on_cpu, vadd_on_cpu,
 };
 use nvidia_ga104::kronos_diag::{
     self as kd, EMBED, EmbedBy, FINAL, Ladder, ProbeCtx, SeqMode, Stale, TokenIo, Verdict, Way,
@@ -167,7 +168,13 @@ fn the_ladder_confirms_stale_data_and_picks_the_repair() {
         p.summary()
     );
     assert_eq!((first.layer, first.launch), (1, 0), "{}", first.line());
-    assert_eq!(first.stale, Some(Stale { from: EMBED }));
+    assert_eq!(
+        first.stale,
+        Some(Stale {
+            from: EMBED,
+            partial: false
+        })
+    );
     assert_eq!(first.local, None, "x a fost rescris de ultima lansare");
     // Layer 0 ran on fresh data: its cache rows are fine.
     assert!(p.stages[..2].iter().all(|s| s.ok && s.layer == 0));
@@ -190,7 +197,13 @@ fn the_ladder_confirms_stale_data_and_picks_the_repair() {
     assert_eq!(att.unwrap().local, Some((0.0, true)));
     // The final LayerNorm read x as the embedding left it; the logits follow from that h.
     let fin: Vec<_> = p.stages.iter().filter(|s| s.layer == FINAL).collect();
-    assert_eq!(fin[0].stale, Some(Stale { from: EMBED }));
+    assert_eq!(
+        fin[0].stale,
+        Some(Stale {
+            from: EMBED,
+            partial: false
+        })
+    );
     assert_eq!(fin[1].local.map(|l| l.1), Some(true));
     let lg = p.logits.as_ref().unwrap();
     assert!(!lg.passes && lg.not_finite == 0 && lg.fill == 0);
@@ -262,7 +275,13 @@ fn a_hidden_layer_shows_the_stale_read_in_its_cache_rows() {
         p.summary()
     );
     assert_eq!((bad.layer, bad.launch), (1, 3), "{}", bad.line());
-    assert_eq!(bad.stale, Some(Stale { from: 0 }));
+    assert_eq!(
+        bad.stale,
+        Some(Stale {
+            from: 0,
+            partial: false
+        })
+    );
     // Layer 0's own rows are fine; layer 2 is the visible one (16 launches) and the two final launches follow.
     assert!(p.stages[..2].iter().all(|s| s.ok && s.layer == 0));
     assert_eq!(p.stages.len(), 2 + 2 + 16 + 2);
@@ -749,6 +768,213 @@ fn a_text_in_the_chosen_mode() {
             stop.line()
         );
     }
+}
+
+/// The Q8 matrix-vector program, wrong in one element where its output is the marked address (the logits: the
+/// output head, 512 rows here and 16 384 on the control model — a shape no earlier step ran on the board).
+fn matvec_wrong_at_the_marked_output(l: &mut SimLaunch<'_>) -> GpuResult<()> {
+    q8_matvec_on_cpu(l)?;
+    let y = l.mem.read_u64(l.cbuf0 + 0x38)?;
+    if y == MARK.with(|m| m.get()) {
+        let v = f32::from_bits(l.mem.read_u32(y + 28)?);
+        l.mem.write_u32(y + 28, (v + 0.5).to_bits());
+    }
+    Ok(())
+}
+
+/// LayerNorm, wrong in one element where its output is the marked address (the final vector).
+fn layernorm_wrong_at_the_marked_output(l: &mut SimLaunch<'_>) -> GpuResult<()> {
+    layernorm_on_cpu(l)?;
+    let y = l.mem.read_u64(l.cbuf0 + 0x40)?;
+    if y == MARK.with(|m| m.get()) {
+        let v = f32::from_bits(l.mem.read_u32(y + 12)?);
+        l.mem.write_u32(y + 12, (v + 0.5).to_bits());
+    }
+    Ok(())
+}
+
+/// The two launches after the layers, wrong by themselves: the whole token names each one at once (their inputs
+/// are in memory), every prefix is clean, and no way is chosen.
+#[test]
+fn a_wrong_final_launch_is_named_by_the_whole_token() {
+    let m = small();
+    // The output head.
+    let mut s = with_model(&m, Prog::Q8Matvec, matvec_wrong_at_the_marked_output);
+    MARK.with(|k| k.set(s.vas.logits));
+    let (l, j) = ladder_of(&mut s, &m);
+    assert_eq!(l.chosen, None);
+    assert_eq!(
+        shape_of(&l),
+        [
+            (1, 0, 35, 3),
+            (2, 0, 35, 3),
+            (3, 0, 35, 3),
+            (3, 0, 1, 1),
+            (3, 0, 16, 1),
+            (3, 0, 32, 1)
+        ]
+    );
+    let p = &l.probes[0];
+    let bad = p.first_bad().unwrap();
+    assert_eq!(
+        (bad.layer, bad.launch, bad.name()),
+        (FINAL, 1, "logit-uri = Emb * h")
+    );
+    assert!(matches!(bad.local, Some((d, false)) if (d - 0.5).abs() < 1e-3));
+    // It is the only stage outside: the last layer's 16 launches and the final LayerNorm are fine.
+    assert_eq!(p.stages.iter().filter(|s| !s.ok).count(), 1);
+    let lg = p.logits.as_ref().unwrap();
+    assert_eq!((lg.outside, lg.max_at), (1, 7));
+    assert!((lg.max_abs - 0.5).abs() < 1e-3);
+    let text = kd::parse_journal(&j).lines().join("\n");
+    assert!(text.contains("LANSARE GRESITA"), "{text}");
+    assert!(
+        text.contains("logit-uri = Emb * h (dupa straturi)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("la indexul 7; 1 in afara tolerantei"),
+        "{text}"
+    );
+
+    // The final LayerNorm: named itself; the logits follow from the (wrong) vector it left.
+    let mut s = with_model(&m, Prog::LayerNorm, layernorm_wrong_at_the_marked_output);
+    MARK.with(|k| k.set(s.vas.h_final));
+    let (l, _) = ladder_of(&mut s, &m);
+    assert_eq!(l.chosen, None);
+    let p = &l.probes[0];
+    let bad = p.first_bad().unwrap();
+    assert_eq!(
+        (bad.layer, bad.launch, bad.name()),
+        (FINAL, 0, "normalizare finala")
+    );
+    assert!(matches!(bad.local, Some((_, false))));
+    let head = p.stages.last().unwrap();
+    assert_eq!((head.layer, head.launch, head.ok), (FINAL, 1, false));
+    assert!(matches!(head.local, Some((_, true))), "{}", head.line());
+    assert_eq!(l.probes.len(), 6, "toate prefixele sunt curate");
+}
+
+thread_local! {
+    /// The input of the marked matrix's twin in the layer before (what `matvec_half_stale` keeps as "the cache").
+    static OLD_INPUT: std::cell::RefCell<Vec<f32>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The two weight matrices: (the layer before's, the marked layer's).
+    static TWINS: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// The Q8 matrix-vector program on a board where every processor has its own cache and only some of them hold the
+/// old line: the launch of the marked matrix computes its ODD rows with the input its twin in the layer before
+/// read at the same address, and its even rows with what is in memory.
+fn matvec_half_stale(l: &mut SimLaunch<'_>) -> GpuResult<()> {
+    q8_matvec_on_cpu(l)?;
+    let (w, x, y) = (
+        l.mem.read_u64(l.cbuf0 + 0x28)?,
+        l.mem.read_u64(l.cbuf0 + 0x30)?,
+        l.mem.read_u64(l.cbuf0 + 0x38)?,
+    );
+    let rows = l.mem.read_u32(l.cbuf0 + 0x40)? as usize;
+    let cols = 32 * l.mem.read_u32(l.cbuf0 + 0x44)? as usize;
+    let (before, marked) = TWINS.with(|t| t.get());
+    if w == before {
+        let xs = l.mem.read_f32s(x, cols)?;
+        OLD_INPUT.with(|o| *o.borrow_mut() = xs);
+    } else if w == marked {
+        let mut wb = vec![0u8; gpu_compute::q8::matrix_bytes(rows, cols)?];
+        l.mem.read(w, &mut wb)?;
+        let old = OLD_INPUT.with(|o| o.borrow().clone());
+        let mut stale = vec![0.0f32; rows];
+        gpu_compute::q8::matvec_gpu_order(&wb, rows, cols, &old, &mut stale)?;
+        for (r, v) in stale.iter().enumerate().filter(|(r, _)| r % 2 == 1) {
+            l.mem.write_u32(y + 4 * r as u64, v.to_bits());
+        }
+    }
+    Ok(())
+}
+
+/// Each processor of the board has its own cache: a launch whose blocks ran on several of them may be only PARTLY
+/// made of old values. The verdict is still "stale data", marked as partial — not "a wrong launch".
+#[test]
+fn a_partly_stale_launch_is_still_named_stale() {
+    let m = small();
+    let (cpu, prev) = first_token(&m);
+    let w = m.weights();
+    let mut s = with_model(&m, Prog::Q8Matvec, matvec_half_stale);
+    TWINS.with(|t| t.set((s.vas.layers[0].wqkv, s.vas.layers[1].wqkv)));
+    let vas = s.vas.clone();
+    let ctx = ProbeCtx {
+        w: &w,
+        vas: &vas,
+        prev: &prev,
+        token: TOKEN,
+        pos: 0,
+        cpu_logits: &cpu,
+        want: model::argmax(&cpu),
+    };
+    let p = kd::probe(&mut s, &ctx, Way::OS_305, 35);
+    assert!(
+        matches!(p.verdict, Verdict::DateVechi(_)),
+        "{}",
+        p.summary()
+    );
+    let bad = p.first_bad().unwrap();
+    assert_eq!(
+        (bad.layer, bad.launch, bad.name()),
+        (1, 1, "qkv = Wqkv * h")
+    );
+    assert_eq!(
+        bad.stale,
+        Some(Stale {
+            from: 0,
+            partial: true
+        })
+    );
+    assert!(matches!(bad.local, Some((_, false))));
+    // Everything before it is clean (layer 1's LayerNorm read fresh data here); what follows only passes it on.
+    let at = p.verdict.stage().unwrap();
+    assert!(p.stages[..at].iter().all(|s| s.ok));
+    assert!(
+        p.stages[at + 1..]
+            .iter()
+            .filter(|s| !s.ok)
+            .all(|s| s.stale.is_none())
+    );
+    assert!(
+        p.summary().contains("o parte din iesire"),
+        "{}",
+        p.summary()
+    );
+    p.journal(s.journal());
+    let text = kd::parse_journal(&s.take_journal_text()).lines().join("\n");
+    assert!(text.contains("DATE VECHI"), "{text}");
+    assert!(
+        text.contains("O PARTE din iesire = rezultatul cu intrarea VECHE (din stratul 0), restul urmeaza din intrarile de acum"),
+        "{text}"
+    );
+
+    // The same launch wrong in rows that no old value explains: a wrong launch, not stale data.
+    fn matvec_half_wrong(l: &mut SimLaunch<'_>) -> GpuResult<()> {
+        q8_matvec_on_cpu(l)?;
+        if l.mem.read_u64(l.cbuf0 + 0x28)? == TWINS.with(|t| t.get()).1 {
+            let y = l.mem.read_u64(l.cbuf0 + 0x38)?;
+            for r in (1..96u64).step_by(2) {
+                let v = f32::from_bits(l.mem.read_u32(y + 4 * r)?);
+                l.mem.write_u32(y + 4 * r, (v + 0.5).to_bits());
+            }
+        }
+        Ok(())
+    }
+    let mut s = with_model(&m, Prog::Q8Matvec, matvec_half_wrong);
+    TWINS.with(|t| t.set((s.vas.layers[0].wqkv, s.vas.layers[1].wqkv)));
+    let vas = s.vas.clone();
+    let ctx = ProbeCtx { vas: &vas, ..ctx };
+    let p = kd::probe(&mut s, &ctx, Way::OS_305, 35);
+    assert!(
+        matches!(p.verdict, Verdict::LansareGresita(_)),
+        "{}",
+        p.summary()
+    );
+    let bad = p.first_bad().unwrap();
+    assert_eq!((bad.layer, bad.launch, bad.stale), (1, 1, None));
 }
 
 /// A board whose memory reads back as garbage (the token itself runs): what the diagnosis must survive.

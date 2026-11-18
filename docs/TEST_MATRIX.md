@@ -1,6 +1,6 @@
 # Matricea de teste
 
-## Rezultate — sesiunea 112 (18 nov 2026, ~12:30–15:00, cloud, fără placă) — C-139: I14 după `os-305` (alt argmax pe placă): reparația (invalidare înaintea fiecărei lansări), scara și diagnosticul din jurnal (`kronos_diag`), toate SIMULARE
+## Rezultate — sesiunea 112 (18 nov 2026, ~12:30–14:45, cloud, fără placă) — C-139: I14 după `os-305` (alt argmax pe placă): reparația (invalidare înaintea fiecărei lansări), scara și diagnosticul din jurnal (`kronos_diag`), toate SIMULARE
 
 Ipoteza „date vechi” e pusă în modelul de GPU cu `CommandProcessor::model_stale_reads` (oprit implicit): e o **ipoteză**, nu o măsurătoare.
 
@@ -24,7 +24,9 @@ Ipoteza „date vechi” e pusă în modelul de GPU cu `CommandProcessor::model_
 | T132p | unități `kronos_diag`: trimiterile pe fiecare mod (și mărimea zonei de comenzi: 1 760 B modelul de control, 9 440 B #513); `Way` și embedding-ul driverului; raportul logit-urilor; jurnalul dus-întors; numele etapelor încap într-un rând | `cargo test -p nvidia-ga104 --lib kronos_diag` | conform | conform | PASS (SIMULARE) |
 | T132q | modelul de control real (`mic_q8_0.kgr`, vectorii din hub pregătiți local): pe ipoteză argmax 12536 ≠ 10337 cu toate logit-urile finite; scara alege reparația (148 de rânduri de jurnal); cele 3 texte dau exact vectorii lui Kronos cu reparația; „pe straturi” și cu embedding-ul driverului la fel | `KGR1_VECTORI=$PWD/target/vectori-kgr1 cargo test -p nvidia-ga104 --test sim_i14_diag kgr1_control -- --ignored` | conform | conform | PASS (SIMULARE, local; ignorat în CI — vectorii sunt în hubul privat) |
 | T132r | marjele celor 29 de poziții de control pe motorul de pe procesor: cea mai mică 0,0281 (de 28 de ori toleranța), poziția căzută la `os-305` 0,2849 → nu e rotunjire | `… kgr1_margins -- --ignored` | conform | conform | PASS (local; ignorat în CI) |
-| T132s | tot pachetul | `bash tools/check.sh` | 529 PASS | **529 PASS** (507 → +22), 6 ignorate (4 → +2); format, clippy `-D warnings`, build no_std | PASS |
+| T132s | cele două lansări de după straturi, greșite singure: capul de ieșire („logit-uri = Emb * h”) și norma finală sunt numite direct de simbolul întreg (intrările lor sunt în memorie); toate prefixele sunt curate; niciun fel ales | `… a_wrong_final_launch` | conform | conform | PASS (SIMULARE) |
+| T132t | o lansare doar **pe jumătate** făcută din valori vechi (rândurile impare ale lui `qkv` din stratul 1 cu h-ul stratului 0 — cum ar arăta cache-uri separate pe fiecare procesor al plăcii): verdictul rămâne „date vechi”, marcat „o parte din ieșire”; aceeași lansare cu rânduri greșite pe care nicio valoare veche nu le explică = „lansare greșită” | `… a_partly_stale` | conform | conform | PASS (SIMULARE) |
+| T132u | tot pachetul | `bash tools/check.sh` | 531 PASS | **531 PASS** (507 → +24), 6 ignorate (4 → +2); format, clippy `-D warnings`, build no_std | PASS |
 | — | I14 cu scara și reparația pe RTX 3070 Ti | — | — | — | NOT TESTED (fereastra cu Adrian, după `os-306`) |
 
 ## Rezultate — sesiunea 108 (17 nov 2026, ~16:20, cloud, fără placă) — C-135: I9 pasul 5 după `os-304` (jetonul refuzat cu `0x40`): `open_work_channel_c135` — forma B direct, canal fără notificator de erori (încercarea N), apoi ChID ales de noi + jeton calculat (F), toate SIMULARE

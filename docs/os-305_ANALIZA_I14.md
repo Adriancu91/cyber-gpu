@@ -206,6 +206,8 @@ Totul trece prin patru lucruri pe care le dă OS-ul (`TokenIo`: trimite lansări
 - După fiecare probă, memoria e citită înapoi (zona de lucru, rândurile noi K/V, vectorul final, logit-urile) și **fiecare lansare e judecată de
   trei ori**: față de ce trebuia să scrie; față de ce iese din **intrările pe care le are placa în memorie**; iar dacă nu urmează din ele, față de
   **valorile vechi** ale intrărilor (semnătura unei citiri vechi). Verdictul arată prima etapă care **dovedește** ceva.
+- „Date vechi” e recunoscut și când doar **o parte** din ieșirea unei lansări vine din valori vechi (unele rânduri, elemente sau capete), iar restul
+  urmează din intrările de acum — așa ar arăta o placă pe care fiecare procesor (SM) are cache-ul lui și doar unele au ținut linia veche.
 - **`explain`**, când un simbol al unui text nu trece: memoria așa cum a lăsat-o acel simbol, judecată la fel, fără să trimită nimic; spune și dacă
   doar copierea în RAM e greșită. **`locate`**: dacă greșeala a intrat într-un strat ale cărui valori au fost deja rescrise, o găsește cu prefixe.
 - **Rândurile din jurnal** (toate încep cu `i14d`, numele lor sunt în `kronos_diag::rows`): felul trimiterii, cine a scris embedding-ul, câte lansări,
@@ -222,7 +224,8 @@ Totul trece prin patru lucruri pe care le dă OS-ul (`TokenIo`: trimite lansări
 
 | Ce scrie jurnalul | Ce înseamnă | Ce urmează |
 |---|---|---|
-| control: DATE VECHI (stratul 1, normalizare 1, „x vechi”); reparația: TRECE | I1 confirmată | textele rulează cu reparația în aceeași pornire; dacă trec, I14 e trecut pe placă și urmează #513 |
+| control: DATE VECHI (în stratul 1; întreg sau „o parte din ieșire”); reparația: TRECE | I1 confirmată | textele rulează cu reparația în aceeași pornire; dacă trec, I14 e trecut pe placă și urmează #513 |
+| control: LANSARE GREȘITĂ sau EROARE MOȘTENITĂ într-o lansare a stratului 1; reparația: TRECE | tot I1, cu un amestec de valori vechi pe care diagnosticul nu l-a recunoscut (aceeași lansare nu poate fi greșită doar când lipsește golirea) | la fel ca mai sus |
 | control: TRECE; reparația: TRECE; apoi textul cade la poziția 0 cu „logit-uri diferite între RAM și VRAM” | I4: doar copierea în RAM | textele merg mai departe cu logit-urile din VRAM (pasul rămâne ESEC); de reparat copierea de 64 KiB |
 | control și reparația nu trec, „pe straturi” trece | date vechi pe care golirea dintre lansări nu le curăță | textele rulează pe straturi (mai lent); de studiat câmpurile QMD (§7) |
 | niciun fel nu trece; embedding-ul singur: LANSARE GREȘITĂ; cu embedding-ul driverului: TRECE | I2: programul `embed` | textele rulează cu embedding-ul driverului (pasul rămâne ESEC); de reparat `embed` (jurnalul are abaterea) |
@@ -238,13 +241,15 @@ Totul trece prin patru lucruri pe care le dă OS-ul (`TokenIo`: trimite lansări
   embedding-ul sau copierea în RAM sunt greșite pe placă, chiar dacă textele trec ocolindu-le; felul ales de scară e scris în jurnal).
 - `SM_GLOBAL_CACHING_ENABLE` și biții de invalidare din QMD rămân nesetați (ca la `os-305`); îi atingem doar dacă placa arată că e nevoie.
 - Modelul „date vechi” ține un singur cache pentru toată placa; placa reală are câte unul pe fiecare procesor (SM). E destul pentru a arăta
-  mecanismul, nu pentru a prezice cifrele plăcii.
+  mecanismul, nu pentru a prezice cifrele plăcii. Diagnosticul recunoaște și amestecul (o parte veche, o parte nouă), dar numai față de valorile
+  vechi pe care le poate calcula (cele ale primului strat, care a rulat pe date proaspete).
 
 ## 11. Teste și unelte (toate SIMULARE)
 
-- `crates/nvidia-ga104/tests/sim_i14_diag.rs` (14 teste, 2 cu vectorii din hub): tabloul plăcii pe ipoteză (I13 trece, I14 cade cu logit-uri finite);
+- `crates/nvidia-ga104/tests/sim_i14_diag.rs` (16 teste, 2 cu vectorii din hub): tabloul plăcii pe ipoteză (I13 trece, I14 cade cu logit-uri finite);
   scara confirmă „date vechi” și alege reparația; un strat ascuns arată citirea veche în rândurile lui K/V; căderea pe „o trimitere pe strat”; o
-  lansare greșită e numită (în primul strat, în al doilea, la orice poziție sau doar de la poziția 1); embedding greșit → al driverului; o trimitere
+  lansare greșită e numită (în primul strat, în al doilea, după straturi — norma finală și capul de ieșire —, la orice poziție sau doar de la
+  poziția 1); o lansare doar pe jumătate „veche” e tot „date vechi”, una pe jumătate greșită nu; embedding greșit → al driverului; o trimitere
   care nu se termină oprește scara; explicația unui simbol deja rulat (și cazul „doar copierea în RAM”); **pasul întreg, cum îl descrie nota pentru OS**;
   memorie citită ca gunoi (NaN, infinit, zero, biți la întâmplare, umplutură) — diagnosticul rulează în nucleu, deci nu are voie să se oprească
   cu panică: dă un verdict, nu alege niciun fel, iar rândurile se citesc înapoi (rulat și cu verificarea depășirilor aritmetice);
@@ -252,4 +257,4 @@ Totul trece prin patru lucruri pe care le dă OS-ul (`TokenIo`: trimite lansări
 - `sim_i11_copy.rs`, `sim_i12_q8.rs`: secvențele I11 și I12 trec și cu modelul „date vechi” pornit (ca pe placă).
 - `transfer` (teste de unitate): secvența reparată = cea veche + o invalidare pe lansare, cuvânt cu cuvânt.
 - Unelte pe gazdă: `cargo run --release -p nvidia-ga104 --example analiza_i14 [-- <gpu-jurnal.txt>]` (cu `KGR1_VECTORI`), `verifica_jurnal_lant`.
-- Total la sfârșitul sesiunii: **529 PASS + 6 ignorate** (cele 6 cer vectorii din hubul privat; trec local), `tools/check.sh` verde.
+- Total la sfârșitul sesiunii: **531 PASS + 6 ignorate** (cele 6 cer vectorii din hubul privat; trec local), `tools/check.sh` verde.
