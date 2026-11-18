@@ -1,5 +1,35 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 113 — 18 noiembrie 2026, ~19:25–20:00 (ora României), în cloud, FĂRĂ placă — **C-142 făcut în SIMULARE**: forma lui #513 pe canalul simulat, limitele, contoarele de viteză; analiza FLR (trei surse)
+
+Pornită de programare. Date noi de la sesiunea 112: **`os-306` — I14 TRECE pe placa reală** (de două ori, jurnalele 008 și 009: proba 1 „o invalidare” =
+DATE VECHI ca la `os-305`, proba 2 „invalidare înaintea fiecărei lansări” = trece, argmax = procesor = vectori), deci **lanțul I0 → I14 întreg a trecut pe
+RTX 3070 Ti** cu `db34429`. Comanda nouă **C-142** (Adrian, 17:45, completare 18:06): sprijin pentru #513 pe placă (C-141) + FLR pentru ciclul automat (C-143).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Limitele (C-142 pasul 1) | `kronos_speed::ModelLimits` (din forme): 196 lansări pe simbol; 7 872 / **9 440** / 712 B de comenzi; zona **32 KiB** (16 KiB nu ajung; 64 KiB la 24 de straturi); pas ≥ 197 (OS: 0x100, ajunge); VRAM **142,2 MiB**; urcare în **14 bucăți** de 8 MiB; `check` numește fiecare limită neîndeplinită | PASS (SIMULARE), T133a–b |
+| Forma lui #513 în `gpu-sim` | `tests/sim_k513.rs`: 12 straturi, E 768, 12 capete, vocabular 16 384, context 512 (greutăți generate): zona 32 KiB, urcare prin arenă (recitită = identică), 4 poziții × o sonerie de 196 lansări `EachLaunch`, logit-urile din RAM = procesorul, greedy | PASS (SIMULARE), T133e–f |
+| Contoarele de viteză (pasul 2) | `kronos_speed::Speed`: ceasul plăcii separat de al procesorului, urcarea separat; rânduri `kv` (14 fără pozițiile) + cititorul `parse_journal` | PASS (SIMULARE), T133c–d |
+| Timpul (din jurnalul `os-306`) | un simbol de control ≈ 0,27 s între sonerii, din care aproape tot = 15 rânduri de jurnal × ~18 ms; pentru #513 estimat ~0,3 s/simbol + placa (necunoscut) + verificarea pe procesor | DEDUS (nemăsurat) |
+| FLR (pasul 3, trei surse) | `docs/C-142_K513_VITEZA_FLR.md` §4: RM 570.144 (FLR = reset complet al cipului, apoi așteaptă GFW boot), **tinygrad: la WPR2 ridicat face reset PCI și merge mai departe**, nouveau/nova: Booter Unload cu **FWSEC-SB înainte** (noi îl omisesem la C-103). Propunere: FLR la începutul lanțului doar cu WPR2 ridicat; proba cu Adrian descrisă. Studiul C-103 corectat („probabil NU” era greșit) | DEDUS (~80 % că FLR coboară WPR2) |
+| `gpu-sim` mai rapid | copierea memoriei pe pagini + traducerea ținută pe pagină (aceleași rezultate) | PASS |
+| Documente | `docs/C-142_K513_VITEZA_FLR.md`; nota OS `integration/cyber-universe/C-142_k513-limite-si-viteza.md`; TEST_MATRIX T133; PROVENANCE; RISKS B10; C-103 | — |
+| Verificări | `tools/check.sh` (Rust 1.97.0): format, clippy `-D warnings`, **538 teste** (531 → +7; 6 ignorate), build no_std; 81 s | PASS (SIMULARE) |
+| Pe RTX 3070 Ti | `kronos --gpu` cu #513 + contoarele; FLR | NOT TESTED (după C-141 / cu Adrian) |
+
+Interfața publică: doar adăugări (modulul `nvidia_ga104::kronos_speed`: `ModelLimits`, `Limit`, `Speed`, `Source`, `Upload`, `TokenTime`, `SpeedSummary`,
+`ParsedSpeed`, `parse_journal`, `rows`, `K513_*`). În `gpu-sim` nicio funcție schimbată la exterior (doar interiorul copierii). OS-ul fixat pe `db34429`
+compilează neschimbat.
+**Cât de sigur:** că #513 merge pe placă cu codul de la `os-306` + zona de 32 KiB ~75 % (aceleași programe și același fel de trimitere; riscurile: timpi
+mai lungi pe lansare, fișierul de 106 MiB de pe stick); FLR ~80 %.
+
+**Următorul pas:** (1) OS-ul leagă commit-ul acestei sesiuni în C-141 (`os-307`) — contoarele în `kronos --gpu`; (2) **Adrian, în fereastră:** `kronos --gpu`
+cu #513 → `trimite`; (3) **Adrian: „da” / „nu” pentru proba FLR** (§4 din doc) — dacă da, comandă pentru OS (scrierea în configurația PCI) și pentru noi
+(ordinea + citirile); (4) noi, după jurnal: cifrele `kv`. Separat: DA/NU pentru pasul 3 pe laptop.
+**Regula 8:** 113 are pas (cod + analiză).
+
+---
 ## Sesiunea 112 — 18 noiembrie 2026, ~12:30–14:45 (ora României), în cloud, FĂRĂ placă — jurnalul `os-305` analizat (**I9–I13 au trecut pe placă**; I14 = alt simbol); **C-139 făcut în SIMULARE**: reparația, scara și diagnosticul din jurnal
 
 Pornită de Adrian (comanda C-139, ~12:30). „OPRIT” din sesiunea 111 s-a ridicat singur: jurnal nou în `rezultate/` + comandă nouă. Date noi: `os-305`

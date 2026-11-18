@@ -33,6 +33,8 @@ Testele T118: după I6 + I7, unload → WPR2 = 0 → **I6 rulează din nou în a
 
 ### 2b. Resetul PCIe al funcției (FLR) — de citit pe placă, probabil NU
 
+> **Actualizare 18 nov 2026 (C-142):** citit pe placă (K-2): RTX 3070 Ti **anunță FLR**. Presupunerea „probabil NU” de mai jos era greșită pentru placa asta. Comparația cu cele trei surse și propunerea: `docs/C-142_K513_VITEZA_FLR.md` §4.
+
 - PCIe Base Spec: Device Capabilities bit 28 = „Function Level Reset Capability”; se declanșează cu Device Control bit 15. Plăcile GeForce de consum **nu anunță FLR**
   (cunoaștere generală: utilizatorii de virtualizare folosesc resetul de magistrală tocmai de aceea); pe RTX 3070 Ti nu știm — **se citește**.
 - Implementat (doar citire): `gpu_pci::caps::reset_capabilities` → `flr_capable`, `flr_initiated`, `pm_no_soft_reset`, `power_state`, `pme_from_d3cold` + `summary()`.

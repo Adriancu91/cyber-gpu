@@ -337,3 +337,17 @@ care citează manualul PTX. Din sursele OS-ului (`cyber-universe`, doar citit): 
 `gpu_sim::cmdproc::CommandProcessor::model_stale_reads` e o **ipoteză pusă în model** (un singur cache pentru toată placa), nu comportament
 observat. Programele NAK nu au fost recompilate; din listările lor existente (`tools/nak/out/*.sm86.txt`) s-au citit doar numele instrucțiunilor.
 Niciun octet de firmware NVIDIA citit sau copiat. Niciun cod GPL citit pentru această sesiune.
+
+**Sesiunea 113 (18 nov, ~19:25), C-142 (#513 pe placă: limite, viteză, FLR):** codul nou (`kronos_speed`, testul `sim_k513`, extinderea `TokenSim`,
+copierea pe pagini și traducerea ținută pe pagină din `gpu_sim::cmdproc`) e scris de noi, din codul nostru existent; forma lui #513 din hub
+(`integrare/kronos/MODEL.md`). Pentru analiza FLR (doc `C-142_K513_VITEZA_FLR.md` §4), surse **citite ca specificație, nimic copiat**: **driverul NVIDIA
+570.144** (MIT, `open-gpu-kernel-modules` eticheta `570.144`): `kernel_bif.c` (`kbifResetFromTimeoutFullChip`), `arch/ampere/kernel_bif_ga100.c`
+(`kbifPrepareForFullChipReset_GA100`, `kbifDoFullChipReset_GA100`), `arch/turing/kernel_bif_tu102.c` (`kbifDoFunctionLevelReset_TU102`),
+`gsp/kernel_gsp.c` (`_kgspBootGspRm`), `arch/nvalloc/unix/src/osinit.c` (`NV_FLAG_TRIGGER_FLR`), `kernel-open/nvidia/nv.c` și `os-pci.c`
+(`os_pci_trigger_flr`). **tinygrad** (MIT, ramura principală `8ffd4c8`, 18 nov 2026): `runtime/support/nv/nvdev.py` (`_early_ip_init`: WPR2 ridicat →
+reset PCI), `runtime/support/nv/ip.py` (`wait_for_reset`), `runtime/support/system.py` (`reset`, `reset_method`). **nouveau** (GPL, Linux, doar citit):
+`drivers/gpu/drm/nouveau/nvkm/subdev/gsp/tu102.c` (`tu102_gsp_booter_unload`, `tu102_gsp_fini`). **nova-core** (GPL, Linux, doar citit):
+`drivers/gpu/nova-core/gsp/boot.rs`, `gsp/hal/tu102.rs`, `fb.rs`, `fb/regs.rs`. Din sursele GPL doar ordinea pașilor și textele de eroare, pentru
+comparație; **nicio linie GPL în cod** (nici nu s-a scris cod FLR în această sesiune). Faptul „FLR da” vine din răspunsul OS-ului K-2 de pe workstation.
+Niciun octet de firmware NVIDIA citit sau copiat.
+

@@ -1,5 +1,19 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 113 (18 nov 2026, ~19:25–20:00, cloud, fără placă) — C-142: forma lui #513 în `gpu-sim`, limitele, contoarele de viteză, toate SIMULARE
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T133a | limitele lui #513 din forme: 196 lansări, 7 872 / 9 440 / 712 B de comenzi, zona 32 KiB, pas ≥ 197, ~106 MiB greutăți în 14 bucăți de 8 MiB, buget < 160 MiB; 24 de straturi → 64 KiB | `cargo test -p nvidia-ga104 k513_limits` | conform | conform | PASS (SIMULARE) |
+| T133b | `ModelLimits::check` numește fiecare limită neîndeplinită (zona 16 KiB, pas 0x80, VRAM mic, bucată mică); bucată 0 / nemultiplu de 16 refuzată | `… check_names_every_limit` | conform | conform | PASS |
+| T133c | contoarele: placa și procesorul separat, urcarea separat; mediane, simboluri/s, MB/s; ceasul plăcii înapoi = eroare; ceas lipsă = „?”, nu ghicit | `… speed_counts`, `… a_missing_host_clock` | conform | conform | PASS |
+| T133d | rândurile `kv` în jurnal (5 + 4/poziție + 9, sau 14 fără pozițiile) și citite înapoi; o rulare mai veche din același text e ignorată | `… journal_rows_read_back` | conform | conform | PASS |
+| T133e | **forma lui #513** (12 straturi, E 768, 12 capete, vocabular 16 384, context 512; greutăți generate) pe canalul simulat: zona 32 KiB, urcare prin arenă în 14 bucăți ≤ 8 MiB (recitite din VRAM = identice), 4 poziții × 1 sonerie de 196 lansări `EachLaunch`, logit-urile din RAM = procesorul (≤ 1e-3), greedy, rândurile `kv` citite înapoi | `cargo test -p nvidia-ga104 --release --test sim_k513` | conform | conform (16 s pe gazdă) | PASS (SIMULARE) |
+| T133f | verificarea OS-ului refuză zona de 16 KiB și VRAM-ul mic înainte de orice urcare | `… the_os_check_refuses` | conform | conform | PASS |
+| T133g | `gpu-sim`: copierea memoriei pe pagini + traducerea ținută pe pagină — aceleași rezultate în toate testele, pachetul de teste mai rapid | `sh tools/check.sh` | toate trec | **538 PASS**, 6 ignorate (531 → +7); format, clippy `-D warnings`, build no_std; 81 s (înainte 92 s fără testul nou) | PASS |
+| T133h | pe RTX 3070 Ti: `kronos --gpu` cu #513, contoarele `kv` | — | — | — | NOT TESTED (după C-141, cu Adrian) |
+| T133i | pe RTX 3070 Ti: FLR coboară WPR2 (propunerea din `docs/C-142_K513_VITEZA_FLR.md` §4) | — | — | — | NOT TESTED (cere „da” + comandă OS) |
+
 ## Rezultate — sesiunea 112 (18 nov 2026, ~12:30–14:45, cloud, fără placă) — C-139: I14 după `os-305` (alt argmax pe placă): reparația (invalidare înaintea fiecărei lansări), scara și diagnosticul din jurnal (`kronos_diag`), toate SIMULARE
 
 Ipoteza „date vechi” e pusă în modelul de GPU cu `CommandProcessor::model_stale_reads` (oprit implicit): e o **ipoteză**, nu o măsurătoare.
