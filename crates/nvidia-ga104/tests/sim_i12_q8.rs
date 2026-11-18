@@ -194,6 +194,26 @@ fn matvec_q8_on_the_work_channel_is_identical_to_the_oracle() {
     }
 }
 
+/// C-139 (the hypothesis raised by os-305): with the GPU model's non-coherent
+/// read cache on, I12 still gives the oracle bit for bit — the product reads
+/// what the copy before it wrote and the copy after it reads y, each for the
+/// first time; nothing is read again after being rewritten. As on the board,
+/// where I12 passed.
+#[test]
+fn matvec_q8_passes_under_the_stale_read_model() {
+    for line in [4u64, 128, 1024] {
+        let mut r = rig();
+        r.stale_line = line;
+        let j = prepare(&mut r, 100, 96, 0x12);
+        submit(&mut r, &j);
+        gpu(&mut r, &j).unwrap();
+        let (y, _) = y_and_records(&mut r, &j);
+        let v = mv::judge(&j.w, 100, 96, &j.x, &y).unwrap();
+        assert_eq!(v, Verdict::Identic, "linie {line}: {}", v.line());
+        assert_eq!(r.cp.as_ref().unwrap().stale_bytes_served(), 0);
+    }
+}
+
 /// Mistakes planted in what the driver writes; each must end in a refusal or
 /// in "nu trece" naming the row, never in a pass.
 #[test]

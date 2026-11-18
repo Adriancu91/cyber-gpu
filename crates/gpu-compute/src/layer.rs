@@ -288,6 +288,112 @@ pub fn gelu_gpu(x: f32) -> f32 {
     0.5 * x * (1.0 + erf)
 }
 
+/// C-139: every vector one position leaves in the activation scratch of a layer, computed with the **program
+/// models** above (`layernorm_gpu`, `q8::matvec_gpu_order`, `vadd_gpu`, `attention_head_gpu`, `gelu_gpu`) in the order
+/// of the 16 launches — what each launch should have written, to find the first one that did not. In SIMULARE the
+/// model's memory equals this bit for bit; on a board only inside the layer tolerance.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LayerTrace {
+    /// The layer's input (x before launch 0).
+    pub x_in: Vec<f32>,
+    /// Launch 0: LayerNorm 1.
+    pub h: Vec<f32>,
+    /// Launch 1: Wqkv·h (3E).
+    pub qkv: Vec<f32>,
+    /// Launch 2: + bqkv (3E: q | k | v). Launches 3 and 4 copy k and v into the caches.
+    pub qkvb: Vec<f32>,
+    /// Launch 5: the attention.
+    pub att: Vec<f32>,
+    /// Launches 6, 7: Wout·att, + bout.
+    pub o: Vec<f32>,
+    pub ob: Vec<f32>,
+    /// Launch 8: x + ob.
+    pub x1: Vec<f32>,
+    /// Launch 9: LayerNorm 2.
+    pub h2: Vec<f32>,
+    /// Launches 10, 11: Wfc·h2, + bfc (4E).
+    pub f: Vec<f32>,
+    pub fb: Vec<f32>,
+    /// Launch 12: GELU (4E).
+    pub g: Vec<f32>,
+    /// Launches 13, 14: Wproj·g, + bproj.
+    pub p: Vec<f32>,
+    pub pb: Vec<f32>,
+    /// Launch 15: x1 + pb, the layer's output (written over x).
+    pub x_out: Vec<f32>,
+}
+
+/// The attention launch for every head, on explicit caches (`kc`/`vc` = `[position][E]`, rows `0..n_pos`).
+pub fn attention_gpu(s: &Shape, q: &[f32], kc: &[f32], vc: &[f32], n_pos: usize) -> Vec<f32> {
+    let (e, d) = (s.e, s.d());
+    let a = AttnArgs {
+        n_pos,
+        e,
+        d,
+        scale: 1.0 / math::sqrt(d as f32),
+    };
+    (0..s.heads)
+        .flat_map(|hd| attention_head_gpu(q, kc, vc, &a, hd))
+        .collect()
+}
+
+/// C-139: [`LayerTrace`] of position `pos` for input `x`. `kc`/`vc` hold the rows of the positions **before** `pos`
+/// (rows from `pos` on are not read; nothing is written).
+pub fn trace_gpu(
+    s: &Shape,
+    w: &LayerWeights<'_>,
+    x: &[f32],
+    kc: &[f32],
+    vc: &[f32],
+    pos: usize,
+) -> GpuResult<LayerTrace> {
+    s.check(w)?;
+    let e = s.e;
+    if x.len() != e || pos >= MAX_POS || kc.len() < pos * e || vc.len() < pos * e {
+        return Err(bad("strat: x de alta marime sau pozitie peste cache"));
+    }
+    let mv = |m: &[u8], rows: usize, cols: usize, v: &[f32]| -> GpuResult<Vec<f32>> {
+        let mut y = alloc::vec![0.0f32; rows];
+        q8::matvec_gpu_order(m, rows, cols, v, &mut y)?;
+        Ok(y)
+    };
+    let h = layernorm_gpu(x, w.ln1_g, w.ln1_b, s.eps);
+    let qkv = mv(w.wqkv, 3 * e, e, &h)?;
+    let qkvb = vadd_gpu(&qkv, w.bqkv);
+    let mut k: Vec<f32> = kc[..pos * e].to_vec();
+    k.extend_from_slice(&qkvb[e..2 * e]);
+    let mut v: Vec<f32> = vc[..pos * e].to_vec();
+    v.extend_from_slice(&qkvb[2 * e..]);
+    let att = attention_gpu(s, &qkvb, &k, &v, pos + 1);
+    let o = mv(w.wout, e, e, &att)?;
+    let ob = vadd_gpu(&o, w.bout);
+    let x1 = vadd_gpu(x, &ob);
+    let h2 = layernorm_gpu(&x1, w.ln2_g, w.ln2_b, s.eps);
+    let f = mv(w.wfc, 4 * e, e, &h2)?;
+    let fb = vadd_gpu(&f, w.bfc);
+    let g: Vec<f32> = fb.iter().map(|&v| gelu_gpu(v)).collect();
+    let p = mv(w.wproj, e, 4 * e, &g)?;
+    let pb = vadd_gpu(&p, w.bproj);
+    let x_out = vadd_gpu(&x1, &pb);
+    Ok(LayerTrace {
+        x_in: x.to_vec(),
+        h,
+        qkv,
+        qkvb,
+        att,
+        o,
+        ob,
+        x1,
+        h2,
+        f,
+        fb,
+        g,
+        p,
+        pb,
+        x_out,
+    })
+}
+
 /// The first element outside the layer tolerance: `(index, gpu, cpu)`; lengths that differ or a value that is not
 /// finite never pass.
 pub fn first_outside(got: &[f32], cpu: &[f32]) -> Option<(usize, f32, f32)> {
@@ -325,5 +431,81 @@ mod tests {
         assert!(first_outside(&[1.0], &[1.0, 2.0]).is_some());
         assert!(first_outside(&[1.001], &[1.0]).is_some());
         assert!(first_outside(&[1.000_05], &[1.0]).is_none());
+    }
+
+    /// C-139: the trace of the program models ends where the CPU engine ends (inside the layer tolerance), position
+    /// after position, and reads only the cache rows before its position.
+    #[test]
+    fn the_trace_follows_the_cpu_engine() {
+        let e = 64;
+        let s = Shape {
+            e,
+            heads: 4,
+            eps: 1e-5,
+        };
+        let mut seed = 7u64;
+        let mut r = move || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((seed >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+        };
+        let mut mat = |rows: usize, cols: usize| {
+            let rb = cols / q8::BLOCK * q8::BLOCK_BYTES;
+            let mut w = alloc::vec![0u8; rows * rb];
+            for i in 0..rows {
+                let row: Vec<f32> = (0..cols).map(|_| r() * 0.1).collect();
+                q8::quantize_row(&row, &mut w[i * rb..(i + 1) * rb]).unwrap();
+            }
+            w
+        };
+        let (wqkv, wout, wfc, wproj) = (mat(3 * e, e), mat(e, e), mat(4 * e, e), mat(e, 4 * e));
+        let vec = |n: usize, mid: f32| -> Vec<f32> {
+            (0..n)
+                .map(|i| mid + ((i * 37 % 19) as f32 - 9.0) / 300.0)
+                .collect()
+        };
+        let (g1, b1, g2, b2) = (vec(e, 1.0), vec(e, 0.0), vec(e, 1.0), vec(e, 0.0));
+        let (bqkv, bout, bfc, bproj) = (vec(3 * e, 0.0), vec(e, 0.0), vec(4 * e, 0.0), vec(e, 0.0));
+        let w = LayerWeights {
+            ln1_g: &g1,
+            ln1_b: &b1,
+            wqkv: &wqkv,
+            bqkv: &bqkv,
+            wout: &wout,
+            bout: &bout,
+            ln2_g: &g2,
+            ln2_b: &b2,
+            wfc: &wfc,
+            bfc: &bfc,
+            wproj: &wproj,
+            bproj: &bproj,
+        };
+        let (mut kc, mut vc) = (
+            alloc::vec![0.0f32; MAX_POS * e],
+            alloc::vec![0.0f32; MAX_POS * e],
+        );
+        for pos in 0..3 {
+            let x: Vec<f32> = (0..e)
+                .map(|i| ((i * 13 + pos * 7) % 23) as f32 / 11.0 - 1.0)
+                .collect();
+            // Rows from `pos` on are poisoned: the trace must not read them.
+            let (mut kp, mut vp) = (kc.clone(), vc.clone());
+            kp[pos * e..].fill(f32::NAN);
+            vp[pos * e..].fill(f32::NAN);
+            let t = trace_gpu(&s, &w, &x, &kp, &vp, pos).unwrap();
+            let mut cpu = x.clone();
+            step_cpu(&s, &w, &mut cpu, &mut kc, &mut vc, pos).unwrap();
+            assert_eq!(first_outside(&t.x_out, &cpu), None, "pozitia {pos}");
+            assert_eq!(
+                first_outside(&t.qkvb[e..2 * e], &kc[pos * e..(pos + 1) * e]),
+                None
+            );
+            assert_eq!(t.x_in, x);
+            assert_eq!((t.qkv.len(), t.f.len(), t.g.len()), (3 * e, 4 * e, 4 * e));
+            assert_eq!(t.x_out, vadd_gpu(&t.x1, &t.pb));
+        }
+        assert!(trace_gpu(&s, &w, &[0.0; 3], &kc, &vc, 0).is_err());
+        assert!(trace_gpu(&s, &w, &alloc::vec![0.0; e], &kc[..e], &vc, 2).is_err());
     }
 }

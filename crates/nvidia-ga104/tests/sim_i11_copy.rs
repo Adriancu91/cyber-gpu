@@ -162,6 +162,24 @@ fn round_trip_ram_vram_ram_bit_for_bit() {
     }
 }
 
+/// C-139 (the hypothesis raised by os-305): with the GPU model's non-coherent
+/// read cache on, the round trip still passes bit for bit — the second copy
+/// reads what the first one wrote, but nothing is read again after being
+/// rewritten. As on the board, where I11 passed.
+#[test]
+fn round_trip_passes_under_the_stale_read_model() {
+    for line in [4u64, 128, 1024] {
+        let mut r = rig();
+        r.stale_line = line;
+        let t = prepare(&mut r, 256 << 10, None);
+        submit(&mut r, &t);
+        gpu_runs(&mut r, &t).unwrap();
+        let back = sys_read(&r.sys, &t.dst, t.bytes);
+        assert_eq!(transfer::first_mismatch(&back, SEED), None, "linie {line}");
+        assert_eq!(r.cp.as_ref().unwrap().stale_bytes_served(), 0);
+    }
+}
+
 /// The host RAM really is reached through the PTEs: the copy lands on the
 /// bus addresses the OS gave, page by page (scattered), not anywhere else.
 #[test]

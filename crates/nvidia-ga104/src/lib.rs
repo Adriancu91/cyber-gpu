@@ -42,6 +42,9 @@
 //!   checked step by step (pure text);
 //! - [`launch_cost`]: C-69 — measurement 1 of the one-program target: the
 //!   cost of one launch from GPU timestamps (encoding + reading, SIMULARE);
+//! - [`kronos_diag`]: C-139 — where a token of Kronos goes wrong on the work
+//!   channel: the three ways of sending it, every launch's output read back and
+//!   judged, the rows for the stick journal and their reader (SIMULARE);
 //! - [`backend`]: the I1 contract for GA104.
 //!
 //! Sources and licences: docs/GA104_INITIALIZATION.md, docs/PROVENANCE.md.
@@ -68,6 +71,7 @@ pub mod i6_check;
 pub mod i6_log;
 pub mod ids;
 pub mod init;
+pub mod kronos_diag;
 pub mod kronos_gen;
 pub mod kronos_layer;
 pub mod kronos_model;

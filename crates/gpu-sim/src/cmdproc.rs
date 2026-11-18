@@ -32,7 +32,9 @@
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
+use alloc::collections::btree_map::Entry;
 use alloc::vec::Vec;
+use core::cell::RefCell;
 
 use gpu_core::error::{GpuError, GpuResult};
 use nvidia_rm570::regs::{clc7c0 as c, clc56f as h, qmd_v03_00 as q};
@@ -47,6 +49,26 @@ const PAGE: u64 = 4096;
 #[derive(Default)]
 pub struct GpuMem {
     pages: BTreeMap<u64, Box<[u8; PAGE as usize]>>,
+    /// C-139: the optional model of a non-coherent read cache
+    /// ([`CommandProcessor::model_stale_reads`]). Off by default.
+    stale: RefCell<StaleReads>,
+}
+
+/// C-139, SIMULARE of a **hypothesis** (docs/os-305_ANALIZA_I14.md), not of
+/// observed hardware: the loads of a running program go through a cache that
+/// nothing keeps coherent — a line read once is served again from the cache,
+/// whatever was written to memory since (by a program or by the host), until
+/// the caches are invalidated.
+#[derive(Default)]
+struct StaleReads {
+    /// Bytes per cache line (a power of two up to a page); 0 = the model is
+    /// off and memory is coherent, as it always was.
+    line: u64,
+    /// A program is running: only its loads go through the cache.
+    in_program: bool,
+    lines: BTreeMap<u64, Vec<u8>>,
+    /// Bytes served from the cache that differed from memory at that time.
+    stale_bytes: u64,
 }
 
 impl GpuMem {
@@ -59,20 +81,58 @@ impl GpuMem {
         }
     }
 
+    fn byte(&self, a: u64) -> GpuResult<u8> {
+        self.pages
+            .get(&(a / PAGE))
+            .map(|p| p[(a % PAGE) as usize])
+            .ok_or(GpuError::InvalidArgument(
+                "SIM: citire din memorie GPU nemapata",
+            ))
+    }
+
     /// Reading memory that was never written is an error (a real GPU would
-    /// fault on an unmapped address).
+    /// fault on an unmapped address). With the stale-read model on and a
+    /// program running, the bytes come from the model's cache lines.
     pub fn read(&self, va: u64, out: &mut [u8]) -> GpuResult<()> {
+        let mut st = self.stale.borrow_mut();
+        if st.line == 0 || !st.in_program {
+            for (i, b) in out.iter_mut().enumerate() {
+                *b = self.byte(va + i as u64)?;
+            }
+            return Ok(());
+        }
+        let line = st.line;
         for (i, b) in out.iter_mut().enumerate() {
             let a = va + i as u64;
-            let p = self
-                .pages
-                .get(&(a / PAGE))
-                .ok_or(GpuError::InvalidArgument(
-                    "SIM: citire din memorie GPU nemapata",
-                ))?;
-            *b = p[(a % PAGE) as usize];
+            let base = a - a % line;
+            let now = self.byte(a)?;
+            let at = (a - base) as usize;
+            let cached = match st.lines.entry(base) {
+                Entry::Occupied(l) => l.get()[at],
+                Entry::Vacant(v) => {
+                    let fetched = (0..line)
+                        .map(|k| self.byte(base + k))
+                        .collect::<GpuResult<Vec<u8>>>()?;
+                    v.insert(fetched)[at]
+                }
+            };
+            if cached != now {
+                st.stale_bytes += 1;
+            }
+            *b = cached;
         }
         Ok(())
+    }
+
+    /// C-139: marks the start/end of a program run for the stale-read model;
+    /// returns the previous state.
+    fn set_in_program(&self, on: bool) -> bool {
+        core::mem::replace(&mut self.stale.borrow_mut().in_program, on)
+    }
+
+    /// C-139: what an invalidation of the shader data caches does in the model.
+    fn drop_cached_lines(&self) {
+        self.stale.borrow_mut().lines.clear();
     }
 
     pub fn read_u32(&self, va: u64) -> GpuResult<u32> {
@@ -322,6 +382,37 @@ impl CommandProcessor {
         self.programs.len() - 1
     }
 
+    /// C-139, SIMULARE of a **hypothesis** raised by os-305 (I13 passed on the
+    /// board, I14 did not): the loads of a program go through a read cache of
+    /// `line_bytes`-byte lines that is **not coherent** with later writes and
+    /// is emptied only by `INVALIDATE_SHADER_CACHES_NO_WFI` (global data or
+    /// constant) or by a QMD that asks for it
+    /// (`INVALIDATE_SHADER_DATA_CACHE`). `0` turns the model off (the
+    /// default: coherent memory). It is our reading of why every working
+    /// stack invalidates before each launch; nothing here was observed on
+    /// the board.
+    pub fn model_stale_reads(&mut self, line_bytes: u64) -> GpuResult<()> {
+        if line_bytes != 0 && (!line_bytes.is_power_of_two() || line_bytes > PAGE) {
+            return Err(bad(
+                "SIM: linia de cache trebuie sa fie putere a lui 2, cel mult o pagina",
+            ));
+        }
+        let mut st = self.mem.stale.borrow_mut();
+        // The same size again keeps the lines: only an invalidation empties
+        // the cache, not a new doorbell.
+        if st.line != line_bytes {
+            st.line = line_bytes;
+            st.lines.clear();
+        }
+        Ok(())
+    }
+
+    /// C-139: bytes the stale-read model served that differed from memory
+    /// (0 = the model changed nothing, or is off).
+    pub fn stale_bytes_served(&self) -> u64 {
+        self.mem.stale.borrow().stale_bytes
+    }
+
     /// I10a: a channel as the GPU sees it after the doorbell: reads `GPGet`
     /// and `GPPut` from USERD at `userd_va`, runs the ring entries from GET
     /// up to PUT (wrapping), then writes `GPGet = GPPut` back. A PUT outside
@@ -443,6 +534,12 @@ impl CommandProcessor {
                     return Err(bad("SIM: biti nemodelati in INVALIDATE_SHADER_CACHES"));
                 }
                 self.cache_invalidations += 1;
+                // C-139: the stale-read model (if on) forgets its lines.
+                if c::NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI_GLOBAL_DATA.get(d) != 0
+                    || c::NVC7C0_INVALIDATE_SHADER_CACHES_NO_WFI_CONSTANT.get(d) != 0
+                {
+                    self.mem.drop_cached_lines();
+                }
                 Ok(())
             }
             m => self.setup_method(m, d),
@@ -653,12 +750,22 @@ impl CommandProcessor {
                 "SIM: QMD declara mai putine bariere decat foloseste programul",
             ));
         }
-        run(&mut Launch {
+        // C-139: a QMD may ask for the shader data cache to be invalidated
+        // before its launch (tinygrad's QMDs do; ours do not set it yet).
+        if g(q::NVC6C0_QMDV03_00_INVALIDATE_SHADER_DATA_CACHE)
+            == q::NVC6C0_QMDV03_00_INVALIDATE_SHADER_DATA_CACHE_TRUE
+        {
+            self.mem.drop_cached_lines();
+        }
+        let was = self.mem.set_in_program(true);
+        let ran = run(&mut Launch {
             mem: &mut self.mem,
             cbuf0,
             grid,
             block,
-        })?;
+        });
+        self.mem.set_in_program(was);
+        ran?;
         self.gpu_time_ns += self.sim_launch_ns;
         self.events.push(Event::Launch {
             qmd: qmd_va,
@@ -1321,6 +1428,16 @@ pub const TOKEN_NEEDS: Needs = Needs {
 /// counter, as the G workgroups would. It shows the list and its arguments are right; it does NOT model the grid
 /// barrier's timing or coherence on a real SM (one operation is finished before the next starts, by construction).
 pub fn token_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    // C-139: `token.comp` reads its work data with coherent loads
+    // (`ld.global.strong.sys`, tools/nak/README.md) and its weights never
+    // change, so the stale-read model does not apply inside it.
+    let was = l.mem.set_in_program(false);
+    let ran = token_ops(l);
+    l.mem.set_in_program(was);
+    ran
+}
+
+fn token_ops(l: &mut Launch<'_>) -> GpuResult<()> {
     if l.block != [32, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 || l.mem.read_u64(l.cbuf0)? != 0 {
         return Err(bad("SIM: token cere blocuri de 32x1x1, grila 1D, baza 0"));
     }

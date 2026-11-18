@@ -4,6 +4,9 @@
 //! GPU side (`gpu_sim::cmdproc`) fetching everything through the page tables.
 #![allow(dead_code)]
 
+pub mod kgr1;
+pub mod token_sim;
+
 use gpu_core::error::{GpuError, GpuResult};
 use gpu_sim::cmdproc::{CommandProcessor, Needs, ProgramFn};
 use gpu_sim::fake_rm::FakeRm;
@@ -114,6 +117,9 @@ pub struct Rig {
     pub rm: Direct,
     pub u: UserSpace,
     pub cg: ComputeGroup,
+    /// C-139: bytes per line of the GPU model's non-coherent read cache (`CommandProcessor::model_stale_reads`,
+    /// a hypothesis about the board, not an observation); 0 = off (coherent memory, the default).
+    pub stale_line: u64,
 }
 
 /// Golden image → working client → work channel → compute setup submitted.
@@ -149,6 +155,7 @@ pub fn rig_with_push(push_bytes: u64) -> Rig {
         rm: d,
         u,
         cg,
+        stale_line: 0,
     }
 }
 
@@ -172,6 +179,7 @@ pub fn gpu_runs(
         cp.sim_method_ns = 100;
         cp
     });
+    cp.model_stale_reads(r.stale_line)?;
     cp.events.clear();
     cp.timestamps.clear();
     let v = &r.mem.writer().0;

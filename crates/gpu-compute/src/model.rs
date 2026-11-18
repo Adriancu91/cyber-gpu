@@ -126,6 +126,56 @@ pub fn embed_gpu(tok_row: &[u8], pos_row: &[u8], n: usize) -> Vec<f32> {
         .collect()
 }
 
+/// C-139: what every launch of one token should leave in memory, with the program models ([`layer::trace_gpu`],
+/// [`embed_gpu`], `q8::matvec_gpu_order`): the embedding, every layer's vectors, the final LayerNorm and the logits.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TokenTrace {
+    /// The embedding launch (x before layer 0).
+    pub x0: Vec<f32>,
+    pub layers: Vec<layer::LayerTrace>,
+    pub h_final: Vec<f32>,
+    pub logits: Vec<f32>,
+}
+
+/// C-139: [`TokenTrace`] of `token` at `pos`. `prev` holds the caches of the positions before `pos` (e.g. the CPU
+/// engine's after it ran them); nothing is written.
+pub fn trace_gpu(
+    m: &ModelWeights<'_>,
+    prev: &Caches,
+    token: usize,
+    pos: usize,
+) -> GpuResult<TokenTrace> {
+    m.check()?;
+    if token >= m.vocab || pos >= m.context {
+        return Err(bad("model: simbol sau pozitie in afara tabelelor"));
+    }
+    if prev.k.len() != m.layers.len() || prev.v.len() != m.layers.len() {
+        return Err(bad("model: cache-uri pentru alt numar de straturi"));
+    }
+    let e = m.shape.e;
+    let x0 = embed_gpu(
+        &m.emb_tok[m.row_offset(token)..],
+        &m.emb_pos[m.row_offset(pos)..],
+        e,
+    );
+    let mut layers = Vec::with_capacity(m.layers.len());
+    let mut x = x0.clone();
+    for (i, l) in m.layers.iter().enumerate() {
+        let t = layer::trace_gpu(&m.shape, l, &x, &prev.k[i], &prev.v[i], pos)?;
+        x = t.x_out.clone();
+        layers.push(t);
+    }
+    let h_final = layer::layernorm_gpu(&x, m.ln_g, m.ln_b, m.shape.eps);
+    let mut logits = alloc::vec![0.0f32; m.vocab];
+    q8::matvec_gpu_order(m.emb_tok, m.vocab, e, &h_final, &mut logits)?;
+    Ok(TokenTrace {
+        x0,
+        layers,
+        h_final,
+        logits,
+    })
+}
+
 /// The greedy token: the largest logit, the lowest index on a tie; `None` if any logit is not finite.
 pub fn argmax(logits: &[f32]) -> Option<usize> {
     if logits.is_empty() || logits.iter().any(|v| !v.is_finite()) {

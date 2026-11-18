@@ -11,7 +11,7 @@
 //! FRTS defaults to the board's region (3–4 Nov 2026: 0x1ffe00000..0x1fff00000).
 //! Since os-280 it also prints a digest of what GSP-RM said before
 //! `GSP_INIT_DONE` (NOCAT records, LibOS prints, the result), when the journal
-//! has such rows.
+//! has such rows. C-139: the I14 diagnosis (`kronos_diag` rows), when present.
 //! Exit code: 0 = TRECE, 3 = stopped cleanly at a step (Bus Master put back),
 //! 2 = to analyse, 1 = usage / file error.
 
@@ -110,6 +110,18 @@ fn main() {
     let nocat = nocat_log::digest(&text);
     if !nocat.is_empty() {
         print!("{nocat}");
+    }
+    // C-139: the I14 diagnosis the driver journaled (which launch of a token
+    // went wrong, and which way of sending passes), if the journal has it.
+    let diag = nvidia_ga104::kronos_diag::parse_journal(&text);
+    if !diag.probes.is_empty() {
+        println!(
+            "diagnosticul I14 din jurnal ({} probe; detalii: exemplul analiza_i14):",
+            diag.probes.len()
+        );
+        for l in diag.lines() {
+            println!("  {l}");
+        }
     }
     match rm_calls {
         Some(n) => println!(

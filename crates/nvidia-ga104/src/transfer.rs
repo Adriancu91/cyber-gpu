@@ -202,6 +202,47 @@ pub const fn sequence_words(n: usize) -> usize {
     2 + 6 + n * (4 + 6)
 }
 
+/// C-139 (after os-305): [`encode_sequence`] with the shader caches
+/// invalidated **before every launch**, not only once at the start — the
+/// same words as before plus one `INVALIDATE_SHADER_CACHES_NO_WFI`
+/// (instruction + global data + constant; the method the board already took
+/// at I10–I13) in front of each `SEND_PCAS_A`. Why: a launch may read, through
+/// the program's `ld.global…constant` loads, memory that an earlier launch of
+/// the SAME submission read and that was rewritten since (I14: layer 2 reuses
+/// the activation scratch of layer 1; I13 never did that inside one
+/// submission). Every working stack we read invalidates per launch (tinygrad:
+/// `memory_barrier` before each `exec` and the invalidate bits in each QMD);
+/// that the caches are the cause on the board is a **hypothesis**
+/// (docs/os-305_ANALIZA_I14.md). The records are the same as
+/// [`encode_sequence`]'s ([`analyze_sequence`] reads them).
+pub fn encode_sequence_fresh(
+    p: &mut PushBuf<'_>,
+    qmds: &[u64],
+    records_va: u64,
+    first_payload: u32,
+) -> GpuResult<()> {
+    if qmds.is_empty() {
+        return Err(bad("secventa fara lansari"));
+    }
+    invalidate_caches(p)?;
+    timestamp_release(p, records_va, first_payload)?;
+    for (k, &q) in qmds.iter().enumerate() {
+        invalidate_caches(p)?;
+        launch(p, q)?;
+        timestamp_release(
+            p,
+            records_va + (k as u64 + 1) * RECORD,
+            first_payload.wrapping_add(k as u32 + 1),
+        )?;
+    }
+    Ok(())
+}
+
+/// Words [`encode_sequence_fresh`] writes for `n` launches.
+pub const fn sequence_words_fresh(n: usize) -> usize {
+    2 + 6 + n * (2 + 4 + 6)
+}
+
 /// Reads the `n + 1` records of [`encode_sequence`]: every payload as asked,
 /// time never going back; returns the `n` durations (ns). A wrong payload
 /// names the first launch that did not finish.
@@ -433,6 +474,38 @@ mod tests {
         assert!(analyze_sequence(&r[..48], 3, 0x700).is_err());
         // The round trip is the sequence of two.
         assert_eq!(sequence_words(2), ROUND_TRIP_WORDS);
+    }
+
+    /// C-139: the fresh sequence is the old one with one invalidate (2 words)
+    /// in front of every launch; nothing else moves.
+    #[test]
+    fn fresh_sequence_is_the_old_one_plus_an_invalidate_per_launch() {
+        let va = crate::mmu::VA_BASE;
+        let qmds = [va + 0x100, va + 0x200, va + 0x300];
+        let mut a = [0u32; 64];
+        let mut pa = PushBuf::new(&mut a);
+        encode_sequence(&mut pa, &qmds, va + 0x400, 0x700).unwrap();
+        let mut b = [0u32; 64];
+        let mut pb = PushBuf::new(&mut b);
+        encode_sequence_fresh(&mut pb, &qmds, va + 0x400, 0x700).unwrap();
+        assert_eq!(pb.len(), sequence_words_fresh(3));
+        assert_eq!(sequence_words_fresh(3), sequence_words(3) + 2 * 3);
+        let (old, new) = (pa.words().to_vec(), pb.words().to_vec());
+        let inv = &old[..2];
+        // Taking out the invalidate in front of each launch gives the old words back.
+        let mut stripped = new[..8].to_vec();
+        let mut at = 8;
+        for _ in 0..3 {
+            assert_eq!(&new[at..at + 2], inv, "invalidarea dinaintea lansarii");
+            stripped.extend_from_slice(&new[at + 2..at + 12]);
+            at += 12;
+        }
+        assert_eq!(at, new.len());
+        assert_eq!(stripped, old);
+        let mut w = [0u32; 8];
+        assert!(encode_sequence_fresh(&mut PushBuf::new(&mut w), &[], va + 0x400, 0).is_err());
+        // One launch: the same count as the old form (the upload's stretch does not grow).
+        assert_eq!(sequence_words_fresh(1), sequence_words(1) + 2);
     }
 
     #[test]

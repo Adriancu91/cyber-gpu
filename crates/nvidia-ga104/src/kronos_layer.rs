@@ -135,6 +135,18 @@ pub(crate) fn blocks(n: usize, per: u32) -> u32 {
     n.div_ceil(per as usize) as u32
 }
 
+/// C-139: one launch of the copy program (`bytes` from `src` to `dst`, both 16-aligned GPU VAs, VRAM or host RAM) as
+/// a [`Launch`] — e.g. the copy of the logits down that the OS appends to a token's list, so that the whole list
+/// goes through the same code (`kronos_diag::submissions`). The same cbuf and QMD as `transfer::copy_cbuf` /
+/// `transfer::copy_qmd`.
+pub fn copy_launch(src: u64, dst: u64, bytes: u64) -> GpuResult<Launch> {
+    Ok(Launch {
+        prog: Prog::Copy,
+        cbuf: transfer::copy_cbuf(src, dst, bytes)?,
+        grid: (bytes / transfer::COPY_UNIT).div_ceil(transfer::COPY_BLOCK as u64) as u32,
+    })
+}
+
 /// GPU VAs of everything one layer touches. Activations live in one scratch buffer laid out by
 /// [`LayerVas::with_scratch`]; caches are `[MAX_POS][E]` each.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -286,13 +298,7 @@ pub fn token_launches(s: &Shape, v: &LayerVas, pos: usize) -> GpuResult<Vec<Laun
         cbuf: cbuf(&[a, b, c], &[n as u32]),
         grid: blocks(n, 256),
     };
-    let copy = |src: u64, dst: u64, bytes: u64| -> GpuResult<Launch> {
-        Ok(Launch {
-            prog: Prog::Copy,
-            cbuf: transfer::copy_cbuf(src, dst, bytes)?,
-            grid: (bytes / transfer::COPY_UNIT).div_ceil(transfer::COPY_BLOCK as u64) as u32,
-        })
-    };
+    let copy = copy_launch;
     let row = 4 * e as u64;
     let scale = 1.0 / gpu_compute::math::sqrt(d as f32);
     Ok(alloc::vec![
@@ -519,6 +525,21 @@ mod tests {
         for x in &l {
             x.qmd(base, base + 0x100).unwrap();
         }
+        // C-139: the copy as a launch gives the QMD `transfer::copy_qmd` gives.
+        let c = copy_launch(base + 0x1000, base + 0x2_0000, 65536).unwrap();
+        assert_eq!((c.prog, c.grid), (Prog::Copy, 16));
+        assert_eq!(
+            c.qmd(base, base + 0x100).unwrap(),
+            transfer::copy_qmd(base, base + 0x100, 65536)
+                .unwrap()
+                .to_bytes()
+                .unwrap()
+        );
+        assert_eq!(
+            c.cbuf,
+            transfer::copy_cbuf(base + 0x1000, base + 0x2_0000, 65536).unwrap()
+        );
+        assert!(copy_launch(base + 8, base + 0x9000, 64).is_err());
         assert!(token_launches(&s, &v, MAX_POS).is_err());
         assert!(
             token_launches(
