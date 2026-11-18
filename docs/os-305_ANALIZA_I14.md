@@ -43,11 +43,11 @@ Nota pentru OS: `integration/cyber-universe/C-139_i14-diagnostic-si-reparatie.md
 
 **Ce rezultă de aici, cu codul OS-ului de la `os-305` în față** (`kernel/src/drivers/gpu_i14.rs`; DEDUS):
 1. Prima sonerie = urcarea modelului (greutăți + zona de lucru + logit-uri, 692 480 B, o singură bucată). A doua = **un singur simbol**: primul simbol
-   al primului text de control („Ana are mere.”, simbolul 65, poziția 0; `vectori.json` cere 10337 după el).
+   al primului text de control (poziția 0; `vectori.json` spune ce simbol trebuie să iasă după el).
 2. Toate cele 37 de înregistrări ale simbolului au sosit, în ordine (`analyze_sequence` a trecut înainte să se citească logit-urile): cele 36 de
    lansări (35 ale modelului + copierea logit-urilor în RAM) **s-au executat și s-au terminat**.
 3. Mesajul „argmax diferit” apare doar dacă `argmax` există, adică **toate cele 16 384 de logit-uri citite din RAM erau numere finite** (cu un singur
-   NaN verificarea aceasta e sărită și mesajul ar fi fost altul). Simbolul plăcii a fost altul decât 10337.
+   NaN verificarea aceasta e sărită și mesajul ar fi fost altul). Simbolul plăcii a fost altul decât cel cerut.
 4. **Ordinea verificărilor (întrebarea din C-139):** da — argmax-ul față de `vectori.json` e verificat în `run_token`, **înaintea** judecății
    logit-urilor față de procesor (`Generation::accept` → `kronos_model::judge`, toleranță 1e-3). De aceea știm doar „alt simbol”, nu și cât de departe
    sunt numerele. Rândul cu cele două valori (`argmax … pe placa, vectori.json …`) a mers doar pe ecran (`lines`), nu în jurnalul de pe stick.
@@ -61,8 +61,8 @@ din hub pregătiți local; testul `kgr1_margins_rule_out_rounding`):
 
 | Poziție | Marja | Față de toleranța logit-urilor (1e-3) |
 |---|---|---|
-| „Ana are mere.”, poziția 0 (cea care a căzut) | **0,2849** | de 285 de ori |
-| cea mai mică dintre cele 29 („Ana are mere.”, poziția 4) | 0,0281 | de 28 de ori |
+| primul text, poziția 0 (cea care a căzut) | **0,28** | de peste 280 de ori |
+| cea mai mică dintre cele 29 | 0,028 | de 28 de ori |
 
 Două logit-uri mișcate unul spre altul cu toată toleranța (2 × (1e-3 + 1e-3 · 8,4)) nu ajung nici la cea mai mică marjă. Deci pe placă cel puțin un
 logit a fost greșit cu peste 0,14 — o **eroare de calcul sau de date**, nu o diferență de rotunjire (MUFU, FMA, ordinea adunărilor). (DEDUS)
@@ -120,7 +120,7 @@ Procentele sunt estimări, nu măsurători.
   au trecut la I12/I13. **Cum o arată testul:** o etapă „LANSARE GREȘITĂ” (ieșirea nu urmează din intrările aflate în memorie), cu numele ei.
 
 ### I4 — logit-urile nu au ajuns în RAM (cam 5 %)
-- **Pentru:** umplutura `0xEE` dă exact mesajul de pe placă (argmax 0 ≠ 10337). **Contra:** I11 și I12 au dovedit pe placă scrierea în aceleași
+- **Pentru:** umplutura `0xEE` dă exact mesajul de pe placă (argmax 0, altul decât cel cerut). **Contra:** I11 și I12 au dovedit pe placă scrierea în aceleași
   pagini DMA. **Cum o arată testul:** scara trece (ea citește VRAM), primul simbol al textului nu; explicația scrie câte logit-uri diferă între RAM
   și VRAM și câte au rămas `eeeeeeee`.
 
@@ -155,21 +155,22 @@ de la I10 încoace. **Nu apare nicio metodă și niciun registru nou.**
 ## 6. Ce arată modelul (SIMULARE — o ipoteză pusă în model, nu o măsurătoare)
 
 `gpu_sim::cmdproc::CommandProcessor::model_stale_reads(linie)` (oprit implicit): citirile unui program trec printr-un cache pe care nimic nu-l ține
-la zi până la următoarea invalidare. Pe **modelul de control real** (`mic_q8_0.kgr`, vectorii din hub pregătiți local), simbolul 65 la poziția 0:
+la zi până la următoarea invalidare. Pe **modelul de control real** (`mic_q8_0.kgr`, vectorii din hub pregătiți local), primul simbol al primului text, la poziția 0:
 
 | Cum rulează (SIMULARE) | argmax | Logit-uri nefinite | Abaterea maximă față de procesor | Ce ar fi spus pasul |
 |---|---|---|---|---|
-| memorie coerentă (modelul de până acum) | 10337 | 0 | 3,3·10⁻⁶ | trece |
-| **I1, linii de 4…128 B, trimis ca la `os-305`** | **12536** | **0** | 7,17 (la indexul 237); 16 369 în afara toleranței | „argmax diferit” — ca pe placă |
+| memorie coerentă (modelul de până acum) | cel cerut | 0 | 3,3·10⁻⁶ | trece |
+| **I1, linii de 4…128 B, trimis ca la `os-305`** | **altul** | **0** | 7,17; 16 369 din 16 384 în afara toleranței | „argmax diferit” — ca pe placă |
 | I1, linii de 256 B | niciunul | 16 384 | — | „logit-uri NaN/infinit” — nu ca pe placă |
-| I1 + reparația (invalidare înaintea fiecărei lansări) | 10337 | 0 | 3,3·10⁻⁶ | trece |
-| I1 + o trimitere pe strat | 10337 | 0 | 3,3·10⁻⁶ | trece |
+| I1 + reparația (invalidare înaintea fiecărei lansări) | cel cerut | 0 | 3,3·10⁻⁶ | trece |
+| I1 + o trimitere pe strat | cel cerut | 0 | 3,3·10⁻⁶ | trece |
 | I4: logit-urile necopiate în RAM | 0 | 0 | 3,7·10²⁸ | „argmax diferit” |
-| I2: embedding fără rândul poziției | 908 | 0 | 8,04 | „argmax diferit” |
-| I2: embedding cu numerele fără semn | 11408 | 0 | 10,4 | „argmax diferit” |
+| I2: embedding fără rândul poziției | altul | 0 | 8,04 | „argmax diferit” |
+| I2: embedding cu numerele fără semn | altul | 0 | 10,4 | „argmax diferit” |
 
-Primele 8 logit-uri pe I1 (ca la `os-305`): `1,369 1,730 2,659 −3,683 2,287 −0,535 0,628 1,508`; pe procesor: `−0,558 1,837 1,275 −3,722 0,134 0,016 −0,982 2,072`.
-Aceste semnături sunt aici ca să poată fi comparate cu numerele plăcii din jurnalul următor (`analiza_i14 <gpu-jurnal.txt>` le compară singură).
+Cele patru feluri greșite dau **patru simboluri diferite** și logit-uri diferite; valorile (simbolul și primele 8 logit-uri pentru fiecare) le afișează
+`analiza_i14` din vectorii pregătiți local — nu le scriem aici, fiindcă vectorii de control nu se pun în acest depozit.
+Aceste semnături se compară cu numerele plăcii din jurnalul următor (`analiza_i14 <gpu-jurnal.txt>` o face singură).
 Pe placă, ce valori rămân vechi depinde de ce procesor (SM) rulează fiecare grup, deci numerele plăcii pot diferi de ale modelului chiar dacă I1 e adevărată;
 ce contează e **verdictul pe etape**, nu potrivirea cifrelor.
 
