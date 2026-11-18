@@ -1,12 +1,14 @@
 //! C-139 (after os-305: I9–I13 pass on the board, `i14-simbol` fails with "argmax diferit de vectorii lui Kronos"
 //! and nothing else reaches the stick journal) — **where** a token goes wrong, written into the journal.
 //!
-//! Three things, all driven through two small operations the caller implements ([`TokenIo`]: send a list of
-//! launches as one submission; read words of GPU memory back):
+//! Three things, all driven through three small operations the caller implements ([`TokenIo`]: send a list of
+//! launches as one submission; read words of GPU memory back; write a few words):
 //!
-//! - [`SeqMode`]: how the launches of one token are sent. `Once` is what os-305 ran (C-83: the shader caches
-//!   invalidated once per submission); `EachLaunch` is the repair (`transfer::encode_sequence_fresh`); `PerLayer`
-//!   sends one submission per layer — the regime I13 passed on the board.
+//! - [`SeqMode`] / [`Way`]: how the launches of one token are sent. `Once` is what os-305 ran (C-83: the shader
+//!   caches invalidated once per submission); `EachLaunch` is the repair (`transfer::encode_sequence_fresh`);
+//!   `PerLayer` sends one submission per layer — the regime I13 passed on the board. A [`Way`] also says who writes
+//!   the embedding: the program `embed` (the one program of a token that I13 never ran on the board) or the driver
+//!   ([`driver_embedding`], as I13 wrote its x).
 //! - [`probe`] / [`examine`]: after a run, the activation scratch, the new cache rows, the final vector and the
 //!   logits are read back and every launch's output is compared (a) with what the launch should have written
 //!   (`gpu_compute::model::trace_gpu`, the program models), (b) with the launch's model fed with the **board's own
@@ -14,7 +16,10 @@
 //!   **older version** of an input (the value the same address held earlier in the token) — the signature of a
 //!   stale read. The first stage outside the tolerance and its kind are the [`Verdict`].
 //! - [`ladder`]: the first token of a control text in the three modes, then — only if none passes — prefixes of the
-//!   launch list (the embedding alone, then each layer with its input still in place), until the stage is named.
+//!   launch list (the embedding alone; if it is the wrong one, the token again with the driver's embedding; then
+//!   each layer with its input still in place), until the stage is named. Its answer is the [`Way`] the texts run in.
+//! - [`explain`]: after a token of the caller's own run fails, memory as that token left it, judged (nothing sent);
+//!   it also tells when only the copy of the logits into RAM is wrong ([`Explained::vram_pass`]).
 //!
 //! Everything is journaled ([`Probe::journal`], [`LogitReport::journal`]) with fixed row names ([`rows`]) and read
 //! back from a stick journal by [`parse_journal`].
@@ -74,6 +79,91 @@ impl SeqMode {
             SeqMode::PerLayer => "o trimitere pe strat (ca la I13)",
         }
     }
+}
+
+/// Who puts the embedding (x before layer 0) in memory.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EmbedBy {
+    /// Launch 0 of the token's list: the program `embed` (the one program I13 never ran on the board).
+    Program = 0,
+    /// The driver computes it ([`driver_embedding`]: E multiply-adds) and writes it at `x` before the first
+    /// submission, as I13 wrote its x; launch 0 is not sent.
+    Driver = 1,
+}
+
+/// How a token is sent: the mode of its submissions and who writes the embedding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Way {
+    pub mode: SeqMode,
+    pub embed: EmbedBy,
+}
+
+impl Way {
+    /// What `i14-simbol` ran in os-305.
+    pub const OS_305: Way = Way::of(SeqMode::Once);
+    /// The repair of C-139.
+    pub const REPAIR: Way = Way::of(SeqMode::EachLaunch);
+
+    pub const fn of(mode: SeqMode) -> Way {
+        Way {
+            mode,
+            embed: EmbedBy::Program,
+        }
+    }
+
+    pub const fn with_driver_embedding(self) -> Way {
+        Way {
+            mode: self.mode,
+            embed: EmbedBy::Driver,
+        }
+    }
+
+    pub fn name(&self) -> String {
+        match self.embed {
+            EmbedBy::Program => String::from(self.mode.name()),
+            EmbedBy::Driver => format!("{}, embedding scris de driver", self.mode.name()),
+        }
+    }
+
+    /// The submissions of the first `n` launches of a token's list in this way: [`submissions`], without launch 0
+    /// when the driver writes the embedding. The ranges index the token's list (and its launch slots).
+    pub fn submissions(&self, layers: usize, n: usize) -> Vec<Range<usize>> {
+        let mut s = submissions(self.mode, layers, n);
+        if self.embed == EmbedBy::Driver
+            && let Some(first) = s.first_mut()
+        {
+            first.start = 1;
+            if first.start >= first.end {
+                s.remove(0);
+            }
+        }
+        s
+    }
+}
+
+impl From<SeqMode> for Way {
+    /// The mode with the program's embedding.
+    fn from(mode: SeqMode) -> Way {
+        Way::of(mode)
+    }
+}
+
+/// The embedding of `token` at `pos` as the driver computes it when it does not launch `embed`: the bits of E
+/// values, to be written at `x` (`ModelVas::layers[0].x`) before the first submission. The same arithmetic as the
+/// program (`gpu_compute::model::embed_gpu`), so the rest of the token is unchanged bit for bit.
+pub fn driver_embedding(w: &ModelWeights<'_>, token: usize, pos: usize) -> GpuResult<Vec<u32>> {
+    w.check()?;
+    if token >= w.vocab || pos >= w.context {
+        return Err(bad("model: simbol sau pozitie in afara tabelelor"));
+    }
+    Ok(model::embed_gpu(
+        &w.emb_tok[w.row_offset(token)..],
+        &w.emb_pos[w.row_offset(pos)..],
+        w.shape.e,
+    )
+    .iter()
+    .map(|v| v.to_bits())
+    .collect())
 }
 
 /// The submissions of the first `n` launches of a token's list (`n` may include launches the caller appends after
@@ -139,7 +229,7 @@ pub fn push_bytes(mode: SeqMode, layers: usize, launches: usize) -> usize {
         .unwrap_or(0)
 }
 
-/// The two operations the diagnosis needs from the caller (the OS on the board, the tests on `gpu-sim`).
+/// The three operations the diagnosis needs from the caller (the OS on the board, the tests on `gpu-sim`).
 pub trait TokenIo {
     /// Sends `launches` as ONE submission encoded with [`encode`] for `mode` and waits for its last record
     /// (constant buffer + QMD of `launches[i]` written at launch slot `first_slot + i`). An error (a record that
@@ -148,6 +238,10 @@ pub trait TokenIo {
 
     /// Reads GPU memory back: for each `(GPU VA, words)` the 32-bit words there (VRAM through the window).
     fn read(&mut self, ranges: &[(u64, usize)]) -> GpuResult<Vec<Vec<u32>>>;
+
+    /// Writes `words` at GPU VA `va` (VRAM through the window; only used for the embedding written by the driver,
+    /// E words at `x`). It may be queued, but must be in memory before the next [`Self::submit`] runs.
+    fn write(&mut self, va: u64, words: &[u32]) -> GpuResult<()>;
 }
 
 // ------------------------------------------------------------------------------------------------ the logits
@@ -254,6 +348,7 @@ pub fn logit_report(
 pub mod rows {
     pub const PROBE: &str =
         "i14d proba (1 o invalidare, 2 inaintea fiecarei lansari, 3 pe straturi, 0 simbolul rulat)";
+    pub const EMBED_BY: &str = "i14d embedding scris de (0 programul embed, 1 driver)";
     pub const LAUNCHES: &str = "i14d lansari trimise";
     pub const TOKEN: &str = "i14d simbol";
     pub const POS: &str = "i14d pozitia";
@@ -285,6 +380,7 @@ pub mod rows {
     pub const SUMMARY_MORE: &str = "i14d rezumat (urmare)";
     pub const CHOSEN: &str =
         "i14d modul ales pentru texte (0 niciunul, 2 inaintea fiecarei lansari, 3 pe straturi)";
+    pub const CHOSEN_EMBED: &str = "i14d embedding pentru texte (0 programul embed, 1 driver)";
 }
 
 fn val(j: &mut Journal, what: &'static str, value: u32) {
@@ -504,7 +600,7 @@ impl Verdict {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Probe {
     /// How it was sent; `None` = nothing was sent by the diagnosis (memory as a token of the caller left it).
-    pub mode: Option<SeqMode>,
+    pub way: Option<Way>,
     /// Launches of the token's list that ran.
     pub done: usize,
     pub token: usize,
@@ -530,8 +626,8 @@ impl Probe {
 
     /// The verdict in one sentence (Romanian, for the screen, the report and the journal's summary row).
     pub fn summary(&self) -> String {
-        let how = match self.mode {
-            Some(m) => format!("{} lansari, {}", self.done, m.name()),
+        let how = match self.way {
+            Some(w) => format!("{} lansari, {}", self.done, w.name()),
             None => String::from("simbolul rulat"),
         };
         let what = match &self.verdict {
@@ -569,7 +665,8 @@ impl Probe {
     /// pass), then every stage outside the tolerance with its numbers. A clean run costs about a dozen rows.
     pub fn journal(&self, j: &mut Journal) {
         use rows as n;
-        val(j, n::PROBE, self.mode.map_or(0, |m| m as u32));
+        val(j, n::PROBE, self.way.map_or(0, |w| w.mode as u32));
+        val(j, n::EMBED_BY, self.way.map_or(0, |w| w.embed as u32));
         val(j, n::LAUNCHES, self.done as u32);
         val(j, n::VERDICT, self.verdict.code());
         match &self.logits {
@@ -858,9 +955,9 @@ fn inputs_of(t: &LayerTrace, s: usize) -> (&[f32], &[f32]) {
 }
 
 /// Judges what is in memory after `done` launches of the token (pure: nothing is sent or read here).
-pub fn examine(c: &ProbeCtx<'_>, mode: Option<SeqMode>, done: usize, b: &Board) -> Probe {
+pub fn examine(c: &ProbeCtx<'_>, way: Option<Way>, done: usize, b: &Board) -> Probe {
     let fail = |err: GpuError| Probe {
-        mode,
+        way,
         done,
         token: c.token,
         pos: c.pos,
@@ -1093,7 +1190,7 @@ pub fn examine(c: &ProbeCtx<'_>, mode: Option<SeqMode>, done: usize, b: &Board) 
         (None, None) => Verdict::Curat,
     };
     Probe {
-        mode,
+        way,
         done,
         token: c.token,
         pos: c.pos,
@@ -1104,15 +1201,11 @@ pub fn examine(c: &ProbeCtx<'_>, mode: Option<SeqMode>, done: usize, b: &Board) 
     }
 }
 
-/// Sends the first `done` launches of the token in `mode`, reads memory back and judges it.
-pub fn probe<I: TokenIo + ?Sized>(
-    io: &mut I,
-    c: &ProbeCtx<'_>,
-    mode: SeqMode,
-    done: usize,
-) -> Probe {
+/// Sends the first `done` launches of the token in `way` (the embedding written by the driver first, if `way` says
+/// so), reads memory back and judges it.
+pub fn probe<I: TokenIo + ?Sized>(io: &mut I, c: &ProbeCtx<'_>, way: Way, done: usize) -> Probe {
     let fail = |err: GpuError| Probe {
-        mode: Some(mode),
+        way: Some(way),
         done,
         token: c.token,
         pos: c.pos,
@@ -1129,15 +1222,41 @@ pub fn probe<I: TokenIo + ?Sized>(
     if done == 0 || done > list.len() {
         return fail(bad("diagnostic: numar de lansari in afara listei"));
     }
-    for r in submissions(mode, layers, done) {
-        if let Err(err) = io.submit(&list[r.clone()], r.start, mode) {
+    // With the driver's embedding at least one launch must follow it: the write may be queued until a submission.
+    if way.embed == EmbedBy::Driver && done < 2 {
+        return fail(bad(
+            "diagnostic: dupa embedding-ul scris de driver trebuie o lansare",
+        ));
+    }
+    if way.embed == EmbedBy::Driver {
+        let written =
+            driver_embedding(c.w, c.token, c.pos).and_then(|x| io.write(c.vas.layers[0].x, &x));
+        if let Err(err) = written {
+            return fail(err);
+        }
+    }
+    for r in way.submissions(layers, done) {
+        if let Err(err) = io.submit(&list[r.clone()], r.start, way.mode) {
             return fail(err);
         }
     }
     match read_board(io, c, done) {
-        Ok(b) => examine(c, Some(mode), done, &b),
+        Ok(b) => examine(c, Some(way), done, &b),
         Err(err) => fail(err),
     }
+}
+
+/// What [`explain`] found.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Explained {
+    pub probe: Probe,
+    /// The logits as they are in VRAM (what the last launch of the model wrote), when memory could be read.
+    pub vram_logits: Option<Vec<f32>>,
+    /// The logits in VRAM pass on their own (the CPU judgement and the wanted greedy token) while the ones the
+    /// caller read do not: only the copy into RAM is wrong. The caller may go on with `vram_logits` (reading the
+    /// logits through the window from then on) so the rest of the text is still judged — and must report the copy
+    /// as wrong.
+    pub vram_pass: bool,
 }
 
 /// After a token of the caller's own run did not pass: memory **as that token left it** is read back and judged
@@ -1148,10 +1267,11 @@ pub fn explain<I: TokenIo + ?Sized>(
     c: &ProbeCtx<'_>,
     ram_logits: &[f32],
     j: &mut Journal,
-) -> Probe {
+) -> Explained {
     let n = km::launches_per_token(c.w.layers.len());
-    let mut p = match read_board(io, c, n) {
+    let (mut p, vram) = match read_board(io, c, n) {
         Ok(b) => {
+            // Judged with the logits in VRAM first: `Curat` here = the model's own launches are all right.
             let mut p = examine(c, None, n, &b);
             p.ram_diff = Some(
                 (0..b.logits.len().max(ram_logits.len()))
@@ -1161,42 +1281,51 @@ pub fn explain<I: TokenIo + ?Sized>(
                     })
                     .count(),
             );
-            p
+            (p, Some(b.logits))
         }
-        Err(err) => Probe {
-            mode: None,
-            done: n,
-            token: c.token,
-            pos: c.pos,
-            stages: Vec::new(),
-            logits: None,
-            ram_diff: None,
-            verdict: Verdict::Neterminat(err),
-        },
+        Err(err) => (
+            Probe {
+                way: None,
+                done: n,
+                token: c.token,
+                pos: c.pos,
+                stages: Vec::new(),
+                logits: None,
+                ram_diff: None,
+                verdict: Verdict::Neterminat(err),
+            },
+            None,
+        ),
     };
     // What the caller judged: the logits it read.
     let ram = logit_report(c.token, c.pos, ram_logits, c.cpu_logits, c.want);
-    if p.verdict == Verdict::Curat && !ram.passes {
+    let vram_pass = p.verdict == Verdict::Curat && !ram.passes;
+    if vram_pass {
         p.verdict = Verdict::DoarLogiti;
     }
     p.logits = Some(ram);
     p.journal(j);
-    p
+    Explained {
+        probe: p,
+        vram_logits: vram,
+        vram_pass,
+    }
 }
 
 /// The answer of [`ladder`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ladder {
     pub probes: Vec<Probe>,
-    /// The mode the texts should run in: the first of `EachLaunch`, `PerLayer` whose whole token passed.
-    pub chosen: Option<SeqMode>,
+    /// How the texts should be sent: the first way whose whole token passed (never [`Way::OS_305`], which is only
+    /// the control).
+    pub chosen: Option<Way>,
 }
 
 impl Ladder {
     pub fn lines(&self) -> Vec<String> {
         let mut out: Vec<String> = self.probes.iter().flat_map(|p| p.lines()).collect();
         out.push(match self.chosen {
-            Some(m) => format!("i14 diagnostic: textele ruleaza cu: {}", m.name()),
+            Some(w) => format!("i14 diagnostic: textele ruleaza cu: {}", w.name()),
             None => String::from(
                 "i14 diagnostic: niciun mod nu trece; etapa de mai sus e cea de reparat (nimic nu mai e trimis)",
             ),
@@ -1205,53 +1334,112 @@ impl Ladder {
     }
 }
 
-/// The first token of a control text, three ways, before the texts run:
-/// 1. `Once` — exactly what failed in os-305 (a **control**: it tells whether that failure is still there and at
-///    which stage; it does not decide anything);
-/// 2. `EachLaunch` — the repair; if the whole token passes, it is chosen and nothing more is sent;
+/// How a probe of the ladder ended.
+enum Ran {
+    Clean,
+    /// A submission did not finish (or memory could not be read): nothing more may be sent.
+    Dead,
+    /// Not clean; `embedding`: the first stage outside the tolerance is the embedding.
+    Bad {
+        embedding: bool,
+    },
+}
+
+/// One probe of the ladder: sent, judged, journaled, kept.
+fn run<I: TokenIo + ?Sized>(
+    io: &mut I,
+    c: &ProbeCtx<'_>,
+    j: &mut Journal,
+    probes: &mut Vec<Probe>,
+    way: Way,
+    done: usize,
+) -> Ran {
+    let p = probe(io, c, way, done);
+    p.journal(j);
+    let r = if p.passes() {
+        Ran::Clean
+    } else if matches!(p.verdict, Verdict::Neterminat(_)) {
+        Ran::Dead
+    } else {
+        Ran::Bad {
+            embedding: p.first_bad().is_some_and(|s| s.layer == EMBED),
+        }
+    };
+    probes.push(p);
+    r
+}
+
+/// Whole tokens in `ways`, in order, until one passes: that way. `Err` = a submission did not finish.
+fn first_clean<I: TokenIo + ?Sized>(
+    io: &mut I,
+    c: &ProbeCtx<'_>,
+    j: &mut Journal,
+    probes: &mut Vec<Probe>,
+    ways: [Way; 2],
+) -> Result<Option<Way>, ()> {
+    let n = km::launches_per_token(c.w.layers.len());
+    for way in ways {
+        match run(io, c, j, probes, way, n) {
+            Ran::Clean => return Ok(Some(way)),
+            Ran::Dead => return Err(()),
+            Ran::Bad { .. } => {}
+        }
+    }
+    Ok(None)
+}
+
+/// The first token of a control text, sent several ways, before the texts run:
+/// 1. [`Way::OS_305`] — exactly what failed in os-305 (a **control**: it tells whether that failure is still there
+///    and at which stage; it does not decide anything);
+/// 2. [`Way::REPAIR`] (`EachLaunch`) — if the whole token passes, it is chosen and nothing more is sent;
 /// 3. `PerLayer` — only if 2 did not pass; chosen if it passes;
-/// 4. only if neither passed: prefixes in `PerLayer` — the embedding alone, then each layer up to its 15th launch
-///    (its input still in x) — until one is not clean: that probe names the launch.
+/// 4. only if neither passed: the embedding alone (one launch). If **it** is wrong, the token is tried again with
+///    the embedding written by the driver (`EachLaunch`, then `PerLayer`) and the first that passes is chosen;
+/// 5. still nothing: each layer up to its 15th launch (its input still in x), until one is not clean — that probe
+///    names the launch.
 ///
-/// A submission that does not finish stops everything at once. Every probe is journaled as it ends.
+/// A submission that does not finish stops everything at once. Every probe is journaled as it ends, then the choice.
 pub fn ladder<I: TokenIo + ?Sized>(io: &mut I, c: &ProbeCtx<'_>, j: &mut Journal) -> Ladder {
     let layers = c.w.layers.len();
     let n = km::launches_per_token(layers);
     let mut probes: Vec<Probe> = Vec::new();
-    let mut chosen = None;
-    let mut run =
-        |io: &mut I, probes: &mut Vec<Probe>, mode: SeqMode, done: usize| -> (bool, bool) {
-            let p = probe(io, c, mode, done);
-            p.journal(j);
-            let r = (p.passes(), matches!(p.verdict, Verdict::Neterminat(_)));
-            probes.push(p);
-            r
-        };
-    'all: {
-        let (_, dead) = run(io, &mut probes, SeqMode::Once, n);
-        if dead {
-            break 'all;
+    let per_layer = Way::of(SeqMode::PerLayer);
+    let chosen = 'all: {
+        if matches!(run(io, c, j, &mut probes, Way::OS_305, n), Ran::Dead) {
+            break 'all None;
         }
-        for mode in [SeqMode::EachLaunch, SeqMode::PerLayer] {
-            let (ok, dead) = run(io, &mut probes, mode, n);
-            if dead {
-                break 'all;
-            }
-            if ok {
-                chosen = Some(mode);
-                break 'all;
-            }
+        match first_clean(io, c, j, &mut probes, [Way::REPAIR, per_layer]) {
+            Ok(None) => {}
+            Ok(way) => break 'all way,
+            Err(()) => break 'all None,
         }
-        let prefixes = core::iter::once(1)
-            .chain((0..layers).map(|l| 1 + LAUNCHES_PER_TOKEN * l + LAUNCHES_PER_TOKEN - 1));
-        for done in prefixes {
-            let (ok, _) = run(io, &mut probes, SeqMode::PerLayer, done);
-            if !ok {
+        // Nothing passes: which launch? First the embedding alone.
+        let mut prefix_way = per_layer;
+        match run(io, c, j, &mut probes, per_layer, 1) {
+            Ran::Dead => break 'all None,
+            Ran::Bad { embedding: true } => {
+                let ways = [
+                    Way::REPAIR.with_driver_embedding(),
+                    per_layer.with_driver_embedding(),
+                ];
+                match first_clean(io, c, j, &mut probes, ways) {
+                    Ok(None) => prefix_way = per_layer.with_driver_embedding(),
+                    Ok(way) => break 'all way,
+                    Err(()) => break 'all None,
+                }
+            }
+            Ran::Clean | Ran::Bad { .. } => {}
+        }
+        for l in 0..layers {
+            let done = 1 + LAUNCHES_PER_TOKEN * l + LAUNCHES_PER_TOKEN - 1;
+            if !matches!(run(io, c, j, &mut probes, prefix_way, done), Ran::Clean) {
                 break;
             }
         }
-    }
-    val(j, rows::CHOSEN, chosen.map_or(0, |m| m as u32));
+        None
+    };
+    val(j, rows::CHOSEN, chosen.map_or(0, |w| w.mode as u32));
+    val(j, rows::CHOSEN_EMBED, chosen.map_or(0, |w| w.embed as u32));
     Ladder { probes, chosen }
 }
 
@@ -1261,6 +1449,8 @@ pub fn ladder<I: TokenIo + ?Sized>(io: &mut I, c: &ProbeCtx<'_>, j: &mut Journal
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ParsedProbe {
     pub mode: u32,
+    /// 1 = the embedding was written by the driver.
+    pub embed_by: u32,
     pub launches: u32,
     pub verdict: u32,
     pub token: Option<u32>,
@@ -1288,8 +1478,9 @@ pub struct ParsedProbe {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ParsedDiag {
     pub probes: Vec<ParsedProbe>,
-    /// The `CHOSEN` row, if the ladder ran to its end.
+    /// The `CHOSEN` row, if the ladder ran to its end, and who writes the embedding for the texts.
     pub chosen: Option<u32>,
+    pub chosen_embed: Option<u32>,
 }
 
 fn row<'a>(line: &'a str, kind: &str) -> Option<(&'a str, &'a str)> {
@@ -1329,12 +1520,17 @@ pub fn parse_journal(text: &str) -> ParsedDiag {
                 out.chosen = Some(v);
                 continue;
             }
+            if name == n::CHOSEN_EMBED {
+                out.chosen_embed = Some(v);
+                continue;
+            }
             let Some(p) = out.probes.last_mut() else {
                 continue;
             };
             let some = |v: u32| (v != u32::MAX).then_some(v);
             let f = f32::from_bits(v);
             match name {
+                x if x == n::EMBED_BY => p.embed_by = v,
                 x if x == n::LAUNCHES => p.launches = v,
                 x if x == n::VERDICT => p.verdict = v,
                 x if x == n::TOKEN => p.token = Some(v),
@@ -1384,8 +1580,20 @@ pub fn parse_journal(text: &str) -> ParsedDiag {
 impl ParsedProbe {
     /// The probe in plain Romanian, for the person reading the journal.
     pub fn lines(&self) -> Vec<String> {
+        let by_driver = |e: u32| {
+            if e == EmbedBy::Driver as u32 {
+                ", embedding scris de driver"
+            } else {
+                ""
+            }
+        };
         let how = match SeqMode::from_code(self.mode) {
-            Some(m) => format!("proba cu {} ({} lansari)", m.name(), self.launches),
+            Some(m) => format!(
+                "proba cu {}{} ({} lansari)",
+                m.name(),
+                by_driver(self.embed_by),
+                self.launches
+            ),
             None => String::from("simbolul rulat de pasul I14 (memoria citita dupa el)"),
         };
         let verdict = match self.verdict {
@@ -1485,6 +1693,10 @@ impl ParsedDiag {
         let mut out: Vec<String> = self.probes.iter().flat_map(|p| p.lines()).collect();
         if let Some(c) = self.chosen {
             out.push(match SeqMode::from_code(c) {
+                Some(m) if self.chosen_embed == Some(EmbedBy::Driver as u32) => format!(
+                    "modul ales pentru texte: {}, embedding scris de driver (programul embed e gresit pe placa)",
+                    m.name()
+                ),
                 Some(m) => format!("modul ales pentru texte: {}", m.name()),
                 None => String::from("niciun mod nu a trecut: textele nu au mai rulat"),
             });
@@ -1562,6 +1774,76 @@ mod tests {
     }
 
     #[test]
+    fn ways_and_the_driver_embedding() {
+        let way = |w: Way, n: usize| -> Vec<(usize, usize)> {
+            w.submissions(2, n)
+                .into_iter()
+                .map(|r| (r.start, r.end))
+                .collect()
+        };
+        // With the program's embedding a way is its mode.
+        for mode in [SeqMode::Once, SeqMode::EachLaunch, SeqMode::PerLayer] {
+            for n in 0..=40 {
+                assert_eq!(way(Way::of(mode), n), subs(mode, 2, n));
+            }
+        }
+        assert_eq!(Way::OS_305, Way::of(SeqMode::Once));
+        assert_eq!(Way::REPAIR, Way::of(SeqMode::EachLaunch));
+        // With the driver's embedding launch 0 is not sent; the slots stay the list's indices.
+        let d = Way::REPAIR.with_driver_embedding();
+        assert_eq!(d.embed, EmbedBy::Driver);
+        assert_eq!(way(d, 36), [(1, 36)]);
+        assert_eq!(way(d, 1), [], "doar embedding-ul: nimic de trimis");
+        assert_eq!(way(d, 0), []);
+        let p = Way::of(SeqMode::PerLayer).with_driver_embedding();
+        assert_eq!(way(p, 36), [(1, 17), (17, 33), (33, 36)]);
+        assert_eq!(way(p, 16), [(1, 16)]);
+        assert_eq!(way(p, 1), []);
+        assert_eq!(
+            d.name(),
+            "invalidare inaintea fiecarei lansari, embedding scris de driver"
+        );
+        assert_eq!(Way::OS_305.name(), SeqMode::Once.name());
+
+        // The driver's embedding is the program's arithmetic (and the CPU engine's x before layer 0).
+        let m = km::test_model(
+            Shape {
+                e: 32,
+                heads: 4,
+                eps: 1e-5,
+            },
+            1,
+            64,
+            16,
+            3,
+        )
+        .unwrap();
+        let w = m.weights();
+        let x = driver_embedding(&w, 5, 2).unwrap();
+        assert_eq!(x.len(), 32);
+        let t = model::trace_gpu(&w, &Caches::new(1, 32), 5, 0);
+        assert!(t.is_ok());
+        let at_2 = model::embed_gpu(
+            &w.emb_tok[w.row_offset(5)..],
+            &w.emb_pos[w.row_offset(2)..],
+            32,
+        );
+        assert_eq!(x, at_2.iter().map(|v| v.to_bits()).collect::<Vec<_>>());
+        let at_0 = driver_embedding(&w, 5, 0).unwrap();
+        assert_eq!(
+            at_0,
+            t.unwrap()
+                .x0
+                .iter()
+                .map(|v| v.to_bits())
+                .collect::<Vec<_>>()
+        );
+        assert_ne!(x, at_0, "pozitia conteaza");
+        assert!(driver_embedding(&w, 64, 0).is_err());
+        assert!(driver_embedding(&w, 0, 16).is_err());
+    }
+
+    #[test]
     fn what_ran_after_n_launches() {
         // 2 layers: 1 embedding + 32 + 2 final.
         assert_eq!(split(1, 2), (0, 0, 0));
@@ -1613,8 +1895,8 @@ mod tests {
         board[5] += 0.25;
         let r = logit_report(65, 0, &board, &cpu, Some(9));
         let p = Probe {
-            mode: Some(SeqMode::Once),
-            done: 35,
+            way: Some(Way::REPAIR.with_driver_embedding()),
+            done: 34,
             token: 65,
             pos: 0,
             stages: alloc::vec![
@@ -1650,6 +1932,7 @@ mod tests {
         let mut j = Journal::new(256);
         p.journal(&mut j);
         val(&mut j, rows::CHOSEN, 2);
+        val(&mut j, rows::CHOSEN_EMBED, 1);
         // As the OS prints the journal on the stick.
         let text: String = j
             .events()
@@ -1657,10 +1940,10 @@ mod tests {
             .map(|(i, e)| format!("[  127.{i:06}] gpu: {e}\n"))
             .collect();
         let d = parse_journal(&text);
-        assert_eq!(d.chosen, Some(2));
+        assert_eq!((d.chosen, d.chosen_embed), (Some(2), Some(1)));
         assert_eq!(d.probes.len(), 1);
         let q = &d.probes[0];
-        assert_eq!((q.mode, q.launches, q.verdict), (1, 35, 2));
+        assert_eq!((q.mode, q.embed_by, q.launches, q.verdict), (2, 1, 34, 2));
         assert_eq!((q.token, q.pos), (Some(65), Some(0)));
         assert_eq!(q.argmax_want, Some(9));
         assert_eq!(q.argmax_board, r.board.map(|v| v as u32));
@@ -1680,7 +1963,13 @@ mod tests {
         assert!(lines.contains("intrarea VECHE (din stratul 0)"), "{lines}");
         assert!(lines.contains("x VECHI"), "{lines}");
         assert!(
-            lines.contains("invalidare inaintea fiecarei lansari"),
+            lines.contains(
+                "proba cu invalidare inaintea fiecarei lansari, embedding scris de driver (34 lansari)"
+            ),
+            "{lines}"
+        );
+        assert!(
+            lines.contains("modul ales pentru texte: invalidare inaintea fiecarei lansari, embedding scris de driver"),
             "{lines}"
         );
         // A journal of another step has nothing for us.

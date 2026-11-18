@@ -1,7 +1,7 @@
 //! SIMULARE: a whole Kronos model on the simulated work channel, laid out the way the OS lays it out for
 //! `i14-simbol` (one blob = every weight, 16-aligned, then the activation scratch and the final vector + logits,
 //! both started as NaN; two caches per layer; one launch slot of 512 bytes per launch; one records buffer), and the
-//! two operations `kronos_diag::TokenIo` asks for. Shared by `tests/sim_i14_diag.rs` and the host tool
+//! three operations `kronos_diag::TokenIo` asks for. Shared by `tests/sim_i14_diag.rs` and the host tool
 //! `examples/analiza_i14.rs`. The "GPU" is `gpu_sim::cmdproc` with the program models; nothing here says anything
 //! about the board.
 #![allow(dead_code)]
@@ -12,7 +12,7 @@ use gpu_sim::cmdproc::{
     copy_b128_on_cpu, embed_on_cpu, gelu_on_cpu, layernorm_on_cpu, q8_matvec_on_cpu, vadd_on_cpu,
 };
 use nvidia_ga104::gsp::golden::{GoldenMemory, Mapping};
-use nvidia_ga104::kronos_diag::{self as kd, SeqMode, TokenIo};
+use nvidia_ga104::kronos_diag::{self as kd, EmbedBy, SeqMode, TokenIo, Way};
 use nvidia_ga104::kronos_layer::{self as kl, Launch, LayerVas, PROGRAMS, Prog, WeightVas};
 use nvidia_ga104::kronos_model::{self as km, ModelVas, OwnedModel};
 use nvidia_ga104::mmu::SysMapping;
@@ -180,33 +180,49 @@ impl<'a> TokenSim<'a> {
         v
     }
 
-    /// The whole token in `mode`; the logits read back from VRAM.
-    pub fn run_token(&mut self, token: usize, pos: usize, mode: SeqMode) -> GpuResult<Vec<f32>> {
+    /// Sends `list` (a token's launches, plus whatever the caller appended) in `way`: the embedding written by the
+    /// driver first when the way says so, then the submissions.
+    fn send(&mut self, list: &[Launch], token: usize, pos: usize, way: Way) -> GpuResult<()> {
+        let m = self.m;
+        if way.embed == EmbedBy::Driver {
+            let x = kd::driver_embedding(&m.weights(), token, pos)?;
+            self.write(self.vas.layers[0].x, &x)?;
+        }
+        for r in way.submissions(m.layers.len(), list.len()) {
+            self.submit(&list[r.clone()], r.start, way.mode)?;
+        }
+        Ok(())
+    }
+
+    /// The whole token in `way` (a `SeqMode` = that mode with the program's embedding); the logits read back from
+    /// VRAM.
+    pub fn run_token(
+        &mut self,
+        token: usize,
+        pos: usize,
+        way: impl Into<Way>,
+    ) -> GpuResult<Vec<f32>> {
         let m = self.m;
         let list = km::token_launches(&m.shape, m.vocab, m.context, &self.vas, token, pos)?;
-        for r in kd::submissions(mode, m.layers.len(), list.len()) {
-            self.submit(&list[r.clone()], r.start, mode)?;
-        }
+        self.send(&list, token, pos, way.into())?;
         let got = self.read(&[(self.vas.logits, m.vocab)])?;
         Ok(got[0].iter().map(|&b| f32::from_bits(b)).collect())
     }
 
     /// The whole token as the OS runs it for the texts: the list, then the copy of the logits down into RAM
-    /// (filled with 0xEE before), sent in `mode`; the logits read from RAM.
+    /// (filled with 0xEE before), sent in `way`; the logits read from RAM.
     pub fn run_token_ram(
         &mut self,
         token: usize,
         pos: usize,
-        mode: SeqMode,
+        way: impl Into<Way>,
     ) -> GpuResult<Vec<f32>> {
         let m = self.m;
         let bytes = (4 * m.vocab as u64).next_multiple_of(16);
         let mut list = km::token_launches(&m.shape, m.vocab, m.context, &self.vas, token, pos)?;
         list.push(kl::copy_launch(self.vas.logits, self.host.va, bytes)?);
         sys_write(&mut self.r.sys, &self.host, &vec![0xee; bytes as usize]);
-        for r in kd::submissions(mode, m.layers.len(), list.len()) {
-            self.submit(&list[r.clone()], r.start, mode)?;
-        }
+        self.send(&list, token, pos, way.into())?;
         Ok(self.ram_logits())
     }
 
@@ -305,5 +321,18 @@ impl TokenIo for TokenSim<'_> {
                     .collect())
             })
             .collect()
+    }
+
+    fn write(&mut self, va: u64, words: &[u32]) -> GpuResult<()> {
+        let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+        let m = self
+            .mappings()
+            .into_iter()
+            .find(|m| va >= m.va && va + bytes.len() as u64 <= m.va + m.size)
+            .ok_or(GpuError::InvalidArgument(
+                "SIM: scriere in afara bufferelor",
+            ))?;
+        put_bytes(self.r.mem.writer_mut(), m.pa + (va - m.va), &bytes);
+        Ok(())
     }
 }

@@ -19,9 +19,9 @@ use gpu_compute::layer::{self, Shape};
 use gpu_compute::model::{self, Caches};
 use gpu_core::diag::Journal;
 use gpu_core::error::{GpuError, GpuResult};
-use gpu_sim::cmdproc::{Launch as SimLaunch, embed_on_cpu, gelu_on_cpu};
+use gpu_sim::cmdproc::{Launch as SimLaunch, embed_on_cpu, gelu_on_cpu, vadd_on_cpu};
 use nvidia_ga104::kronos_diag::{
-    self as kd, EMBED, FINAL, Ladder, ProbeCtx, SeqMode, Stale, TokenIo, Verdict,
+    self as kd, EMBED, EmbedBy, FINAL, Ladder, ProbeCtx, SeqMode, Stale, TokenIo, Verdict, Way,
 };
 use nvidia_ga104::kronos_gen::{GenPlan, Generation, Stop, TokenCheck, TokenOutput, TokenRunner};
 use nvidia_ga104::kronos_layer::{self as kl, Launch, Prog};
@@ -161,11 +161,11 @@ fn the_ladder_confirms_stale_data_and_picks_the_repair() {
     let m = small();
     let mut s = TokenSim::new(&m, 4);
     let (l, j) = ladder_of(&mut s, &m);
-    assert_eq!(l.chosen, Some(SeqMode::EachLaunch));
+    assert_eq!(l.chosen, Some(Way::REPAIR));
     assert_eq!(l.probes.len(), 2);
     assert_eq!(s.submissions, [35, 35]);
     let p = &l.probes[0];
-    assert_eq!(p.mode, Some(SeqMode::Once));
+    assert_eq!(p.way, Some(Way::OS_305));
     let first = p.first_bad().expect("o etapa in afara");
     assert!(
         matches!(p.verdict, Verdict::DateVechi(_)),
@@ -205,10 +205,11 @@ fn the_ladder_confirms_stale_data_and_picks_the_repair() {
 
     // The journal says the same when read back from the stick.
     let d = kd::parse_journal(&journal_text(&j));
-    assert_eq!(d.chosen, Some(2));
+    assert_eq!((d.chosen, d.chosen_embed), (Some(2), Some(0)));
     assert_eq!(d.probes.len(), 2);
     assert_eq!((d.probes[0].mode, d.probes[0].verdict), (1, 2));
     assert_eq!((d.probes[1].mode, d.probes[1].verdict), (2, 1));
+    assert!(d.probes.iter().all(|p| p.embed_by == 0));
     assert_eq!(d.probes[0].stages[0].0, 0x100);
     assert_eq!(d.probes[0].stages[0].2 >> 8, EMBED as u32);
     assert_eq!(
@@ -220,6 +221,7 @@ fn the_ladder_confirms_stale_data_and_picks_the_repair() {
     let text = d.lines().join("\n");
     assert!(text.contains("DATE VECHI"), "{text}");
     assert!(text.contains("modul ales pentru texte: invalidare inaintea fiecarei lansari"));
+    assert!(!text.contains("scris de driver"), "{text}");
     // No row of the diagnosis looks like a step line or a register access to the chain's journal checker.
     for line in journal_text(&j).lines() {
         assert_eq!(nvidia_ga104::chain_log::parse_step(line), None, "{line}");
@@ -235,7 +237,7 @@ fn the_ladder_confirms_stale_data_and_picks_the_repair() {
     // A healthy board (coherent memory): the control passes too; the repair is still what the texts use.
     let mut s = TokenSim::new(&m, 0);
     let (l, _) = ladder_of(&mut s, &m);
-    assert_eq!(l.chosen, Some(SeqMode::EachLaunch));
+    assert_eq!(l.chosen, Some(Way::REPAIR));
     assert!(l.probes.iter().all(|p| p.passes()) && l.probes.len() == 2);
 }
 
@@ -257,7 +259,7 @@ fn a_hidden_layer_shows_the_stale_read_in_its_cache_rows() {
     .unwrap();
     let mut s = TokenSim::new(&m, 128);
     let (l, _) = ladder_of(&mut s, &m);
-    assert_eq!(l.chosen, Some(SeqMode::EachLaunch));
+    assert_eq!(l.chosen, Some(Way::REPAIR));
     let p = &l.probes[0];
     let bad = p.first_bad().unwrap();
     assert!(
@@ -288,6 +290,9 @@ impl TokenIo for Deaf<'_> {
     fn read(&mut self, r: &[(u64, usize)]) -> GpuResult<Vec<Vec<u32>>> {
         self.0.read(r)
     }
+    fn write(&mut self, va: u64, words: &[u32]) -> GpuResult<()> {
+        self.0.write(va, words)
+    }
 }
 
 /// If the invalidate method does not help, one submission per layer (I13's regime) is tried and chosen.
@@ -309,7 +314,7 @@ fn the_ladder_falls_back_to_one_submission_per_layer() {
     };
     let mut j = Journal::new(4096);
     let l = kd::ladder(&mut io, &ctx, &mut j);
-    assert_eq!(l.chosen, Some(SeqMode::PerLayer));
+    assert_eq!(l.chosen, Some(Way::of(SeqMode::PerLayer)));
     let v: Vec<u32> = l.probes.iter().map(|p| p.verdict.code()).collect();
     assert_eq!(v, [2, 2, 1]);
     assert_eq!(io.0.submissions, [35, 35, 17, 16, 2]);
@@ -345,6 +350,17 @@ fn with_model(m: &OwnedModel, prog: Prog, f: gpu_sim::cmdproc::ProgramFn) -> Tok
     s
 }
 
+/// `(mode, embedding by the driver, launches, verdict code)` of every probe.
+fn shape_of(l: &Ladder) -> Vec<(u32, u32, usize, u32)> {
+    l.probes
+        .iter()
+        .map(|p| {
+            let w = p.way.unwrap();
+            (w.mode as u32, w.embed as u32, p.done, p.verdict.code())
+        })
+        .collect()
+}
+
 /// A launch that is wrong by itself (no mode helps): the prefixes name it — program and layer — and stop there.
 #[test]
 fn a_wrong_launch_is_named_by_the_prefixes() {
@@ -353,14 +369,15 @@ fn a_wrong_launch_is_named_by_the_prefixes() {
     let (l, j) = ladder_of(&mut s, &m);
     assert_eq!(l.chosen, None);
     // Control, repair, per layer (none passes), the embedding alone (clean), layer 0 up to its 15th launch.
-    let v: Vec<(u32, usize, u32)> = l
-        .probes
-        .iter()
-        .map(|p| (p.mode.unwrap() as u32, p.done, p.verdict.code()))
-        .collect();
     assert_eq!(
-        v,
-        [(1, 35, 4), (2, 35, 4), (3, 35, 4), (3, 1, 1), (3, 16, 3)]
+        shape_of(&l),
+        [
+            (1, 0, 35, 4),
+            (2, 0, 35, 4),
+            (3, 0, 35, 4),
+            (3, 0, 1, 1),
+            (3, 0, 16, 3)
+        ]
     );
     // The whole tokens only see that layer 1 started from a wrong x ("inherited").
     let whole = l.probes[0].first_bad().unwrap();
@@ -376,19 +393,138 @@ fn a_wrong_launch_is_named_by_the_prefixes() {
     let at = p.verdict.stage().unwrap();
     assert!(p.stages[..at].iter().all(|s| s.ok));
     assert_eq!(p.stages[0].layer, EMBED);
-    let text = kd::parse_journal(&journal_text(&j)).lines().join("\n");
+    let d = kd::parse_journal(&journal_text(&j));
+    assert_eq!((d.chosen, d.chosen_embed), (Some(0), Some(0)));
+    let text = d.lines().join("\n");
     assert!(text.contains("LANSARE GRESITA"), "{text}");
     assert!(text.contains("gelu (stratul 0, lansarea 12)"), "{text}");
     assert!(text.contains("niciun mod nu a trecut"), "{text}");
 
-    // A wrong embedding: the very first prefix (one launch) says so.
-    let mut s = with_model(&m, Prog::Embed, embed_wrong);
+    // A launch wrong only in the SECOND layer (`fb = f + bfc` there): layer 0's prefix is clean, layer 1's names it.
+    let mut s = with_model(&m, Prog::Vadd, vadd_wrong_at_the_marked_bias);
+    WRONG_BIAS.with(|b| b.set(s.vas.layers[1].bfc));
     let (l, _) = ladder_of(&mut s, &m);
     assert_eq!(l.chosen, None);
+    assert_eq!(
+        shape_of(&l)[3..],
+        [(3, 0, 1, 1), (3, 0, 16, 1), (3, 0, 32, 3)]
+    );
     let p = l.probes.last().unwrap();
-    assert_eq!((p.done, p.verdict.code()), (1, 3), "{}", p.summary());
-    assert_eq!(p.first_bad().unwrap().layer, EMBED);
-    assert_eq!(l.probes.len(), 4);
+    let bad = p.first_bad().unwrap();
+    assert_eq!((bad.layer, bad.launch, bad.name()), (1, 11, "f + bfc"));
+    assert!(matches!(bad.local, Some((d, false)) if (d - 0.5).abs() < 1e-3));
+    // Before it: layer 0's two cache rows and its output (still in x), then layer 1's launches — all clean.
+    let at = p.verdict.stage().unwrap();
+    assert!(p.stages[..at].iter().all(|s| s.ok));
+    assert_eq!(
+        p.stages[..3]
+            .iter()
+            .map(|s| (s.layer, s.launch))
+            .collect::<Vec<_>>(),
+        [(0, 3), (0, 4), (0, 15)]
+    );
+}
+
+thread_local! {
+    /// The bias address at which `vadd_wrong_at_the_marked_bias` goes wrong (a plain `fn` cannot capture it; every
+    /// test runs in its own thread).
+    static WRONG_BIAS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The vector addition, wrong in one element only where its second input is the marked bias: one launch of one
+/// layer, however the token is sent.
+fn vadd_wrong_at_the_marked_bias(l: &mut SimLaunch<'_>) -> GpuResult<()> {
+    vadd_on_cpu(l)?;
+    if l.mem.read_u64(l.cbuf0 + 0x30)? == WRONG_BIAS.with(|b| b.get()) {
+        let y = l.mem.read_u64(l.cbuf0 + 0x38)?;
+        let v = f32::from_bits(l.mem.read_u32(y + 8)?);
+        l.mem.write_u32(y + 8, (v + 0.5).to_bits());
+    }
+    Ok(())
+}
+
+/// The program `embed` wrong on the board (the one program of a token that I13 never ran there): the embedding
+/// alone says so, the token passes with the embedding written by the driver, and the texts run that way.
+#[test]
+fn a_wrong_embedding_is_replaced_by_the_drivers() {
+    let m = small();
+    let mut s = with_model(&m, Prog::Embed, embed_wrong);
+    let (l, j) = ladder_of(&mut s, &m);
+    let by_driver = Way::REPAIR.with_driver_embedding();
+    assert_eq!(l.chosen, Some(by_driver));
+    assert_eq!(
+        shape_of(&l),
+        [
+            (1, 0, 35, 4),
+            (2, 0, 35, 4),
+            (3, 0, 35, 4),
+            (3, 0, 1, 3),
+            (2, 1, 35, 1)
+        ]
+    );
+    // The last submission is the token without its launch 0.
+    assert_eq!(s.submissions, [35, 35, 17, 16, 2, 1, 34]);
+    let p = &l.probes[3];
+    let bad = p.first_bad().unwrap();
+    assert_eq!(bad.layer, EMBED);
+    assert!(matches!(bad.local, Some((d, false)) if (d - 0.25).abs() < 1e-3));
+    assert!(
+        l.lines()
+            .last()
+            .unwrap()
+            .contains("embedding scris de driver")
+    );
+    let d = kd::parse_journal(&journal_text(&j));
+    assert_eq!((d.chosen, d.chosen_embed), (Some(2), Some(1)));
+    assert_eq!(d.probes[4].embed_by, 1);
+    let text = d.lines().join("\n");
+    assert!(
+        text.contains("embedding (simbol + pozitie) (inainte de straturi)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("embedding scris de driver (programul embed e gresit pe placa)"),
+        "{text}"
+    );
+
+    // A text that way: every position passes against the CPU; with the program's embedding the first one stops it.
+    for (way, passes) in [(by_driver, true), (Way::REPAIR, false)] {
+        let mut check = Cpu {
+            w: m.weights(),
+            c: Caches::new(2, 32),
+        };
+        let mut g =
+            Generation::new(GenPlan::new(&[TOKEN, 17, 300], 8, m.vocab, m.context).unwrap());
+        let stop = g
+            .run(&mut TextRunner { s: &mut s, way }, Some(&mut check))
+            .clone();
+        if passes {
+            assert_eq!(stop, Stop::Gata, "{}", stop.line());
+            assert_eq!(g.generated().len(), 8);
+        } else {
+            assert!(
+                matches!(stop, Stop::NuTrece { pos: 0, .. }),
+                "{}",
+                stop.line()
+            );
+        }
+    }
+
+    // The embedding wrong AND a launch of a layer wrong: the driver's embedding does not save the token, and the
+    // prefixes (with the driver's embedding in place) name the other launch.
+    let mut s = with_model(&m, Prog::Embed, embed_wrong);
+    s.models.iter_mut().find(|x| x.0 == Prog::Gelu).unwrap().1 = gelu_wrong;
+    let (l, _) = ladder_of(&mut s, &m);
+    assert_eq!(l.chosen, None);
+    assert_eq!(
+        shape_of(&l)[3..],
+        [(3, 0, 1, 3), (2, 1, 35, 4), (3, 1, 35, 4), (3, 1, 16, 3)]
+    );
+    let p = l.probes.last().unwrap();
+    assert_eq!(p.way.unwrap().embed, EmbedBy::Driver);
+    let bad = p.first_bad().unwrap();
+    assert_eq!((bad.layer, bad.launch, bad.name()), (0, 12, "gelu"));
+    assert!(p.stages[0].layer == EMBED && p.stages[0].ok);
 }
 
 /// A submission that never finishes: the diagnosis stops at once, nothing more is sent.
@@ -432,9 +568,12 @@ fn explaining_a_token_that_already_ran() {
         want: model::argmax(&cpu),
     };
     let mut j = Journal::new(1024);
-    let p = kd::explain(&mut s, &ctx, &ram, &mut j);
+    let ex = kd::explain(&mut s, &ctx, &ram, &mut j);
     assert_eq!(s.submissions.len(), before, "nimic trimis");
-    assert_eq!(p.mode, None);
+    assert!(!ex.vram_pass, "logit-urile din VRAM sunt la fel de gresite");
+    assert_eq!(ex.vram_logits.as_deref(), Some(&ram[..]));
+    let p = ex.probe;
+    assert_eq!(p.way, None);
     assert!(
         matches!(p.verdict, Verdict::DateVechi(_)),
         "{}",
@@ -454,7 +593,12 @@ fn explaining_a_token_that_already_ran() {
     let vas = s.vas.clone();
     let ctx = ProbeCtx { vas: &vas, ..ctx };
     let mut j = Journal::new(1024);
-    let p = kd::explain(&mut s, &ctx, &fill, &mut j);
+    let ex = kd::explain(&mut s, &ctx, &fill, &mut j);
+    // Only the copy is wrong: the logits in VRAM pass, and the step may go on with them.
+    assert!(ex.vram_pass);
+    let vram = ex.vram_logits.unwrap();
+    assert!(kd::logit_report(TOKEN, 0, &vram, &cpu, ctx.want).passes);
+    let p = ex.probe;
     assert_eq!(p.verdict, Verdict::DoarLogiti, "{}", p.summary());
     assert!(p.stages.iter().all(|s| s.ok));
     assert_eq!(p.ram_diff, Some(m.vocab));
@@ -468,15 +612,15 @@ fn explaining_a_token_that_already_ran() {
     );
 }
 
-/// The step's run of a text in a mode: one token = the list + the copy of the logits down, read from RAM.
+/// The step's run of a text in a way: one token = the list + the copy of the logits down, read from RAM.
 struct TextRunner<'s, 'm> {
     s: &'s mut TokenSim<'m>,
-    mode: SeqMode,
+    way: Way,
 }
 
 impl TokenRunner for TextRunner<'_, '_> {
     fn run_token(&mut self, token: usize, pos: usize) -> GpuResult<TokenOutput> {
-        let logits = self.s.run_token_ram(token, pos, self.mode)?;
+        let logits = self.s.run_token_ram(token, pos, self.way)?;
         let t = 1000 * (self.s.submissions.len() as u64 + 1);
         Ok(TokenOutput {
             logits,
@@ -507,7 +651,7 @@ fn a_text_in_the_chosen_mode() {
     for line in [4u64, 128] {
         let mut s = TokenSim::new(&m, line);
         let (l, _) = ladder_of(&mut s, &m);
-        let mode = l.chosen.unwrap();
+        let way = l.chosen.unwrap();
         let mut check = Cpu {
             w: m.weights(),
             c: Caches::new(2, 32),
@@ -515,7 +659,7 @@ fn a_text_in_the_chosen_mode() {
         let mut g =
             Generation::new(GenPlan::new(&[TOKEN, 17, 300], 8, m.vocab, m.context).unwrap());
         let stop = g
-            .run(&mut TextRunner { s: &mut s, mode }, Some(&mut check))
+            .run(&mut TextRunner { s: &mut s, way }, Some(&mut check))
             .clone();
         assert_eq!(stop, Stop::Gata, "linie {line}: {}", stop.line());
         assert_eq!(g.generated().len(), 8);
@@ -531,7 +675,7 @@ fn a_text_in_the_chosen_mode() {
             .run(
                 &mut TextRunner {
                     s: &mut s2,
-                    mode: SeqMode::PerLayer,
+                    way: Way::of(SeqMode::PerLayer),
                 },
                 Some(&mut check),
             )
@@ -552,7 +696,7 @@ fn a_text_in_the_chosen_mode() {
             .run(
                 &mut TextRunner {
                     s: &mut s3,
-                    mode: SeqMode::Once,
+                    way: Way::OS_305,
                 },
                 Some(&mut check),
             )
@@ -592,9 +736,26 @@ fn a_later_position_is_clean_on_a_healthy_model() {
             want: None,
         };
         let mode = [SeqMode::Once, SeqMode::EachLaunch, SeqMode::PerLayer][pos % 3];
+        // Odd positions: the embedding written by the driver (launch 0 not sent) — the same bits.
+        let way = if pos % 2 == 1 {
+            Way::of(mode).with_driver_embedding()
+        } else {
+            Way::of(mode)
+        };
+        if way.embed == EmbedBy::Driver {
+            // The driver's embedding alone is not a probe: nothing would be sent after the write.
+            let p = kd::probe(&mut s, &ctx, way, 1);
+            assert!(matches!(p.verdict, Verdict::Neterminat(_)));
+        }
         for done in [1, 16, 22, 32, 34, 35] {
-            let p = kd::probe(&mut s, &ctx, mode, done);
+            if done == 1 && way.embed == EmbedBy::Driver {
+                continue;
+            }
+            let before = s.submissions.len();
+            let p = kd::probe(&mut s, &ctx, way, done);
             assert!(p.passes(), "pozitia {pos}, {done} lansari: {}", p.summary());
+            let sent: usize = s.submissions[before..].iter().sum();
+            assert_eq!(sent, done - (pos % 2), "pozitia {pos}, {done} lansari");
             // In SIMULARE the model's memory is the trace, bit for bit — except where the trace used the CPU
             // engine's rows of earlier positions (the attention, from position 1 on).
             let worst = p.stages.iter().fold(0.0f32, |m, s| m.max(s.dev));
@@ -636,7 +797,7 @@ fn kgr1_control_model_under_the_hypothesis() {
     };
     let mut j = Journal::new(4096);
     let l = kd::ladder(&mut s, &ctx, &mut j);
-    assert_eq!(l.chosen, Some(SeqMode::EachLaunch));
+    assert_eq!(l.chosen, Some(Way::REPAIR));
     let lg = l.probes[0].logits.as_ref().unwrap();
     eprintln!("SIMULARE (ipoteza): {}", lg.line());
     eprintln!("SIMULARE (ipoteza): primele 8 logit-uri {:?}", lg.first);
@@ -669,6 +830,25 @@ fn kgr1_control_model_under_the_hypothesis() {
         assert!(max_abs(&last, &t.logits) <= VECTOR_TOL, "{}", t.text);
         assert_eq!(s.stale_bytes(), 0);
     }
+
+    // The first text again with the embedding written by the driver (the fallback if the program `embed` is the
+    // wrong one on the board): the same greedy tokens at every position, launch 0 never sent.
+    let t = &vs[0];
+    let mut s = TokenSim::new(&m, 128);
+    let way = Way::REPAIR.with_driver_embedding();
+    let mut seq = t.prompt.clone();
+    for pos in 0..t.prompt.len() + t.greedy.len() - 1 {
+        let got = s.run_token_ram(seq[pos], pos, way).unwrap();
+        let top = model::argmax(&got).unwrap();
+        if pos < t.prompt.len() {
+            assert_eq!(top, t.argmax[pos], "{}: pozitia {pos}", t.text);
+        }
+        if pos + 1 >= seq.len() {
+            seq.push(top);
+        }
+    }
+    assert_eq!(&seq[t.prompt.len()..], &t.greedy[..], "{}", t.text);
+    assert!(s.submissions.iter().all(|&n| n == 35), "35 = 36 fara embed");
 }
 
 /// The margins of the control vectors on our CPU engine: at every one of the 29 positions the greedy token is far
