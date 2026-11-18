@@ -41,7 +41,7 @@ use nvidia_rm570::regs::{clc7c0 as c, clc56f as h, qmd_v03_00 as q};
 use nvidia_rm570::rmapi::AmpereAControlGPFifo;
 use nvidia_rm570::{Field, QMD_SIZE, QmdField};
 
-use crate::vram::{Aperture, SimVram, translate, translate_any};
+use crate::vram::{AnyTranslation, Aperture, SimVram, translate, translate_any};
 
 const PAGE: u64 = 4096;
 
@@ -73,11 +73,18 @@ struct StaleReads {
 
 impl GpuMem {
     pub fn write(&mut self, va: u64, data: &[u8]) {
-        for (i, &b) in data.iter().enumerate() {
-            let a = va + i as u64;
-            self.pages
+        // Page by page (one map lookup per page, not per byte); the same bytes land where they did.
+        let mut done = 0usize;
+        while done < data.len() {
+            let a = va + done as u64;
+            let at = (a % PAGE) as usize;
+            let n = (PAGE as usize - at).min(data.len() - done);
+            let page = self
+                .pages
                 .entry(a / PAGE)
-                .or_insert_with(|| Box::new([0; PAGE as usize]))[(a % PAGE) as usize] = b;
+                .or_insert_with(|| Box::new([0; PAGE as usize]));
+            page[at..at + n].copy_from_slice(&data[done..done + n]);
+            done += n;
         }
     }
 
@@ -96,8 +103,20 @@ impl GpuMem {
     pub fn read(&self, va: u64, out: &mut [u8]) -> GpuResult<()> {
         let mut st = self.stale.borrow_mut();
         if st.line == 0 || !st.in_program {
-            for (i, b) in out.iter_mut().enumerate() {
-                *b = self.byte(va + i as u64)?;
+            // Page by page; a page never written is the same error as before.
+            let mut done = 0usize;
+            while done < out.len() {
+                let a = va + done as u64;
+                let at = (a % PAGE) as usize;
+                let n = (PAGE as usize - at).min(out.len() - done);
+                let page = self
+                    .pages
+                    .get(&(a / PAGE))
+                    .ok_or(GpuError::InvalidArgument(
+                        "SIM: citire din memorie GPU nemapata",
+                    ))?;
+                out[done..done + n].copy_from_slice(&page[at..at + n]);
+                done += n;
             }
             return Ok(());
         }
@@ -217,9 +236,9 @@ impl GpuMem {
         if !va.is_multiple_of(8) || !len.is_multiple_of(8) {
             return Err(bad("SIM: copiere nealiniata"));
         }
+        let mut tlb = Tlb::default();
         for off in (0..len).step_by(8) {
-            let t = translate_any(vram, root, va + off)
-                .map_err(|_| bad("SIM: adresa GPU fara traducere"))?;
+            let t = tlb.get(vram, root, va + off)?;
             let v = match t.aperture {
                 Aperture::Vram => vram.read_u64(t.addr),
                 _ => sys.read_u64(t.addr),
@@ -243,9 +262,9 @@ impl GpuMem {
         if !va.is_multiple_of(8) || !len.is_multiple_of(8) {
             return Err(bad("SIM: copiere nealiniata"));
         }
+        let mut tlb = Tlb::default();
         for off in (0..len).step_by(8) {
-            let t = translate_any(vram, root, va + off)
-                .map_err(|_| bad("SIM: adresa GPU fara traducere"))?;
+            let t = tlb.get(vram, root, va + off)?;
             if t.read_only {
                 return Err(bad("SIM: scriere GPU intr-o pagina doar-citire"));
             }
@@ -257,6 +276,37 @@ impl GpuMem {
             .map_err(bad)?;
         }
         Ok(())
+    }
+}
+
+/// The last 4 KiB page [`translate_any`] walked, reused for the next addresses of the same page (every page size
+/// the MMU maps is a multiple of 4 KiB, so the page's bytes are contiguous at the other end too). Only within one
+/// `load_from` / `store_to`: the page tables cannot change in between.
+#[derive(Default)]
+struct Tlb {
+    last: Option<(u64, AnyTranslation)>,
+}
+
+impl Tlb {
+    fn get(&mut self, vram: &SimVram, root: u64, va: u64) -> GpuResult<AnyTranslation> {
+        let page = va & !(PAGE - 1);
+        if let Some((p, t)) = self.last
+            && p == page
+        {
+            return Ok(AnyTranslation {
+                addr: t.addr + (va - page),
+                ..t
+            });
+        }
+        let t = translate_any(vram, root, va).map_err(|_| bad("SIM: adresa GPU fara traducere"))?;
+        self.last = Some((
+            page,
+            AnyTranslation {
+                addr: t.addr - (va - page),
+                ..t
+            },
+        ));
+        Ok(t)
     }
 }
 

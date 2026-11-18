@@ -66,14 +66,33 @@ pub struct TokenSim<'a> {
     pub submissions: Vec<usize>,
     /// Where the diagnosis writes its rows (on the board: the stick journal).
     pub journal: Journal,
+    /// C-142: the upload pieces through the arena (bytes, copy-launch ns from the records), empty when the blob
+    /// was written straight into VRAM.
+    pub upload: Vec<(u64, u64)>,
+    /// C-142: for every doorbell, the board clock (model's) at record 0 and at the last record, and the sum of the
+    /// launch durations.
+    pub times: Vec<(u64, u64, u64)>,
 }
 
 impl<'a> TokenSim<'a> {
     /// `stale_line`: bytes per line of the GPU model's non-coherent read cache (0 = coherent memory).
     pub fn new(m: &'a OwnedModel, stale_line: u64) -> Self {
+        Self::with(m, stale_line, 0x4000, None).unwrap()
+    }
+
+    /// C-142: the rig with a pushbuffer area of `push` bytes; with `upload = Some(piece)` the blob reaches VRAM as
+    /// the OS sends it — written into a host-RAM arena `piece` bytes at a time and copied up by one `copy_b128`
+    /// launch per piece (I11) — instead of being written straight into VRAM. A piece that does not arrive whole is
+    /// an error.
+    pub fn with(
+        m: &'a OwnedModel,
+        stale_line: u64,
+        push: u64,
+        upload: Option<u64>,
+    ) -> GpuResult<Self> {
         let e = m.shape.e;
         let n = km::launches_per_token(m.layers.len()) + 1;
-        let mut r = rig_with_push(0x4000);
+        let mut r = rig_with_push(push);
         r.stale_line = stale_line;
         let progs: Vec<(Prog, Mapping)> = PROGRAMS
             .iter()
@@ -123,7 +142,11 @@ impl<'a> TokenSim<'a> {
             0xff,
         );
         let blob = r.mem.alloc_mapped(b.len() as u64, 0x1000).unwrap();
-        put_bytes(r.mem.writer_mut(), blob.pa, &b);
+        let mut pieces = Vec::new();
+        match upload {
+            None => put_bytes(r.mem.writer_mut(), blob.pa, &b),
+            Some(piece) => pieces = upload_blob(&mut r, &progs, &blob, &b, piece)?,
+        }
         let at = |o: u64| blob.va + o;
         let mut caches = Vec::new();
         let mut layers = Vec::new();
@@ -163,7 +186,7 @@ impl<'a> TokenSim<'a> {
             h_final: at(fin),
             logits: at(fin) + 4 * e as u64,
         };
-        TokenSim {
+        Ok(TokenSim {
             r,
             m,
             vas,
@@ -177,7 +200,9 @@ impl<'a> TokenSim<'a> {
             next_payload: 0x1_0000,
             submissions: Vec::new(),
             journal: Journal::new(JOURNAL_ROWS),
-        }
+            upload: pieces,
+            times: Vec::new(),
+        })
     }
 
     fn mappings(&self) -> Vec<Mapping> {
@@ -240,6 +265,66 @@ impl<'a> TokenSim<'a> {
     }
 }
 
+/// The blob `b` into VRAM `blob` the way the OS uploads it (`gpu_i14::run_model` step 1): each piece of at most
+/// `piece` bytes written into a host-RAM arena, then one `copy_b128` launch (I11) copies it up, one doorbell per
+/// piece; its two records give the copy's time. The GPU model sees only the arena, the launch, the program and the
+/// piece's stretch of VRAM.
+fn upload_blob(
+    r: &mut Rig,
+    progs: &[(Prog, Mapping)],
+    blob: &Mapping,
+    b: &[u8],
+    piece: u64,
+) -> GpuResult<Vec<(u64, u64)>> {
+    let copy = progs.iter().find(|(p, _)| *p == Prog::Copy).unwrap().1;
+    let piece = piece.min(b.len() as u64);
+    let host = r
+        .mem
+        .alloc_sys_mapped(&dma_pages(4, piece.div_ceil(0x1000) as usize))?;
+    let cb = r.mem.alloc_mapped(0x1000, 0x1000)?;
+    let q = r.mem.alloc_mapped(0x1000, 0x1000)?;
+    let rec = r.mem.alloc_mapped(0x1000, 0x1000)?;
+    let mut out = Vec::new();
+    for (i, chunk) in b.chunks(piece as usize).enumerate() {
+        let len = (chunk.len() as u64).next_multiple_of(16);
+        let dst = blob.va + i as u64 * piece;
+        sys_write(&mut r.sys, &host, chunk);
+        let w = r.mem.writer_mut();
+        put_bytes(w, cb.pa, &transfer::copy_cbuf(host.va, dst, len)?);
+        put_bytes(
+            w,
+            q.pa,
+            &transfer::copy_qmd(copy.va, cb.va, len)?.to_bytes()?,
+        );
+        put_bytes(w, rec.pa, &[0; 32]);
+        let first = 0xc000 + 0x100 * i as u32;
+        let mut words = vec![0u32; transfer::sequence_words(1)];
+        let mut pb = PushBuf::new(&mut words);
+        transfer::encode_sequence(&mut pb, &[q.va], rec.va, first)?;
+        let nw = pb.len();
+        let (fence, done) = (rec.va + 16, first as u64 + 1);
+        r.wq.submit_fenced(r.mem.writer_mut(), &words[..nw], fence, done)?;
+        let programs: Vec<(&[u8], ProgramFn, Needs)> = MODELS
+            .iter()
+            .map(|&(p, f, needs)| (p.code(), f, needs))
+            .collect();
+        let loads = [
+            (host.va, host.size),
+            span(&cb),
+            span(&q),
+            span(&rec),
+            span(&copy),
+            (dst, len),
+        ];
+        gpu_runs(r, &programs, &loads, &[(dst, len), span(&rec)])?;
+        let recs = get_bytes(r.mem.writer_mut(), rec.pa, 32);
+        let ns = transfer::analyze_sequence(&recs, 1, first)?[0];
+        r.wq.retire(fence, done)?;
+        out.push((chunk.len() as u64, ns));
+    }
+    Ok(out)
+}
+
 impl TokenIo for TokenSim<'_> {
     fn submit(&mut self, launches: &[Launch], first_slot: usize, mode: SeqMode) -> GpuResult<()> {
         let n = launches.len();
@@ -295,7 +380,9 @@ impl TokenIo for TokenSim<'_> {
             self.records.pa,
             16 * (n as u64 + 1),
         );
-        transfer::analyze_sequence(&rec, n, first)?;
+        let busy: u64 = transfer::analyze_sequence(&rec, n, first)?.iter().sum();
+        let ts = |k: usize| u64::from_le_bytes(rec[16 * k + 8..16 * k + 16].try_into().unwrap());
+        self.times.push((ts(0), ts(n), busy));
         self.r.wq.retire(fence, done)?;
         self.submissions.push(n);
         Ok(())
