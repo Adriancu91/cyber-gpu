@@ -893,8 +893,12 @@ struct Scratch<'a> {
 
 impl<'a> Scratch<'a> {
     fn at(&self, va: u64, units: usize) -> &'a [f32] {
-        let start = (va.wrapping_sub(self.v.x) / 4) as usize;
-        self.words.get(start..start + units * self.e).unwrap_or(&[])
+        // An address before x or past the scratch gives nothing (never a panic: this runs in the kernel).
+        let range = va
+            .checked_sub(self.v.x)
+            .and_then(|off| usize::try_from(off / 4).ok())
+            .and_then(|start| Some(start..start.checked_add(units.checked_mul(self.e)?)?));
+        range.and_then(|r| self.words.get(r)).unwrap_or(&[])
     }
     /// The output of launch `s` (cache rows are not in the scratch).
     fn out(&self, s: usize) -> &'a [f32] {

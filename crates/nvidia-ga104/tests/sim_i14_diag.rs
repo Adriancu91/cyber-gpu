@@ -751,6 +751,157 @@ fn a_text_in_the_chosen_mode() {
     }
 }
 
+/// A board whose memory reads back as garbage (the token itself runs): what the diagnosis must survive.
+struct Garbage<'a> {
+    s: TokenSim<'a>,
+    /// 0 = NaN, 1 = infinities, 2 = zeros, 3 = pseudo-random bits, 4 = the 0xEE fill, 5 = huge finite values.
+    kind: u32,
+    seed: u32,
+}
+
+impl TokenIo for Garbage<'_> {
+    fn submit(&mut self, l: &[Launch], slot: usize, mode: SeqMode) -> GpuResult<()> {
+        self.s.submit(l, slot, mode)
+    }
+    fn read(&mut self, r: &[(u64, usize)]) -> GpuResult<Vec<Vec<u32>>> {
+        let mut got = self.s.read(r)?;
+        for w in got.iter_mut().flat_map(|v| v.iter_mut()) {
+            self.seed = self
+                .seed
+                .wrapping_mul(1_664_525)
+                .wrapping_add(1_013_904_223);
+            *w = match self.kind {
+                0 => f32::NAN.to_bits(),
+                1 if self.seed & 1 == 0 => f32::INFINITY.to_bits(),
+                1 => f32::NEG_INFINITY.to_bits(),
+                2 => 0,
+                3 => self.seed,
+                4 => kd::RAM_FILL,
+                _ => f32::MAX.to_bits() ^ (self.seed & 0x8000_0000),
+            };
+        }
+        Ok(got)
+    }
+    fn write(&mut self, va: u64, words: &[u32]) -> GpuResult<()> {
+        self.s.write(va, words)
+    }
+    fn journal(&mut self) -> &mut gpu_core::diag::Journal {
+        self.s.journal()
+    }
+}
+
+/// The diagnosis runs in the kernel, on the board: whatever memory holds, it must end with a verdict — no panic,
+/// no way chosen, every probe journaled and readable back.
+#[test]
+fn garbage_in_memory_never_panics_and_never_passes() {
+    let m3 = km::test_model(small().shape, 3, 512, 32, 11).unwrap();
+    for m in [small(), m3] {
+        let (cpu, prev) = first_token(&m);
+        let w = m.weights();
+        for kind in 0..6 {
+            let mut io = Garbage {
+                s: TokenSim::new(&m, 0),
+                kind,
+                seed: 0x1234_5678 + kind,
+            };
+            let vas = io.s.vas.clone();
+            let ctx = ProbeCtx {
+                w: &w,
+                vas: &vas,
+                prev: &prev,
+                token: TOKEN,
+                pos: 0,
+                cpu_logits: &cpu,
+                want: model::argmax(&cpu),
+            };
+            let l = kd::ladder(&mut io, &ctx);
+            assert_eq!(l.chosen, None, "fel {kind}");
+            assert!(l.probes.iter().all(|p| !p.passes()), "fel {kind}");
+            // Every prefix length, sent, judged and journaled (NaN and random bits; the other kinds: the ladder
+            // and the explanation only, to keep the test short).
+            let n = match kind {
+                0 | 3 => km::launches_per_token(m.layers.len()),
+                _ => 0,
+            };
+            for done in 1..=n {
+                let p = kd::probe(&mut io, &ctx, Way::of(SeqMode::PerLayer), done);
+                assert!(!p.passes(), "fel {kind}, {done} lansari: {}", p.summary());
+                assert!(!p.lines().is_empty());
+                p.journal(io.journal());
+            }
+            // The explanation of a token, with garbage as the logits the step read too.
+            let read = vec![f32::from_bits(0x7fc0_1234); m.vocab];
+            let ex = kd::explain(&mut io, &ctx, &read);
+            assert!(!ex.vram_pass && !ex.probe.passes(), "fel {kind}");
+            let (by_program, by_driver) = (
+                kd::locate(&mut io, &ctx, EmbedBy::Program),
+                kd::locate(&mut io, &ctx, EmbedBy::Driver),
+            );
+            assert!(by_program.len() <= 1 + m.layers.len() && !by_driver.is_empty());
+            // What was journaled reads back, probe for probe, none of them passing.
+            let text = io.s.take_journal_text();
+            let d = kd::parse_journal(&text);
+            assert_eq!(
+                d.probes.len(),
+                l.probes.len() + n + 1 + by_program.len() + by_driver.len(),
+                "fel {kind}"
+            );
+            assert!(d.probes.iter().all(|p| p.verdict != 1), "fel {kind}");
+            assert_eq!(d.chosen, Some(0));
+            assert!(!d.lines().is_empty());
+        }
+    }
+    // A later position, with caches that hold earlier rows: the same.
+    let m = small();
+    let w = m.weights();
+    let mut c = Caches::new(2, 32);
+    for (pos, &tok) in [TOKEN, 17, 300].iter().enumerate() {
+        model::step_cpu(&w, &mut c, tok, pos).unwrap();
+    }
+    let cpu = model::step_cpu(&w, &mut c, 9, 3).unwrap();
+    let mut io = Garbage {
+        s: TokenSim::new(&m, 0),
+        kind: 3,
+        seed: 99,
+    };
+    let vas = io.s.vas.clone();
+    let ctx = ProbeCtx {
+        w: &w,
+        vas: &vas,
+        prev: &c,
+        token: 9,
+        pos: 3,
+        cpu_logits: &cpu,
+        want: None,
+    };
+    assert!(!kd::explain(&mut io, &ctx, &cpu).probe.passes());
+    assert!(!kd::locate(&mut io, &ctx, EmbedBy::Program).is_empty());
+    // Reads that come back short are an error of the read, not a panic.
+    struct Short<'a>(TokenSim<'a>);
+    impl TokenIo for Short<'_> {
+        fn submit(&mut self, l: &[Launch], slot: usize, mode: SeqMode) -> GpuResult<()> {
+            self.0.submit(l, slot, mode)
+        }
+        fn read(&mut self, r: &[(u64, usize)]) -> GpuResult<Vec<Vec<u32>>> {
+            let mut got = self.0.read(r)?;
+            got.pop();
+            Ok(got)
+        }
+        fn write(&mut self, va: u64, words: &[u32]) -> GpuResult<()> {
+            self.0.write(va, words)
+        }
+        fn journal(&mut self) -> &mut gpu_core::diag::Journal {
+            self.0.journal()
+        }
+    }
+    let mut io = Short(TokenSim::new(&m, 0));
+    let vas = io.0.vas.clone();
+    let ctx = ProbeCtx { vas: &vas, ..ctx };
+    let l = kd::ladder(&mut io, &ctx);
+    assert_eq!((l.chosen, l.probes.len()), (None, 1));
+    assert!(matches!(l.probes[0].verdict, Verdict::Neterminat(_)));
+}
+
 // ------------------------------------------------------------------ the step, as the note for the OS describes it
 
 /// Where the step reads a token's logits from.

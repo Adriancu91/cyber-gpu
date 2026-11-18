@@ -1,5 +1,32 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 112 (18 nov 2026, ~12:30–15:00, cloud, fără placă) — C-139: I14 după `os-305` (alt argmax pe placă): reparația (invalidare înaintea fiecărei lansări), scara și diagnosticul din jurnal (`kronos_diag`), toate SIMULARE
+
+Ipoteza „date vechi” e pusă în modelul de GPU cu `CommandProcessor::model_stale_reads` (oprit implicit): e o **ipoteză**, nu o măsurătoare.
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T132a | secvența reparată = cea veche + o invalidare înaintea fiecărei lansări, cuvânt cu cuvânt; `sequence_words_fresh(n)` = 8 + 12·n | `cargo test -p nvidia-ga104 fresh_sequence` | conform | conform | PASS (SIMULARE) |
+| T132b | tabloul plăcii pe ipoteză (linii de 4 și 128 B): un strat pe trimitere, 4 poziții, x scris de driver (I13) trece fără nicio citire veche; simbolul întreg într-o trimitere (I14) cade cu toate logit-urile finite; ambele reparații trec; cu memorie coerentă cele 3 moduri dau aceiași biți | `cargo test -p nvidia-ga104 --test sim_i14_diag the_board_picture` | conform | conform | PASS (SIMULARE) |
+| T132c | secvențele I11 (copiere dus-întors) și I12 (copiere, W·x, copiere) trec și cu modelul „date vechi” pornit, ca pe placă | `cargo test -p nvidia-ga104 under_the_stale_read_model` | conform | conform | PASS (SIMULARE) |
+| T132d | scara pe ipoteză: proba de control = DATE VECHI la normalizarea 1 a stratului 1 (valoarea lui x scrisă de embedding), reparația trece și e aleasă, 2 trimiteri; jurnalul citit înapoi spune același lucru; niciun rând nu arată ca un pas sau ca o scriere în registru; pe modelul sănătos tot reparația e aleasă | `… the_ladder_confirms` | conform | conform | PASS (SIMULARE) |
+| T132e | 3 straturi: stratul ascuns arată citirea veche în rândurile lui K/V (sunt ce dă `qkvb` al stratului 0) | `… a_hidden_layer` | conform | conform | PASS (SIMULARE) |
+| T132f | invalidarea dintre lansări fără efect → „o trimitere pe strat” e încercată și aleasă (trimiteri de 35, 35, 17, 16, 2 lansări) | `… the_ladder_falls_back` | conform | conform | PASS (SIMULARE) |
+| T132g | o lansare greșită, fără date vechi: în ultimul strat e numită direct de simbolul întreg (ieșirea nu urmează din intrările din memorie); doar în primul strat → „moștenit”, iar prefixul stratului o numește; scara nu alege niciun fel | `… a_wrong_launch` | conform | conform | PASS (SIMULARE) |
+| T132h | `embed` greșit: embedding-ul singur = lansare greșită; simbolul trece cu embedding-ul scris de driver (lansarea 0 netrimisă); un text trece așa; `embed` + GELU greșite → prefixele (cu embedding-ul driverului) numesc GELU | `… a_wrong_embedding` | conform | conform | PASS (SIMULARE) |
+| T132i | o trimitere care nu se termină oprește scara pe loc; nimic nu mai e trimis; verdictul 5 în jurnal | `… a_submission_that_does_not_finish` | conform | conform | PASS (SIMULARE) |
+| T132j | explicația unui simbol deja rulat: (1) date vechi — nimic trimis, RAM = VRAM, primele 8 logit-uri și abaterea în jurnal; (2) logit-urile neajunse în RAM — etapele bune, 512 valori rămase `eeeeeeee`, `vram_pass` | `… explaining_a_token` | conform | conform | PASS (SIMULARE) |
+| T132k | un text întreg în felul ales (linii de 4 și 128 B): toate pozițiile trec față de procesor; pe straturi la fel, aceleași simboluri; trimis ca la `os-305`: oprit la poziția 0 | `… a_text_in_the_chosen_mode` | conform | conform | PASS (SIMULARE) |
+| T132l | **pasul întreg, cum îl descrie nota pentru OS**: sănătos și pe ipoteză → ok cu reparația, nimic explicat; copierea în RAM nu ajunge → textele trec cu logit-urile din VRAM, pasul = ESEC cu motivul; `embed` greșit → textele trec cu embedding-ul driverului, pasul = ESEC cu motivul; lansare greșită la orice poziție → niciun text trimis; greșită doar de la poziția 1, în ultimul strat → numită de explicație; într-un strat ascuns → „moștenit”, apoi `locate` o numește | `… the_step_as_the_note` | conform | conform | PASS (SIMULARE) |
+| T132m | o poziție ulterioară pe modelul sănătos: simbol întreg și prefixe curate în toate felurile (și cu embedding-ul driverului), bit cu bit la poziția 0 | `… a_later_position` | conform | conform | PASS (SIMULARE) |
+| T132n | memoria citită ca gunoi (NaN, infinit, zero, biți la întâmplare, umplutură, valori uriașe), 2 și 3 straturi, toate lungimile de prefix: niciodată panică, niciodată „trece”, niciun fel ales; citiri scurte = eroare a citirii; rulat și în build de depanare (verificarea depășirilor) | `… garbage_in_memory` | conform | conform | PASS (SIMULARE) |
+| T132o | urma programelor (`layer::trace_gpu`, `model::trace_gpu`) urmează motorul de pe procesor | `cargo test -p gpu-compute the_trace_follows` | conform | conform | PASS (SIMULARE) |
+| T132p | unități `kronos_diag`: trimiterile pe fiecare mod (și mărimea zonei de comenzi: 1 760 B modelul de control, 9 440 B #513); `Way` și embedding-ul driverului; raportul logit-urilor; jurnalul dus-întors; numele etapelor încap într-un rând | `cargo test -p nvidia-ga104 --lib kronos_diag` | conform | conform | PASS (SIMULARE) |
+| T132q | modelul de control real (`mic_q8_0.kgr`, vectorii din hub pregătiți local): pe ipoteză argmax 12536 ≠ 10337 cu toate logit-urile finite; scara alege reparația (148 de rânduri de jurnal); cele 3 texte dau exact vectorii lui Kronos cu reparația; „pe straturi” și cu embedding-ul driverului la fel | `KGR1_VECTORI=$PWD/target/vectori-kgr1 cargo test -p nvidia-ga104 --test sim_i14_diag kgr1_control -- --ignored` | conform | conform | PASS (SIMULARE, local; ignorat în CI — vectorii sunt în hubul privat) |
+| T132r | marjele celor 29 de poziții de control pe motorul de pe procesor: cea mai mică 0,0281 (de 28 de ori toleranța), poziția căzută la `os-305` 0,2849 → nu e rotunjire | `… kgr1_margins -- --ignored` | conform | conform | PASS (local; ignorat în CI) |
+| T132s | tot pachetul | `bash tools/check.sh` | 529 PASS | **529 PASS** (507 → +22), 6 ignorate (4 → +2); format, clippy `-D warnings`, build no_std | PASS |
+| — | I14 cu scara și reparația pe RTX 3070 Ti | — | — | — | NOT TESTED (fereastra cu Adrian, după `os-306`) |
+
 ## Rezultate — sesiunea 108 (17 nov 2026, ~16:20, cloud, fără placă) — C-135: I9 pasul 5 după `os-304` (jetonul refuzat cu `0x40`): `open_work_channel_c135` — forma B direct, canal fără notificator de erori (încercarea N), apoi ChID ales de noi + jeton calculat (F), toate SIMULARE
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |

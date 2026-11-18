@@ -24,7 +24,7 @@ Nota pentru OS: `integration/cyber-universe/C-139_i14-diagnostic-si-reparatie.md
   feluri și **scrie în jurnal unde apare primul număr greșit**: ce calcul, în ce strat, cu cât, și dacă e „număr vechi” sau calcul greșit. Dacă un fel
   trece, textele rulează așa mai departe, în aceeași pornire. Dacă e greșit un singur calcul care poate fi ocolit (citirea simbolului sau copierea
   rezultatului), textele rulează ocolindu-l, dar pasul rămâne „ESEC” până îl reparăm — nu numim „reușit” ceva ce a trecut pe ocolite.
-- **Șanse la testul următor (`os-306`):** cam **60 %** ca I14 să treacă de tot; peste **90 %** ca, dacă nu trece, jurnalul să spună exact ce calcul
+- **Șanse la testul următor (`os-306`):** cam **50 %** ca I14 să treacă de tot; peste **90 %** ca, dacă nu trece, jurnalul să spună exact ce calcul
   e greșit — adică să nu mai avem nevoie de o pornire doar pentru a afla unde e problema.
 
 ## 1. Ce s-a observat pe placă (OBSERVAT, `gpu-jurnal-007.txt`)
@@ -195,7 +195,7 @@ aleasă folosește doar ce placa a acceptat deja. Dacă pe placă `EachLaunch` n
 
 ## 8. Diagnosticul din jurnal (`nvidia_ga104::kronos_diag`)
 
-Totul trece prin trei operații pe care le dă OS-ul (`TokenIo`: trimite lansările; citește memoria plăcii; scrie câteva cuvinte).
+Totul trece prin patru lucruri pe care le dă OS-ul (`TokenIo`: trimite lansările; citește memoria plăcii; scrie câteva cuvinte; jurnalul).
 
 - Rândurile se scriu în același jurnal în care OS-ul scrie accesele lui (`TokenIo::journal`), deci pe stick apar în ordine, imediat după
   trimiterile fiecărei probe — și rămân acolo chiar dacă placa se blochează la proba următoare.
@@ -242,12 +242,14 @@ Totul trece prin trei operații pe care le dă OS-ul (`TokenIo`: trimite lansăr
 
 ## 11. Teste și unelte (toate SIMULARE)
 
-- `crates/nvidia-ga104/tests/sim_i14_diag.rs` (13 teste, 2 cu vectorii din hub): tabloul plăcii pe ipoteză (I13 trece, I14 cade cu logit-uri finite);
+- `crates/nvidia-ga104/tests/sim_i14_diag.rs` (14 teste, 2 cu vectorii din hub): tabloul plăcii pe ipoteză (I13 trece, I14 cade cu logit-uri finite);
   scara confirmă „date vechi” și alege reparația; un strat ascuns arată citirea veche în rândurile lui K/V; căderea pe „o trimitere pe strat”; o
   lansare greșită e numită (în primul strat, în al doilea, la orice poziție sau doar de la poziția 1); embedding greșit → al driverului; o trimitere
   care nu se termină oprește scara; explicația unui simbol deja rulat (și cazul „doar copierea în RAM”); **pasul întreg, cum îl descrie nota pentru OS**;
+  memorie citită ca gunoi (NaN, infinit, zero, biți la întâmplare, umplutură) — diagnosticul rulează în nucleu, deci nu are voie să se oprească
+  cu panică: dă un verdict, nu alege niciun fel, iar rândurile se citesc înapoi (rulat și cu verificarea depășirilor aritmetice);
   modelul de control real pe ipoteză (cele trei texte dau exact vectorii lui Kronos cu reparația și cu embedding-ul driverului); marjele.
 - `sim_i11_copy.rs`, `sim_i12_q8.rs`: secvențele I11 și I12 trec și cu modelul „date vechi” pornit (ca pe placă).
 - `transfer` (teste de unitate): secvența reparată = cea veche + o invalidare pe lansare, cuvânt cu cuvânt.
 - Unelte pe gazdă: `cargo run --release -p nvidia-ga104 --example analiza_i14 [-- <gpu-jurnal.txt>]` (cu `KGR1_VECTORI`), `verifica_jurnal_lant`.
-- Total la sfârșitul sesiunii: **528 PASS + 6 ignorate** (cele 6 cer vectorii din hubul privat; trec local), `tools/check.sh` verde.
+- Total la sfârșitul sesiunii: **529 PASS + 6 ignorate** (cele 6 cer vectorii din hubul privat; trec local), `tools/check.sh` verde.

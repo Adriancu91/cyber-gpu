@@ -318,3 +318,22 @@ care bindgen nu le poate evalua), cu sursa în comentariu. Codul nostru (`user_s
 `rmapi::work_channel_params_with`, `gpu_sim::fake_rm::TokenRule`) e scris de noi; `TokenRule` și regula ChID-urilor din model sunt **ipoteze / valori
 SIM**, nu placa. Niciun octet de firmware NVIDIA citit sau copiat; adresele NOCAT din jurnale nu au fost căutate în firmware. Niciun cod GPL citit pentru
 această sesiune.
+
+**Sesiunea 112 (18 nov, ~12:30), C-139 (I14 după `os-305`: alt argmax pe placă):** surse citite ca specificație sau ca idee, **nimic copiat** —
+**NVIDIA, documentația publică „Parallel Thread Execution ISA” 8.8** (pagina de arhivă CUDA 12.9.2), §9.7.9.1 „Cache Operators”, tabelele 31–32:
+rândurile `.ca`, `.cv`, `.wb`, `.wt` și §9.7.9.9 (`ld.global.nc`) — de aici ideea că driverul trebuie să invalideze liniile L1 între lansări
+dependente. **tinygrad** (MIT), `tinygrad/runtime/ops_nv.py` de pe ramura principală la 18 nov 2026: `NVComputeQueue.memory_barrier` (metoda și cele
+trei câmpuri), `NVComputeQueue.exec` (prima lansare prin PCAS, următoarele înlănțuite cu `dependent_qmd0_*`), șablonul QMD din `NVProgramData`
+(`sm_global_caching_enable`, biții `invalidate_*`, `cwd_membar_type`, `constant_buffer_invalidate_0`); locurile din care e chemat `memory_barrier`
+sunt în alt fișier, necitit. **Mesa** (MIT), prin oglinda android.googlesource: commit `ad98b76a147` (NAK, MR 35217, „Set cache ops on global memory
+access on Kepler” — `LdCacheOp` / `StCacheOp` și alegerea lor) și commit `c39bf7e7f98` (NVK, MR 35246 — invalidarea cache-ului de date de textură
+pe Kepler; din el doar numele barierelor `NVK_BARRIER_INVALIDATE_TEX_DATA` / `_SHADER_DATA`). **mesa-dev**, 26 oct. 2016, „[PATCH 4/7] nvc0: be
+smarter when invalidating shader caches” (driverul Gallium vechi, MIT): sensul biților 0 și 12 ai `MEM_BARRIER` și observația că driverul NVIDIA
+trimite de obicei `0x1011`. **Forumul NVIDIA pentru dezvoltatori**, firul „cache data invalidation between kernel calls” (iunie 2012): un răspuns
+care citează manualul PTX. Din sursele OS-ului (`cyber-universe`, doar citit): `kernel/src/drivers/gpu_i14.rs`, `gpu_i11.rs`, `gpu_i10.rs` la `os-305`
+— ordinea verificărilor și ce trimite pasul. Metoda `INVALIDATE_SHADER_CACHES_NO_WFI` și valoarea ei erau deja în codul nostru din sesiunea 21
+(I10b, `work_queue::invalidate_caches`, din antetele MIT generate); C-139 doar o trimite mai des. Codul nou (`transfer::encode_sequence_fresh`,
+`kronos_diag`, `gpu_compute::{layer, model}::trace_gpu`, `kronos_layer::copy_launch`, uneltele `analiza_i14` / `verifica_jurnal_lant`) e scris de noi.
+`gpu_sim::cmdproc::CommandProcessor::model_stale_reads` e o **ipoteză pusă în model** (un singur cache pentru toată placa), nu comportament
+observat. Programele NAK nu au fost recompilate; din listările lor existente (`tools/nak/out/*.sm86.txt`) s-au citit doar numele instrucțiunilor.
+Niciun octet de firmware NVIDIA citit sau copiat. Niciun cod GPL citit pentru această sesiune.
