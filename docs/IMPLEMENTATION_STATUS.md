@@ -1,5 +1,30 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 119 — 19 noiembrie 2026, ~23:05–23:40 (ora României), în cloud, FĂRĂ placă — **C-147 punctul 1 (etapa 0) făcut în SIMULARE**, punctul 4 pregătit (oprit), limitele #651 (C-150)
+
+Pornită de programare. Comandă nouă: **C-147** (Adrian, 19 nov 22:33 + „Da, aprob tot” 22:50): planul de performanță, pachetul 1.
+Nicio altă sesiune nu lucra (ultimul commit 19:30). Detalii: `docs/C-147_ETAPA0.md`; nota pentru OS:
+`integration/cyber-universe/C-147_etapa0-masuratori.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Verificări la pornire | `tools/check.sh` (Rust 1.100.0): 545 teste | PASS (SIMULARE) |
+| (a) timpul pe fel de lansare | `kronos_perf::{token_kinds, KindProfile}`: 20 de feluri, suma pe simbol + o lansare (mediane), rânduri `kp` + cititor; suma = `kv` | PASS (SIMULARE), T135a–b |
+| (b) lansarea goală în jurnal | `kronos_perf::launch_cost_rows` → `kl` | PASS, T135b |
+| (d) copierea VRAM → VRAM | `kronos_perf::VramCopy`: 64 MiB × 3 cu `copy_b128`, MB/s, trafic, ‰ din 608 GB/s, 3 cuvinte verificate → `kc` | PASS (SIMULARE), T135c |
+| (c) starea de performanță | `gsp::perf`: `GET_CURRENT_PSTATE` (NVIDIA îl trimite neschimbat la GSP) → `ks`; refuz = rând. `LEVEL_INFO_V2` și temperatura **nu** (fără cale documentată în 570.144) | PASS (SIMULARE), T135d |
+| Punctul 4 (viteza maximă) | `gsp::perf::BoostPlan`, **oprit implicit**: forma A = cea a driverului NVIDIA (`INTERNAL_PERF_BOOST_SET_2X`; driverul NVIDIA NU trimite `PERF_BOOST` direct la GSP), forma B = tinygrad (fără verificarea răspunsului); 600 s, ștergerea la final | PASS (SIMULARE), T135d |
+| C-150 (#651) | `ModelLimits::k651()`: 388 lansări, 64 KiB, **pas 389 → OS-ul trebuie `STRIDE 0x200`**, VRAM ~250–290 MiB | PASS, T135e |
+| Verificări | `tools/check.sh` (Rust 1.100.0): format, clippy `-D warnings`, **555 teste** (545 → +10; 6 ignorate), build no_std; CI verde (rulările 44616166533, 44617396178) | PASS (SIMULARE) |
+| Pe RTX 3070 Ti | rândurile `kp`/`kl`/`ks`/`kc` în `os-309` | NOT TESTED (după C-148) |
+
+Interfața publică: doar adăugări (module noi `nvidia_ga104::kronos_perf`, `nvidia_ga104::gsp::perf`; `kronos_speed::{K651_LAYERS,
+K651_VOCAB, K651_CONTEXT, K651_SHAPE, ModelLimits::k651}`). Nimic redenumit sau șters; nimic schimbat în ce primește placa la `kronos --gpu`.
+
+**Următorul pas:** C-147 punctul 2 (etapa 3a: lipirea calculelor mărunte, 196 → ~87, în SIMULARE), apoi 3 (`q8_matvec` cu 32 de fire),
+5 (unealta NAK nouă), 6 (studiul câmpurilor de lansare); punctul 7 după cifrele `os-309`. **Regula 8:** 119 are pas.
+
+---
 ## Sesiunea 118 — 19 noiembrie 2026, ~19:10–19:35 (ora României), în cloud, FĂRĂ placă — **analiza cifrelor `kt` din `os-308`** (fără cod)
 
 Pornită de programare. Date noi în hub: **ciclul automat `os-308`** (19 nov 14:37, fără Adrian): 16 simboluri pe placă identice cu procesorul;

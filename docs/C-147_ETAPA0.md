@@ -1,6 +1,6 @@
 # C-147 — Planul de performanță, pachetul 1: etapa 0 (măsurători) + viteza maximă pregătită + limitele #651
 
-Sesiunea Cyber-GPU 119 (19 nov 2026, 23:05–00:30, în cloud, **fără placă**). Comanda: hub `COMENZI.md` C-147 (Adrian, 19 nov 22:33,
+Sesiunea Cyber-GPU 119 (19 nov 2026, ~23:05–23:40, în cloud, **fără placă**). Comanda: hub `COMENZI.md` C-147 (Adrian, 19 nov 22:33,
 completare 22:50). Planul: hub `idei/2026-11-19_plan-performanta-placa.md`. Totul e **adăugat** (nimic redenumit sau șters) și testat
 **doar în SIMULARE**; cifrele din teste sunt ale ceasului simulat (250 µs pe lansare) și nu spun nimic despre RTX 3070 Ti.
 

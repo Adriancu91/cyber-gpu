@@ -1,6 +1,6 @@
 # Matricea de teste
 
-## Rezultate — sesiunea 119 (19 nov 2026, ~23:05–00:30, cloud, fără placă) — C-147 etapa 0 (măsurători), viteza maximă pregătită, limitele #651, toate SIMULARE
+## Rezultate — sesiunea 119 (19 nov 2026, ~23:05–23:40, cloud, fără placă) — C-147 etapa 0 (măsurători), viteza maximă pregătită, limitele #651, toate SIMULARE
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |
 |---|---|---|---|---|---|
