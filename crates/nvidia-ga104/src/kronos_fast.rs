@@ -111,8 +111,8 @@ impl WriteShadow {
     pub fn changes(&self, pa: u64, new: &[u8]) -> GpuResult<Vec<(u64, Range<usize>)>> {
         let i0 = self.index(pa, new.len())?;
         let mut out: Vec<(u64, Range<usize>)> = Vec::new();
-        for (k, c) in new.chunks_exact(4).enumerate() {
-            let w = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
+        for (k, c) in new.as_chunks::<4>().0.iter().enumerate() {
+            let w = u32::from_le_bytes(*c);
             if self.known[i0 + k] && self.words[i0 + k] == w {
                 continue;
             }
@@ -128,8 +128,8 @@ impl WriteShadow {
     /// `new` is now at `pa` (written and read back).
     pub fn remember(&mut self, pa: u64, new: &[u8]) -> GpuResult<()> {
         let i0 = self.index(pa, new.len())?;
-        for (k, c) in new.chunks_exact(4).enumerate() {
-            self.words[i0 + k] = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
+        for (k, c) in new.as_chunks::<4>().0.iter().enumerate() {
+            self.words[i0 + k] = u32::from_le_bytes(*c);
             self.known[i0 + k] = true;
         }
         Ok(())

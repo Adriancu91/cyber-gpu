@@ -15,7 +15,7 @@ Pornită de programare. Date noi: **`os-307`, primul ciclu automat** (19 nov 08:
 | Timpul pe bucăți (pentru C-146) | `kronos_fast::TimeSplit`/`TokenSplit`: placă / driver / jurnal / ecran / verificare, rânduri `kt …` + `parse_split`; `FIGURES` = ce include fiecare cifră | PASS, T134b |
 | Estimarea (pasul 4) | cu jurnalul ținut + umbra: ~45 ms/simbol (~20–22 simb/s) cu golire pe simbol, ~30 ms (~30–34) cu golire la 16; plafon 43,9; verificarea de referință între simboluri ține „cu verificare” la ~0,25 | ESTIMARE (nemăsurat) |
 | Nota pentru OS | `integration/cyber-universe/C-145_pauzele-driverului.md` (pașii de legare pentru C-146) | — |
-| Verificări | `tools/check.sh` (Rust 1.97.0): format, clippy `-D warnings`, **545 teste** (538 → +7; 6 ignorate), build no_std | PASS (SIMULARE) |
+| Verificări | `tools/check.sh` (Rust **1.100.0**, ca CI-ul): format, clippy `-D warnings`, **545 teste** (538 → +7; 6 ignorate), build no_std. Primul push a dat CI roșu: clippy 1.100 cere `as_chunks` în loc de `chunks_exact(4)` (local era 1.97) — reparat în commit-ul următor | PASS (SIMULARE) |
 | Pe RTX 3070 Ti | `os-308` cu C-145 legat (ciclul automat) | NOT TESTED (după C-146) |
 
 Interfața publică: doar adăugări (`gpu_core::diag::{Flush, LiveSink, Routine, LiveStats}`, metodele noi ale `Journal`; modulul
