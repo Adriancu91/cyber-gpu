@@ -76,6 +76,7 @@ pub mod kronos_fast;
 pub mod kronos_gen;
 pub mod kronos_layer;
 pub mod kronos_model;
+pub mod kronos_perf;
 pub mod kronos_speed;
 pub mod kronos_token;
 pub mod launch_cost;

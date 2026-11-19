@@ -76,6 +76,8 @@ pub struct TokenSim<'a> {
     pub shadow: Option<nvidia_ga104::kronos_fast::WriteShadow>,
     /// C-145: bytes written into the launch slots so far.
     pub launch_bytes: u64,
+    /// C-147: every doorbell's launch durations (ns, from its records), in order.
+    pub durations: Vec<Vec<u64>>,
 }
 
 impl<'a> TokenSim<'a> {
@@ -208,6 +210,7 @@ impl<'a> TokenSim<'a> {
             times: Vec::new(),
             shadow: None,
             launch_bytes: 0,
+            durations: Vec::new(),
         })
     }
 
@@ -399,7 +402,9 @@ impl TokenIo for TokenSim<'_> {
             self.records.pa,
             16 * (n as u64 + 1),
         );
-        let busy: u64 = transfer::analyze_sequence(&rec, n, first)?.iter().sum();
+        let each = transfer::analyze_sequence(&rec, n, first)?;
+        let busy: u64 = each.iter().sum();
+        self.durations.push(each);
         let ts = |k: usize| u64::from_le_bytes(rec[16 * k + 8..16 * k + 16].try_into().unwrap());
         self.times.push((ts(0), ts(n), busy));
         self.r.wq.retire(fence, done)?;
