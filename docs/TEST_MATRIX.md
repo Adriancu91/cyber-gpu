@@ -1,5 +1,17 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 119 (19 nov 2026, ~23:05–00:30, cloud, fără placă) — C-147 etapa 0 (măsurători), viteza maximă pregătită, limitele #651, toate SIMULARE
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T135a | felurile de lansare = lista trimisă de driver, unu la unu (cu/fără embedding, cu copierea în RAM; `EachLaunch` și `PerLayer`); suma pe feluri = timpul `kv` al acelorași simboluri; rândurile `kp` citite înapoi din textul jurnalului | `cargo test -p nvidia-ga104 --release --test sim_c147 kinds_are` | conform | conform | PASS (SIMULARE) |
+| T135b | `KindProfile`: sume și mediane pe fel, refuză lungimi diferite / alt număr de lansări; rândurile `kp`, `kl`, `kc` citite înapoi cu `parse_journal` (64 MiB în 300 µs → 223 696 MB/s, 735 ‰) | `cargo test -p nvidia-ga104 kronos_perf` | conform | conform | PASS |
+| T135c | copierea VRAM → VRAM cu `copy_b128`, de 3 ori într-o trimitere: destinația identică bit cu bit, cele 3 cuvinte verificate corecte, 3 timpi; o înregistrare lipsă = eroare | `… sim_c147 vram_copy` | conform | conform | PASS (SIMULARE) |
+| T135d | starea de performanță: P0…P15 / mască ciudată / refuz; refuzul GSP-ului simulat = rând `ks … 8000xxxx`, nu eroare; viteza maximă `Blocked` implicit, durată finită (0, >3600, infinit refuzate), ștergerea în aceeași formă; cele două forme (A NVIDIA, B tinygrad) octet cu octet | `cargo test -p nvidia-ga104 gsp::perf` + `… sim_c147 pstate` | conform | conform | PASS (SIMULARE) |
+| T135e | limitele #651: 388 lansări, 64 KiB, pas 389 (> 0x100 al OS-ului), VRAM ~250–290 MiB; `check` numește zona și pasul la setările lui #513 | `cargo test -p nvidia-ga104 k651_limits` | conform | conform | PASS |
+| T135f | tot pachetul | `sh tools/check.sh` (Rust 1.100.0) | conform | **555 PASS** (545 → +10), 6 ignorate; format, clippy `-D warnings`, build no_std | PASS |
+| T135g | pe RTX 3070 Ti: rândurile `kp`/`kl`/`ks`/`kc` în `os-309` | — | — | — | NOT TESTED (după C-148) |
+
 ## Rezultate — sesiunea 116 (19 nov 2026, ~10:50, cloud, fără placă) — C-145: pauzele driverului (jurnal ținut, umbra lansărilor, timpul pe bucăți, verificarea după placă), toate SIMULARE
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |
