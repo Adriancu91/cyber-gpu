@@ -1,0 +1,95 @@
+// C-147 step 2 (etapa 3a): q8_matvec with the small operations after it glued into the same launch.
+//   v = W·x (exactly q8_matvec.comp: the same per-thread loop and the same reduction tree)
+//   v = v + bias[row]                      (always; the old separate vadd "+b")
+//   if (flags & 1) v = res[row] + v        (the residual add: the old vadd "rez")
+//   if (flags & 2) v = gelu(v)             (the old gelu.comp, the same formula and the same operations)
+//   y[row] = v
+//   if (flags & 4) rows [split, 2 split) are also written to k[row - split], rows [2 split, 3 split) to v[row - 2 split]
+//                                          (QKV: the new key/value into the caches — the old two copy_b128)
+// Every value goes through the same operations, in the same order, as the separate launches did, so the CPU oracle is
+// the composition of the old ones (q8::row_gpu_order, add_f32_ftz, gelu_gpu). What NAK emitted is checked in
+// q8_fused.sm86.txt (FADD.FTZ for the additions, the gelu sequence as in gelu.sm86.txt).
+// Requirements (the launcher checks them): w, x, bias, res, y, k, v 4-byte aligned, grid x = rows, block 32x1x1.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Words { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+
+layout(push_constant) uniform Args {
+    Words w;     // 0x28
+    In x;        // 0x30
+    In bias;     // 0x38
+    In res;      // 0x40
+    Out y;       // 0x48
+    Out k;       // 0x50
+    Out vv;      // 0x58
+    uint rows;   // 0x60
+    uint blocks; // 0x64
+    uint flags;  // 0x68
+    uint split;  // 0x6c
+} args;
+
+shared float parts[32];
+
+float gelu(float x) {
+    float z = x * 0.70710678118654752;
+    float a = abs(z);
+    float t = 1.0 / (1.0 + 0.3275911 * a);
+    float p = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+    float e = 1.0 - p * exp(-a * a);
+    float erf = z < 0.0 ? -e : e;
+    return 0.5 * x * (1.0 + erf);
+}
+
+void main() {
+    uint row = gl_WorkGroupID.x;
+    uint t = gl_LocalInvocationID.x;
+    float part = 0.0;
+    if (row < args.rows) {
+        uint base = row * args.blocks * 9u;   // 36 bytes = 9 words per block
+        for (uint b = t; b < args.blocks; b += 32u) {
+            uint wb = base + b * 9u;
+            float scale = uintBitsToFloat(args.w.v[wb]);
+            float s = 0.0;
+            for (uint k = 0u; k < 8u; k++) {
+                int q4 = int(args.w.v[wb + 1u + k]);
+                uint xi = b * 32u + k * 4u;
+                for (uint j = 0u; j < 4u; j++) {
+                    float q = float(bitfieldExtract(q4, int(8u * j), 8));
+                    s += q * args.x.v[xi + j];
+                }
+            }
+            part += scale * s;
+        }
+    }
+    parts[t] = part;
+    barrier();
+    for (uint stride = 16u; stride > 0u; stride >>= 1u) {
+        if (t < stride) {
+            parts[t] = parts[t] + parts[t + stride];
+        }
+        barrier();
+    }
+    if (t == 0u && row < args.rows) {
+        float v = parts[0] + args.bias.v[row];
+        if ((args.flags & 1u) != 0u) {
+            v = args.res.v[row] + v;
+        }
+        if ((args.flags & 2u) != 0u) {
+            v = gelu(v);
+        }
+        args.y.v[row] = v;
+        if ((args.flags & 4u) != 0u && row >= args.split) {
+            if (row < 2u * args.split) {
+                args.k.v[row - args.split] = v;
+            } else if (row < 3u * args.split) {
+                args.vv.v[row - 2u * args.split] = v;
+            }
+        }
+    }
+}

@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 120 — 20 noiembrie 2026, ~01:25–02:00 (ora României), în cloud, FĂRĂ placă — **C-147 punctul 2 (etapa 3a) făcut în SIMULARE**: 196 → 88 de lansări pe simbol
+
+Pornită de programare (sesiunea de 01:25). Nicio altă sesiune nu lucra (ultimul commit 23:40). C-147 era `preluat` de 119 cu punctul 1 gata;
+am luat punctul 2. Detalii: `docs/C-147_ETAPA3A.md`; nota pentru OS: `integration/cyber-universe/C-147_etapa3a-programe-lipite.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Verificări la pornire | Rust 1.100.0 instalat (ca CI-ul); unealta NAK (Mesa 25.0.7) reconstruită: `q8_matvec` iese identic | PASS |
+| Programul lipit | `tools/nak/q8_fused.comp` → `q8_fused.sm86.sass` (578 instr., 19 registre, SHA-256 `d86e53e2…`): `q8_matvec` + termenul liber + rezidual / GELU / cheia-valoarea în cache; listarea citită: produsul și GELU = aceleași instrucțiuni ca programele vechi | COMPILAT, NU RULAT |
+| Stratul lipit | `kronos_layer::token_launches_fused` (16 → 7), `kronos_model::token_launches_fused` (#513: 195 → 87, +copierea = 88), `kronos_perf::token_kinds_fused`, modelul `gpu_sim::cmdproc::q8_fused_on_cpu` | PASS (SIMULARE), T136a–d |
+| Proba | stratul (E 64 și E 768) și un model mic: `x`, cache-urile și logit-urile **identice bit cu bit** cu lista de 196; 4 greșeli plantate, toate prinse | PASS (SIMULARE) |
+| Verificări | `tools/check.sh` (Rust 1.100.0): format, clippy `-D warnings`, **561 teste** (555 → +6; 6 ignorate), build no_std | PASS (SIMULARE) |
+| Pe RTX 3070 Ti | lista de 88: aceleași simboluri (și logit-uri) ca lista de 196 | NOT TESTED (după `os-309`, Release separat) |
+
+Interfața publică: doar adăugări (modulul `q8_fused`; `Prog::Q8Fused` — variantă nouă, OS-ul nu face `match` complet pe `Prog`; `PROGRAMS_FUSED`,
+`LAUNCHES_PER_TOKEN_FUSED`, `Prog::registers`, `token_launches_fused`, `launches_per_token_fused`, `LAYER_KINDS_FUSED`, `token_kinds_fused`).
+`PROGRAMS`, `token_launches` și octeții QMD de azi: neschimbați.
+
+**Următorul pas:** C-147 punctul 3 (`q8_matvec` cu toate cele 32 de fire + citiri de 128 de biți, în SIMULARE), apoi C-151 punctul 3 (nota de reset
+pentru OS), 5, 6; punctul 7 după cifrele `os-309`. **Regula 8:** 120 are pas.
+
+---
 ## Sesiunea 119 — 19 noiembrie 2026, ~23:05–23:40 (ora României), în cloud, FĂRĂ placă — **C-147 punctul 1 (etapa 0) făcut în SIMULARE**, punctul 4 pregătit (oprit), limitele #651 (C-150)
 
 Pornită de programare. Comandă nouă: **C-147** (Adrian, 19 nov 22:33 + „Da, aprob tot” 22:50): planul de performanță, pachetul 1.

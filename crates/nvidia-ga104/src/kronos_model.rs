@@ -72,6 +72,38 @@ pub fn token_launches(
     token: usize,
     pos: usize,
 ) -> GpuResult<Vec<Launch>> {
+    launches_with(s, vocab, context, v, token, pos, kl::token_launches)
+}
+
+/// C-147 step 2: launches per token with the glued layers ([`token_launches_fused`]): 87 for #513's 12 layers.
+pub const fn launches_per_token_fused(layers: usize) -> usize {
+    kl::LAUNCHES_PER_TOKEN_FUSED * layers + 3
+}
+
+/// C-147 step 2 (etapa 3a): the same token as [`token_launches`], every layer in 7 launches
+/// ([`kl::token_launches_fused`]); the logits get the same bits (SIMULARE). Needs [`kl::PROGRAMS_FUSED`] uploaded.
+pub fn token_launches_fused(
+    s: &Shape,
+    vocab: usize,
+    context: usize,
+    v: &ModelVas,
+    token: usize,
+    pos: usize,
+) -> GpuResult<Vec<Launch>> {
+    launches_with(s, vocab, context, v, token, pos, kl::token_launches_fused)
+}
+
+type LayerFn = fn(&Shape, &kl::LayerVas, usize) -> GpuResult<Vec<Launch>>;
+
+fn launches_with(
+    s: &Shape,
+    vocab: usize,
+    context: usize,
+    v: &ModelVas,
+    token: usize,
+    pos: usize,
+    layer: LayerFn,
+) -> GpuResult<Vec<Launch>> {
     v.check()?;
     if token >= vocab || pos >= context || context > gpu_compute::layer::MAX_POS {
         return Err(bad("model: simbol sau pozitie in afara tabelelor"));
@@ -93,7 +125,7 @@ pub fn token_launches(
         grid: kl::blocks(e, 256),
     });
     for l in &v.layers {
-        out.extend(kl::token_launches(s, l, pos)?);
+        out.extend(layer(s, l, pos)?);
     }
     out.push(Launch {
         prog: Prog::LayerNorm,

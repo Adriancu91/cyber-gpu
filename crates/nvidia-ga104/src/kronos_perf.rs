@@ -96,6 +96,20 @@ pub const LAYER_KINDS: [Kind; 16] = [
     Kind::Residual2,
 ];
 
+/// C-147 step 2: the kinds of the glued layer (`kronos_layer::token_launches_fused`, 7 launches). A glued launch
+/// is counted under its matrix: `qkv` = QKV + bias + K/V into the caches, `out` = out + bias + residual, `fc` =
+/// fc + bias + GELU, `proj` = proj + bias + residual. The other layer kinds then have no launches (no rows); the row
+/// `kp lansari pe simbol` (88 instead of 196 for #513) says which list was measured.
+pub const LAYER_KINDS_FUSED: [Kind; 7] = [
+    Kind::Ln1,
+    Kind::Qkv,
+    Kind::Attention,
+    Kind::Out,
+    Kind::Ln2,
+    Kind::Fc,
+    Kind::Proj,
+];
+
 /// Every kind, in the order of the journal rows.
 pub const ALL_KINDS: [Kind; 20] = [
     Kind::Embed,
@@ -202,6 +216,23 @@ pub fn token_kinds(layers: usize, embed: bool, copy_down: bool) -> Vec<Kind> {
     }
     for _ in 0..layers {
         v.extend_from_slice(&LAYER_KINDS);
+    }
+    v.push(Kind::FinalLn);
+    v.push(Kind::Logits);
+    if copy_down {
+        v.push(Kind::CopyDown);
+    }
+    v
+}
+
+/// C-147 step 2: [`token_kinds`] for the glued list (`kronos_model::token_launches_fused`).
+pub fn token_kinds_fused(layers: usize, embed: bool, copy_down: bool) -> Vec<Kind> {
+    let mut v = Vec::with_capacity(7 * layers + 4);
+    if embed {
+        v.push(Kind::Embed);
+    }
+    for _ in 0..layers {
+        v.extend_from_slice(&LAYER_KINDS_FUSED);
     }
     v.push(Kind::FinalLn);
     v.push(Kind::Logits);
@@ -643,6 +674,7 @@ mod tests {
         // The one-to-one check against `kronos_model::token_launches` is in `tests/sim_c147.rs`.
         assert_eq!(token_kinds(2, true, false).len(), km::launches_per_token(2));
         assert_eq!(token_kinds(12, true, true).len(), 196);
+        assert_eq!(token_kinds_fused(12, true, true).len(), 88);
         assert_eq!(token_kinds(12, false, true).len(), 195);
         for k in ALL_KINDS {
             assert_eq!(ALL_KINDS[k.index()], k);

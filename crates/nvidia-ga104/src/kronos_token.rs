@@ -55,6 +55,8 @@ pub fn op_number(p: Prog) -> u32 {
         Prog::Attention => 4,
         Prog::Gelu => 5,
         Prog::Embed => 6,
+        // C-147: `token.comp` has no such operation; `work_list` refuses it.
+        Prog::Q8Fused => 7,
     }
 }
 
@@ -66,6 +68,9 @@ pub fn work_list(launches: &[Launch]) -> GpuResult<Vec<u8>> {
     }
     let mut out = Vec::with_capacity(ENTRY * launches.len());
     for l in launches {
+        if l.prog == Prog::Q8Fused {
+            return Err(bad("lista de lucru: token.comp nu are programul q8_fused"));
+        }
         if l.cbuf[..CBUF_LIST].iter().any(|&b| b != 0) || l.grid == 0 {
             return Err(bad(
                 "lista de lucru: bufferul constant foloseste 0x00..0x28 sau grila 0",

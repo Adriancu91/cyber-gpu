@@ -1446,6 +1446,59 @@ pub fn gelu_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// C-147 step 2: what `q8_fused` needs: the 32 partial sums of `q8_matvec` (128 B), no hardware barrier (one warp).
+pub const Q8_FUSED_NEEDS: Needs = Needs {
+    shared_bytes: 128,
+    barriers: 0,
+};
+
+/// C-147 step 2: the CPU stand-in for `tools/nak/out/q8_fused.sm86.sass` — W 0x28, x 0x30, bias 0x38, res 0x40,
+/// y 0x48, k 0x50, v 0x58, rows 0x60, blocks 0x64, flags 0x68 (1 residual, 2 GELU, 4 K/V), split 0x6c; one block of
+/// 32 per row. Every row: `q8::row_gpu_order` (as `q8_matvec`), `+ bias` and `res +` with `FADD.FTZ` (as `vadd`),
+/// `gelu_gpu` (as `gelu`): the composition of the separate launches' models, in their order. Blocks past `rows`
+/// write nothing; a pointer the flags do not use is never read.
+pub fn q8_fused_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    use gpu_compute::math::add_f32_ftz;
+    if l.block != [32, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 || l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: q8_fused cere blocuri de 32x1x1, grila 1D, baza 0",
+        ));
+    }
+    let r = |l: &Launch<'_>, o: u64| l.mem.read_u64(l.cbuf0 + o);
+    let (w, x, bias, res) = (r(l, 0x28)?, r(l, 0x30)?, r(l, 0x38)?, r(l, 0x40)?);
+    let (y, k, v) = (r(l, 0x48)?, r(l, 0x50)?, r(l, 0x58)?);
+    let rows = l.mem.read_u32(l.cbuf0 + 0x60)? as u64;
+    let blocks = l.mem.read_u32(l.cbuf0 + 0x64)? as usize;
+    let flags = l.mem.read_u32(l.cbuf0 + 0x68)?;
+    let split = l.mem.read_u32(l.cbuf0 + 0x6c)? as u64;
+    if !(w | x | bias | res | y | k | v).is_multiple_of(4) {
+        return Err(bad("SIM: q8_fused cu adrese nealiniate la 4"));
+    }
+    let row_bytes = blocks * gpu_compute::q8::BLOCK_BYTES;
+    let xs = l.mem.read_f32s(x, blocks * gpu_compute::q8::BLOCK)?;
+    let mut row = alloc::vec![0u8; row_bytes];
+    for i in 0..rows.min(l.grid[0] as u64) {
+        l.mem.read(w + i * row_bytes as u64, &mut row)?;
+        let dot = gpu_compute::q8::row_gpu_order(&row, &xs);
+        let mut val = add_f32_ftz(dot, f32::from_bits(l.mem.read_u32(bias + 4 * i)?));
+        if flags & 1 != 0 {
+            val = add_f32_ftz(f32::from_bits(l.mem.read_u32(res + 4 * i)?), val);
+        }
+        if flags & 2 != 0 {
+            val = gpu_compute::layer::gelu_gpu(val);
+        }
+        l.mem.write_u32(y + 4 * i, val.to_bits());
+        if flags & 4 != 0 && i >= split {
+            if i < 2 * split {
+                l.mem.write_u32(k + 4 * (i - split), val.to_bits());
+            } else if i < 3 * split {
+                l.mem.write_u32(v + 4 * (i - 2 * split), val.to_bits());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// C-83 I14: `embed.comp` — token row 0x28, position row 0x30 (both Q8_0), x 0x38, n 0x40; blocks of 256.
 pub fn embed_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     if l.block != [256, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 || l.mem.read_u64(l.cbuf0)? != 0 {

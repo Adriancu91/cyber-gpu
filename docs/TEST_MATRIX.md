@@ -1,5 +1,17 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 120 (20 nov 2026, ~01:25–02:00, cloud, fără placă) — C-147 punctul 2 (etapa 3a): programul lipit `q8_fused`, SIMULARE
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T136a | `q8_fused::cbuf`: așezarea în bufferul constant (72 octeți), refuzuri (QKV ≠ 3·E, rezidual = ieșire, nealiniat, cache lipsă) | `cargo test -p nvidia-ga104 q8_fused` | conform | conform | PASS |
+| T136b | stratul lipit (7 lansări) față de cele 16: `x` + cache-urile identice bit cu bit, E 64 × 6 poziții și E 768 × 2; în toleranța I13 | `cargo test -p nvidia-ga104 --release --test sim_c147_fused fused_layer` | conform | conform | PASS (SIMULARE) |
+| T136c | model mic (3 straturi), 4 poziții, trimis ca de OS: logit-uri și cache-uri identice bit cu bit; felurile `kp` lipite = lansările | `… sim_c147_fused fused_model` | conform | conform | PASS (SIMULARE) |
+| T136d | numărători (#513: 195 → 87), `PROGRAMS_FUSED`, registrele vechi 19, `work_list` refuză programul lipit; 4 greșeli plantate neprinse = 0 | `… sim_c147_fused` | conform | conform | PASS (SIMULARE) |
+| T136e | unealta NAK reconstruită: `q8_matvec` identic (SHA-256 `d8c118cc…`); `q8_fused` = produsul identic cu `q8_matvec`, GELU identic cu `gelu`, `fadd.ftz` pentru termen/rezidual, 19 registre, fără `BAR.SYNC` | `sh tools/nak/build.sh q8_fused` + citirea listării | conform | conform | PASS (COMPILAT) |
+| T136f | tot pachetul | `sh tools/check.sh` (Rust 1.100.0) | conform | **561 PASS** (555 → +6), 6 ignorate; format, clippy `-D warnings`, build no_std | PASS |
+| T136g | pe RTX 3070 Ti: lista de 88, aceleași simboluri (și logit-uri) ca lista de 196 | — | — | — | NOT TESTED |
+
 ## Rezultate — sesiunea 119 (19 nov 2026, ~23:05–23:40, cloud, fără placă) — C-147 etapa 0 (măsurători), viteza maximă pregătită, limitele #651, toate SIMULARE
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |

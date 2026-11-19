@@ -165,3 +165,16 @@ Unitățile MUFU sunt aproximative și nedocumentate bit cu bit: stratul se jude
 
 **Ce NU e dovedit:** bariera pe toată placa (cere ca toate cele G grupuri să fie pe placă în același timp: G ≤ numărul de SM-uri, 48) și
 coerența memoriei pe RTX 3070 Ti. Modelul din `gpu-sim` execută lista în ordine, deci nu poate arăta o blocare la barieră.
+
+## C-147 punctul 2: `q8_fused` — calculele mărunte lipite (20 nov 2026, sesiunea 120, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh q8_fused` (Mesa 25.0.7 reconstruit în cloud; `q8_matvec` a ieșit **identic**, SHA-256 `d8c118cc…`).
+
+| Ce | Valoare |
+|---|---|
+| Program | `q8_fused.comp`: `q8_matvec` + termenul liber + (rezidual \| GELU \| cheia și valoarea în cache), după steaguri în bufferul constant (0x68) |
+| Ieșire | 578 instrucțiuni, **9 248 octeți**, 19 registre, 128 B memorie partajată, fără `BAR.SYNC` |
+| SHA-256 `q8_fused.sm86.sass` | `d86e53e2f117e8769026a907fe53a9c4a33350f27807e5c0674c1dea3344dd08` |
+| Argumente | W/x/b/rez/y/k/v la 0x28…0x58, rânduri 0x60, blocuri 0x64, steaguri 0x68, E 0x6c (72 octeți de „push constants”) |
+| Aritmetica | produsul: aceleași instrucțiuni ca `q8_matvec`; `fadd.ftz` termen și rezidual (ordinea lui `vadd`); GELU: aceleași 21 de instrucțiuni ca `gelu` → oracolul = compunerea modelelor vechi, bit cu bit |
+
+Detalii: `docs/C-147_ETAPA3A.md`.

@@ -10,6 +10,7 @@
 #   sh tools/nak/build.sh matmul_1d      # step 4: 1D blocktiling, 8 results per thread (session 9)
 #   sh tools/nak/build.sh matmul_2d      # step 5: 2D blocktiling, 8x8 results per thread (session 10)
 #   sh tools/nak/build.sh matmul_vec4    # step 6: step 5 with 128-bit loads/stores, A transposed in shared (session 24)
+#   sh tools/nak/build.sh q8_fused       # C-147 step 2: q8_matvec + bias / residual / GELU / K-V copy (session 120)
 #   sh tools/nak/build.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): apt install glslang-tools spirv-tools libvulkan-dev libdrm-dev
@@ -58,6 +59,9 @@ matmul_2d)
     ;;
 matmul_vec4)
     exec sh "$0" kernel matmul_vec4 40
+    ;;
+q8_fused)
+    exec sh "$0" kernel q8_fused 72
     ;;
 kernel)
     NAME=${2:?nume}; PUSH=${3:?octeti push constants}

@@ -38,6 +38,9 @@ pub enum Prog {
     Gelu,
     /// I14: the token + position embedding (`embed.comp`).
     Embed,
+    /// C-147 step 2: `q8_matvec` with the bias, residual, GELU or K/V copy glued in (`q8_fused.comp`,
+    /// [`crate::q8_fused`]); used only by [`token_launches_fused`].
+    Q8Fused,
 }
 
 pub const PROGRAMS: [Prog; 7] = [
@@ -48,6 +51,18 @@ pub const PROGRAMS: [Prog; 7] = [
     Prog::Attention,
     Prog::Gelu,
     Prog::Embed,
+];
+
+/// C-147 step 2: the programs of the glued layer ([`token_launches_fused`]): [`PROGRAMS`] + [`Prog::Q8Fused`].
+pub const PROGRAMS_FUSED: [Prog; 8] = [
+    Prog::Copy,
+    Prog::Q8Matvec,
+    Prog::Vadd,
+    Prog::LayerNorm,
+    Prog::Attention,
+    Prog::Gelu,
+    Prog::Embed,
+    Prog::Q8Fused,
 ];
 
 pub const VADD: &[u8] = include_bytes!("../../../tools/nak/out/vadd.sm86.sass");
@@ -66,6 +81,15 @@ impl Prog {
             Prog::Attention => ATTENTION,
             Prog::Gelu => GELU,
             Prog::Embed => EMBED,
+            Prog::Q8Fused => crate::q8_fused::Q8_FUSED,
+        }
+    }
+
+    /// Registers per thread (the NAK dumps: 19 for the I13–I14 programs).
+    pub fn registers(self) -> u32 {
+        match self {
+            Prog::Q8Fused => crate::q8_fused::REGISTERS,
+            _ => 19,
         }
     }
 
@@ -73,14 +97,14 @@ impl Prog {
     pub fn block(self) -> u32 {
         match self {
             Prog::Copy | Prog::Vadd | Prog::Gelu | Prog::Embed => 256,
-            Prog::Q8Matvec | Prog::LayerNorm | Prog::Attention => 32,
+            Prog::Q8Matvec | Prog::LayerNorm | Prog::Attention | Prog::Q8Fused => 32,
         }
     }
 
     /// Shared memory (one warp each: NAK left no `BAR.SYNC`).
     pub fn shared(self) -> Option<SharedMemory> {
         let bytes = match self {
-            Prog::Q8Matvec | Prog::LayerNorm => 128,
+            Prog::Q8Matvec | Prog::LayerNorm | Prog::Q8Fused => 128,
             Prog::Attention => 4 * (MAX_POS as u32 + 32),
             _ => return None,
         };
@@ -105,7 +129,7 @@ impl Launch {
     pub fn qmd(&self, prog_va: u64, cbuf_va: u64) -> GpuResult<[u8; nvidia_rm570::QMD_SIZE]> {
         let q = ComputeQmd {
             program_va: prog_va,
-            registers: 19,
+            registers: self.prog.registers(),
             cbuf0_va: cbuf_va,
             cbuf0_size: 0x100,
             grid: [self.grid, 1, 1],
@@ -334,6 +358,66 @@ pub fn token_launches(s: &Shape, v: &LayerVas, pos: usize) -> GpuResult<Vec<Laun
 
 /// Launches per position.
 pub const LAUNCHES_PER_TOKEN: usize = 16;
+
+/// C-147 step 2: launches per position of the glued layer ([`token_launches_fused`]).
+pub const LAUNCHES_PER_TOKEN_FUSED: usize = 7;
+
+/// C-147 step 2 (etapa 3a): the same layer as [`token_launches`] in 7 launches — LayerNorm, QKV with its bias and
+/// the new key and value into the caches, attention, out with bias and residual, LayerNorm, fc with bias and GELU,
+/// proj with bias and residual. Every value goes through the same operations in the same order as in the 16 launches, so `v.x`
+/// gets the same bits (in SIMULARE: tested bit for bit). The intermediate vectors `qkv`, `o`, `ob`, `f`, `fb`, `p`,
+/// `pb` are no longer written (`qkvb`, `att`, `x1`, `h`, `h2`, `g` are, as before).
+pub fn token_launches_fused(s: &Shape, v: &LayerVas, pos: usize) -> GpuResult<Vec<Launch>> {
+    use crate::q8_fused::{self as qf, Tail};
+    // The same checks as the 16 launches (shape, position): build them and keep the three that stay.
+    let old = token_launches(s, v, pos)?;
+    let e = s.e;
+    let row = 4 * e as u64;
+    let fused = |w: u64, x: u64, b: u64, y: u64, rows: usize, cols: usize, t: Tail| {
+        qf::cbuf(w, x, b, y, rows, cols, t).map(|cbuf| Launch {
+            prog: Prog::Q8Fused,
+            cbuf,
+            grid: rows as u32,
+        })
+    };
+    Ok(alloc::vec![
+        old[0].clone(),
+        fused(
+            v.wqkv,
+            v.h,
+            v.bqkv,
+            v.qkvb,
+            3 * e,
+            e,
+            Tail::BiasKv {
+                k: v.kc + pos as u64 * row,
+                v: v.vc + pos as u64 * row,
+                split: e,
+            },
+        )?,
+        old[5].clone(),
+        fused(
+            v.wout,
+            v.att,
+            v.bout,
+            v.x1,
+            e,
+            e,
+            Tail::BiasRes { res: v.x }
+        )?,
+        old[9].clone(),
+        fused(v.wfc, v.h2, v.bfc, v.g, 4 * e, e, Tail::BiasGelu)?,
+        fused(
+            v.wproj,
+            v.g,
+            v.bproj,
+            v.x,
+            e,
+            4 * e,
+            Tail::BiasRes { res: v.x1 }
+        )?,
+    ])
+}
 
 /// A layer's weights owned (the window's synthetic test layer, or a layer read from a KGR1 file by the OS).
 #[derive(Clone, Debug, PartialEq)]
