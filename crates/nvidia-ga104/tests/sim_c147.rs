@@ -144,3 +144,60 @@ fn vram_copy_bit_for_bit_with_one_time_per_copy() {
     cut[48..52].copy_from_slice(&0u32.to_le_bytes());
     assert!(c.analyze(&cut, FIRST).is_err());
 }
+
+/// (c) and point 4 against the fake GSP-RM (`gpu_sim::fake_rm`, written from the headers): it does not model the
+/// performance controls, so it refuses them — the refusal is a `ks` row, never an error of the
+/// chain and never a made-up P-state. The boost stays off unless the plan is enabled; its clear has the same shape.
+#[test]
+fn pstate_and_boost_refused_by_the_fake_rm_become_rows() {
+    use gpu_sim::fake_rm::{FN_GSP_RM_ALLOC, FN_GSP_RM_CONTROL, FakeRm};
+    use nvidia_ga104::gsp::golden::CLIENT;
+    use nvidia_ga104::gsp::perf::{self as gp, BoostPlan, Pstate, When};
+    use nvidia_ga104::gsp::rmapi::{self, class};
+
+    let mut rm = FakeRm::new();
+    let mut alloc = |parent: u32, h: u32, c: u32, p: &[u8]| {
+        let sent = rmapi::encode_alloc(CLIENT, parent, h, c, p);
+        let (_, reply) = rm.handle(FN_GSP_RM_ALLOC, &sent).unwrap();
+        rmapi::check_alloc_reply(&sent, &reply).unwrap();
+    };
+    alloc(0, 0xcf00_0000, class::ROOT, &rmapi::root_params());
+    alloc(
+        CLIENT,
+        0xcf00_0001,
+        class::DEVICE,
+        &rmapi::device_params(CLIENT),
+    );
+    alloc(
+        0xcf00_0001,
+        0xcf00_0002,
+        class::SUBDEVICE,
+        &rmapi::subdevice_params(),
+    );
+    let sub = 0xcf00_0002;
+    let mut j = gpu_core::diag::Journal::new(16);
+    let sent = gp::encode_get_pstate(CLIENT, sub);
+    let (_, reply) = rm.handle(FN_GSP_RM_CONTROL, &sent).unwrap();
+    let p = gp::read_pstate(&sent, &reply).unwrap();
+    assert!(matches!(p, Pstate::Refused(_)), "{p:?}");
+    gp::journal_pstate(&mut j, When::End, p);
+    assert!(BoostPlan::default().encode_boost(CLIENT, sub).is_err());
+    let on = BoostPlan {
+        enabled: true,
+        ..BoostPlan::default()
+    };
+    for sent in [
+        on.encode_boost(CLIENT, sub).unwrap(),
+        on.encode_clear(CLIENT, sub),
+    ] {
+        let (_, reply) = rm.handle(FN_GSP_RM_CONTROL, &sent).unwrap();
+        assert!(gp::read_boost(&sent, &reply).unwrap() & 0x8000_0000 != 0);
+    }
+    let text: Vec<String> = j.events().map(|e| e.to_string()).collect();
+    assert_eq!(text.len(), 1);
+    assert!(
+        text[0].contains("ks stare de performanta la final"),
+        "{text:?}"
+    );
+    assert!(text[0].contains("= 0x8000"), "{text:?}");
+}

@@ -44,6 +44,14 @@ pub const K513_SHAPE: Shape = Shape {
     eps: 1e-5,
 };
 
+/// C-147 / C-150: the shape of Kronos #651 (183 M; cyberspace `config/conv_w2_mare_24zc.toml`: `n_straturi = 24`,
+/// `n_capete = 12`, `n_emb = 768`, `context = 512`, tokenizer `bpe_16384`): #513's width, twice the layers. To be
+/// checked against hub `integrare/kronos/MODEL_651.md` when the export (C-150) writes it.
+pub const K651_LAYERS: usize = 24;
+pub const K651_VOCAB: usize = 16_384;
+pub const K651_CONTEXT: usize = 512;
+pub const K651_SHAPE: Shape = K513_SHAPE;
+
 // ------------------------------------------------------------------------------------------------ limits
 
 /// What one model needs on the work channel (shapes only).
@@ -162,6 +170,20 @@ impl ModelLimits {
         ) {
             Ok(l) => l,
             Err(_) => unreachable!("#513 shapes are valid"),
+        }
+    }
+
+    /// C-150: #651 (24 layers) with the OS's upload pieces (8 MiB).
+    pub fn k651() -> Self {
+        match Self::of(
+            &K651_SHAPE,
+            K651_LAYERS,
+            K651_VOCAB,
+            K651_CONTEXT,
+            I11_DEFAULT_BYTES,
+        ) {
+            Ok(l) => l,
+            Err(_) => unreachable!("#651 shapes are valid"),
         }
     }
 
@@ -602,6 +624,37 @@ mod tests {
         assert_eq!(l.pieces, 14);
         assert!(l.vram.total() < 160 << 20);
         assert_eq!(l.lines().len(), 5);
+    }
+
+    #[test]
+    fn k651_limits() {
+        let l = ModelLimits::k651();
+        assert_eq!(l.layers, 24);
+        // 16 × 24 + 3 = 387 launches of the model + the copy of the logits down.
+        assert_eq!(l.launches, 388);
+        assert_eq!(l.push_area, 64 << 10);
+        // The payload stride: 389 — above the 0x100 the OS uses for #513 (it needs 0x200 for #651).
+        assert_eq!(l.stride, 389);
+        assert!(l.stride > 0x100 && l.stride <= 0x200);
+        let gib = 1u64 << 30;
+        assert!(
+            l.check(64 << 10, 0x200, 7 * gib, 7 * gib, 4 << 20)
+                .is_empty()
+        );
+        let bad = l.check(32 << 10, 0x100, 7 * gib, 7 * gib, 4 << 20);
+        assert_eq!(bad.len(), 2, "{bad:?}");
+        // ~183 M weights at Q8_0 (1.0625 B each) + scratch, caches, logits: ~270 MiB on the board.
+        assert!(
+            l.vram.blob > 190 << 20 && l.vram.blob < 215 << 20,
+            "{}",
+            l.vram.blob >> 20
+        );
+        assert!(
+            l.vram.total() > 250 << 20 && l.vram.total() < 290 << 20,
+            "{}",
+            l.vram.total() >> 20
+        );
+        assert_eq!(l.pieces, l.vram.blob.div_ceil(8 << 20));
     }
 
     #[test]

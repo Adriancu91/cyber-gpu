@@ -59,6 +59,7 @@ pub mod libos;
 pub mod msgq;
 pub mod nocat;
 pub mod nocat_log;
+pub mod perf;
 pub mod registry;
 pub mod rmapi;
 pub mod rpc;
