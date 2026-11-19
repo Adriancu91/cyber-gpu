@@ -1,5 +1,25 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 118 — 19 noiembrie 2026, ~19:40–20:05 (ora României), în cloud, FĂRĂ placă — **analiza cifrelor `kt` din `os-308`** (fără cod)
+
+Pornită de programare. Date noi în hub: **ciclul automat `os-308`** (19 nov 14:37, fără Adrian): 16 simboluri pe placă identice cu procesorul;
+**10,99 simb/s cu driverul** (os-307: 3,10); `kt`: placă 23,0 ms, driver 0, **jurnal 73,9 ms**. Propunerea OS
+`idei/2026-11-19_kronos-placa-mai-rapid.md` așteaptă „da”-ul lui Adrian. **Nicio comandă nouă pentru cyber-gpu.** Pasul nostru planificat
+(„după jurnalul `os-308`: cifrele `kt` față de estimare”) l-am făcut.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Verificări la pornire | `tools/check.sh` (Rust 1.100.0, ca CI-ul): format, clippy `-D warnings`, 545 teste (6 ignorate), build no_std | PASS (SIMULARE) |
+| CI | vârful `07e0031`, rularea 44515135016 | VERDE |
+| Analiza `kt` | `docs/os-308_ANALIZA_KT.md`: umbra a lucrat (driver 41 → 0 ms); jurnalul e de ~4× peste estimare pentru că OS-ul afișează fiecare rând ținut prin `info!` (serial + ecran, ~4,3 ms/rând × 15 ≈ 64 ms) + golirea ~10–12 ms ≈ 74 ms | DEDUS (din orele rândurilor + codul OS citit) |
+| Estimare nouă | doar golirea la final: ~13 simb/s; fără ecoul rândurilor ținute: ~27–29; fără ecou + golire rară: ~40 | ESTIMARE (nemăsurat) |
+| Nota pentru OS | `integration/cyber-universe/os-308_ecoul-jurnalului.md` (observație; nimic de legat din crate-uri) | — |
+| Pe RTX 3070 Ti | — | NOT TESTED |
+
+Interfața publică: neschimbată (niciun cod). **Următorul pas:** decizia lui Adrian pe idee; partea care contează e în OS (`gpu_i6::live_line`);
+cyber-gpu nu are nimic de schimbat pentru ea. **Regula 8:** 118 are pas (analiză).
+
+---
 ## Sesiunea 117 — 19 noiembrie 2026, ~13:25–13:40 (ora României), în cloud, FĂRĂ placă — **oprire scurtă: nimic de făcut fără placă**
 
 Pornită de programare. În hub, de la sesiunea 116: doar starea Kronos și **C-146 preluat de OS** (P6-97: legarea C-145 → `os-308`, OS-ul a legat deja
