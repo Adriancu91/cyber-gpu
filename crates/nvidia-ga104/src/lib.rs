@@ -72,6 +72,7 @@ pub mod i6_log;
 pub mod ids;
 pub mod init;
 pub mod kronos_diag;
+pub mod kronos_fast;
 pub mod kronos_gen;
 pub mod kronos_layer;
 pub mod kronos_model;

@@ -154,11 +154,70 @@ impl fmt::Display for Event {
     }
 }
 
+/// C-145: whether the live destination must have an event on the stick
+/// before the library goes on ([`Flush::Now`]: the event and everything held
+/// before it) or may hold it in memory for a while ([`Flush::Later`]: a
+/// routine event inside a [`Routine`] stretch).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Flush {
+    Now,
+    Later,
+}
+
+/// C-145: a live destination that may hold routine events: `line` gets every
+/// event in push order with its [`Flush`]; `flush` is called when the held
+/// events must reach the stick without a new event (the end of a routine
+/// stretch, [`Journal::flush_live`]).
+#[derive(Clone, Copy, Debug)]
+pub struct LiveSink {
+    pub line: fn(&Event, Flush),
+    pub flush: fn(),
+}
+
+/// C-145: which events are routine during a long run of the same accesses
+/// (`kronos --gpu`: the VRAM window moves, the TLB invalidate, the
+/// work-channel doorbell and the notes that come with them). Only BAR0
+/// **writes** at `writes` and notes equal to one of `notes` can be routine;
+/// steps, values, texts, reads, configuration accesses, sequencer commands
+/// and waits are never routine. At most `max_pending` routine events are
+/// held: the next one goes out with [`Flush::Now`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Routine {
+    pub writes: &'static [u64],
+    pub notes: &'static [&'static str],
+    pub max_pending: u32,
+}
+
+impl Routine {
+    pub fn covers(&self, e: &Event) -> bool {
+        match e {
+            Event::MmioWrite { bar: 0, offset, .. } => self.writes.contains(offset),
+            Event::Note(n) => self.notes.contains(n),
+            _ => false,
+        }
+    }
+}
+
+/// C-145: what the live destination was handed during routine stretches.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LiveStats {
+    /// Events handed with [`Flush::Later`].
+    pub held: u64,
+    /// Times the held events had to go out ([`Flush::Now`] after held
+    /// events, or a `flush` call).
+    pub flushes: u64,
+    /// Held right now (not yet on the stick).
+    pub pending: u32,
+}
+
 pub struct Journal {
     events: VecDeque<Event>,
     cap: usize,
     dropped: u64,
     sink: Option<fn(&Event)>,
+    live: Option<LiveSink>,
+    routine: Option<Routine>,
+    stats: LiveStats,
 }
 
 impl Journal {
@@ -168,6 +227,9 @@ impl Journal {
             cap: cap.max(1),
             dropped: 0,
             sink: None,
+            live: None,
+            routine: None,
+            stats: LiveStats::default(),
         }
     }
     /// Same journal, and every event is also handed to `sink` the moment it
@@ -179,9 +241,62 @@ impl Journal {
         j.sink = Some(sink);
         j
     }
+    /// C-145: like [`Self::with_sink`], with a destination that may hold
+    /// routine events during a [`Routine`] stretch ([`Self::set_routine`]).
+    /// Outside such a stretch every event is handed with [`Flush::Now`]:
+    /// the same as `with_sink`.
+    pub fn with_live_sink(cap: usize, live: LiveSink) -> Self {
+        let mut j = Self::new(cap);
+        j.live = Some(live);
+        j
+    }
+
+    /// C-145: starts (`Some`) or ends (`None`) a routine stretch. Ending it,
+    /// or changing it, first puts the held events on the stick. The memory
+    /// journal is the same either way: every event, in order.
+    pub fn set_routine(&mut self, r: Option<Routine>) {
+        self.flush_live();
+        self.routine = r.filter(|r| r.max_pending > 0);
+    }
+
+    pub fn routine(&self) -> Option<Routine> {
+        self.routine
+    }
+
+    /// C-145: the held events go to the stick now (e.g. once per token).
+    pub fn flush_live(&mut self) {
+        if self.stats.pending > 0 {
+            if let Some(l) = self.live {
+                (l.flush)();
+            }
+            self.stats.pending = 0;
+            self.stats.flushes += 1;
+        }
+    }
+
+    pub fn live_stats(&self) -> LiveStats {
+        self.stats
+    }
+
     pub fn push(&mut self, e: Event) {
         if let Some(s) = self.sink {
             s(&e);
+        }
+        if let Some(l) = self.live {
+            let hold = self
+                .routine
+                .is_some_and(|r| r.covers(&e) && self.stats.pending < r.max_pending);
+            if hold {
+                (l.line)(&e, Flush::Later);
+                self.stats.pending += 1;
+                self.stats.held += 1;
+            } else {
+                (l.line)(&e, Flush::Now);
+                if self.stats.pending > 0 {
+                    self.stats.pending = 0;
+                    self.stats.flushes += 1;
+                }
+            }
         }
         if self.events.len() == self.cap {
             self.events.pop_front();
@@ -244,6 +359,87 @@ mod tests {
         j.push(Event::Note("c"));
         assert_eq!(SEEN.load(Ordering::Relaxed), 3);
         assert_eq!((j.len(), j.dropped()), (1, 2));
+    }
+
+    /// C-145: a routine stretch holds only the routine events, never more
+    /// than `max_pending`; every step, value and other write goes out at
+    /// once and takes the held ones with it; the order is the push order and
+    /// the memory journal is unchanged.
+    #[test]
+    fn routine_stretch_holds_only_routine_events() {
+        use std::sync::Mutex;
+        use std::vec::Vec;
+        static LOG: Mutex<Vec<(String, Flush)>> = Mutex::new(Vec::new());
+        static FLUSHES: Mutex<u32> = Mutex::new(0);
+        fn line(e: &Event, f: Flush) {
+            LOG.lock().unwrap().push((e.to_string(), f));
+        }
+        fn flush() {
+            *FLUSHES.lock().unwrap() += 1;
+        }
+        const W: [u64; 2] = [0x1700, 0xbb0090];
+        const N: [&str; 1] = ["permis"];
+        let w = |off: u64| Event::MmioWrite {
+            bar: 0,
+            offset: off,
+            before: 0,
+            written: 1,
+            after: 1,
+        };
+        let mut j = Journal::with_live_sink(64, LiveSink { line, flush });
+        j.push(w(0x1700)); // no stretch yet: Now
+        j.set_routine(Some(Routine {
+            writes: &W,
+            notes: &N,
+            max_pending: 3,
+        }));
+        j.push(Event::Note("permis")); // held
+        j.push(w(0x1700)); // held
+        j.push(w(0x1704)); // not in the list: Now
+        j.push(Event::MmioRead {
+            bar: 0,
+            offset: 0x1700,
+            value: 1,
+        }); // reads never routine
+        j.push(w(0xbb0090)); // held
+        j.push(w(0x1700)); // held
+        j.push(w(0x1700)); // held (3rd)
+        j.push(w(0x1700)); // over the cap: Now
+        j.push(Event::Note("altceva")); // other note: Now
+        j.push(w(0x1700)); // held
+        j.push(Event::Step {
+            name: "pas",
+            ok: true,
+        }); // steps never held
+        j.push(w(0x1700)); // held
+        j.set_routine(None); // the end flushes
+        j.push(w(0x1700)); // after the stretch: Now
+        let log = LOG.lock().unwrap().clone();
+        let flags: Vec<Flush> = log.iter().map(|x| x.1).collect();
+        use Flush::{Later as L, Now as N_};
+        assert_eq!(flags, [N_, L, L, N_, N_, L, L, L, N_, N_, L, N_, L, N_]);
+        // Same events, same order as the memory journal.
+        let mem: Vec<String> = j.events().map(|e| e.to_string()).collect();
+        let sent: Vec<String> = log.iter().map(|x| x.0.clone()).collect();
+        assert_eq!(mem, sent);
+        assert_eq!(
+            *FLUSHES.lock().unwrap(),
+            1,
+            "only the end of the stretch calls flush"
+        );
+        let st = j.live_stats();
+        assert_eq!(st.held, 7);
+        assert_eq!(st.pending, 0);
+        assert_eq!(st.flushes, 4);
+        // Without a live sink the stretch changes nothing.
+        let mut k = Journal::new(4);
+        k.set_routine(Some(Routine {
+            writes: &W,
+            notes: &N,
+            max_pending: 3,
+        }));
+        k.push(w(0x1700));
+        assert_eq!((k.len(), k.live_stats().held), (1, 0));
     }
 
     #[test]

@@ -326,6 +326,55 @@ impl Generation {
         self.stop.as_ref().unwrap_or(&Stop::Gata)
     }
 
+    /// C-145: the same generation with the CPU check **after** the board: every position runs on the GPU first
+    /// (greedy, the board's own tokens, its logits kept), then the CPU engine judges every kept position in order,
+    /// exactly as [`Self::run`] would have. The board's clock then measures only the driver and the board (the
+    /// CPU engine's seconds are no longer between the records). The first position the check refuses (or fails
+    /// at) becomes the stop, and every token generated from it on is dropped (`seq` ends with the token of that
+    /// position's input). Memory: the kept logits, [`Self::deferred_bytes`]. The board runs a few more positions
+    /// after a wrong one than [`Self::run`] would — only reads of its own buffers and the same launches; nothing
+    /// new is written outside them.
+    pub fn run_check_after<R: TokenRunner + ?Sized>(
+        &mut self,
+        r: &mut R,
+        check: &mut dyn TokenCheck,
+    ) -> &Stop {
+        let mut kept: Vec<(usize, usize, Vec<f32>)> = Vec::new();
+        while let Some((tok, pos)) = self.next() {
+            let out = r.run_token(tok, pos);
+            let logits = out.as_ref().ok().map(|o| o.logits.clone());
+            let before = self.pos;
+            self.accept(out, None);
+            if let Some(l) = logits.filter(|_| self.pos > before) {
+                kept.push((tok, pos, l));
+            }
+        }
+        for (tok, pos, got) in kept {
+            let fail = match check.cpu_logits(tok, pos) {
+                Err(err) => Some(Stop::Eroare { pos, err }),
+                Ok(c) => match km::judge(&got, &c) {
+                    TokenVerdict::Trece { max_abs, .. } => {
+                        self.worst_abs = self.worst_abs.max(max_abs);
+                        None
+                    }
+                    verdict => Some(Stop::NuTrece { pos, verdict }),
+                },
+            };
+            if let Some(stop) = fail {
+                self.seq.truncate(self.plan.prompt.len().max(pos + 1));
+                self.pos = pos;
+                self.stop = Some(stop);
+                break;
+            }
+        }
+        self.stop.as_ref().unwrap_or(&Stop::Gata)
+    }
+
+    /// C-145: the most memory [`Self::run_check_after`] keeps (every position's logits).
+    pub fn deferred_bytes(&self) -> usize {
+        self.plan.positions() * self.plan.vocab * 4
+    }
+
     pub fn stats(&self) -> GenStats {
         let mut t = self.per_token.clone();
         t.sort_unstable();

@@ -1,5 +1,33 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 116 — 19 noiembrie 2026, ~10:45–11:05 (ora României), în cloud, FĂRĂ placă — **C-145 făcut în SIMULARE**: pauzele driverului la `kronos --gpu` (analiză + 4 unelte, toate oprite implicit)
+
+Pornită de programare. Date noi: **`os-307`, primul ciclu automat** (19 nov 08:52, fără Adrian): lanțul I0 → I14 trece și **Kronos #513 a generat
+16 simboluri pe placă, toate identice cu procesorul**; viteza: 43,93 simb/s doar lansările, 3,10 cu driverul, 0,24 „cu pauzele”. Comanda nouă
+**C-145** (Adrian, 08:57): de unde vin pauzele și cum le scurtăm, doar prin adăugare.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Analiza (C-145 pasul 1) | `docs/C-145_PAUZELE_DRIVERULUI.md`, din orele rândurilor `gpu-jurnal-011` + codul OS (citit): un simbol = 15 rânduri, fiecare scris **și sincronizat** pe stick (~16,4 ms) ≈ **246 ms**; rescrierea celor 196 de sloturi de lansare prin fereastra VRAM cu recitire ≈ **41 ms**; placa 22,9 ms; total 294,8 ms. **0,24** = ceasul plăcii pe toată generarea, **cu** verificarea pe procesor (motorul de referință, 1 nucleu, **3,87 s pe poziție**) între simboluri; 3,10 n-o include | MĂSURAT de OS / DEDUS |
+| Jurnalul ținut (pasul 2) | `gpu_core::diag`: `Journal::with_live_sink` + `set_routine` + `flush_live`; `kronos_fast::gen_routine` (fereastra, invalidarea, soneria + notele date de OS, cel mult 64 de rânduri ținute). Pașii, `kg`/`kv`/`kt`, citirile, orice altă scriere: imediat. Aceleași rânduri, aceeași ordine | PASS (SIMULARE), T134a–c |
+| Umbra lansărilor (pasul 2) | `kronos_fast::WriteShadow`: se scriu doar cuvintele schimbate ale sloturilor; pe canalul simulat 18 640 B în loc de 147 456 B, logit-uri identice bit cu bit | PASS (SIMULARE), T134d |
+| Verificarea după placă | `Generation::run_check_after` (+ `deferred_bytes`): aceeași judecată, aceeași oprire la refuz | PASS (SIMULARE), T134e |
+| Timpul pe bucăți (pentru C-146) | `kronos_fast::TimeSplit`/`TokenSplit`: placă / driver / jurnal / ecran / verificare, rânduri `kt …` + `parse_split`; `FIGURES` = ce include fiecare cifră | PASS, T134b |
+| Estimarea (pasul 4) | cu jurnalul ținut + umbra: ~45 ms/simbol (~20–22 simb/s) cu golire pe simbol, ~30 ms (~30–34) cu golire la 16; plafon 43,9; verificarea de referință între simboluri ține „cu verificare” la ~0,25 | ESTIMARE (nemăsurat) |
+| Nota pentru OS | `integration/cyber-universe/C-145_pauzele-driverului.md` (pașii de legare pentru C-146) | — |
+| Verificări | `tools/check.sh` (Rust 1.97.0): format, clippy `-D warnings`, **545 teste** (538 → +7; 6 ignorate), build no_std | PASS (SIMULARE) |
+| Pe RTX 3070 Ti | `os-308` cu C-145 legat (ciclul automat) | NOT TESTED (după C-146) |
+
+Interfața publică: doar adăugări (`gpu_core::diag::{Flush, LiveSink, Routine, LiveStats}`, metodele noi ale `Journal`; modulul
+`nvidia_ga104::kronos_fast`: `GEN_WRITES`, `GEN_MAX_PENDING`, `gen_routine`, `WriteShadow`, `TokenSplit`, `SplitSummary`, `TimeSplit`,
+`ParsedSplit`, `parse_split`, `FIGURES`; `kronos_gen::Generation::{run_check_after, deferred_bytes}`). Nimic redenumit sau șters; nimic schimbat în
+ce primește placa (regula „trei surse” nu se aplică). OS-ul fixat pe `3a23dc0` compilează neschimbat.
+**Ce nu s-a făcut:** fereastra VRAM fixă (câștig < 1 ms după jurnal), mai puține invalidări (ar schimba trimiterea care a trecut I14).
+
+**Următorul pas:** OS-ul leagă C-145 (C-146) → `os-308` → ciclul automat; noi, după jurnal: cifrele `kt` față de estimare.
+**Regula 8:** 116 are pas (analiză + cod).
+
+---
 ## Sesiunea 115 — 19 noiembrie 2026, ~07:15–07:30 (ora României), în cloud, FĂRĂ placă — **oprire scurtă: nimic de făcut fără placă**
 
 Pornită de programare. În hub, de la sesiunea 114: doar stări (OS: „OPRIT, nimic nou”; Kronos: S126). **Nicio comandă nouă pentru cyber-gpu**,

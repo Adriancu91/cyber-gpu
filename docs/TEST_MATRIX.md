@@ -1,5 +1,16 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 116 (19 nov 2026, ~10:50, cloud, fără placă) — C-145: pauzele driverului (jurnal ținut, umbra lansărilor, timpul pe bucăți, verificarea după placă), toate SIMULARE
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T134a | jurnalul cu rutină: ține doar scrierile la adresele date și notele date, cel mult `max_pending`; pași, valori, citiri, alte scrieri merg imediat și iau cu ele ce era ținut; aceleași rânduri în aceeași ordine ca jurnalul din memorie; fără destinație nu schimbă nimic | `cargo test -p gpu-core routine_stretch` | conform | conform | PASS |
+| T134b | `kronos_fast`: rutina = fereastra, cele 3 registre de invalidare, soneria (nimic altceva); umbra dă doar cuvintele schimbate, refuză nealiniat / în afară; `TimeSplit` cu cifrele `os-307` dă 3,39 / 0,24 simboluri/s și rândurile `kt` citite înapoi | `cargo test -p nvidia-ga104 kronos_fast` | conform | conform | PASS |
+| T134c | un simbol ca în `os-307` (15 rânduri) × 18 poziții: stick-ul cu rânduri ținute = stick-ul rând cu rând, text identic; 18 goliri în loc de 270 | `cargo test -p nvidia-ga104 --release --test sim_c145 held_routine` | conform | conform | PASS (SIMULARE) |
+| T134d | umbra sloturilor pe canalul simulat: aceleași simboluri, logit-uri identice bit cu bit, 18 640 B scriși față de 147 456 B (8 poziții × 36 lansări) | `… sim_c145 shadow` | conform | conform | PASS (SIMULARE) |
+| T134e | verificarea după placă: aceleași simboluri și aceeași abatere ca verificarea între simboluri; la refuz (poziția 4 sau 1 din text) aceeași oprire, aceleași simboluri păstrate | `… sim_c145 check_after` | conform | conform | PASS (SIMULARE) |
+| T134f | pe RTX 3070 Ti: `os-308` cu C-145 legat, rândurile `kt` | — | — | — | NOT TESTED (ciclul automat, după C-146) |
+
 ## Rezultate — sesiunea 113 (18 nov 2026, ~19:25–20:00, cloud, fără placă) — C-142: forma lui #513 în `gpu-sim`, limitele, contoarele de viteză, toate SIMULARE
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |

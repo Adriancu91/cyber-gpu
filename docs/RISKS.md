@@ -36,6 +36,7 @@
 | B9 | ~~GitHub Actions nu mai alocă calculatoare joburilor~~ **rezolvat 23 oct 19:10:** repo-ul e public, CI gratuit | — |
 | B8 | Kernel fără SSE/AVX salvat | crate-urile merg în soft-float; performanța CPU cere XSAVE (ARHITECTURA §14.7) |
 | B10 | După orice lanț trecut de I6, WPR2 rămâne ridicat → fiecare încercare cere pornire rece cu Adrian la cablu (C-103) | **în SIMULARE (sesiunea 85):** `falcon::booter_unload` — programul semnat `booter_unload` pe SEC2, ca driverul NVIDIA la descărcare, coboară WPR2 fără reset; de probat pe placă (`gpu recupereaza`, OS); rezerve: FLR/SBR (`docs/C-103_RESET_PLACA.md`). **18 nov (C-142):** placa anunță FLR (K-2); propunerea = FLR la începutul lanțului când WPR2 e ridicat, ca tinygrad (`docs/C-142_K513_VITEZA_FLR.md` §4), de probat cu Adrian; Booter Unload rămâne rezervă, cu FWSEC-SB înainte (ca RM, nouveau, nova) |
+| B11 | C-145: rândurile de rutină ținute în memorie / umbra sloturilor de lansare ar putea ascunde ceva pe placă | ambele oprite implicit; rutina = doar 5 adrese deja permise + notele date de OS, pașii și valorile merg imediat, ordinea rămâne (T134c); la blocare lipsesc ≤ 64 rânduri de pe stick. Umbra: doar zone scrise numai de procesor; nu e verificat că placa nu rescrie sloturile — OS-ul poate reciti zona la final și compara (`docs/C-145_PAUZELE_DRIVERULUI.md` §6) |
 
 ## Riscuri
 | Risc | Impact | Măsură |

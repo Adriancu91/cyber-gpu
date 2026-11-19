@@ -72,6 +72,10 @@ pub struct TokenSim<'a> {
     /// C-142: for every doorbell, the board clock (model's) at record 0 and at the last record, and the sum of the
     /// launch durations.
     pub times: Vec<(u64, u64, u64)>,
+    /// C-145: when set, the launch slots are written through this shadow (only the changed words).
+    pub shadow: Option<nvidia_ga104::kronos_fast::WriteShadow>,
+    /// C-145: bytes written into the launch slots so far.
+    pub launch_bytes: u64,
 }
 
 impl<'a> TokenSim<'a> {
@@ -202,6 +206,8 @@ impl<'a> TokenSim<'a> {
             journal: Journal::new(JOURNAL_ROWS),
             upload: pieces,
             times: Vec::new(),
+            shadow: None,
+            launch_bytes: 0,
         })
     }
 
@@ -340,8 +346,21 @@ impl TokenIo for TokenSim<'_> {
             let (cb_va, cb_pa) = (self.launches.va + off, self.launches.pa + off);
             let qmd = l.qmd(va(l.prog), cb_va)?;
             let w = self.r.mem.writer_mut();
-            put_bytes(w, cb_pa, &l.cbuf);
-            put_bytes(w, cb_pa + 256, &qmd);
+            for (pa, bytes) in [(cb_pa, &l.cbuf[..]), (cb_pa + 256, &qmd[..])] {
+                match self.shadow.as_mut() {
+                    None => {
+                        put_bytes(w, pa, bytes);
+                        self.launch_bytes += bytes.len() as u64;
+                    }
+                    Some(sh) => {
+                        for (at, r) in sh.changes(pa, bytes)? {
+                            put_bytes(w, at, &bytes[r.clone()]);
+                            self.launch_bytes += r.len() as u64;
+                        }
+                        sh.remember(pa, bytes)?;
+                    }
+                }
+            }
             qmds.push(cb_va + 256);
         }
         put_bytes(

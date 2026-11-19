@@ -351,3 +351,9 @@ reset PCI), `runtime/support/nv/ip.py` (`wait_for_reset`), `runtime/support/syst
 comparație; **nicio linie GPL în cod** (nici nu s-a scris cod FLR în această sesiune). Faptul „FLR da” vine din răspunsul OS-ului K-2 de pe workstation.
 Niciun octet de firmware NVIDIA citit sau copiat.
 
+**Sesiunea 116 (19 nov, ~10:50), C-145 (pauzele driverului la `kronos --gpu`):** cod nou scris de noi (`gpu_core::diag`: `Flush`, `LiveSink`,
+`Routine`, `LiveStats`, `Journal::{with_live_sink, set_routine, routine, flush_live, live_stats}`; modulul `nvidia_ga104::kronos_fast`;
+`Generation::{run_check_after, deferred_bytes}`; testul `tests/sim_c145.rs`, umbra în `TokenSim`). Surse: **doar datele noastre** — jurnalele
+`os-307` din hub (`rezultate/os-automat/2026-11-19/`) și codul OS `cyber-universe` (`gpu_i6.rs`, `gpu_i14.rs`, doar citit, nimic copiat). Nicio
+sursă străină nouă, niciun registru nou (adresele de rutină sunt cele deja folosite: `vram_window::CONTROL_REGISTERS`, `chain_log::WORK_DOORBELL`).
+Niciun octet de firmware NVIDIA citit sau copiat.
