@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 118 — 19 noiembrie 2026, ~19:40–20:05 (ora României), în cloud, FĂRĂ placă — **analiza cifrelor `kt` din `os-308`** (fără cod)
+## Sesiunea 118 — 19 noiembrie 2026, ~19:10–19:35 (ora României), în cloud, FĂRĂ placă — **analiza cifrelor `kt` din `os-308`** (fără cod)
 
 Pornită de programare. Date noi în hub: **ciclul automat `os-308`** (19 nov 14:37, fără Adrian): 16 simboluri pe placă identice cu procesorul;
 **10,99 simb/s cu driverul** (os-307: 3,10); `kt`: placă 23,0 ms, driver 0, **jurnal 73,9 ms**. Propunerea OS
