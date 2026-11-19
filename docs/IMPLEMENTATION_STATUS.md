@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 115 — 19 noiembrie 2026, ~07:45–08:00 (ora României), în cloud, FĂRĂ placă — **oprire scurtă: nimic de făcut fără placă**
+## Sesiunea 115 — 19 noiembrie 2026, ~07:15–07:30 (ora României), în cloud, FĂRĂ placă — **oprire scurtă: nimic de făcut fără placă**
 
 Pornită de programare. În hub, de la sesiunea 114: doar stări (OS: „OPRIT, nimic nou”; Kronos: S126). **Nicio comandă nouă pentru cyber-gpu**,
 **niciun jurnal nou în `rezultate/`** (ultimul: `os-306`; `os-307` așteaptă fereastra cu Adrian). Nu s-a inventat lucru.
