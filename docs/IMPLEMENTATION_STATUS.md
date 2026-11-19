@@ -1,5 +1,21 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 117 — 19 noiembrie 2026, ~13:25–13:40 (ora României), în cloud, FĂRĂ placă — **oprire scurtă: nimic de făcut fără placă**
+
+Pornită de programare. În hub, de la sesiunea 116: doar starea Kronos și **C-146 preluat de OS** (P6-97: legarea C-145 → `os-308`, OS-ul a legat deja
+`e74b418`). **Nicio comandă nouă pentru cyber-gpu**, **niciun jurnal nou în `rezultate/`** (ultimul: `gpu-jurnal-011`, `os-307`). Nu s-a inventat lucru.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Verificări la pornire | `tools/check.sh` (Rust **1.100.0**, ca CI-ul; ținta `x86_64-unknown-none` instalată): format, clippy `-D warnings`, 545 teste (6 ignorate), build no_std | PASS (SIMULARE) |
+| CI | vârful `e74b418`, rularea 44492910520 | VERDE |
+| Cod / documentație | — | — |
+| Pe RTX 3070 Ti | `os-308` (C-145 legat) prin ciclul automat, cifrele `kt` | NOT TESTED (după C-146) |
+
+**Următorul pas:** neschimbat — OS-ul termină C-146 → `os-308` → ciclul automat; noi, după jurnal: cifrele `kt` față de estimare (~20–34 simb/s).
+**Regula 8:** 117 fără pas (1 din 3; 116 a avut pas).
+
+---
 ## Sesiunea 116 — 19 noiembrie 2026, ~10:45–11:05 (ora României), în cloud, FĂRĂ placă — **C-145 făcut în SIMULARE**: pauzele driverului la `kronos --gpu` (analiză + 4 unelte, toate oprite implicit)
 
 Pornită de programare. Date noi: **`os-307`, primul ciclu automat** (19 nov 08:52, fără Adrian): lanțul I0 → I14 trece și **Kronos #513 a generat
