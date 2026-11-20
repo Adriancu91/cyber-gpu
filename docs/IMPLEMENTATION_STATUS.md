@@ -1,5 +1,32 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 126 — 20 noiembrie 2026, ~19:25–20:00 (ora României), în cloud, FĂRĂ placă — **C-147 punctul 5: a doua unealtă NAK + primul program pe circuitele speciale („tensor cores”), în SIMULARE**
+
+Pornită de programare. Nicio altă sesiune Cyber-GPU nu lucra (ultimul commit: 17:00). Nicio comandă nouă pentru noi; din C-147 rămăseseră
+punctele 5 și 6 — am luat punctul 5. Detalii: `docs/C-147_PUNCTUL5_TENSOR.md`. (În hub, ramura locală veche `main` divergea de origin —
+lucrul s-a făcut pe `origin/main`, nimic rescris.)
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| A doua unealtă | Mesa **26.3.1** (MIT) construit separat (`tools/nak/build2.sh`, `nak_dump_cm.c`, ieșirea în `tools/nak/out2/`); unealta veche 25.0.7 și `out/` neatinse | FĂCUT |
+| Ce oferă pentru SM 8.6 | f16 × f16 → f16/f32 (16×16×16, 16×8×16, 16×8×8); s8/u8 → s32/u32 (4 forme); **fără bf16/tf32** | CITIT din unealtă (`coopmat_shapes.sm86.txt`) |
+| Ce emite NAK | `mma16_f16`: 2 × `hmma.m16n8k16.f32`, 78 instr., 32 registre, SHA-256 `f8c0db68…`; sonda `mma16_s8`: 2 × `imma.m16n8k32.i8.i8`; identice la două compilări | COMPILAT, NU RULAT |
+| Diferență de așezare | NVK 26.3.1: argumentele la **cbuf 0 + 0x700** (vechea unealtă: 0x28) — `mma16::cbuf` o respectă, T142c prinde greșeala | FĂCUT |
+| Oracolul | `gpu_compute::mma`: conversii f16 exacte (65 536 valori), referința f64, toleranța scrisă `17·2⁻²³·(|c|+Σ|a·b|)`, `judge` | PASS, T142d |
+| Modelul | `gpu_sim::cmdproc::mma16_f16_on_cpu` cu ipoteza „blocuri de 8, tăiere spre zero” (nedovedită pentru GA104) | PASS (SIMULARE), T142a–c |
+| Verificări | `tools/check.sh` (Rust 1.100.0): format, clippy `-D warnings`, **614 teste** (604 → +10; 6 ignorate), build no_std | PASS (SIMULARE) |
+| Pe RTX 3070 Ti | `hmma` corect? cum adună circuitele? | NOT TESTED (doar după „da”-ul separat al lui Adrian) |
+
+Concluzie pentru viteză: la generarea simbol cu simbol înmulțirile sunt matrice × vector, iar circuitele speciale lucrează pe blocuri de
+8–16 coloane → folosesc la **loturi** (citirea promptului, mai multe cereri odată), nu schimbă ordinea din punctul 7 (dieta driverului întâi).
+
+Interfața publică: doar adăugări (`gpu_compute::mma`; `nvidia_ga104::mma16`; `gpu_sim::cmdproc::{mma16_f16_on_cpu, MMA16_F16_NEEDS,
+MMA16_PUSH_BASE}`). Nimic schimbat în lanțul de azi.
+
+**Următorul pas:** C-147 punctul 6 (studiul lanțului pe placă, doar document); C-151 punctul 2 după ce tabloul merge pe placă; un LayerNorm
+nou dacă centrul de comandă îl aprobă. **Regula 8:** 126 are pas.
+
+---
 ## Sesiunea 125 — 20 noiembrie 2026, ~16:25–17:00 (ora României), în cloud, FĂRĂ placă — **C-147 punctul 7: estimarea pe etape după os-322 + „dieta driverului” gata de legat, în SIMULARE**
 
 Pornită de programare. Nicio altă sesiune Cyber-GPU nu lucra (ultimul commit: 14:20). Între timp, testul 2 (`os-322`) a trecut pe placă:
