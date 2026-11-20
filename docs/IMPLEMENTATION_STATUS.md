@@ -13,7 +13,7 @@ din C-151 („întâi punctul 3, OS-ul are nevoie de notă”) am luat C-151 pun
 | Codul | `gpu_pci::flr` (permis explicit, salvare, FLR, rescriere + recitire), `nvidia_ga104::flr_reset::reset_if_wpr2_up` (WPR2 → FLR → GFW → WPR2), 8 rezultate cu sens + rândul `kf` + cititor | PASS (SIMULARE), T138 |
 | Modelul | `SimConfig::with_flr`, FLR în configurație; `FakeGsp::sim_flr` (WPR2 → 0, GSP-RM dispărut, VBIOS din nou); defecte `Wpr2SurvivesFlr`, `GfwNeverAfterFlr`, placa mută, tranzacții blocate | PASS (SIMULARE) |
 | Proba cerută | WPR2 ridicat → FLR → WPR2 coborât → **I6 + I7 trec a doua oară** în aceeași „pornire” | PASS (SIMULARE), T138a |
-| Verificări | `tools/check.sh` (Rust 1.100.0): format, clippy `-D warnings`, **579 teste** (575 → +4; 6 ignorate), build no_std | PASS (SIMULARE) |
+| Verificări | `tools/check.sh` (Rust 1.100.0): format, clippy `-D warnings`, **579 teste** (575 → +4; 6 ignorate), build no_std; CI verde (run 44682282056) | PASS (SIMULARE) |
 | Pe RTX 3070 Ti | FLR coboară WPR2? lanțul a doua oară? | NOT TESTED (C-152 punctul 1, OS) |
 
 Interfața publică: doar adăugări (modulele `gpu_pci::flr`, `nvidia_ga104::flr_reset`; `gpu_sim::pci::{FLR_NOT_READY_READS, SimConfig::with_flr}` și
