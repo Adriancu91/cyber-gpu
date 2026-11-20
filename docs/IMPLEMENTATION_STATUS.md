@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 125 — 20 noiembrie 2026, ~16:25–17:25 (ora României), în cloud, FĂRĂ placă — **C-147 punctul 7: estimarea pe etape după os-322 + „dieta driverului” gata de legat, în SIMULARE**
+
+Pornită de programare. Nicio altă sesiune Cyber-GPU nu lucra (ultimul commit: 14:20). Între timp, testul 2 (`os-322`) a trecut pe placă:
+viteza maximă a mers (P5 → P0), placa 381,98 simb/s, 16/16 identice — deci punctul 7 („după cifre, estimarea pe etape”) s-a deblocat.
+Detalii: `docs/C-147_PUNCTUL7_ESTIMARE.md`; nota pentru OS: `integration/cyber-universe/C-147_punctul7-dieta-driverului.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Unde se duce un simbol | unealta nouă `timpul_driverului` (`driver_split`) pe `gpu-jurnal-017.txt`: din 5 788 µs, ~1 517 µs = pushbuffer-ul rescris întreg (2 363 de cuvinte recitite), ~529 µs = zerorizarea înregistrărilor + lansările schimbate, 840 µs procesorul, 2 905 placa + citirea înregistrărilor | MĂSURAT pe ferestre; ce e în fiecare fereastră DEDUS (~85 %) |
+| Placa | 60 % înmulțiri (la 11 % din viteza memoriei), **21 % LayerNorm** (21,8 µs pe lansare, un singur warp), 10 % atenția, 9 % calculele mărunte | MĂSURAT (`kp`); interpretarea DEDUS |
+| Estimarea | azi 172 simb/s (median) → dieta ~250 → + P3 ~280 → + LayerNorm nou ~320 → + etapa 4 ~470; P7 coboară după etapa 4; #651: ~96 → ~150 cu dieta | DEDUS |
+| Codul | `nvidia_ga104::driver_split`, exemplul `timpul_driverului`, `kronos_fast::ShadowedMemory` (pushbuffer doar cu cuvintele schimbate) | PASS (SIMULARE), T141 |
+| Proba în simulare | cu dieta: logit-uri, cache-uri, durate **identice bit cu bit**; cuvinte pe simbol 623 → 55 și 299 → 28; înregistrările vechi prinse | PASS (SIMULARE), T141a–c |
+| Verificări | `tools/check.sh` (Rust 1.100.0): format, clippy `-D warnings`, **604 teste** (597 → +7; 6 ignorate), build no_std | PASS (SIMULARE) |
+| Pe RTX 3070 Ti | dieta: driverul de la ~3,1 spre ~1,3 ms? | NOT TESTED (OS: opțiune oprită implicit, apoi probă) |
+
+Interfața publică: doar adăugări (modulul nou `driver_split`; `kronos_fast::ShadowedMemory`). Nimic schimbat în lanțul de azi.
+
+**Următorul pas:** C-147 punctele 5 (circuitele speciale, a doua unealtă NAK) și 6 (studiul lanțului pe placă); propunere nouă pentru centrul de
+comandă: LayerNorm mai rapid (21 % din timpul plăcii). C-151 punctul 2 după ce tabloul merge pe placă. **Regula 8:** 125 are pas.
+
+---
 ## Sesiunea 124 — 20 noiembrie 2026, ~13:25–14:20 (ora României), în cloud, FĂRĂ placă — **C-151 punctul 1 (tabloul de bord RUSD) gata de legat, în SIMULARE**
 
 Pornită de programare. Nicio altă sesiune Cyber-GPU nu lucra (ultimul commit: 10:50). Sesiunea OS leagă acum viteza maximă (P6-106, urgentă
