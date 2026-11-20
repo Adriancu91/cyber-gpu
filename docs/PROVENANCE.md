@@ -373,3 +373,9 @@ sau copiat din ele în această sesiune. Nicio sursă GPL. Niciun octet de firmw
 noi; ordinea operațiilor din oracol e citită în listarea NAK a programului nostru. Ideile (toate firele la lucru, citiri de 128 de biți) vin din planul
 din hub (`idei/2026-11-19_plan-performanta-placa.md`) — nicio sursă străină citită sau copiată în această sesiune. Nicio sursă GPL. Niciun octet de
 firmware NVIDIA citit sau copiat.
+
+**Sesiunea 122 (20 nov, ~07:30), C-151 punctul 3 (resetul FLR):** codul nou (`gpu_pci::flr`, `nvidia_ga104::flr_reset`, modelul FLR din
+`gpu_sim::pci` și `FakeGsp::sim_flr`) e scris de noi. Citite ca specificație (nimic copiat sau tradus): driverul NVIDIA 570.144 (MIT,
+`kernel_bif_tu102.c` `kbifDoFunctionLevelReset_TU102`, `kernel_bif_ga100.c` `kbifDoFullChipReset_GA100` / `kbifClearDownstreamReadCounter_GA100`,
+`kernel_bif_gh100.c` — ordinea și registrele PCI standard) și tinygrad (MIT, `runtime/support/nv/nvdev.py` `_early_ip_init`, `system.py` `reset`,
+commit `c0bb645`). PCIe Base Spec: cunoaștere publică. Nicio sursă GPL citită în cod. Niciun octet de firmware NVIDIA citit sau copiat.

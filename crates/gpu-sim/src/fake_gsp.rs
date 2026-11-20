@@ -116,7 +116,20 @@ pub enum SimFault {
     /// C-103: Booter Unload halts without error but WPR2 stays up (what RM
     /// reports as "WPR2 is still up").
     Wpr2Stuck,
+    /// C-151: a Function Level Reset leaves WPR2 up (the ~20 % case of
+    /// `docs/C-142_K513_VITEZA_FLR.md` §4: no source says FLR lowers it).
+    Wpr2SurvivesFlr,
+    /// C-151: after a Function Level Reset the VBIOS never finishes GFW boot.
+    GfwNeverAfterFlr,
 }
+
+/// C-151: `NV_PGC6_AON_SECURE_SCRATCH_GROUP_05_PRIV_LEVEL_MASK` (nouveau
+/// `tu102_devinit_wait`, MIT), modelled only around an FLR.
+pub const GFW_PRIV_MASK: u32 = 0x0011_8128;
+
+/// SIM: reads of the GFW priv mask that still answer "protected" while the
+/// VBIOS re-runs after an FLR (the board's real duration is unknown).
+pub const GFW_REBOOT_READS: u32 = 20;
 
 /// C-96, OBSERVAT on the board (10 Nov 2026, os-276, `gpu-jurnal-004.txt`):
 /// the first HWCFG2 read after `NV_PGSP_FALCON_ENGINE` RESET 1 → 0 on the
@@ -209,6 +222,11 @@ pub struct FakeGsp {
     /// a start not below FRTS: Booter fails with SIM code `0xbad2`.
     /// `None` = the older model (WPR2 left as FWSEC set it).
     pub wpr_meta_mem: Option<(u64, Vec<u8>)>,
+    /// C-151: Function Level Resets this board saw ([`FakeGsp::sim_flr`]).
+    pub flr_count: u32,
+    /// C-151: `Some(n)` = the VBIOS re-runs after an FLR; the GFW priv mask
+    /// answers "protected" for `n` more reads.
+    gfw_reboot_left: Option<u32>,
     mem: [FalconMem; 2],
 }
 
@@ -253,8 +271,44 @@ impl FakeGsp {
             gsp_mailbox_locked: false,
             libos_at_booter: None,
             wpr_meta_mem: None,
+            flr_count: 0,
+            gfw_reboot_left: None,
             mem: [FalconMem::new(), FalconMem::new()],
         }
+    }
+
+    /// C-151, SIMULARE: the visible effects on BAR0 of a Function Level Reset
+    /// of the GPU function, as DEDUCED from RM 570.144 (`kbifDoFunctionLevelReset_TU102`
+    /// waits for GFW boot after it: the VBIOS re-runs) and tinygrad (`nvdev.py`:
+    /// "WPR2 is up. Issuing a full reset.", then FWSEC-FRTS again): falcons back
+    /// to their power-on state, GSP-RM gone, WPR2 0, GFW boot in progress for
+    /// [`GFW_REBOOT_READS`] reads. Never confirmed on the board — the faults
+    /// [`SimFault::Wpr2SurvivesFlr`] and [`SimFault::GfwNeverAfterFlr`] model
+    /// the other outcomes. Called by the test's board model when the
+    /// configuration space sees the FLR (`gpu_sim::pci::SimConfig::flr_count`).
+    pub fn sim_flr(&mut self) {
+        self.flr_count += 1;
+        if self.fault != SimFault::Wpr2SurvivesFlr {
+            self.regs.insert(fb::NV_PFB_PRI_MMU_WPR2_ADDR_LO, 0);
+            self.regs.insert(fb::NV_PFB_PRI_MMU_WPR2_ADDR_HI, 0);
+        }
+        self.gsp = Falcon::default();
+        self.sec2 = Falcon::default();
+        self.riscv_active = false;
+        self.booter_arg = None;
+        self.libos_at_booter = None;
+        self.gsp_mailbox_locked = false;
+        self.mem = [FalconMem::new(), FalconMem::new()];
+        for r in [
+            GSP_BASE + fv4::NV_PFALCON_FALCON_MAILBOX0,
+            GSP_BASE + fv4::NV_PFALCON_FALCON_MAILBOX1,
+            SEC2_BASE + fv4::NV_PFALCON_FALCON_MAILBOX0,
+            SEC2_BASE + fv4::NV_PFALCON_FALCON_MAILBOX1,
+            gc6::NV_PGC6_BSI_SECURE_SCRATCH_14,
+        ] {
+            self.regs.remove(&r);
+        }
+        self.gfw_reboot_left = Some(GFW_REBOOT_READS);
     }
 
     /// The address FWSEC puts in WPR2 HI for `frts` (see `wpr2_hi_back`,
@@ -722,6 +776,20 @@ impl Mmio for FakeGsp {
     }
     fn read32_raw(&mut self, offset: u64) -> u32 {
         let off = offset as u32;
+        if let Some(n) = self.gfw_reboot_left {
+            let gfw = gc6::NV_PGC6_AON_SECURE_SCRATCH_GROUP_05(0);
+            if off == GFW_PRIV_MASK {
+                if n > 0 || self.fault == SimFault::GfwNeverAfterFlr {
+                    self.gfw_reboot_left = Some(n.saturating_sub(1));
+                    return 0; // still protected: the VBIOS is running
+                }
+                self.gfw_reboot_left = None;
+                self.regs.insert(GFW_PRIV_MASK, 1);
+                self.regs.insert(gfw, 0xff);
+            } else if off == gfw {
+                return 0;
+            }
+        }
         if off == gc6::NV_PGC6_BSI_SECURE_SCRATCH_14
             || off == f2::NV_FALCON2_GSP_BASE + riscv::NV_PRISCV_RISCV_CPUCTL
         {

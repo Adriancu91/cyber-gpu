@@ -606,3 +606,6 @@ identificator, hardware/configurație, commit, comanda, așteptat, obținut, cod
 | `chain` (6) | oprire la I7 blocat; eșec I6 → Bus Master pus la loc; modul automat nu rulează pași care scriu; pas doar-citire care scrie = eșec | PASS (SIMULARE) |
 | `gpu tur` pe placă | rulat de bucla automată; raportul comparat cu `compara_raport` | NOT TESTED (comanda OS nu există încă) |
 | `gpu lant` pe placă | doar cu Adrian de față | NOT TESTED |
+
+| T138 `flr_reset` (4), C-151 punctul 3 | WPR2 ridicat → FLR → GFW → WPR2 = 0 → I6 + I7 a doua oară; WPR2 jos → nicio scriere; WPR2 rămas → oprire fără a doua încercare; FLR neanunțat / placa mută / BAR care refuză / GFW neterminat / tranzacții blocate | PASS (SIMULARE) |
+| FLR pe RTX 3070 Ti | proba C-152 punctul 1 (OS, ciclul automat) | NOT TESTED |

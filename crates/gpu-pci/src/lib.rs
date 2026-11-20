@@ -22,6 +22,7 @@ extern crate alloc;
 pub mod bar;
 pub mod bus_master;
 pub mod caps;
+pub mod flr;
 pub mod header;
 pub mod mem_space;
 pub mod report;

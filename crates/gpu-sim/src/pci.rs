@@ -23,7 +23,20 @@ pub struct SimConfig {
     pub decode_was_enabled_during_bar_write: bool,
     /// Fault injection: this BAR slot keeps all-ones and ignores the restore.
     pub fault_sticky_bar: Option<usize>,
+    /// C-151: Function Level Resets done (Device Control bit 15 written
+    /// while Device Capabilities bit 28 is set). SIMULARE.
+    pub flr_count: u32,
+    /// C-151: reads left that answer all ones after an FLR (the function
+    /// "still in reset"). SIM value [`FLR_NOT_READY_READS`] after each FLR.
+    pub flr_not_ready_left: u32,
+    /// C-151 fault: after an FLR the function never answers again.
+    pub flr_never_ready: bool,
+    /// C-151: Device Status "Transactions Pending" (bit 5) stays set.
+    pub pending_transactions: bool,
 }
+
+/// SIM: configuration reads that answer all ones after an FLR.
+pub const FLR_NOT_READY_READS: u32 = 3;
 
 impl SimConfig {
     /// SIM: RTX 3070 Ti (10de:2482) with BAR0 16 MiB, BAR1 256 MiB 64-bit
@@ -72,6 +85,42 @@ impl SimConfig {
             writes: 0,
             decode_was_enabled_during_bar_write: false,
             fault_sticky_bar: None,
+            flr_count: 0,
+            flr_not_ready_left: 0,
+            flr_never_ready: false,
+            pending_transactions: false,
+        }
+    }
+
+    /// C-151: the device announces FLR (Device Capabilities bit 28), as the
+    /// RTX 3070 Ti of the workstation does (K-2, 18 Nov 2026, OBSERVAT).
+    pub fn with_flr(mut self) -> Self {
+        self.regs[0x7c / 4] |= 1 << 28;
+        self
+    }
+
+    /// C-151, SIMULARE: what a Function Level Reset does to the configuration
+    /// space (PCIe Base Spec: the function's registers return to their
+    /// power-on values, except sticky and HwInit ones): Command 0, BAR bases
+    /// 0 (type bits stay), cache line / latency / interrupt line 0, Device
+    /// Control to its default, MSI off. IDs, class and the capability layout
+    /// stay (read-only).
+    fn do_flr(&mut self) {
+        self.flr_count += 1;
+        self.flr_not_ready_left = FLR_NOT_READY_READS;
+        self.regs[1] &= 0xffff_0000;
+        for slot in 0..6 {
+            self.regs[4 + slot] = self.bar_ro[slot];
+        }
+        self.regs[3] &= 0xffff_0000;
+        self.regs[15] &= 0xffff_ff00;
+        self.regs[0x80 / 4] = 0x0000_2810; // SIM default Device Control
+        self.regs[0x88 / 4] &= 0xffff_0000; // LnkCtl
+        self.regs[0xa0 / 4] &= 0xffff_0000; // DevCtl2
+        self.regs[0xa8 / 4] &= 0xffff_0000; // LnkCtl2
+        self.regs[0x68 / 4] &= 0xfffe_ffff; // MSI enable off
+        for o in [0x6c, 0x70, 0x74] {
+            self.regs[o / 4] = 0;
         }
     }
 
@@ -192,7 +241,15 @@ impl ConfigSpace for SimConfig {
         if self.absent {
             return 0xffff_ffff;
         }
-        self.regs[(offset as usize & 0xffc) / 4]
+        if self.flr_count > 0 && (self.flr_never_ready || self.flr_not_ready_left > 0) {
+            self.flr_not_ready_left = self.flr_not_ready_left.saturating_sub(1);
+            return 0xffff_ffff;
+        }
+        let off = offset as usize & 0xffc;
+        if off == 0x80 && self.pending_transactions {
+            return self.regs[off / 4] | 1 << 21;
+        }
+        self.regs[off / 4]
     }
 
     fn write32(&mut self, offset: u16, value: u32) {
@@ -217,6 +274,29 @@ impl ConfigSpace for SimConfig {
                 }
                 self.regs[off / 4] = (value & self.bar_mask[slot]) | self.bar_ro[slot];
             }
+            // C-151: the registers the FLR restore writes back.
+            0x80 => {
+                if value & 0x8000 != 0 && self.regs[0x7c / 4] & (1 << 28) != 0 {
+                    self.do_flr();
+                } else {
+                    let st = self.regs[off / 4] & 0xffff_0000;
+                    self.regs[off / 4] = st | (value & 0x7fff);
+                }
+            }
+            0x0c | 0x88 | 0xa0 | 0xa8 => {
+                let hi = self.regs[off / 4] & 0xffff_0000;
+                self.regs[off / 4] = hi | (value & 0xffff);
+            }
+            0x3c => {
+                let hi = self.regs[off / 4] & 0xffff_ff00;
+                self.regs[off / 4] = hi | (value & 0xff);
+            }
+            0x68 => {
+                let lo = self.regs[off / 4] & 0x0000_ffff;
+                self.regs[off / 4] =
+                    lo | (value & 0x0001_0000) | (self.regs[off / 4] & 0xfffe_0000);
+            }
+            0x6c | 0x70 | 0x74 => self.regs[off / 4] = value,
             // Everything else in this model is read-only.
             _ => {}
         }

@@ -61,6 +61,7 @@ pub mod chain;
 pub mod chain_log;
 pub mod fb_layout;
 pub mod firmware;
+pub mod flr_reset;
 pub mod fuse;
 pub mod fw_check;
 pub mod fw_hdr;
