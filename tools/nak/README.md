@@ -178,3 +178,16 @@ coerența memoriei pe RTX 3070 Ti. Modelul din `gpu-sim` execută lista în ordi
 | Aritmetica | produsul: aceleași instrucțiuni ca `q8_matvec`; `fadd.ftz` termen și rezidual (ordinea lui `vadd`); GELU: aceleași 21 de instrucțiuni ca `gelu` → oracolul = compunerea modelelor vechi, bit cu bit |
 
 Detalii: `docs/C-147_ETAPA3A.md`.
+
+## C-147 punctul 3: `q8_matvec32` — toate cele 32 de fire (20 nov 2026, sesiunea 121, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh q8_matvec32` (Mesa 25.0.7 reconstruit în cloud; `q8_matvec` și `q8_fused` au ieșit **identice**).
+
+| Ce | Valoare |
+|---|---|
+| Program | `q8_matvec32.comp`: unitatea = un sfert de bloc (8 coloane); firul t ia sferturile t, t+32, …; x citit cu 2 × 128 de biți pe sfert |
+| Ieșire | 199 instrucțiuni, **3 184 octeți**, 22 registre, 128 B memorie partajată, fără `BAR.SYNC` |
+| SHA-256 `q8_matvec32.sm86.sass` | `86ae584bd079454150a585968c2ea63ef2b7dadec31054d21a6f59d6afc7c303` |
+| Argumente | aceleași ca `q8_matvec` (32 de octeți de „push constants”); x aliniat la 16 |
+| Aritmetica | pe sfert: `FFMA(q0, x0, FMUL(q1, x1))`, apoi 6 × `FFMA`, apoi `FFMA(scale, s, part)`; arborele lui `q8_matvec` → oracolul `q8::row_gpu_order_w32` |
+
+Detalii: `docs/C-147_ETAPA4.md`.

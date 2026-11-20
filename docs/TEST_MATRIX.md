@@ -1,5 +1,18 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 121 (20 nov 2026, ~04:25–05:30, cloud, fără placă) — C-147 punctul 3 (etapa 4): `q8_matvec32` + cursa `q8_race`, SIMULARE
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T137a | oracolul `row_gpu_order_w32`: în marjă față de procesor și de `q8_matvec` la 5 forme; diferit în ultimii biți la 64×768; 32 de fire ocupate de la 256 de intrări; un sfert calculat de mână | `cargo test -p gpu-compute q8` | conform | conform | PASS |
+| T137b | `q8_matvec32`: programul = cel compilat (199 instr., SHA-256), bufferul constant = al lui `q8_matvec` + x aliniat la 16, QMD diferă doar prin registre; verdicte | `cargo test -p nvidia-ga104 q8_matvec32` | conform | conform | PASS |
+| T137c | pe canalul de lucru: identic bit cu bit cu oracolul la 5 forme (până la 3072×768 și 768×3072), în marja I12; sub modelul „date vechi”: identic | `cargo test -p nvidia-ga104 --release --test sim_c147_w32` | conform | conform | PASS (SIMULARE) |
+| T137d | 5 greșeli plantate (x nealiniat, x deplasat, grilă scurtă, număr schimbat, ordinea veche): niciuna nu trece | `… sim_c147_w32 planted` | conform | conform | PASS (SIMULARE) |
+| T137e | cursa: A B B A, mărcile citite, y judecat, rândurile `kr` scrise și citite; regula câștigului (≥ 50 ‰, proba trecută; egalitate → rămâne) | `… sim_c147_w32 the_race` + `cargo test -p nvidia-ga104 q8_race` | conform | conform | PASS (SIMULARE) |
+| T137f | unealta NAK reconstruită: `q8_matvec` (`d8c118cc…`) și `q8_fused` (`d86e53e2…`) identice; `q8_matvec32`: 2 × `ld.global.constant.b128`, 22 registre, fără `BAR.SYNC` | `sh tools/nak/build.sh q8_matvec32` + citirea listării | conform | conform | PASS (COMPILAT) |
+| T137g | `tools/check.sh` (Rust 1.100.0): format, clippy `-D warnings`, 575 teste (6 ignorate), build no_std | `tools/check.sh` | verde | verde | PASS |
+| T137h | pe RTX 3070 Ti: cursa (`kr`), `q8_matvec32` identic cu oracolul | (OS, după legare) | — | — | NOT TESTED |
+
 ## Rezultate — sesiunea 120 (20 nov 2026, ~01:25–02:00, cloud, fără placă) — C-147 punctul 2 (etapa 3a): programul lipit `q8_fused`, SIMULARE
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |

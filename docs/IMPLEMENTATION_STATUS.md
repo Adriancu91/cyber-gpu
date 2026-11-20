@@ -1,5 +1,32 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 121 — 20 noiembrie 2026, ~04:25–05:15 (ora României), în cloud, FĂRĂ placă — **C-147 punctul 3 (etapa 4) făcut în SIMULARE**: `q8_matvec32` (toate cele 32 de fire) + cursa pe placă pregătită
+
+Pornită de programare (sesiunea de 04:25). Nicio altă sesiune nu lucra (ultimul commit cyber-gpu: 01:40). C-147 `preluat`, punctele 1–2 gata; am
+luat punctul 3. Detalii: `docs/C-147_ETAPA4.md`; nota pentru OS: `integration/cyber-universe/C-147_etapa4-cursa-q8.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Verificări la pornire | Rust 1.100.0 (ca CI-ul); unealta NAK (Mesa 25.0.7) reconstruită de la zero: `q8_matvec` și `q8_fused` ies identice | PASS |
+| Programul nou | `tools/nak/q8_matvec32.comp` → `q8_matvec32.sm86.sass` (199 instr., 22 registre, 3 184 octeți, SHA-256 `86ae584b…`): un sfert de bloc pe fir → **32 din 32 de fire** la 768 de intrări (azi 24); x citit cu `ld.global.constant.b128`; aceleași argumente ca `q8_matvec` | COMPILAT, NU RULAT |
+| Oracolul | `q8::row_gpu_order_w32`, după listare (`FFMA(q0, x0, FMUL(q1, x1))` + 6 × `FFMA` pe sfert; arborele vechi) | PASS, T137a |
+| Pe canalul de lucru | identic bit cu bit cu oracolul la 5 forme (până la 3072×768 / 768×3072), în marja I12 față de `q8_matvec`; 5 greșeli plantate, toate prinse | PASS (SIMULARE), T137b–d |
+| Cursa | `q8_race`: benzile #513, serii A B B A, mărci de timp, y judecat după fiecare serie, rânduri `kr` + cititor; regula: schimbă doar dacă trece proba și e mai rapid cu ≥ 50 ‰ | PASS (SIMULARE), T137e |
+| Banc de test | `dma_pages` repeta pagini la un număr multiplu de 7 (o urcare se suprascria) — reparat; testele vechi trec la fel | PASS |
+| Verificări | `tools/check.sh` (Rust 1.100.0): format, clippy `-D warnings`, **575 teste** (561 → +14; 6 ignorate), build no_std | PASS (SIMULARE) |
+| Pe RTX 3070 Ti | cursa (`kr`) și `q8_matvec32` identic cu oracolul | NOT TESTED (după legarea în OS) |
+
+Ce nu s-a făcut (scris în `docs/C-147_ETAPA4.md`): citiri de 128 de biți din W (blocurile de 36 de octeți nu sunt aliniate; ar cere altă așezare a
+greutăților la urcare), x în memoria partajată (folositor doar cu mai multe rânduri pe grup), programele f32 din C-20 E în cursă (locul lor e la loturi).
+
+Interfața publică: doar adăugări (`gpu_compute::q8::{row_gpu_order_w32, matvec_gpu_order_w32, busy_threads, W32_QUARTERS, W32_UNIT}`;
+`gpu_sim::cmdproc::{q8_matvec32_on_cpu, Q8_MATVEC32_NEEDS}`; modulele noi `nvidia_ga104::q8_matvec32` și `nvidia_ga104::q8_race`). Nimic schimbat în
+ce primește placa la `kronos --gpu` de azi.
+
+**Următorul pas:** C-151 punctul 3 (nota de reset din interior pentru OS), apoi C-151 punctul 1 (tabloul de bord RUSD), C-147 punctele 5, 6;
+punctul 7 după cifrele `os-309`; după cursa pe placă: câștigătorul în lista de simbol. **Regula 8:** 121 are pas.
+
+---
 ## Sesiunea 120 — 20 noiembrie 2026, ~01:25–02:00 (ora României), în cloud, FĂRĂ placă — **C-147 punctul 2 (etapa 3a) făcut în SIMULARE**: 196 → 88 de lansări pe simbol
 
 Pornită de programare (sesiunea de 01:25). Nicio altă sesiune nu lucra (ultimul commit 23:40). C-147 era `preluat` de 119 cu punctul 1 gata;
