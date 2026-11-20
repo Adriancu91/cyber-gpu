@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 124 — 20 noiembrie 2026, ~13:25–14:20 (ora României), în cloud, FĂRĂ placă — **C-151 punctul 1 (tabloul de bord RUSD) gata de legat, în SIMULARE**
+
+Pornită de programare. Nicio altă sesiune Cyber-GPU nu lucra (ultimul commit: 10:50). Sesiunea OS leagă acum viteza maximă (P6-106, urgentă
+pentru testul de azi) — nimic de cerut de la noi pentru ea. Am luat următorul punct din coadă: C-151 punctul 1. Detalii:
+`docs/C-151_TABLOU_RUSD.md`; nota pentru OS: `integration/cyber-universe/C-151_tablou-rusd.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Regula „trei surse” | NVIDIA 570.144 `cl00de.h`, `ctrl2080internal.h`, `gpu_user_shared_data.c`, `g_subdevice_nvoc.c` (steaguri `0xc0`, aceeași clasă ca `KGR_GET_INFO` acceptat pe placă), `nvrm_registry.h`; nouveau „GSP telemetry via RUSD” (14 iul 2026) | ÎNDEPLINITĂ pentru formă, memorie (pagină de sistem contiguă), citire (marcă–copie–marcă, 10 încercări); **diferență DEDUS:** NVIDIA/nouveau folosesc clientul intern al GSP-RM, noi clientul nostru |
+| Așezarea | `offsetof` tipărit de compilatorul C din antetul NVIDIA: 464 de octeți, pozițiile secțiunilor | FĂCUT |
+| Codul | `gsp::rusd::{rusd_start, rusd_stop, read_section, read_dashboard, dashboard_at_end, parse_kd}`, `RusdPlan` (oprit implicit), `RusdMem`, `Dashboard`, rândurile `kd` | PASS (SIMULARE), T140 |
+| Modelul | `gpu_sim::fake_rm::{SimRusd, RusdRule, RUSD_SIZE}`, `cmd::INTERNAL_INIT_USER_SHARED_DATA`, `…_SET_DATA_POLL`; implicit oprit (comportamentul vechi neschimbat) | PASS (SIMULARE) |
+| Verificări | `tools/check.sh` (Rust 1.100.0): format, clippy `-D warnings`, **597 teste** (587 → +10; 6 ignorate), build no_std | PASS (SIMULARE) |
+| Pe RTX 3070 Ti | GSP-RM acceptă `INIT` de la clientul nostru? pagina completată? temperatura reală? | NOT TESTED (Release OS, la sfârșitul lanțului) |
+
+Interfața publică: doar adăugări (modulul nou `gsp::rusd`; `fake_rm::{SimRusd, RusdRule, RUSD_SIZE}`, două constante noi în `fake_rm::cmd`,
+câmp public nou `FakeRm::rusd` — `FakeRm` are `Default`). Nimic schimbat în lanțul de azi.
+
+**Următorul pas:** C-151 punctul 2 (tabloul înainte/după viteza maximă, pragul de temperatură) — după ce tabloul merge pe placă; până atunci
+C-147 punctele 5, 6. **Regula 8:** 124 are pas.
+
+---
 ## Sesiunea 123 — 20 noiembrie 2026, ~10:25–10:50 (ora României), în cloud, FĂRĂ placă — **C-147 punctul 4 (viteza maximă) gata de legat, în SIMULARE**
 
 Pornită de programare (sesiunea de 10:25). Nicio altă sesiune nu lucra (ultimul commit cyber-gpu: 07:50). Nota nouă a centrului de comandă

@@ -125,6 +125,10 @@ pub mod cmd {
     pub const PERF_BOOST: u32 = 0x2080_200a;
     /// C-147 (`ctrl2080internal.h`): `NV2080_CTRL_CMD_INTERNAL_PERF_BOOST_SET_2X`.
     pub const INTERNAL_PERF_BOOST_SET_2X: u32 = 0x2080_0a9a;
+    /// C-151 point 1 (`ctrl2080internal.h`): `NV2080_CTRL_CMD_INTERNAL_INIT_USER_SHARED_DATA`.
+    pub const INTERNAL_INIT_USER_SHARED_DATA: u32 = 0x2080_0afe;
+    /// C-151 point 1 (`ctrl2080internal.h`): `…_INTERNAL_USER_SHARED_DATA_SET_DATA_POLL`.
+    pub const INTERNAL_USER_SHARED_DATA_SET_DATA_POLL: u32 = 0x2080_0aff;
     /// C-125 (`ctrl2080gr.h`): `NV2080_CTRL_CMD_GR_GET_CTX_BUFFER_INFO`.
     pub const GR_GET_CTX_BUFFER_INFO: u32 = 0x2080_1219;
 }
@@ -332,6 +336,108 @@ impl SimPerf {
     }
 }
 
+/// C-151 point 1, SIMULARE: how the model answers the two RUSD controls
+/// (hypotheses; none is knowledge about GSP-RM on the RTX 3070 Ti).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RusdRule {
+    /// Both controls accepted; the page is filled by [`SimRusd::render`].
+    #[default]
+    Accept,
+    /// `INIT_USER_SHARED_DATA` with an address refused with this status
+    /// (e.g. GSP-RM tying RUSD to its internal client).
+    RefuseInit(u32),
+    /// `SET_DATA_POLL` refused with this status.
+    RefusePoll(u32),
+    /// Everything accepted but `INIT(0)` (the stop) refused with this status.
+    RefuseDeinit(u32),
+}
+
+/// `sizeof(NV00DE_SHARED_DATA)` in 570.144 (x86-64).
+pub const RUSD_SIZE: usize = 464;
+
+/// C-151 point 1, SIMULARE: the "RM User Shared Data" page as GSP-RM would
+/// fill it (`cl00de.h` 570.144 layout). The values are SIM values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SimRusd {
+    pub rule: RusdRule,
+    /// The address given by `INIT` (`None` = no page / stopped).
+    pub phys: Option<u64>,
+    /// The mask asked for (`NV00DE_RUSD_POLL_*`).
+    pub mask: u64,
+    /// The interval (ms); 0 = never set.
+    pub poll_ms: u32,
+    /// SIM: 45.5 °C (× 256).
+    pub temp_x256: i32,
+    pub clk_graphics_mhz: u32,
+    pub clk_memory_mhz: u32,
+    /// The P-state mask (SIM: P8).
+    pub pstate_mask: u32,
+    pub load_gpu: u32,
+    pub load_mem: u32,
+    pub reasons: u32,
+    pub avg_power_mw: u32,
+    pub power_limit_mw: u32,
+}
+
+impl SimRusd {
+    pub fn new(rule: RusdRule) -> Self {
+        SimRusd {
+            rule,
+            phys: None,
+            mask: 0,
+            poll_ms: 0,
+            temp_x256: 45 * 256 + 128,
+            clk_graphics_mhz: 210,
+            clk_memory_mhz: 405,
+            pstate_mask: 1 << 8,
+            load_gpu: 3,
+            load_mem: 1,
+            reasons: 1, // GPU_IDLE
+            avg_power_mw: 21_000,
+            power_limit_mw: 290_000,
+        }
+    }
+
+    /// True when the model would be writing the page (a page, an interval
+    /// and a mask).
+    pub fn polling(&self) -> bool {
+        self.phys.is_some() && self.poll_ms != 0 && self.mask != 0
+    }
+
+    /// The page after one poll at time `now` (ns, SIM): each section the
+    /// mask covers gets `now` as its timestamp and its values; the rest
+    /// stays 0 ("not available"). All zero when not polling.
+    pub fn render(&self, now: u64) -> [u8; RUSD_SIZE] {
+        let mut b = [0u8; RUSD_SIZE];
+        if !self.polling() || now == 0 {
+            return b;
+        }
+        let mut put = |base: usize, vals: &[u32]| {
+            b[base..base + 8].copy_from_slice(&now.to_le_bytes());
+            for (i, v) in vals.iter().enumerate() {
+                let o = base + 8 + 4 * i;
+                b[o..o + 4].copy_from_slice(&v.to_le_bytes());
+            }
+        };
+        if self.mask & 0x1 != 0 {
+            put(72, &[self.clk_graphics_mhz, self.clk_memory_mhz, 0, 0]);
+        }
+        if self.mask & 0x2 != 0 {
+            put(96, &[self.reasons]);
+            put(112, &[self.load_gpu, self.load_mem]);
+            put(264, &[self.pstate_mask]);
+        }
+        if self.mask & 0x8 != 0 {
+            put(280, &[self.power_limit_mw, self.power_limit_mw]);
+            put(368, &[self.avg_power_mw, 0, 0]);
+        }
+        if self.mask & 0x10 != 0 {
+            put(296, &[self.temp_x256 as u32]);
+        }
+        b
+    }
+}
+
 /// C-135: what a channel's allocation told the model (for the tests):
 /// `hObjectError`, `flags`, `internalFlags` and the address space and size
 /// of `errorNotifierMem`.
@@ -383,6 +489,9 @@ pub struct FakeRm {
     /// C-147 point 4: the performance model; `None` = the controls are
     /// refused (`INVALID_COMMAND`), as before.
     pub perf: Option<SimPerf>,
+    /// C-151 point 1: the RUSD model; `None` = the controls are refused
+    /// (`INVALID_COMMAND`), as before.
+    pub rusd: Option<SimRusd>,
 }
 
 fn rd32(b: &[u8], o: usize) -> u32 {
@@ -869,6 +978,11 @@ impl FakeRm {
                     | cmd::INTERNAL_PERF_BOOST_SET_2X,
                     Some(class::SUBDEVICE),
                 ) if self.perf.is_some() => self.perf_control(command, params),
+                (
+                    cmd::INTERNAL_INIT_USER_SHARED_DATA
+                    | cmd::INTERNAL_USER_SHARED_DATA_SET_DATA_POLL,
+                    Some(class::SUBDEVICE),
+                ) if self.rusd.is_some() => self.rusd_control(command, params),
                 (cmd::TSG_SCHEDULE, Some(class::CHANNEL_GROUP)) => {
                     if params.len() != size::TSG_SCHEDULE {
                         status::INVALID_PARAM_STRUCT
@@ -951,6 +1065,58 @@ impl FakeRm {
                 }
             }
         }
+    }
+
+    /// C-151 point 1 (SIMULARE): `INIT_USER_SHARED_DATA` `{NvU64 physAddr}`
+    /// (0 = stop) and `SET_DATA_POLL` `{NvU64 mask; NvU32 ms}` (ms 0 = keep),
+    /// our reading of `ctrl2080internal.h` / `gpu_user_shared_data.c`
+    /// (570.144). Hypotheses of the model: an unaligned address, unknown mask
+    /// bits or an interval outside 100..=1000 are `INVALID_ARGUMENT`; a mask
+    /// before any page is `INVALID_STATE`.
+    fn rusd_control(&mut self, command: u32, params: &mut [u8]) -> u32 {
+        let Some(r) = self.rusd.as_mut() else {
+            return status::INVALID_COMMAND;
+        };
+        if command == cmd::INTERNAL_INIT_USER_SHARED_DATA {
+            if params.len() != 8 {
+                return status::INVALID_PARAM_STRUCT;
+            }
+            let phys = rd64(params, 0);
+            if phys == 0 {
+                if let RusdRule::RefuseDeinit(st) = r.rule {
+                    return st;
+                }
+                r.phys = None;
+                r.mask = 0;
+                return status::OK;
+            }
+            if let RusdRule::RefuseInit(st) = r.rule {
+                return st;
+            }
+            if !phys.is_multiple_of(8) {
+                return status::INVALID_ARGUMENT;
+            }
+            r.phys = Some(phys);
+            return status::OK;
+        }
+        if params.len() != 16 {
+            return status::INVALID_PARAM_STRUCT;
+        }
+        if let RusdRule::RefusePoll(st) = r.rule {
+            return st;
+        }
+        let (mask, ms) = (rd64(params, 0), rd32(params, 8));
+        if mask & !0x3f != 0 || (ms != 0 && !(100..=1000).contains(&ms)) {
+            return status::INVALID_ARGUMENT;
+        }
+        if r.phys.is_none() && mask != 0 {
+            return status::INVALID_STATE;
+        }
+        r.mask = mask;
+        if ms != 0 {
+            r.poll_ms = ms;
+        }
+        status::OK
     }
 
     // rpc_set_page_directory_v1E_05: hClient 0, hDevice 4, pasid 8, params 16

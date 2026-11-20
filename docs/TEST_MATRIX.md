@@ -1,5 +1,21 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 124 (20 nov 2026, ~13:25–14:20, cloud, fără placă) — C-151 punctul 1: tabloul de bord RUSD, SIMULARE
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T140a | pornire → citire → oprire față de modelul `SimRusd`: valorile (45,5 °C, 210/405 MHz, P8, 21 W), ordinea INIT, interval, mască / mască 0, INIT 0; cititorul `parse_kd` | `cargo test -p nvidia-ga104 --release --test sim_c151_rusd` | conform | conform | PASS (SIMULARE) |
+| T140b | octeții celor 5 comenzi (adresa, `0 / 500 ms`, `0x1b / 0`, `0 / 0`, `0`); clientul și subdispozitivul nostru | `… sim_c151_rusd t140b` | conform | conform | PASS |
+| T140c | `INIT` refuzat → o singură comandă; intervalul refuzat → pagina dată înapoi; fără model → `INVALID_COMMAND` ca rând | `… t140c` | conform | conform | PASS (SIMULARE) |
+| T140d | oprirea refuzată → nota „pagina rămâne rezervată” | `… t140d` | conform | conform | PASS (SIMULARE) |
+| T140e | planul oprit: nimic trimis; planuri greșite refuzate înainte de trimitere | `… t140e` | conform | conform | PASS |
+| T140f | citirea cu marcă de timp: scriere în curs, marcă schimbată, secțiune lipsă, ocupată după 10 încercări; placa fierbinte (motiv termic) | `… t140f` | conform | conform | PASS (SIMULARE) |
+| T140g | `dashboard_at_end` într-un apel | `… t140g` | conform | conform | PASS (SIMULARE) |
+| T140u | forma octeților, așezarea în 464 de octeți, `RUSD_SEQ_DATA_VALID` | `cargo test -p nvidia-ga104 --release --lib rusd` | conform | conform | PASS |
+| T140-placă | GSP-RM acceptă `INIT` de la clientul nostru? pagina completată? valorile reale? | Release OS, modul ciclu, la sfârșitul lanțului | — | — | NOT TESTED |
+
+`tools/check.sh` (Rust 1.100.0): format, clippy `-D warnings`, 597 teste (6 ignorate), build no_std — PASS.
+
 ## Rezultate — sesiunea 121 (20 nov 2026, ~04:25–05:30, cloud, fără placă) — C-147 punctul 3 (etapa 4): `q8_matvec32` + cursa `q8_race`, SIMULARE
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |

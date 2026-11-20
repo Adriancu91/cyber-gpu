@@ -385,3 +385,12 @@ commit `c0bb645`). PCIe Base Spec: cunoaștere publică. Nicio sursă GPL citit�
 tradus): driverul NVIDIA 570.144 (MIT): `kern_perf_boost.c` (`kperfBoostSet_IMPL`), `ctrl2080internal.h`, `ctrl2080perf.h`,
 `g_subdevice_nvoc.c` (steagurile exportului), `control.c` (`RMCTRL_FLAGS_INTERNAL`), `vgpu/rpc.c` (`rpcRmApiControl_GSP`). Nicio sursă GPL.
 Niciun octet de firmware NVIDIA citit sau copiat.
+
+**C-151 punctul 1 (sesiunea 124, 20 nov 2026):** `gsp::rusd` (`rusd_start`, `rusd_stop`, `read_section`, `read_dashboard`,
+`dashboard_at_end`, `parse_kd`, `RusdMem`, `Dashboard`) și modelul `gpu_sim::fake_rm::{SimRusd, RusdRule}` sunt scrise de noi. Citite ca
+specificație (nimic copiat sau tradus): driverul NVIDIA 570.144 (MIT): `class/cl00de.h` (structura, măștile, regula de citire),
+`ctrl/ctrl00de.h`, `ctrl2080internal.h` (cele două comenzi), `gpu_user_shared_data.c` (ordinea, memoria), `g_subdevice_nvoc.c` și
+`rmapi/control.h` (steagurile), `nvrm_registry.h` (intervalul 500 ms, limitele 100–1000), `nvfixedtypes.h` (`NvTemp` = 24.8). Pozițiile
+câmpurilor sunt tipărite cu `offsetof` de compilatorul C din antetul NVIDIA (programul de 20 de rânduri nu intră în repo).
+nouveau, seria „GSP telemetry via RUSD” (Mohamed Ahmed, 14 iul 2026, GPL/MIT, nepreluată) — doar citită ca a treia sursă pentru ordine și
+citire; **nicio linie preluată**. Nicio sursă GPL în cod. Niciun octet de firmware NVIDIA citit sau copiat.
