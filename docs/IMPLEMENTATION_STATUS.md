@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 123 — 20 noiembrie 2026, ~10:25–10:50 (ora României), în cloud, FĂRĂ placă — **C-147 punctul 4 (viteza maximă) gata de legat, în SIMULARE**
+
+Pornită de programare (sesiunea de 10:25). Nicio altă sesiune nu lucra (ultimul commit cyber-gpu: 07:50). Nota nouă a centrului de comandă
+(C-147, 20 nov 09:20): `os-313` a citit **P8** și `kc` = 3 % din 608 GB/s → condiția (a) a lui Adrian e îndeplinită, **punctul 4 trece primul**
+(înaintea lui C-151 punctul 1). Detalii: `docs/C-147_PUNCTUL4.md`; nota pentru OS: `integration/cyber-universe/C-147_punctul4-viteza-maxima.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Verificări la pornire | ramurile atașate din nou la origin; Rust 1.100.0 (ca CI-ul) | PASS |
+| Sursele din nou | NVIDIA 570.144: `kern_perf_boost.c` (driverul trimite `INTERNAL_PERF_BOOST_SET_2X` cu **mânerele clientului însuși**), `g_subdevice_nvoc.c` (steaguri `0xc8`), `control.c` (`INTERNAL`), `vgpu/rpc.c` (plic cu `flags = NONE`, ca al nostru); dovadă pe placă: `INTERNAL_STATIC_KGR_GET_INFO` (tot `INTERNAL`, același plic) acceptat la I10c | FĂCUT; „trei surse” îndeplinită |
+| Codul | `gsp::perf::{boost_start, boost_finish}` (citire → cerere → citire → verdict; la final: citire → ștergere → citire), `BoostStart`, `BoostEnd`, `BoostAnswer`, `BoostVerdict`, `RmControl`, `parse_ks`, rândurile noi `ks`; `kronos_perf::PerfGain` (comparația cu `os-313`) | PASS (SIMULARE), T139 |
+| Modelul | `gpu_sim::fake_rm::{SimPerf, BoostRule}` (P8 / P0, valori SIM; acceptă / fără efect / refuză; forma publică refuzată = ipoteză); implicit oprit (T135d neschimbat) | PASS (SIMULARE) |
+| Verificări | `tools/check.sh` (Rust 1.100.0): format, clippy `-D warnings`, **587 teste** (579 → +8; 6 ignorate), build no_std; CI verde (run 44703664000, stable + nightly) | PASS (SIMULARE) |
+| Pe RTX 3070 Ti | acceptă GSP-RM cererea? urcă placa din P8? cât câștigăm? | NOT TESTED (Release OS separat, modul ciclu) |
+
+Interfața publică: doar adăugări (funcții, tipuri și constante noi în `gsp::perf`; `kronos_perf::PerfGain`; `fake_rm::{SimPerf, BoostRule,
+cmd::PERF_*, FakeRm::perf}` — câmp public nou în `FakeRm`, care are `Default`). Nimic schimbat în lanțul de azi.
+
+**Următorul pas:** C-151 punctul 1 (tabloul de bord RUSD: regula „trei surse”, apoi cod oprit implicit + model), C-151 punctul 2 (tabloul
+înainte/după viteza maximă), apoi C-147 punctele 5, 6; punctul 7 după cifrele testului cu viteza maximă. **Regula 8:** 123 are pas.
+
+---
 ## Sesiunea 122 — 20 noiembrie 2026, ~07:25–08:00 (ora României), în cloud, FĂRĂ placă — **C-151 punctul 3 (resetul din interior, FLR) făcut în SIMULARE**
 
 Pornită de programare (sesiunea de 07:25). Nicio altă sesiune nu lucra (ultimul commit cyber-gpu: 04:43). C-147 punctele 1–3 gata; după ordinea
