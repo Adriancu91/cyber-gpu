@@ -664,10 +664,66 @@ pub fn parse_journal(text: &str) -> ParsedPerf {
     out
 }
 
+/// C-147 point 4: one run against another (e.g. `os-313`, no boost, against the test with the boost), for the
+/// cycle report. Each field: (before, after, after ÷ before in ‰); `None` when a side lacks the row or before is 0.
+/// Lower is better for the times, higher for MB/s. Nothing here judges correctness (the 16 tokens do).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PerfGain {
+    /// `kp toate simbol (us)`: board time per token.
+    pub token_us: Option<(u32, u32, u32)>,
+    /// `kc copiere MB/s`.
+    pub copy_mb_s: Option<(u32, u32, u32)>,
+    /// `kp ln1 simbol (us)`: a small kernel bound by clocks, not by the matrix size.
+    pub ln1_us: Option<(u32, u32, u32)>,
+}
+
+fn ratio(b: Option<u32>, a: Option<u32>) -> Option<(u32, u32, u32)> {
+    let (b, a) = (b?, a?);
+    (b != 0).then(|| (b, a, sat(a as u64 * 1000 / b as u64)))
+}
+
+impl PerfGain {
+    pub fn compare(before: &ParsedPerf, after: &ParsedPerf) -> Self {
+        let ln1 = |p: &ParsedPerf| p.kinds.iter().find(|e| e.0 == Kind::Ln1).and_then(|e| e.1);
+        PerfGain {
+            token_us: ratio(before.total_us, after.total_us),
+            copy_mb_s: ratio(before.copy_mb_s, after.copy_mb_s),
+            ln1_us: ratio(ln1(before), ln1(after)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::kronos_model as km;
+
+    #[test]
+    fn gain_compares_two_runs() {
+        let row = |n: &str, v: u32| alloc::format!("valoare {n} = {v:#010x}\n");
+        let before = [
+            row(rows::TOKENS, 16),
+            row(rows::TOTAL, 22_968),
+            row("kp ln1 simbol (us)", 2_260),
+            row(copy_rows::KIB, 65_536),
+            row(copy_rows::COPY_MB, 9_165),
+        ]
+        .concat();
+        let after = [
+            row(rows::TOKENS, 16),
+            row(rows::TOTAL, 11_484),
+            row("kp ln1 simbol (us)", 226),
+            row(copy_rows::KIB, 65_536),
+            row(copy_rows::COPY_MB, 183_300),
+        ]
+        .concat();
+        let g = PerfGain::compare(&parse_journal(&before), &parse_journal(&after));
+        assert_eq!(g.token_us, Some((22_968, 11_484, 500)));
+        assert_eq!(g.copy_mb_s, Some((9_165, 183_300, 20_000)));
+        assert_eq!(g.ln1_us, Some((2_260, 226, 100)));
+        let none = PerfGain::compare(&ParsedPerf::default(), &parse_journal(&after));
+        assert_eq!(none, PerfGain::default());
+    }
 
     #[test]
     fn kinds_count_like_the_launch_list() {

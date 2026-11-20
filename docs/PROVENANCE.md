@@ -379,3 +379,9 @@ firmware NVIDIA citit sau copiat.
 `kernel_bif_tu102.c` `kbifDoFunctionLevelReset_TU102`, `kernel_bif_ga100.c` `kbifDoFullChipReset_GA100` / `kbifClearDownstreamReadCounter_GA100`,
 `kernel_bif_gh100.c` — ordinea și registrele PCI standard) și tinygrad (MIT, `runtime/support/nv/nvdev.py` `_early_ip_init`, `system.py` `reset`,
 commit `c0bb645`). PCIe Base Spec: cunoaștere publică. Nicio sursă GPL citită în cod. Niciun octet de firmware NVIDIA citit sau copiat.
+
+**C-147 punctul 4 (sesiunea 123, 20 nov 2026):** `gsp::perf::{boost_start, boost_finish, parse_ks, BoostStart, BoostEnd, BoostVerdict}`,
+`kronos_perf::PerfGain` și modelul `gpu_sim::fake_rm::{SimPerf, BoostRule}` sunt scrise de noi. Citite ca specificație (nimic copiat sau
+tradus): driverul NVIDIA 570.144 (MIT): `kern_perf_boost.c` (`kperfBoostSet_IMPL`), `ctrl2080internal.h`, `ctrl2080perf.h`,
+`g_subdevice_nvoc.c` (steagurile exportului), `control.c` (`RMCTRL_FLAGS_INTERNAL`), `vgpu/rpc.c` (`rpcRmApiControl_GSP`). Nicio sursă GPL.
+Niciun octet de firmware NVIDIA citit sau copiat.

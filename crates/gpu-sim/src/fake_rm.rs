@@ -54,6 +54,16 @@
 //! I10c adds the static GR info (`NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_INFO`,
 //! `ctrl2080internal.h`): on a subdevice of any client, exact size, GR0's
 //! entries filled with [`SIM_GR_INFO`] (SIM values, not the board's).
+//!
+//! C-147 point 4 adds, **only when [`FakeRm::perf`] is set** (default `None`:
+//! refused with `INVALID_COMMAND`, as before), the performance state and the
+//! boost: `PERF_GET_CURRENT_PSTATE` (`ctrl2080perf.h`, one `NvU32` mask) and
+//! `INTERNAL_PERF_BOOST_SET_2X` (`ctrl2080internal.h`, `{NvBool flags; NvU32
+//! duration}`), our reading of RM 570.144 `kern_perf_boost.c` and the
+//! `PERF_BOOST` comment ("other factors can limit P-States"). The public
+//! `PERF_BOOST` is answered `NOT_SUPPORTED` — a hypothesis of this model
+//! (its export flags `0x318` have no `ROUTE_TO_PHYSICAL`), not GSP-RM's
+//! known answer. The P-states (idle P8, boosted P0) are SIM values.
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -109,6 +119,12 @@ pub mod cmd {
     pub const TSG_SCHEDULE: u32 = 0xa06c_0101;
     /// I10c (`ctrl2080internal.h`): `NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_INFO`.
     pub const KGR_GET_INFO: u32 = 0x2080_0a2a;
+    /// C-147 (`ctrl2080perf.h`): `NV2080_CTRL_CMD_PERF_GET_CURRENT_PSTATE`.
+    pub const PERF_GET_CURRENT_PSTATE: u32 = 0x2080_2068;
+    /// C-147 (`ctrl2080perf.h`): the public `NV2080_CTRL_CMD_PERF_BOOST`.
+    pub const PERF_BOOST: u32 = 0x2080_200a;
+    /// C-147 (`ctrl2080internal.h`): `NV2080_CTRL_CMD_INTERNAL_PERF_BOOST_SET_2X`.
+    pub const INTERNAL_PERF_BOOST_SET_2X: u32 = 0x2080_0a9a;
     /// C-125 (`ctrl2080gr.h`): `NV2080_CTRL_CMD_GR_GET_CTX_BUFFER_INFO`.
     pub const GR_GET_CTX_BUFFER_INFO: u32 = 0x2080_1219;
 }
@@ -269,6 +285,53 @@ pub enum TokenRule {
     RefusedNoId,
 }
 
+/// C-147 point 4, SIMULARE: how the model answers the boost (hypotheses to
+/// test the driver's rows against; none is knowledge about GSP-RM).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BoostRule {
+    /// Accepted; the P-state reads [`SimPerf::boosted`] until the clear.
+    #[default]
+    Accept,
+    /// Accepted (`OK`) but the P-state does not move ("other factors").
+    AcceptNoEffect,
+    /// Refused with this status; nothing changes.
+    Refuse(u32),
+}
+
+/// C-147 point 4, SIMULARE: the board's performance state in the model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SimPerf {
+    /// The P-state with no boost (SIM: 8, what `os-313` read at the end).
+    pub idle: u8,
+    /// The P-state while a boost to max holds (SIM: 0).
+    pub boosted: u8,
+    pub rule: BoostRule,
+    /// `Some(duration)` of the boost in force (seconds as asked), `None` = none.
+    pub active: Option<u32>,
+    /// Boost and clear requests accepted (a count).
+    pub accepted: u32,
+}
+
+impl SimPerf {
+    pub fn new(rule: BoostRule) -> Self {
+        SimPerf {
+            idle: 8,
+            boosted: 0,
+            rule,
+            active: None,
+            accepted: 0,
+        }
+    }
+
+    /// The P-state the model reports now.
+    pub fn current(&self) -> u8 {
+        match (self.active, self.rule) {
+            (Some(_), BoostRule::Accept) => self.boosted,
+            _ => self.idle,
+        }
+    }
+}
+
 /// C-135: what a channel's allocation told the model (for the tests):
 /// `hObjectError`, `flags`, `internalFlags` and the address space and size
 /// of `errorNotifierMem`.
@@ -317,6 +380,9 @@ pub struct FakeRm {
     pub token_rule: TokenRule,
     /// C-135: channel handle → what its allocation said.
     facts: BTreeMap<u32, ChannelFacts>,
+    /// C-147 point 4: the performance model; `None` = the controls are
+    /// refused (`INVALID_COMMAND`), as before.
+    pub perf: Option<SimPerf>,
 }
 
 fn rd32(b: &[u8], o: usize) -> u32 {
@@ -797,6 +863,12 @@ impl FakeRm {
                         st
                     }
                 }
+                (
+                    cmd::PERF_GET_CURRENT_PSTATE
+                    | cmd::PERF_BOOST
+                    | cmd::INTERNAL_PERF_BOOST_SET_2X,
+                    Some(class::SUBDEVICE),
+                ) if self.perf.is_some() => self.perf_control(command, params),
                 (cmd::TSG_SCHEDULE, Some(class::CHANNEL_GROUP)) => {
                     if params.len() != size::TSG_SCHEDULE {
                         status::INVALID_PARAM_STRUCT
@@ -837,6 +909,48 @@ impl FakeRm {
         wr32(&mut reply, 12, st);
         self.log.controls.push((command, st));
         (0, reply)
+    }
+
+    /// C-147 point 4 (SIMULARE): the P-state read and the boost, our reading of
+    /// `ctrl2080perf.h` / `ctrl2080internal.h` / `kern_perf_boost.c` (570.144).
+    /// Flags: CMD 1:0 (0 clear, 1 one level, 2 to max); duration 1..=3600 or
+    /// `0xffffffff` for a boost, ignored for a clear; else `INVALID_ARGUMENT`.
+    fn perf_control(&mut self, command: u32, params: &mut [u8]) -> u32 {
+        let Some(pf) = self.perf.as_mut() else {
+            return status::INVALID_COMMAND;
+        };
+        match command {
+            cmd::PERF_GET_CURRENT_PSTATE => {
+                if params.len() != 4 {
+                    return status::INVALID_PARAM_STRUCT;
+                }
+                wr32(params, 0, 1u32 << pf.current());
+                status::OK
+            }
+            cmd::PERF_BOOST => status::NOT_SUPPORTED,
+            _ => {
+                if params.len() != 8 {
+                    return status::INVALID_PARAM_STRUCT;
+                }
+                if let BoostRule::Refuse(st) = pf.rule {
+                    return st;
+                }
+                let (flags, duration) = (params[0] as u32, rd32(params, 4));
+                match flags & 3 {
+                    0 => {
+                        pf.active = None;
+                        pf.accepted += 1;
+                        status::OK
+                    }
+                    2 if (1..=3600).contains(&duration) || duration == u32::MAX => {
+                        pf.active = Some(duration);
+                        pf.accepted += 1;
+                        status::OK
+                    }
+                    _ => status::INVALID_ARGUMENT,
+                }
+            }
+        }
     }
 
     // rpc_set_page_directory_v1E_05: hClient 0, hDevice 4, pasid 8, params 16

@@ -609,3 +609,6 @@ identificator, hardware/configurație, commit, comanda, așteptat, obținut, cod
 
 | T138 `flr_reset` (4), C-151 punctul 3 | WPR2 ridicat → FLR → GFW → WPR2 = 0 → I6 + I7 a doua oară; WPR2 jos → nicio scriere; WPR2 rămas → oprire fără a doua încercare; FLR neanunțat / placa mută / BAR care refuză / GFW neterminat / tranzacții blocate | PASS (SIMULARE) |
 | FLR pe RTX 3070 Ti | proba C-152 punctul 1 (OS, ciclul automat) | NOT TESTED |
+
+| T139 viteza maximă (7) + `PerfGain`, C-147 punctul 4 | `boost_start`/`boost_finish` față de modelul de performanță din `gpu-sim`: acceptată (P8 → P0 → ștergere → P8), fără efect, refuzată, planul oprit, fără model, forma publică; octeții pe fir; eroarea de transport; cititorul `parse_ks`; comparația cu `os-313` | PASS (SIMULARE) |
+| Viteza maximă pe RTX 3070 Ti | Release OS separat, modul ciclu (C-148 completarea 1) | NOT TESTED |

@@ -125,6 +125,14 @@ pub mod rows {
     pub const CLEAR: &str = "ks stergerea cererii (0 = acceptata; 8000xxxx = refuz)";
     pub const NO_LEVELS: &str =
         "ks nivelurile si temperatura: necitite (fara cale documentata in 570.144)";
+    /// C-147 point 4: the P-state read while the boost still holds, right before its clear.
+    pub const BEFORE_CLEAR: &str =
+        "ks stare de performanta inainte de stergere (0 = P0; 8000xxxx = refuz)";
+    /// C-147 point 4: the plan is off, nothing was sent (only the readings).
+    pub const OFF: &str = "ks viteza maxima: oprita, nimic trimis (doar citiri)";
+    /// C-147 point 4: one row with what the boost did (see [`super::BoostVerdict`]).
+    pub const VERDICT: &str =
+        "ks viteza maxima verdict (0 oprita, 1 urcata, 2 acceptata fara efect, 3 refuzata)";
 }
 
 /// One `ks` row for a P-state reading.
@@ -216,6 +224,206 @@ impl BoostPlan {
             &boost_params(self.shape, boost_flags::CLEAR_COMPUTE, 0),
         )
     }
+}
+
+// ------------------------------------------------------------------------------ point 4, ready to link
+
+/// What GSP-RM said to the boost.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoostAnswer {
+    /// The plan is off: nothing was sent.
+    Off,
+    /// `NV_OK`.
+    Accepted,
+    /// Refused with this `NV_STATUS` (a row; the chain goes on as today).
+    Refused(u32),
+}
+
+/// What the boost did, judged from the two readings around it (one `ks … verdict` row).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoostVerdict {
+    /// Nothing sent.
+    Off = 0,
+    /// Accepted and the P-state read after is a higher state (a lower number) than before.
+    Raised = 1,
+    /// Accepted, but the P-state did not move (or a reading was odd / refused): "other factors can limit
+    /// P-States" (`ctrl2080perf.h`) — the reading before the clear says whether it moved later.
+    NoEffect = 2,
+    /// Refused by GSP-RM.
+    Refused = 3,
+}
+
+/// The boost's start: the reading before, the answer, the reading after (only when accepted).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BoostStart {
+    pub before: Pstate,
+    pub answer: BoostAnswer,
+    pub after: Option<Pstate>,
+}
+
+impl BoostStart {
+    pub fn verdict(&self) -> BoostVerdict {
+        match (self.answer, self.before, self.after) {
+            (BoostAnswer::Off, ..) => BoostVerdict::Off,
+            (BoostAnswer::Refused(_), ..) => BoostVerdict::Refused,
+            (BoostAnswer::Accepted, Pstate::P(b), Some(Pstate::P(a))) if a < b => {
+                BoostVerdict::Raised
+            }
+            (BoostAnswer::Accepted, ..) => BoostVerdict::NoEffect,
+        }
+    }
+
+    /// True when the boost holds on the board and must be cleared at the end.
+    pub fn needs_clear(&self) -> bool {
+        self.answer == BoostAnswer::Accepted
+    }
+}
+
+/// The boost's end: the reading before the clear (only if a boost holds), the clear's answer (`0` or
+/// `8000xxxx`; `None` = nothing to clear), the reading at the end.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BoostEnd {
+    pub before_clear: Option<Pstate>,
+    pub clear: Option<u32>,
+    pub end: Pstate,
+}
+
+/// One `GSP_RM_CONTROL`: the payload in, GSP-RM's reply out (the OS's `OsRm::call(GSP_RM_CONTROL, …)`).
+pub type RmControl<'a> = dyn FnMut(&[u8]) -> GpuResult<Vec<u8>> + 'a;
+
+fn read_now(h_client: u32, h_subdevice: u32, rm: &mut RmControl<'_>) -> GpuResult<Pstate> {
+    let sent = encode_get_pstate(h_client, h_subdevice);
+    let reply = rm(&sent)?;
+    read_pstate(&sent, &reply)
+}
+
+/// C-147 point 4, **once, right after the work channel is open** (before `i14-simbol` / `kronos --gpu`):
+/// `ks inainte` → the boost (`ks cerere`, only if `plan.enabled`) → `ks dupa cerere` (only if accepted) →
+/// `ks … verdict`. A refusal of GSP-RM (of the reading or of the boost) is a row, never an error; only a transport
+/// error or a reply for another command is (`?`). With the plan off nothing is sent but the reading.
+pub fn boost_start(
+    plan: &BoostPlan,
+    h_client: u32,
+    h_subdevice: u32,
+    rm: &mut RmControl<'_>,
+    j: &mut Journal,
+) -> GpuResult<BoostStart> {
+    let before = read_now(h_client, h_subdevice, rm)?;
+    journal_pstate(j, When::Before, before);
+    let (answer, after) = if plan.enabled {
+        let sent = plan.encode_boost(h_client, h_subdevice)?;
+        let reply = rm(&sent)?;
+        let v = read_boost(&sent, &reply)?;
+        j.push(Event::Value {
+            what: rows::BOOST,
+            value: v,
+        });
+        if v == 0 {
+            let a = read_now(h_client, h_subdevice, rm)?;
+            journal_pstate(j, When::AfterBoost, a);
+            (BoostAnswer::Accepted, Some(a))
+        } else {
+            (BoostAnswer::Refused(v & 0x7fff_ffff), None)
+        }
+    } else {
+        j.push(Event::Note(rows::OFF));
+        (BoostAnswer::Off, None)
+    };
+    let s = BoostStart {
+        before,
+        answer,
+        after,
+    };
+    j.push(Event::Value {
+        what: rows::VERDICT,
+        value: s.verdict() as u32,
+    });
+    Ok(s)
+}
+
+/// C-147 point 4, **at the end of the test** (after `kronos --gpu`, `kp`, `kc`; the place of today's `ks la final`):
+/// if a boost holds — `ks inainte de stergere` → the clear in the same shape (`ks stergerea`); then always
+/// `ks la final`. Call it on the error paths too, when the channel still answers: the boost also ends by itself
+/// after `plan.duration_s`.
+pub fn boost_finish(
+    start: &BoostStart,
+    plan: &BoostPlan,
+    h_client: u32,
+    h_subdevice: u32,
+    rm: &mut RmControl<'_>,
+    j: &mut Journal,
+) -> GpuResult<BoostEnd> {
+    let (before_clear, clear) = if start.needs_clear() {
+        let b = read_now(h_client, h_subdevice, rm)?;
+        j.push(Event::Value {
+            what: rows::BEFORE_CLEAR,
+            value: b.value(),
+        });
+        let sent = plan.encode_clear(h_client, h_subdevice);
+        let reply = rm(&sent)?;
+        let c = read_boost(&sent, &reply)?;
+        j.push(Event::Value {
+            what: rows::CLEAR,
+            value: c,
+        });
+        (Some(b), Some(c))
+    } else {
+        (None, None)
+    };
+    let end = read_now(h_client, h_subdevice, rm)?;
+    journal_pstate(j, When::End, end);
+    Ok(BoostEnd {
+        before_clear,
+        clear,
+        end,
+    })
+}
+
+/// What a stick journal's `ks` rows say (the last value of each; for the cycle report and the host tools).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ParsedKs {
+    pub before: Option<u32>,
+    pub boost: Option<u32>,
+    pub after: Option<u32>,
+    pub verdict: Option<u32>,
+    pub before_clear: Option<u32>,
+    pub clear: Option<u32>,
+    pub end: Option<u32>,
+    /// The `ks viteza maxima: oprita` note was there.
+    pub off: bool,
+}
+
+/// One `… valoare <name> = 0x<hex>` row (the same shape `kronos_perf::value_row` reads).
+fn ks_value(line: &str) -> Option<(&str, u32)> {
+    let rest = line.split("valoare ").nth(1)?;
+    let (name, v) = rest.rsplit_once(" = ")?;
+    let v = u32::from_str_radix(v.trim().strip_prefix("0x")?, 16).ok()?;
+    Some((name, v))
+}
+
+/// Reads the `ks` rows of a stick journal.
+pub fn parse_ks(text: &str) -> ParsedKs {
+    let mut k = ParsedKs::default();
+    for line in text.lines() {
+        if line.contains(rows::OFF) {
+            k.off = true;
+        }
+        let Some((name, v)) = ks_value(line) else {
+            continue;
+        };
+        let slot = match name {
+            rows::BEFORE => &mut k.before,
+            rows::BOOST => &mut k.boost,
+            rows::AFTER => &mut k.after,
+            rows::VERDICT => &mut k.verdict,
+            rows::BEFORE_CLEAR => &mut k.before_clear,
+            rows::CLEAR => &mut k.clear,
+            rows::END => &mut k.end,
+            _ => continue,
+        };
+        *slot = Some(v);
+    }
+    k
 }
 
 /// GSP-RM's status for a boost or a clear: `0` accepted, else `0x8000_0000 | status` (the `ks` row's value).
