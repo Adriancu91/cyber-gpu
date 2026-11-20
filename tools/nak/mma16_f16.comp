@@ -1,0 +1,38 @@
+// C-147 point 5 (tensor cores, T0-T1, preparation only): the smallest
+// cooperative-matrix program. ONE subgroup (32 threads) computes
+//   D[16,16] = A[16,16] * B[16,16] + C[16,16]
+// with A and B in 16-bit floats (row-major) and C, D in 32-bit floats
+// (row-major). The whole multiply is a single coopMatMulAdd, which NAK lowers
+// to the SM 8.6 tensor-core instruction (HMMA) when it can.
+// Compiled with the SECOND NAK tool (tools/nak/build2.sh, Mesa 26.3.1).
+// The oracle and its tolerance are in gpu-compute (mma module).
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_cooperative_matrix : require
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer InH { float16_t v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer InF { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) writeonly buffer OutF { float v[]; };
+
+layout(push_constant) uniform Args {
+    InH a;
+    InH b;
+    InF c;
+    OutF d;
+} args;
+
+void main() {
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> ma;
+    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> mb;
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> mc;
+    coopMatLoad(ma, args.a.v, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatLoad(mb, args.b.v, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatLoad(mc, args.c.v, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    mc = coopMatMulAdd(ma, mb, mc);
+    coopMatStore(mc, args.d.v, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+}

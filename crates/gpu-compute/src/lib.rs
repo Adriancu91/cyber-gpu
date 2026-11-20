@@ -8,6 +8,8 @@
 //!   compared against;
 //! - [`kernels`]: faster CPU kernels (blocked matmul, bf16 weights),
 //!   bit-identical to the reference;
+//! - [`mma`]: binary16 conversions and the oracle + tolerance of the first
+//!   tensor-core program (C-147 point 5; SIMULARE only);
 //! - [`rows`]: row-range versions of softmax (causal), attention and
 //!   cross-entropy, so one operator can be split over several cores;
 //!   bit-identical to the reference, no global state;
@@ -24,6 +26,7 @@ pub mod cpu;
 pub mod kernels;
 pub mod layer;
 pub mod math;
+pub mod mma;
 pub mod model;
 pub mod op;
 pub mod q8;

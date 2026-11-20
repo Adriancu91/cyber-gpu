@@ -1,0 +1,19 @@
+device: NVK 
+coopmat: M=16 N=16 K=16 A=f16 B=f16 C=f16 R=f16 sat=0
+coopmat: M=16 N=8 K=16 A=f16 B=f16 C=f16 R=f16 sat=0
+coopmat: M=16 N=8 K=8 A=f16 B=f16 C=f16 R=f16 sat=0
+coopmat: M=16 N=16 K=16 A=f16 B=f16 C=f32 R=f32 sat=0
+coopmat: M=16 N=8 K=16 A=f16 B=f16 C=f32 R=f32 sat=0
+coopmat: M=16 N=8 K=8 A=f16 B=f16 C=f32 R=f32 sat=0
+coopmat: M=16 N=16 K=32 A=u8 B=u8 C=u32 R=u32 sat=0
+coopmat: M=16 N=8 K=32 A=u8 B=u8 C=u32 R=u32 sat=0
+coopmat: M=16 N=8 K=16 A=u8 B=u8 C=u32 R=u32 sat=0
+coopmat: M=8 N=8 K=16 A=u8 B=u8 C=u32 R=u32 sat=0
+coopmat: M=16 N=16 K=32 A=s8 B=s8 C=s32 R=s32 sat=0
+coopmat: M=16 N=8 K=32 A=s8 B=s8 C=s32 R=s32 sat=0
+coopmat: M=16 N=8 K=16 A=s8 B=s8 C=s32 R=s32 sat=0
+coopmat: M=8 N=8 K=16 A=s8 B=s8 C=s32 R=s32 sat=0
+coopmat: M=16 N=16 K=32 A=s8 B=s8 C=s32 R=s32 sat=1
+coopmat: M=16 N=8 K=32 A=s8 B=s8 C=s32 R=s32 sat=1
+coopmat: M=16 N=8 K=16 A=s8 B=s8 C=s32 R=s32 sat=1
+coopmat: M=8 N=8 K=16 A=s8 B=s8 C=s32 R=s32 sat=1

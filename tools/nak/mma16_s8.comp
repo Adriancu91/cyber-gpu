@@ -1,0 +1,35 @@
+// C-147 point 5, second probe (compile only, not modelled yet): the int8 shape
+// NVK offers on Ampere, D[16,16] = A[16,32] * B[32,16] + C[16,16], A and B in
+// signed 8-bit integers (row-major), C and D in signed 32-bit integers. Asks
+// whether NAK emits the SM 8.6 integer tensor-core instruction (IMMA), which is
+// the one that could one day multiply Q8_0 weights without converting them.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_cooperative_matrix : require
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer In8 { int8_t v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer InI { int v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) writeonly buffer OutI { int v[]; };
+
+layout(push_constant) uniform Args {
+    In8 a;
+    In8 b;
+    InI c;
+    OutI d;
+} args;
+
+void main() {
+    coopmat<int8_t, gl_ScopeSubgroup, 16, 32, gl_MatrixUseA> ma;
+    coopmat<int8_t, gl_ScopeSubgroup, 32, 16, gl_MatrixUseB> mb;
+    coopmat<int, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> mc;
+    coopMatLoad(ma, args.a.v, 0, 32, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatLoad(mb, args.b.v, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    coopMatLoad(mc, args.c.v, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+    mc = coopMatMulAdd(ma, mb, mc);
+    coopMatStore(mc, args.d.v, 0, 16, gl_CooperativeMatrixLayoutRowMajor);
+}

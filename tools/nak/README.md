@@ -191,3 +191,15 @@ Detalii: `docs/C-147_ETAPA3A.md`.
 | Aritmetica | pe sfert: `FFMA(q0, x0, FMUL(q1, x1))`, apoi 6 × `FFMA`, apoi `FFMA(scale, s, part)`; arborele lui `q8_matvec` → oracolul `q8::row_gpu_order_w32` |
 
 Detalii: `docs/C-147_ETAPA4.md`.
+
+## A doua unealtă: Mesa 26.3.1, circuitele speciale (C-147 punctul 5, 20 nov 2026, sesiunea 126) — COMPILAT, NU RULAT
+`sh tools/nak/build2.sh mesa` (o dată, ~20 min, în `~/.cache/cyber-gpu-nak2`), apoi `sh tools/nak/build2.sh mma16_f16` / `mma16_s8`.
+Ieșirea merge în `tools/nak/out2/`; **unealta veche (`build.sh`, `nak_dump.c`, `out/`) rămâne neatinsă**, ca sumele programelor de azi
+să nu se schimbe. `nak_dump_cm.c` cere în plus `VK_KHR_cooperative_matrix` și scrie formele oferite în `out2/coopmat_shapes.sm86.txt`.
+
+| Program | Ce emite NAK | Instr. | Registre | SHA-256 |
+|---|---|---|---|---|
+| `mma16_f16` (16×16×16, f16 → f32) | 2 × `hmma.m16n8k16.f32` | 78 | 32 | `f8c0db68b654372d94ed96c767c7775c32909298a1b77076ddda81a66afa1ef9` |
+| `mma16_s8` (16×16×32, s8 → s32) | 2 × `imma.m16n8k32.i8.i8` | 148 | 32 | `7f6bc59aad0871f1164902ad0f19aad5f89d388003f6d3afd5a4551e9e0c84af` |
+
+**Atenție:** NVK 26.3.1 pune argumentele la **cbuf 0 + 0x700** (unealta veche: 0x28). Detalii, oracol, toleranță: `docs/C-147_PUNCTUL5_TENSOR.md`.

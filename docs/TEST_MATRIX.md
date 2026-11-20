@@ -1,5 +1,16 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 126 (20 nov 2026, ~19:25–20:00, cloud, fără placă) — C-147 punctul 5: circuitele speciale (tensor cores), SIMULARE
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T142a | `mma16_f16`: adresele în bufferul constant la 0x700 (NVK 26.3.1), aceeași poziție în driver și în model | `cargo test -p nvidia-ga104 --release --test sim_c147_mma16` | conform | conform | PASS |
+| T142b | D = A·B + C (16×16, A/B pe 16 biți, C/D f32), trimis ca de driver (pushbuffer, QMD, semafor), 8 seturi de numere: fiecare element în toleranța scrisă (`17 · 2⁻²³ · (|c| + Σ|a·b|)`) față de referința f64; modelul (ipoteza „blocuri de 8, trunchiere”) nu e identic peste tot | `… sim_c147_mma16 t142b` | conform | conform | PASS (SIMULARE) |
+| T142c | program schimbat cu un octet, adrese puse la 0x28 (așezarea uneltei vechi), 64 de fire, 2 blocuri → refuzate, D rămâne NaN | `… t142c` | conform | conform | PASS (SIMULARE) |
+| T142d | `gpu_compute::mma`: toate cele 65 536 de valori pe 16 biți dus-întors exact; rotunjirea la par; identitate·B = B; 5 greșeli plantate prinse (1 %, B transpus, C uitat, lungime greșită, NaN) | `cargo test -p gpu-compute --release mma` | conform | conform | PASS |
+| T142e | programul compilat are 78 de instrucțiuni și suma SHA-256 scrisă; bufferul constant refuză adrese nealiniate sau 0 | `cargo test -p nvidia-ga104 --release --lib mma16` | conform | conform | PASS |
+| — | pe RTX 3070 Ti | — | — | — | NOT TESTED (doar după „da”-ul separat al lui Adrian) |
+
 ## Rezultate — sesiunea 124 (20 nov 2026, ~13:25–14:20, cloud, fără placă) — C-151 punctul 1: tabloul de bord RUSD, SIMULARE
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |

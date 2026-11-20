@@ -1386,6 +1386,49 @@ pub fn q8_matvec32_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// C-147 point 5: where NVK 26.3.1 puts the push constants of `mma16_f16` in cbuf 0 (`c[0x0][0x700]` in
+/// `tools/nak/out2/mma16_f16.sm86.txt`; the first NAK tool, Mesa 25.0.7, put them at 0x28).
+pub const MMA16_PUSH_BASE: u64 = 0x700;
+
+/// C-147 point 5: what `mma16_f16` needs: no shared memory, no barrier (one warp; the dump says
+/// `Shared size: 0`, no `BAR.SYNC`).
+pub const MMA16_F16_NEEDS: Needs = Needs {
+    shared_bytes: 0,
+    barriers: 0,
+};
+
+/// C-147 point 5: the CPU stand-in for `tools/nak/out2/mma16_f16.sm86.sass` (second NAK tool, Mesa
+/// 26.3.1; two `hmma.m16n8k16.f32`): cbuf0 a 0x700, b 0x708, c 0x710, d 0x718 (all 16-aligned); one
+/// block of 32×1×1; D = A·B + C (16×16, A/B binary16, C/D f32, row-major). The arithmetic is
+/// `gpu_compute::mma::mma16_block8_trunc` — a HYPOTHESIS of how the tensor core adds, not a fact.
+pub fn mma16_f16_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    use gpu_compute::mma;
+    if l.block != [32, 1, 1] || l.grid != [1, 1, 1] {
+        return Err(bad("SIM: mma16_f16 cere un bloc de 32x1x1"));
+    }
+    let r = |l: &Launch<'_>, o: u64| l.mem.read_u64(l.cbuf0 + MMA16_PUSH_BASE + o);
+    let (a, b, c, d) = (r(l, 0)?, r(l, 8)?, r(l, 0x10)?, r(l, 0x18)?);
+    if !(a | b | c | d).is_multiple_of(16) {
+        return Err(bad("SIM: mma16_f16 cere a, b, c, d aliniate la 16"));
+    }
+    let halves = |l: &Launch<'_>, va: u64| -> GpuResult<Vec<u16>> {
+        let mut raw = alloc::vec![0u8; 2 * mma::M * mma::K];
+        l.mem.read(va, &mut raw)?;
+        Ok(raw
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|h| u16::from_le_bytes(*h))
+            .collect())
+    };
+    let (ha, hb) = (halves(l, a)?, halves(l, b)?);
+    let fc = l.mem.read_f32s(c, mma::M * mma::N)?;
+    let out =
+        mma::mma16_block8_trunc(&ha, &hb, &fc).ok_or_else(|| bad("SIM: mma16_f16 dimensiuni"))?;
+    l.mem.write_f32s(d, &out);
+    Ok(())
+}
+
 /// C-83 I13: `vadd.comp` — cbuf0 a 0x28, b 0x30, c 0x38, n 0x40; blocks of 256.
 pub fn vadd_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     if l.block != [256, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 || l.mem.read_u64(l.cbuf0)? != 0 {

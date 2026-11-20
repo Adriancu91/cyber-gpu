@@ -399,3 +399,11 @@ citire; **nicio linie preluată**. Nicio sursă GPL în cod. Niciun octet de fir
 `timpul_driverului`, `kronos_fast::ShadowedMemory` și testul T141 sunt scrise de noi. Surse: doar jurnalele noastre de pe placă (hub
 `rezultate/os-automat/2026-11-20/`, rândurile din test sunt copiate de acolo) și codul OS-ului nostru (`cyber-universe` `7fad533`, citit).
 Nicio sursă externă nouă, nimic GPL, niciun octet de firmware.
+
+**C-147 punctul 5 (sesiunea 126, 20 nov 2026):** `gpu_compute::mma` (conversiile pe 16 biți, referința, ipoteza, toleranța, `judge`),
+`nvidia_ga104::mma16`, modelul `gpu_sim::cmdproc::mma16_f16_on_cpu`, programele GLSL `mma16_f16.comp` / `mma16_s8.comp`, programul
+gazdă `nak_dump_cm.c`, scriptul `build2.sh` și testul T142 sunt scrise de noi. Unealtă pe gazdă (niciodată în OS): Mesa 26.3.1 (MIT),
+construită din arhiva oficială; ieșirea ei (`tools/nak/out2/*.sm86.sass`) e cod generat de compilator din programele noastre. Citite ca
+specificație (nimic copiat): `nvk_physical_device.c` (formele „cooperative matrix”), extensiile Khronos `VK_KHR_cooperative_matrix` /
+`GL_KHR_cooperative_matrix`; articolul Fasi, Higham, Mikaitis, Pranesh (PeerJ CS 2021) pentru ideea ipotezei de adunare. Nicio sursă
+GPL, niciun octet de firmware NVIDIA.
