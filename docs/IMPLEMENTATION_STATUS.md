@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 125 — 20 noiembrie 2026, ~16:25–17:25 (ora României), în cloud, FĂRĂ placă — **C-147 punctul 7: estimarea pe etape după os-322 + „dieta driverului” gata de legat, în SIMULARE**
+## Sesiunea 125 — 20 noiembrie 2026, ~16:25–17:00 (ora României), în cloud, FĂRĂ placă — **C-147 punctul 7: estimarea pe etape după os-322 + „dieta driverului” gata de legat, în SIMULARE**
 
 Pornită de programare. Nicio altă sesiune Cyber-GPU nu lucra (ultimul commit: 14:20). Între timp, testul 2 (`os-322`) a trecut pe placă:
 viteza maximă a mers (P5 → P0), placa 381,98 simb/s, 16/16 identice — deci punctul 7 („după cifre, estimarea pe etape”) s-a deblocat.
@@ -13,7 +13,7 @@ Detalii: `docs/C-147_PUNCTUL7_ESTIMARE.md`; nota pentru OS: `integration/cyber-u
 | Estimarea | azi 172 simb/s (median) → dieta ~250 → + P3 ~280 → + LayerNorm nou ~320 → + etapa 4 ~470; P7 coboară după etapa 4; #651: ~96 → ~150 cu dieta | DEDUS |
 | Codul | `nvidia_ga104::driver_split`, exemplul `timpul_driverului`, `kronos_fast::ShadowedMemory` (pushbuffer doar cu cuvintele schimbate) | PASS (SIMULARE), T141 |
 | Proba în simulare | cu dieta: logit-uri, cache-uri, durate **identice bit cu bit**; cuvinte pe simbol 623 → 55 și 299 → 28; înregistrările vechi prinse | PASS (SIMULARE), T141a–c |
-| Verificări | `tools/check.sh` (Rust 1.100.0): format, clippy `-D warnings`, **604 teste** (597 → +7; 6 ignorate), build no_std | PASS (SIMULARE) |
+| Verificări | `tools/check.sh` (Rust 1.100.0): format, clippy `-D warnings`, **604 teste** (597 → +7; 6 ignorate), build no_std; CI verde (run 44755828197) | PASS (SIMULARE) |
 | Pe RTX 3070 Ti | dieta: driverul de la ~3,1 spre ~1,3 ms? | NOT TESTED (OS: opțiune oprită implicit, apoi probă) |
 
 Interfața publică: doar adăugări (modulul nou `driver_split`; `kronos_fast::ShadowedMemory`). Nimic schimbat în lanțul de azi.
