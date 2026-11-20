@@ -1,0 +1,79 @@
+// C-147 step 3 (stage 4): y = W * x with W in Kronos's Q8_0 format (KGR1), like q8_matvec.comp, but with
+// all 32 threads at work on every row and 128-bit loads of x.
+// q8_matvec gives one block of 32 columns to a thread: at 768 inputs (24 blocks) only 24 of the 32 threads work.
+// Here the unit of work is a QUARTER of a block (8 columns = 2 words of numbers + the block's scale):
+// a row has 4 * blocks units and thread t takes the units u = t, t + 32, t + 64, ... in that order
+// (768 inputs: 96 units, exactly 3 per thread; 3072 inputs: 384 units, 12 per thread).
+// In one step the 32 threads read 8 whole consecutive blocks (288 bytes, no gaps), and each x quarter is two
+// 16-byte loads (vec4). The 36-byte blocks are not 16-byte aligned, so the numbers stay 32-bit loads.
+//   part = 0; for each of its units (block b, quarter k):
+//     s = q[8k] * x[32b + 8k]; s += q[8k + i] * x[32b + 8k + i] for i = 1..7; part += scale * s;
+// then the 32 parts are added in the same fixed tree as q8_matvec (stride 16, 8, 4, 2, 1), thread 0 writes y[row].
+// The order is fixed, so the result is reproducible; the CPU oracle (gpu-compute::q8::row_gpu_order_w32)
+// follows the operations NAK emits for it (q8_matvec32.sm86.txt), bit for bit. The result differs from
+// q8_matvec's in the last bits (another summation order), within gpu-compute::q8::margin.
+// Requirements (the launcher checks them): w 4-byte aligned, x 16-byte aligned, grid x = rows, block 32x1x1.
+// The push constants are the same as q8_matvec's (same cbuf0 offsets).
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Words { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer In4 { vec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+
+layout(push_constant) uniform Args {
+    Words w;
+    In4 x;
+    Out y;
+    uint rows;
+    uint blocks;
+} args;
+
+shared float parts[32];
+
+float q(int word, int j) {
+    return float(bitfieldExtract(word, 8 * j, 8));
+}
+
+void main() {
+    uint row = gl_WorkGroupID.x;
+    uint t = gl_LocalInvocationID.x;
+    float part = 0.0;
+    if (row < args.rows) {
+        uint base = row * args.blocks * 9u;   // 36 bytes = 9 words per block
+        uint units = args.blocks * 4u;
+        for (uint u = t; u < units; u += 32u) {
+            uint b = u >> 2u;
+            uint k = u & 3u;
+            uint wb = base + b * 9u;
+            float scale = uintBitsToFloat(args.w.v[wb]);
+            int q0 = int(args.w.v[wb + 1u + 2u * k]);
+            int q1 = int(args.w.v[wb + 2u + 2u * k]);
+            vec4 xa = args.x.v[b * 8u + 2u * k];
+            vec4 xb = args.x.v[b * 8u + 2u * k + 1u];
+            float s = q(q0, 0) * xa.x;
+            s += q(q0, 1) * xa.y;
+            s += q(q0, 2) * xa.z;
+            s += q(q0, 3) * xa.w;
+            s += q(q1, 0) * xb.x;
+            s += q(q1, 1) * xb.y;
+            s += q(q1, 2) * xb.z;
+            s += q(q1, 3) * xb.w;
+            part += scale * s;
+        }
+    }
+    parts[t] = part;
+    barrier();
+    for (uint stride = 16u; stride > 0u; stride >>= 1u) {
+        if (t < stride) {
+            parts[t] = parts[t] + parts[t + stride];
+        }
+        barrier();
+    }
+    if (t == 0u && row < args.rows) {
+        args.y.v[row] = parts[0];
+    }
+}

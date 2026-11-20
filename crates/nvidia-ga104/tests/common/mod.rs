@@ -78,8 +78,15 @@ pub fn get_bytes(w: &mut Sim, pa: u64, len: u64) -> Vec<u8> {
 /// The OS's DMA pages: deliberately not contiguous and above 4 GiB
 /// (page i of buffer `which` at a scattered bus address).
 pub fn dma_pages(which: u64, n: usize) -> Vec<u64> {
-    (0..n as u64)
-        .map(|i| 0x1_2000_0000 + which * 0x1000_0000 + ((i * 7) % n as u64) * 0x2000)
+    // A stride prime to n, so the pages are a permutation (session 121: with the stride fixed at 7, a count that
+    // is a multiple of 7 repeated pages and an upload overwrote itself; 7 is kept for every other count).
+    let n = n as u64;
+    let stride = [7u64, 11, 13]
+        .into_iter()
+        .find(|s| !n.is_multiple_of(*s))
+        .unwrap_or(1);
+    (0..n)
+        .map(|i| 0x1_2000_0000 + which * 0x1000_0000 + ((i * stride) % n) * 0x2000)
         .collect()
 }
 

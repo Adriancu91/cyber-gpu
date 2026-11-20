@@ -164,6 +164,75 @@ pub fn matvec_gpu_order(
     Ok(())
 }
 
+/// C-147 step 3: units (quarter blocks, 8 columns) per block in `q8_matvec32`.
+pub const W32_QUARTERS: usize = 4;
+/// C-147 step 3: columns per unit of `q8_matvec32`.
+pub const W32_UNIT: usize = BLOCK / W32_QUARTERS;
+
+/// One row in the order of `tools/nak/q8_matvec32.comp` (C-147 step 3, all 32
+/// threads at work): the unit is a quarter block (8 columns); thread `t` takes
+/// units t, t+32, …; per unit `s = fma(q₀, x₀, q₁·x₁)` (`FMUL.FTZ` then
+/// `FFMA.FTZ` — NAK's form of `q₀x₀ + q₁x₁`), then `s = fma(q, x, s)` over
+/// the other 6, then `part = fma(scale, s, part)` (all `FFMA.FTZ`, read in
+/// `q8_matvec32.sm86.txt`); then the same tree as [`row_gpu_order`].
+pub fn row_gpu_order_w32(row: &[u8], x: &[f32]) -> f32 {
+    let mut parts = [0.0f32; GPU_THREADS];
+    let blocks = row.len() / BLOCK_BYTES;
+    for (t, part) in parts.iter_mut().enumerate() {
+        for u in (t..blocks * W32_QUARTERS).step_by(GPU_THREADS) {
+            let (b, k) = (u / W32_QUARTERS, u % W32_QUARTERS);
+            let blk = &row[b * BLOCK_BYTES..(b + 1) * BLOCK_BYTES];
+            let scale = f32::from_le_bytes([blk[0], blk[1], blk[2], blk[3]]);
+            let qs = blk[4 + k * W32_UNIT..4 + (k + 1) * W32_UNIT]
+                .iter()
+                .map(|&q| q as i8 as f32);
+            let xs = &x[b * BLOCK + k * W32_UNIT..b * BLOCK + (k + 1) * W32_UNIT];
+            let mut terms = qs.zip(xs);
+            // NAK turned `q0·x0 + q1·x1` into `FFMA.FTZ(q0, x0, FMUL.FTZ(q1, x1))`
+            // (q8_matvec32.sm86.txt, block 5), then 6 `FFMA.FTZ` in column order.
+            let (q0, &x0) = terms.next().unwrap_or((0.0, &0.0));
+            let (q1, &x1) = terms.next().unwrap_or((0.0, &0.0));
+            let first = fma_f32_ftz(q0, x0, mul_f32_ftz(q1, x1));
+            let s = terms.fold(first, |s, (q, &x)| fma_f32_ftz(q, x, s));
+            *part = fma_f32_ftz(scale, s, *part);
+        }
+    }
+    let mut stride = GPU_THREADS / 2;
+    while stride > 0 {
+        for t in 0..stride {
+            parts[t] = add_f32_ftz(parts[t], parts[t + stride]);
+        }
+        stride /= 2;
+    }
+    parts[0]
+}
+
+/// y = W·x exactly as `q8_matvec32` computes it (C-147 step 3, the bit-for-bit oracle).
+pub fn matvec_gpu_order_w32(
+    w: &[u8],
+    rows: usize,
+    cols: usize,
+    x: &[f32],
+    y: &mut [f32],
+) -> GpuResult<()> {
+    check(w, rows, cols, x, y)?;
+    let rb = cols / BLOCK * BLOCK_BYTES;
+    for (r, out) in y.iter_mut().enumerate() {
+        *out = row_gpu_order_w32(&w[r * rb..(r + 1) * rb], x);
+    }
+    Ok(())
+}
+
+/// C-147 step 3: how many of the 32 threads of a row get work, for `cols`
+/// inputs: `q8_matvec` (one block per thread) and `q8_matvec32` (one quarter).
+pub fn busy_threads(cols: usize) -> (usize, usize) {
+    let blocks = cols / BLOCK;
+    (
+        blocks.min(GPU_THREADS),
+        (blocks * W32_QUARTERS).min(GPU_THREADS),
+    )
+}
+
 /// The allowed |GPU − CPU| for each row, fixed before any run (module doc):
 /// `2·k·2⁻²⁴·S·1.01 + k·2⁻¹²⁵` with `k = 64 + 2·blocks + 8` roundings at
 /// most in either order and `S = Σ|scale·q·x|` computed in f64.
@@ -287,6 +356,52 @@ mod tests {
         matvec_cpu(&w, 64, 768, &x, &mut a).unwrap();
         matvec_gpu_order(&w, 64, 768, &x, &mut b).unwrap();
         assert!(a.iter().zip(&b).any(|(p, q)| p.to_bits() != q.to_bits()));
+    }
+
+    /// C-147 step 3: the 32-thread order is within the same margin of the CPU
+    /// engine, is a different computation from `q8_matvec`'s (some rows differ
+    /// in the last bits), and every thread has work from 256 inputs up.
+    #[test]
+    fn w32_order_within_margin_and_all_threads_busy() {
+        for (rows, cols) in [(1, 32), (7, 96), (64, 768), (16, 3072), (5, 1056)] {
+            let (w, x) = matrix(rows, cols, 7 + (rows * cols) as u64);
+            let (mut a, mut b, mut c) = (
+                alloc::vec![0.0; rows],
+                alloc::vec![0.0; rows],
+                alloc::vec![0.0; rows],
+            );
+            matvec_cpu(&w, rows, cols, &x, &mut a).unwrap();
+            matvec_gpu_order_w32(&w, rows, cols, &x, &mut b).unwrap();
+            matvec_gpu_order(&w, rows, cols, &x, &mut c).unwrap();
+            let m = margin(&w, rows, cols, &x).unwrap();
+            assert_eq!(first_outside_margin(&b, &a, &m), None, "{rows}x{cols}");
+            assert_eq!(first_outside_margin(&b, &c, &m), None, "{rows}x{cols}");
+        }
+        let (w, x) = matrix(64, 768, 2);
+        let (mut b, mut c) = (alloc::vec![0.0f32; 64], alloc::vec![0.0f32; 64]);
+        matvec_gpu_order_w32(&w, 64, 768, &x, &mut b).unwrap();
+        matvec_gpu_order(&w, 64, 768, &x, &mut c).unwrap();
+        assert!(b.iter().zip(&c).any(|(p, q)| p.to_bits() != q.to_bits()));
+        assert_eq!(busy_threads(768), (24, 32));
+        assert_eq!(busy_threads(3072), (32, 32));
+        assert_eq!(busy_threads(256), (8, 32));
+        assert_eq!(busy_threads(64), (2, 8));
+        assert!(matvec_gpu_order_w32(&w, 64, 767, &x[..767], &mut b).is_err());
+    }
+
+    /// One unit computed by hand: block 0, quarter 2 of a 1-block row, only
+    /// thread 2 has work; the tree then adds zeros (exact).
+    #[test]
+    fn w32_one_unit_by_hand() {
+        let mut row = [0u8; 36];
+        row[..4].copy_from_slice(&0.5f32.to_le_bytes());
+        for (i, q) in row[4 + 16..4 + 24].iter_mut().enumerate() {
+            *q = (i as i8 + 1) as u8; // 1..8 in quarter 2
+        }
+        let x: Vec<f32> = (0..32).map(|i| i as f32).collect();
+        // s = Σ (i+1)·(16+i), i = 0..7 = 16+34+54+76+100+126+154+184 = 744
+        assert_eq!(row_gpu_order_w32(&row, &x), 0.5 * 744.0);
+        assert_eq!(row_gpu_order(&row, &x), 0.5 * 744.0);
     }
 
     #[test]

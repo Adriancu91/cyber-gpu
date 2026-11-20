@@ -1350,6 +1350,42 @@ pub fn q8_matvec_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// C-147 step 3: what `q8_matvec32` needs: the same 32 partial sums as `q8_matvec` (128 B), no hardware
+/// barrier (one warp; `q8_matvec32.sm86.txt` has no `BAR.SYNC`).
+pub const Q8_MATVEC32_NEEDS: Needs = Needs {
+    shared_bytes: 128,
+    barriers: 0,
+};
+
+/// C-147 step 3: the CPU stand-in for `tools/nak/out/q8_matvec32.sm86.sass` — the cbuf0 of `q8_matvec`
+/// (W 0x28, x 0x30, y 0x38, rows 0x40, blocks 0x44), x 16-aligned (vec4 loads); every row through
+/// `gpu_compute::q8::row_gpu_order_w32` (quarter blocks, all 32 threads; the program's exact order).
+pub fn q8_matvec32_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [32, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 {
+        return Err(bad("SIM: q8_matvec32 cere blocuri de 32x1x1, grila 1D"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad("SIM: baza grupurilor (cbuf0 0x0) trebuie sa fie 0"));
+    }
+    let w = l.mem.read_u64(l.cbuf0 + 0x28)?;
+    let x = l.mem.read_u64(l.cbuf0 + 0x30)?;
+    let y = l.mem.read_u64(l.cbuf0 + 0x38)?;
+    let rows = l.mem.read_u32(l.cbuf0 + 0x40)? as u64;
+    let blocks = l.mem.read_u32(l.cbuf0 + 0x44)? as usize;
+    if !(w | y).is_multiple_of(4) || !x.is_multiple_of(16) {
+        return Err(bad("SIM: q8_matvec32 cere W, y aliniate la 4 si x la 16"));
+    }
+    let row_bytes = blocks * gpu_compute::q8::BLOCK_BYTES;
+    let xs = l.mem.read_f32s(x, blocks * gpu_compute::q8::BLOCK)?;
+    let mut row = alloc::vec![0u8; row_bytes];
+    for r in 0..rows.min(l.grid[0] as u64) {
+        l.mem.read(w + r * row_bytes as u64, &mut row)?;
+        let v = gpu_compute::q8::row_gpu_order_w32(&row, &xs);
+        l.mem.write_u32(y + 4 * r, v.to_bits());
+    }
+    Ok(())
+}
+
 /// C-83 I13: `vadd.comp` — cbuf0 a 0x28, b 0x30, c 0x38, n 0x40; blocks of 256.
 pub fn vadd_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     if l.block != [256, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 || l.mem.read_u64(l.cbuf0)? != 0 {

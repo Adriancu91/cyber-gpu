@@ -85,6 +85,8 @@ pub mod probe;
 pub mod push;
 pub mod q8_fused;
 pub mod q8_matvec;
+pub mod q8_matvec32;
+pub mod q8_race;
 pub mod qmd;
 pub mod radix3;
 pub mod read_tour;
