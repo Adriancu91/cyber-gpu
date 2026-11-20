@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 127 — 20 noiembrie 2026, ~22:25–23:00 (ora României), în cloud, FĂRĂ placă — **C-147 punctul 6: studiul „lanțului pe placă” (etapa 3b), doar document**
+
+Pornită de programare. Nicio altă sesiune Cyber-GPU nu lucra (ultimul commit: ~19:50). Nicio comandă nouă pentru noi; din C-147 rămăsese
+doar punctul 6 — luat acum, deci **C-147 e gata în întregime**. Am citit și deciziile lui Adrian din 19:41 / 19:45 (driverul împerecheat cu
+Kronos; o bază + „pachete de calcul” pe model). Detalii: `docs/C-147_PUNCTUL6_LANT.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Regula „trei surse” | NVIDIA `open-gpu-doc` `clc6c0qmd.h`/`clc7c0qmd.h`/`clc7c0.h` (forma; C6C0 = C7C0 la câmpurile lanțului), tinygrad `ops_nv.py` `5e8b5da9` (leagă **fiecare** lansare: `dependent_qmd0` cu `SCHEDULE` + `PREFETCH`), Mesa 26.3.1 NAK (`INVALIDATE_COPY_SCHEDULE`; teste pe placă reală pentru ordine și golirea din QMD) | ÎNDEPLINITĂ pentru formă; comportamentul DEDUS din două surse care se bazează pe el |
+| Ce pune tinygrad și noi nu | `INVALIDATE_SHADER_DATA_CACHE`, `CWD_MEMBAR_TYPE = L1_SYSMEMBAR`, `SM_GLOBAL_CACHING_ENABLE` (și Mesa), `API_VISIBLE_CALL_LIMIT` (și Mesa), texturi, `QMD_GROUP_ID`, prefetch, `SASS_VERSION`; ora fiecărei lansări prin `RELEASE0` din QMD | tabel cu „ne trebuie / nu” |
+| Ce s-ar schimba față de `EachLaunch` | pushbuffer ~18 cuvinte pe simbol în loc de 8 + 12·n; QMD-urile poartă adresa următorului (din lista modelului, deci din fișa KGR1) | DEDUS; câștig −0,1…0,26 ms pe simbol (ca la punctul 7) |
+| Riscuri | date vechi (I14), lanț care nu pornește, **QMD-uri refolosite + câmpurile `HW_ONLY_*` scrise de placă**, orele `kp` | DEDUS; fiecare cu proba ei |
+| Ordinea propusă | treapta 0 doar citire (QMD-ul după un simbol) → 1 câmpurile noi cu `EachLaunch` → 2 golirea doar din QMD → 3 lanțul (forma Mesa) → 3b cursa cu forma tinygrad; `SM_GLOBAL_CACHING` separat | document |
+| Anexă (decizia 19:41) | inventar: mărimile vin din fișă, limitele sunt ale programelor (context ≤ 512, cap ≤ 128, multipli de 32) | DEDUS din căutare |
+| Verificări | `tools/check.sh` (Rust 1.97.0 în acest container): format, clippy `-D warnings`, **614 teste** (neschimbat; 6 ignorate), build no_std | PASS (SIMULARE) |
+| Pe RTX 3070 Ti | nimic | NOT TESTED (P7 doar cu „da”-ul separat al lui Adrian) |
+
+Interfața publică: neschimbată (nicio linie de cod).
+
+**Următorul pas:** nu mai e nicio comandă deschisă pentru noi în afară de C-151 punctul 2 (după ce tabloul merge pe placă). Fără placă,
+de luat doar la cerere: LayerNorm nou (dacă centrul de comandă îl aprobă), `ModelLimits` direct din fișă, treapta 0 a lanțului.
+**Regula 8:** 127 are pas.
+
+---
 ## Sesiunea 126 — 20 noiembrie 2026, ~19:25–20:00 (ora României), în cloud, FĂRĂ placă — **C-147 punctul 5: a doua unealtă NAK + primul program pe circuitele speciale („tensor cores”), în SIMULARE**
 
 Pornită de programare. Nicio altă sesiune Cyber-GPU nu lucra (ultimul commit: 17:00). Nicio comandă nouă pentru noi; din C-147 rămăseseră

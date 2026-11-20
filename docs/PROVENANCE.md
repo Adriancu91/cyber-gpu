@@ -407,3 +407,9 @@ construită din arhiva oficială; ieșirea ei (`tools/nak/out2/*.sm86.sass`) e c
 specificație (nimic copiat): `nvk_physical_device.c` (formele „cooperative matrix”), extensiile Khronos `VK_KHR_cooperative_matrix` /
 `GL_KHR_cooperative_matrix`; articolul Fasi, Higham, Mikaitis, Pranesh (PeerJ CS 2021) pentru ideea ipotezei de adunare. Nicio sursă
 GPL, niciun octet de firmware NVIDIA.
+
+**C-147 punctul 6 (sesiunea 127, 20 nov 2026) — doar studiu, fără cod:** `docs/C-147_PUNCTUL6_LANT.md`. Citite ca specificație (nimic
+copiat, niciun cod scris): NVIDIA `open-gpu-doc` (MIT) commit `9fdf5c40` — `classes/compute/clc6c0qmd.h`, `clc7c0qmd.h`, `clc7c0.h`
+(pozițiile câmpurilor QMD V03_00 și codurile acțiunilor); tinygrad (MIT) commit `5e8b5da9` — `tinygrad/runtime/ops_nv.py` (cum leagă
+lansările cu `dependent_qmd0_*` și ce câmpuri pune în șablonul QMD); Mesa 26.3.1 (MIT) — `src/nouveau/compiler/nak/qmd.rs`,
+`hw_tests.rs`, `hw_runner.rs`, `src/nouveau/vulkan/nvk_cmd_dispatch.c`. Nicio sursă GPL, niciun octet de firmware NVIDIA.
