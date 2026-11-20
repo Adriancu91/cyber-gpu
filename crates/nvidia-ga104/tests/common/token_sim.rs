@@ -80,6 +80,15 @@ pub struct TokenSim<'a> {
     pub launch_bytes: u64,
     /// C-147: every doorbell's launch durations (ns, from its records), in order.
     pub durations: Vec<Vec<u64>>,
+    /// C-147 point 7 (the driver's diet): when set, the pushbuffer words go through this shadow (only the changed
+    /// words are written).
+    pub push_shadow: Option<nvidia_ga104::kronos_fast::WriteShadow>,
+    /// C-147 point 7: `false` = the timestamp records are not zeroed before a submission (the payloads are unique
+    /// per submission, so a stale record cannot pass `analyze_sequence`).
+    pub zero_records: bool,
+    /// C-147 point 7: for every doorbell, (pushbuffer + ring words written, words left out by the shadow, record
+    /// bytes zeroed).
+    pub driver_words: Vec<(u64, u64, u64)>,
 }
 
 impl<'a> TokenSim<'a> {
@@ -213,6 +222,9 @@ impl<'a> TokenSim<'a> {
             shadow: None,
             launch_bytes: 0,
             durations: Vec::new(),
+            push_shadow: None,
+            zero_records: true,
+            driver_words: Vec::new(),
         })
     }
 
@@ -368,11 +380,16 @@ impl TokenIo for TokenSim<'_> {
             }
             qmds.push(cb_va + 256);
         }
-        put_bytes(
-            self.r.mem.writer_mut(),
-            self.records.pa,
-            &vec![0; 16 * (n + 1)],
-        );
+        let zeroed = if self.zero_records {
+            put_bytes(
+                self.r.mem.writer_mut(),
+                self.records.pa,
+                &vec![0; 16 * (n + 1)],
+            );
+            16 * (n as u64 + 1)
+        } else {
+            0
+        };
         let first = self.next_payload;
         self.next_payload += 0x100;
         let mut words = vec![0u32; kd::words(mode, n)];
@@ -381,9 +398,26 @@ impl TokenIo for TokenSim<'_> {
         assert_eq!(pb.len(), kd::words(mode, n));
         let fence = self.records.va + 16 * n as u64;
         let done = (first + n as u32) as u64;
-        self.r
-            .wq
-            .submit_fenced(self.r.mem.writer_mut(), &words, fence, done)?;
+        let counted = match self.push_shadow.as_mut() {
+            None => {
+                self.r
+                    .wq
+                    .submit_fenced(self.r.mem.writer_mut(), &words, fence, done)?;
+                (words.len() as u64 + 3, 0)
+            }
+            Some(sh) => {
+                let mut m =
+                    nvidia_ga104::kronos_fast::ShadowedMemory::new(self.r.mem.writer_mut(), sh);
+                let r = self.r.wq.submit_fenced(&mut m, &words, fence, done);
+                let c = (m.written, m.skipped);
+                if r.is_err() {
+                    sh.forget();
+                }
+                r?;
+                c
+            }
+        };
+        self.driver_words.push((counted.0, counted.1, zeroed));
         let programs: Vec<(&[u8], ProgramFn, Needs)> = self
             .models
             .iter()

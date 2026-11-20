@@ -394,3 +394,8 @@ specificație (nimic copiat sau tradus): driverul NVIDIA 570.144 (MIT): `class/c
 câmpurilor sunt tipărite cu `offsetof` de compilatorul C din antetul NVIDIA (programul de 20 de rânduri nu intră în repo).
 nouveau, seria „GSP telemetry via RUSD” (Mohamed Ahmed, 14 iul 2026, GPL/MIT, nepreluată) — doar citită ca a treia sursă pentru ordine și
 citire; **nicio linie preluată**. Nicio sursă GPL în cod. Niciun octet de firmware NVIDIA citit sau copiat.
+
+**C-147 punctul 7 (sesiunea 125, 20 nov 2026):** `driver_split` (împărțirea timpului din ceasul rândurilor jurnalului), exemplul
+`timpul_driverului`, `kronos_fast::ShadowedMemory` și testul T141 sunt scrise de noi. Surse: doar jurnalele noastre de pe placă (hub
+`rezultate/os-automat/2026-11-20/`, rândurile din test sunt copiate de acolo) și codul OS-ului nostru (`cyber-universe` `7fad533`, citit).
+Nicio sursă externă nouă, nimic GPL, niciun octet de firmware.

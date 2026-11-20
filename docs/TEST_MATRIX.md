@@ -7,6 +7,9 @@
 | T140a | pornire → citire → oprire față de modelul `SimRusd`: valorile (45,5 °C, 210/405 MHz, P8, 21 W), ordinea INIT, interval, mască / mască 0, INIT 0; cititorul `parse_kd` | `cargo test -p nvidia-ga104 --release --test sim_c151_rusd` | conform | conform | PASS (SIMULARE) |
 | T140b | octeții celor 5 comenzi (adresa, `0 / 500 ms`, `0x1b / 0`, `0 / 0`, `0`); clientul și subdispozitivul nostru | `… sim_c151_rusd t140b` | conform | conform | PASS |
 | T140c | `INIT` refuzat → o singură comandă; intervalul refuzat → pagina dată înapoi; fără model → `INVALID_COMMAND` ca rând | `… t140c` | conform | conform | PASS (SIMULARE) |
+| T141a | dieta driverului (C-147 punctul 7): pushbuffer prin `ShadowedMemory` + înregistrări nezerorizate, 6 poziții, lista de 51 și cea lipită de 24: logit-uri, cache-uri și durate identice bit cu bit cu rularea fără dietă; cuvinte scrise pe simbol 623 → 55 și 299 → 28 | `cargo test -p nvidia-ga104 --release --test sim_c147_diet` | conform | conform | PASS (SIMULARE) |
+| T141b | înregistrările rămase de la trimiterea de dinainte nu trec (`analyze_sequence`), `records_seen` corect după o oprire la jumătate | `… sim_c147_diet stale` | conform | conform | PASS |
+| T141c | `driver_split`: ceasul rândurilor, două simboluri din jurnalul os-322 împărțite pe ferestre (fiecare µs numărat o dată), simbolurile lente lăsate deoparte; `ShadowedMemory` (doar cuvintele schimbate, eroarea uită umbra) | `cargo test -p nvidia-ga104 --release --lib driver_split kronos_fast` | conform | conform | PASS |
 | T140d | oprirea refuzată → nota „pagina rămâne rezervată” | `… t140d` | conform | conform | PASS (SIMULARE) |
 | T140e | planul oprit: nimic trimis; planuri greșite refuzate înainte de trimitere | `… t140e` | conform | conform | PASS |
 | T140f | citirea cu marcă de timp: scriere în curs, marcă schimbată, secțiune lipsă, ocupată după 10 încercări; placa fierbinte (motiv termic) | `… t140f` | conform | conform | PASS (SIMULARE) |

@@ -59,6 +59,7 @@ pub mod board_compare;
 pub mod boot;
 pub mod chain;
 pub mod chain_log;
+pub mod driver_split;
 pub mod fb_layout;
 pub mod firmware;
 pub mod flr_reset;

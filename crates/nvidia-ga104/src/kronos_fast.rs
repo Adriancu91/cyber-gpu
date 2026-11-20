@@ -33,6 +33,7 @@ use gpu_core::diag::{Event, Journal, Routine};
 use gpu_core::error::{GpuError, GpuResult};
 
 use crate::chain_log::{VRAM_WINDOW, WORK_DOORBELL};
+use crate::gsp::work_queue::ChannelMemory;
 use crate::vram_window::CONTROL_REGISTERS;
 
 fn bad(why: &'static str) -> GpuError {
@@ -142,6 +143,56 @@ impl WriteShadow {
 
     pub fn known_words(&self) -> usize {
         self.known.iter().filter(|&&k| k).count()
+    }
+}
+
+/// C-147 point 7 (the driver's diet): a [`ChannelMemory`] that sends a word on to `inner` only when the shadow
+/// does not already know that exact value at that address; words outside the shadow's area always go through.
+/// Meant for the work channel's **pushbuffer** during `kronos --gpu`: `WorkQueue::submit_fenced` writes every
+/// token's words at offset 0 of the area (the previous token's stretch is retired before the next one is placed),
+/// and the board only reads the pushbuffer, so between two tokens only the semaphore payloads change. Like
+/// [`WriteShadow`] for the launch slots: only for areas that **only the CPU writes**; after any error the caller
+/// [`WriteShadow::forget`]s. Reads go straight to `inner`.
+pub struct ShadowedMemory<'a, W: ChannelMemory + ?Sized> {
+    pub inner: &'a mut W,
+    pub shadow: &'a mut WriteShadow,
+    /// Words sent on / left out because the shadow already knew them.
+    pub written: u64,
+    pub skipped: u64,
+}
+
+impl<'a, W: ChannelMemory + ?Sized> ShadowedMemory<'a, W> {
+    pub fn new(inner: &'a mut W, shadow: &'a mut WriteShadow) -> Self {
+        ShadowedMemory {
+            inner,
+            shadow,
+            written: 0,
+            skipped: 0,
+        }
+    }
+}
+
+impl<W: ChannelMemory + ?Sized> ChannelMemory for ShadowedMemory<'_, W> {
+    fn write_u32(&mut self, pa: u64, v: u32) -> GpuResult<()> {
+        let bytes = v.to_le_bytes();
+        let inside = self.shadow.index(pa, 4).is_ok();
+        if inside && self.shadow.changes(pa, &bytes)?.is_empty() {
+            self.skipped += 1;
+            return Ok(());
+        }
+        if let Err(e) = self.inner.write_u32(pa, v) {
+            self.shadow.forget();
+            return Err(e);
+        }
+        if inside {
+            self.shadow.remember(pa, &bytes)?;
+        }
+        self.written += 1;
+        Ok(())
+    }
+
+    fn read_u32(&mut self, pa: u64) -> GpuResult<u32> {
+        self.inner.read_u32(pa)
     }
 }
 
@@ -361,6 +412,57 @@ pub const FIGURES: [(&str, &str); 3] = [
 mod tests {
     use super::*;
     use gpu_core::diag::Flush;
+
+    /// A memory that records every write (and can fail one).
+    struct Log(Vec<(u64, u32)>, Option<u64>);
+    impl ChannelMemory for Log {
+        fn write_u32(&mut self, pa: u64, v: u32) -> GpuResult<()> {
+            if self.1 == Some(pa) {
+                return Err(bad("plantat"));
+            }
+            self.0.push((pa, v));
+            Ok(())
+        }
+        fn read_u32(&mut self, _pa: u64) -> GpuResult<u32> {
+            Ok(0)
+        }
+    }
+
+    #[test]
+    fn shadowed_memory_sends_only_changed_words_inside_its_area() {
+        let mut sh = WriteShadow::new(0x1000, 0x40).unwrap();
+        let mut log = Log(Vec::new(), None);
+        {
+            let mut m = ShadowedMemory::new(&mut log, &mut sh);
+            for (i, v) in [7u32, 8, 9].iter().enumerate() {
+                m.write_u32(0x1000 + 4 * i as u64, *v).unwrap();
+            }
+            assert_eq!((m.written, m.skipped), (3, 0));
+            // The next token: only the middle word changed; a word outside the area always goes through.
+            for (i, v) in [7u32, 18, 9].iter().enumerate() {
+                m.write_u32(0x1000 + 4 * i as u64, *v).unwrap();
+            }
+            m.write_u32(0x2000, 7).unwrap();
+            m.write_u32(0x2000, 7).unwrap();
+            assert_eq!((m.written, m.skipped), (6, 2));
+        }
+        assert_eq!(
+            log.0,
+            [
+                (0x1000, 7),
+                (0x1004, 8),
+                (0x1008, 9),
+                (0x1004, 18),
+                (0x2000, 7),
+                (0x2000, 7)
+            ]
+        );
+        // A failed write forgets the shadow: everything is written again next time.
+        log.1 = Some(0x1008);
+        let mut m = ShadowedMemory::new(&mut log, &mut sh);
+        assert!(m.write_u32(0x1008, 10).is_err());
+        assert_eq!(m.shadow.known_words(), 0);
+    }
 
     #[test]
     fn routine_is_the_window_the_invalidate_and_the_doorbell() {
