@@ -1,5 +1,24 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 128 — 21 noiembrie 2026, ~01:25–01:40 (ora României), în cloud, FĂRĂ placă — **oprire scurtă: nimic nou de făcut fără placă**
+
+Pornită de programare. Nicio altă sesiune Cyber-GPU nu lucra (ultimul commit: 20 nov 22:34). De la sesiunea 127: nicio comandă nouă pentru
+noi în `COMENZI.md`, nicio decizie nouă în `DECIZII.md`, niciun jurnal nou de pe placă (ultimul: `os-322`, 20 nov 15:31); sesiunea OS e
+oprită (regula 5, `os-323`). C-147 e gata; din C-151 rămâne doar punctul 2, care așteaptă ca tabloul de bord să meargă întâi pe placă.
+Lucrul „la cerere” (LayerNorm nou, `ModelLimits` din fișă, treapta 0 a lanțului) n-a fost cerut — nu l-am început (regula „nu inventa lucru”).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Verificări | `tools/check.sh` (Rust 1.97.0; ținta `x86_64-unknown-none` instalată din nou în containerul nou): format, clippy `-D warnings`, **614 teste** (6 ignorate), build no_std | PASS (SIMULARE) |
+| CI GitHub | rularea 245 pe `f19f8be` | verde |
+| Pe RTX 3070 Ti | nimic | NOT TESTED |
+
+Interfața publică: neschimbată (nicio linie de cod).
+
+**Următorul pas:** C-151 punctul 2 după ce tabloul merge pe placă; altfel, doar la cerere. **Regula 8:** 128 n-are pas (oprire scurtă,
+nu eșec); 125–127 au avut pas.
+
+---
 ## Sesiunea 127 — 20 noiembrie 2026, ~22:25–23:00 (ora României), în cloud, FĂRĂ placă — **C-147 punctul 6: studiul „lanțului pe placă” (etapa 3b), doar document**
 
 Pornită de programare. Nicio altă sesiune Cyber-GPU nu lucra (ultimul commit: ~19:50). Nicio comandă nouă pentru noi; din C-147 rămăsese
