@@ -189,6 +189,36 @@ pub fn argmax(logits: &[f32]) -> Option<usize> {
     )
 }
 
+/// C-155 point 3: "no token" in the board's argmax result (any logit not finite, or no logit).
+pub const ARGMAX_NONE: u32 = u32::MAX;
+
+/// C-155 point 3: the 4 words the argmax program (`tools/nak/argmax.comp`) writes for `logits`: the index of the
+/// largest logit (the lowest on a tie; [`ARGMAX_NONE`] if any logit is NaN/infinite or there is none — so word 0 is
+/// exactly [`argmax`]), the bits of the largest finite logit (−0.0 written as +0.0; −∞ if none), how many logits are
+/// not finite (by their exponent bits), and n. Compared exactly, subnormal numbers included (the program compares
+/// integer keys of the bits, not floats with FTZ). Picking a maximum does no arithmetic, so this is the program's result for any split of the
+/// elements between threads.
+pub fn argmax_result(logits: &[f32]) -> [u32; 4] {
+    let mut best = f32::NEG_INFINITY;
+    let mut at = ARGMAX_NONE;
+    let mut nonfinite = 0u32;
+    for (i, &v) in logits.iter().enumerate() {
+        if v.to_bits() & 0x7f80_0000 == 0x7f80_0000 {
+            nonfinite += 1;
+        } else if v > best {
+            best = v;
+            at = i as u32;
+        }
+    }
+    let token = if nonfinite == 0 { at } else { ARGMAX_NONE };
+    let bits = if best.to_bits() == 0x8000_0000 {
+        0
+    } else {
+        best.to_bits()
+    };
+    [token, bits, nonfinite, logits.len() as u32]
+}
+
 /// The first logit outside the token tolerance: `(index, gpu, cpu)`.
 pub fn first_logit_outside(got: &[f32], cpu: &[f32]) -> Option<(usize, f32, f32)> {
     (0..got.len().max(cpu.len())).find_map(|i| {
@@ -208,6 +238,33 @@ mod tests {
         assert_eq!(argmax(&[1.0, 3.0, 3.0, 2.0]), Some(1));
         assert_eq!(argmax(&[1.0, f32::NAN]), None);
         assert_eq!(argmax(&[]), None);
+        // C-155 point 3: word 0 of the board's result is `argmax`, on ties, -0.0 = +0.0, NaN, infinities.
+        for v in [
+            &[1.0, 3.0, 3.0, 2.0][..],
+            &[-0.0, 0.0],
+            &[0.0, -0.0, 0.0],
+            &[f32::MIN, f32::MIN],
+            &[2.0, f32::NAN, 5.0],
+            &[f32::INFINITY, 1.0],
+            &[f32::NEG_INFINITY],
+            &[],
+        ] {
+            let r = argmax_result(v);
+            assert_eq!(r[0], argmax(v).map_or(ARGMAX_NONE, |i| i as u32), "{v:?}");
+            assert_eq!(r[3] as usize, v.len());
+        }
+        assert_eq!(
+            argmax_result(&[2.0, f32::NAN, 5.0]),
+            [ARGMAX_NONE, 5.0f32.to_bits(), 1, 3]
+        );
+        assert_eq!(
+            argmax_result(&[]),
+            [ARGMAX_NONE, f32::NEG_INFINITY.to_bits(), 0, 0]
+        );
+        assert_eq!(argmax_result(&[-0.0, 0.0]), [0, 0, 0, 2]);
+        // Subnormals are ordered exactly (no FTZ): the smallest positive one beats 0.
+        let tiny = f32::from_bits(1);
+        assert_eq!(argmax_result(&[0.0, tiny, -tiny])[0], 1);
         assert!(first_logit_outside(&[10.0], &[10.01]).is_none());
         assert!(first_logit_outside(&[10.0], &[10.02]).is_some());
         assert!(first_logit_outside(&[1.0], &[1.0, 2.0]).is_some());

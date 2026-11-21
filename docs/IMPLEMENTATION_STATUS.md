@@ -1,5 +1,37 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 134 — 21 noiembrie 2026, ~12:10–12:35 (ora României), în cloud, FĂRĂ placă — **C-155 punctul 3 (argmax pe placă)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă în `rezultate/` de la 11:25 (punctul 2 al
+cozii nu are ce compara), deci punctul 3 din C-155.
+
+**Programul `argmax`** (`tools/nak/argmax.comp`, Mesa NAK 25.0.7 reconstruit; `layernorm256` ieșit identic): un grup de 256 de fire
+alege simbolul din logit-urile din VRAM și scrie **16 octeți** în RAM (simbolul, cel mai mare logit, câte logit-uri nefinite, n) în
+loc de copia de 64 KiB + alegerea pe procesor (os-324: 47 + 85 µs). Prima compilare folosea comparații de numere și NAK le-a pus
+cu FTZ (numerele subnormale = 0 → alt simbol decât procesorul în cazuri-limită); am trecut pe **chei întregi din biți**: 0 `fsetp`,
+ordinea exactă a procesorului. 493 de instrucțiuni, 7 888 B, 25 de registre, 96 B partajată, o barieră, SHA-256 `4d67cd34…0572`.
+
+Adăugat (doar adăugări): `argmax::{ARGMAX, ARGMAX_SHA256, REGISTERS, BLOCK, SHARED, RESULT_BYTES, launch, ArgmaxResult}`,
+`kronos_layer::{Prog::Argmax, PROGRAMS_ARGMAX}`, `kronos_gen::{TopOutput, TopRunner, Generation::{accept_top, run_top}}`,
+`gpu_compute::model::{argmax_result, ARGMAX_NONE}`, `gpu_sim::cmdproc::{argmax_on_cpu, ARGMAX_NEEDS}`. `kronos_token::work_list`
+refuză acum și `LayerNorm256` / `Argmax` (`token.comp` nu le are; OS-ul nu folosește `work_list` — verificat). Nota pentru OS:
+`integration/cyber-universe/C-155_argmax-pe-placa.md` (proba: copia + argmax în același simbol, prag 0; apoi doar argmax).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| T145a | copie + argmax în același simbol, 16 poziții, `EachLaunch` și `PerLayer`: cuvintele = oracolul, simbolul = procesorul | PASS (SIMULARE) |
+| T145b | doar argmax: `run_top` = aceleași simboluri ca `run` cu copie și verificare; logit-urile nu ajung în RAM | PASS (SIMULARE) |
+| T145c | algoritmul programului refăcut fir cu fir = oracolul (n 1…50 257; egalități, −0/+0, NaN, ±∞, subnormale) | PASS |
+| T145d–g | octeții = dump-ul NAK, QMD; NaN → fără simbol; program plantat greșit → prins; umplutura → eroare | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy `-D warnings`, **636 de teste**, build no_std | PASS |
+| Pe RTX 3070 Ti | nimic | NOT TESTED |
+
+Estimare (DEDUS): ~130 µs mai puțin pe simbol (~4,08 → ~3,95 ms); câștig mic, rostul e etapa 5 (simbolul rămâne pe placă).
+
+**Următorul pas:** C-155 punctul 4 — cursa înmulțirilor (etapa 4: fc/proj/qkv) cu cifrele os-322 ca bază (sau punctul 2 al cozii,
+dacă apare un test nou pe placă).
+
+---
 ## Sesiunea 133 — 21 noiembrie 2026, ~11:15–11:24 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2b (pozițiile lente din os-324)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Testul `os-324` (dieta, 11:01) a apărut în `rezultate/`, iar centrul de

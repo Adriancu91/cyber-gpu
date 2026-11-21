@@ -9,15 +9,14 @@
 use gpu_core::diag::Journal;
 use gpu_core::error::{GpuError, GpuResult};
 use gpu_sim::cmdproc::{
-    ATTENTION_NEEDS, LAYERNORM_NEEDS, LAYERNORM256_NEEDS, Needs, ProgramFn, Q8_FUSED_NEEDS,
-    Q8_MATVEC_NEEDS, attention_on_cpu, copy_b128_on_cpu, embed_on_cpu, gelu_on_cpu,
-    layernorm_on_cpu, layernorm256_on_cpu, q8_fused_on_cpu, q8_matvec_on_cpu, vadd_on_cpu,
+    ARGMAX_NEEDS, ATTENTION_NEEDS, LAYERNORM_NEEDS, LAYERNORM256_NEEDS, Needs, ProgramFn,
+    Q8_FUSED_NEEDS, Q8_MATVEC_NEEDS, argmax_on_cpu, attention_on_cpu, copy_b128_on_cpu,
+    embed_on_cpu, gelu_on_cpu, layernorm_on_cpu, layernorm256_on_cpu, q8_fused_on_cpu,
+    q8_matvec_on_cpu, vadd_on_cpu,
 };
 use nvidia_ga104::gsp::golden::{GoldenMemory, Mapping};
 use nvidia_ga104::kronos_diag::{self as kd, SeqMode, TokenIo, Way};
-use nvidia_ga104::kronos_layer::{
-    self as kl, Launch, LayerVas, PROGRAMS_FUSED_LN, Prog, WeightVas,
-};
+use nvidia_ga104::kronos_layer::{self as kl, Launch, LayerVas, PROGRAMS_ARGMAX, Prog, WeightVas};
 use nvidia_ga104::kronos_model::{self as km, ModelVas, OwnedModel};
 use nvidia_ga104::mmu::SysMapping;
 use nvidia_ga104::push::PushBuf;
@@ -36,8 +35,8 @@ pub const NONE: Needs = Needs {
 };
 
 /// The nine programs with their models (what `gpu-sim` runs for each; C-147: + the glued `q8_fused`; C-155: + the
-/// new `layernorm256`).
-pub const MODELS: [(Prog, ProgramFn, Needs); 9] = [
+/// new `layernorm256`; C-155 point 3: + `argmax`).
+pub const MODELS: [(Prog, ProgramFn, Needs); 10] = [
     (Prog::Copy, copy_b128_on_cpu, NONE),
     (Prog::Q8Matvec, q8_matvec_on_cpu, Q8_MATVEC_NEEDS),
     (Prog::Vadd, vadd_on_cpu, NONE),
@@ -47,6 +46,7 @@ pub const MODELS: [(Prog, ProgramFn, Needs); 9] = [
     (Prog::Embed, embed_on_cpu, NONE),
     (Prog::Q8Fused, q8_fused_on_cpu, Q8_FUSED_NEEDS),
     (Prog::LayerNorm256, layernorm256_on_cpu, LAYERNORM256_NEEDS),
+    (Prog::Argmax, argmax_on_cpu, ARGMAX_NEEDS),
 ];
 
 fn f32s(v: &[f32]) -> Vec<u8> {
@@ -112,10 +112,11 @@ impl<'a> TokenSim<'a> {
         upload: Option<u64>,
     ) -> GpuResult<Self> {
         let e = m.shape.e;
-        let n = km::launches_per_token(m.layers.len()) + 1;
+        // + the copy of the logits down and the argmax (C-155 point 3).
+        let n = km::launches_per_token(m.layers.len()) + 2;
         let mut r = rig_with_push(push);
         r.stale_line = stale_line;
-        let progs: Vec<(Prog, Mapping)> = PROGRAMS_FUSED_LN
+        let progs: Vec<(Prog, Mapping)> = PROGRAMS_ARGMAX
             .iter()
             .map(|&p| {
                 let mm = r.mem.alloc_mapped(p.code().len() as u64, 0x1000).unwrap();
@@ -196,7 +197,7 @@ impl<'a> TokenSim<'a> {
         let logit_bytes = (4 * m.vocab as u64).next_multiple_of(16);
         let host = r
             .mem
-            .alloc_sys_mapped(&dma_pages(3, logit_bytes.div_ceil(0x1000) as usize))
+            .alloc_sys_mapped(&dma_pages(3, (logit_bytes + 16).div_ceil(0x1000) as usize))
             .unwrap();
         let vas = ModelVas {
             emb_tok: at(emb_tok),
@@ -267,6 +268,18 @@ impl<'a> TokenSim<'a> {
         sys_write(&mut self.r.sys, &self.host, &vec![0xee; bytes as usize]);
         kd::send_token(self, &m.weights(), &vas, token, pos, way.into(), &[down])?;
         Ok(self.ram_logits())
+    }
+
+    /// C-155 point 3: where the argmax result goes in RAM (right after the logits' buffer, 16-aligned).
+    pub fn argmax_va(&self) -> u64 {
+        self.host.va + (4 * self.m.vocab as u64).next_multiple_of(16)
+    }
+
+    /// C-155 point 3: the 16 bytes at [`Self::argmax_va`] now.
+    pub fn ram_argmax(&self) -> nvidia_ga104::argmax::ArgmaxResult {
+        let off = (4 * self.m.vocab as u64).next_multiple_of(16);
+        let all = sys_read(&self.r.sys, &self.host, off + 16);
+        nvidia_ga104::argmax::ArgmaxResult::from_bytes(&all[off as usize..]).unwrap()
     }
 
     /// What is in the RAM buffer of the logits now.

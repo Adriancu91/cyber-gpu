@@ -213,3 +213,13 @@ să nu se schimbe. `nak_dump_cm.c` cere în plus `VK_KHR_cooperative_matrix` și
 | Ieșire | 286 de instrucțiuni, **4 576 octeți**, **25 de registre**, memorie partajată 32 B, o barieră |
 | SHA-256 `layernorm256.sm86.sass` | `a407dd68507f51d30a8f8ecd0853f8a7d95d9d4aa23a6cdd5644b6fe5b38334d` |
 | Aritmetica (citită din cod) | prima valoare a firului intră fără rotunjire (`sel`), restul `fadd.ftz`; media nu se rotunjește niciodată: abaterea e un singur `ffma.ftz` d = (−sumă)·inv_n + x; d₀² cu `fmul.ftz`, apoi `ffma.ftz`; `mufu.rsq`; y = `ffma.ftz`(`fmul.ftz`(d, inv), g, b). Oracolul: `gpu_compute::layer::layernorm_gpu256` |
+
+## Argmax pe placă (21 nov 2026, sesiunea 134, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh argmax` (Mesa 25.0.7 reconstruit în cloud; `layernorm256` a ieșit **identic**, aceeași sumă).
+
+| Ce | Valoare |
+|---|---|
+| Program | `argmax.comp`: 256 de fire, runde de 8 citiri pornite una după alta (indicele de după capăt citește elementul n−1, nefolosit), cheie întreagă din biți (−0 → +0), `shfl.bfly` 16…1, 8 alegeri prin memoria partajată, `bar.sync`, firul 0 scrie 16 octeți |
+| Ieșire | 493 de instrucțiuni, **7 888 octeți**, **25 de registre**, memorie partajată 96 B, o barieră; argumente: logit-uri 0x28, rezultat 0x30, n 0x38 |
+| SHA-256 `argmax.sm86.sass` | `4d67cd3495e67cbb63a598e2ad4298925bed51d9660b65094c05586f0cb80572` |
+| De ce chei întregi | prima variantă (comparații de numere) a ieșit cu `fsetp.*.ftz`: numerele subnormale ar fi fost luate drept 0, deci alt simbol decât procesorul în cazuri-limită. Cu chei: 0 `fsetp` în cod, ordinea exactă a procesorului. Oracolul: `gpu_compute::model::argmax_result` |

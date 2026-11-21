@@ -44,6 +44,9 @@ pub enum Prog {
     /// C-155 point 2: the new LayerNorm (`layernorm256.comp`, [`crate::layernorm256`]): 256 threads, one read of
     /// `x`; the same cbuf as [`Prog::LayerNorm`]. Used only by [`token_launches_fused_ln`].
     LayerNorm256,
+    /// C-155 point 3: the greedy token on the board (`argmax.comp`, [`crate::argmax`]): one block of 256, a 16-byte
+    /// result instead of the copy of the logits. Appended after a token's list by the caller, never part of it.
+    Argmax,
 }
 
 pub const PROGRAMS: [Prog; 7] = [
@@ -69,6 +72,21 @@ pub const PROGRAMS_FUSED_LN: [Prog; 9] = [
     Prog::Embed,
     Prog::Q8Fused,
     Prog::LayerNorm256,
+];
+
+/// C-155 point 3: [`PROGRAMS_FUSED_LN`] + [`Prog::Argmax`] — what must be in VRAM for a token whose logits stay on
+/// the board (the argmax launch appended after the list).
+pub const PROGRAMS_ARGMAX: [Prog; 10] = [
+    Prog::Copy,
+    Prog::Q8Matvec,
+    Prog::Vadd,
+    Prog::LayerNorm,
+    Prog::Attention,
+    Prog::Gelu,
+    Prog::Embed,
+    Prog::Q8Fused,
+    Prog::LayerNorm256,
+    Prog::Argmax,
 ];
 
 pub const PROGRAMS_FUSED: [Prog; 8] = [
@@ -100,6 +118,7 @@ impl Prog {
             Prog::Embed => EMBED,
             Prog::Q8Fused => crate::q8_fused::Q8_FUSED,
             Prog::LayerNorm256 => crate::layernorm256::LAYERNORM256,
+            Prog::Argmax => crate::argmax::ARGMAX,
         }
     }
 
@@ -108,6 +127,7 @@ impl Prog {
         match self {
             Prog::Q8Fused => crate::q8_fused::REGISTERS,
             Prog::LayerNorm256 => crate::layernorm256::REGISTERS,
+            Prog::Argmax => crate::argmax::REGISTERS,
             _ => 19,
         }
     }
@@ -115,7 +135,12 @@ impl Prog {
     /// Threads per block (`local_size_x`).
     pub fn block(self) -> u32 {
         match self {
-            Prog::Copy | Prog::Vadd | Prog::Gelu | Prog::Embed | Prog::LayerNorm256 => 256,
+            Prog::Copy
+            | Prog::Vadd
+            | Prog::Gelu
+            | Prog::Embed
+            | Prog::LayerNorm256
+            | Prog::Argmax => 256,
             Prog::Q8Matvec | Prog::LayerNorm | Prog::Attention | Prog::Q8Fused => 32,
         }
     }
@@ -124,6 +149,9 @@ impl Prog {
     pub fn shared(self) -> Option<SharedMemory> {
         if self == Prog::LayerNorm256 {
             return Some(crate::layernorm256::SHARED);
+        }
+        if self == Prog::Argmax {
+            return Some(crate::argmax::SHARED);
         }
         let bytes = match self {
             Prog::Q8Matvec | Prog::LayerNorm | Prog::Q8Fused => 128,

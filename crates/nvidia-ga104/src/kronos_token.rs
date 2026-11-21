@@ -57,7 +57,9 @@ pub fn op_number(p: Prog) -> u32 {
         Prog::Embed => 6,
         // C-147: `token.comp` has no such operation; `work_list` refuses it.
         Prog::Q8Fused => 7,
+        // C-155: nor these two; `work_list` refuses them as well.
         Prog::LayerNorm256 => 8,
+        Prog::Argmax => 9,
     }
 }
 
@@ -71,6 +73,11 @@ pub fn work_list(launches: &[Launch]) -> GpuResult<Vec<u8>> {
     for l in launches {
         if l.prog == Prog::Q8Fused {
             return Err(bad("lista de lucru: token.comp nu are programul q8_fused"));
+        }
+        if matches!(l.prog, Prog::LayerNorm256 | Prog::Argmax) {
+            return Err(bad(
+                "lista de lucru: token.comp nu are programele layernorm256 si argmax",
+            ));
         }
         if l.cbuf[..CBUF_LIST].iter().any(|&b| b != 0) || l.grid == 0 {
             return Err(bad(

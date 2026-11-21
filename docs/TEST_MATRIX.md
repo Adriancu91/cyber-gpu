@@ -1,5 +1,18 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 134 (21 nov 2026, ~12:10–13:10, cloud, fără placă) — C-155 punctul 3: argmax pe placă, SIMULARE
+
+| ID | Test | Comandă | Așteptat | Obținut | Stare |
+|---|---|---|---|---|---|
+| T145a | proba: lista lipită-ln + dietă + copia logit-urilor + argmax în același simbol, 16 poziții, `EachLaunch` și `PerLayer`: cele 4 cuvinte = `argmax_result` al logit-urilor copiate, simbolul = argmax-ul procesorului, oracolul trece | `cargo test -p nvidia-ga104 --release --test sim_c155_argmax` | conform | conform | PASS (SIMULARE) |
+| T145b | viteza maximă: doar argmax (fără copie), `Generation::run_top` = aceleași simboluri ca `run` cu copie + verificare; bufferul logit-urilor rămâne umplutura; o lansare mai puțin pe simbol | `… t145b` | conform | conform | PASS (SIMULARE) |
+| T145c | algoritmul programului (256 fire, runde de 8, fluture xor 16…1, 8 alegeri) refăcut pe procesor = `argmax_result`, n de la 1 la 50 257, egalități, −0/+0, NaN, ±∞, subnormale, −FLT_MAX | `… t145c` | conform | conform | PASS |
+| T145d | octeții = dump-ul NAK (SHA-256), `shfl` + `bar`, QMD 256 fire / 96 B / o barieră; `work_list` refuză argmax-ul | `… t145d` | conform | conform | PASS |
+| T145e | NaN pus în logit-uri → cuvântul 0 = `0xffffffff`, 1 nefinit, oprire `LogitiNefiniti` | `… t145e` | conform | conform | PASS (SIMULARE) |
+| T145f | program plantat care nu scrie → `Eroare` la poziția 0, niciun simbol; program „cu unu în plus” → prins de proba cu copie | `… t145f` | conform | conform | PASS (SIMULARE) |
+| T145g | umplutura `0xEE`, alt n → eroare, nu simbol | `… t145g` | conform | conform | PASS |
+| — | pe RTX 3070 Ti | — | — | — | NOT TESTED |
+
 ## Rezultate — sesiunea 126 (20 nov 2026, ~19:25–20:00, cloud, fără placă) — C-147 punctul 5: circuitele speciale (tensor cores), SIMULARE
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |

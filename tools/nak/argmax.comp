@@ -1,0 +1,112 @@
+// C-155 point 3: the argmax on the board. One block of 256 threads (8 warps) finds the greedy token in the n logits
+// and writes ONE 16-byte result (4 words) where the driver says (host RAM): the OS reads 16 bytes instead of 4·n.
+//
+// The result, word by word:
+//   [0] the index of the largest logit, the LOWEST index on a tie (`gpu_compute::model::argmax`);
+//       0xffffffff if any logit is NaN or infinite (or n == 0) — then there is no token;
+//   [1] the bits of that largest logit (the largest finite one, -0.0 written as +0.0; -inf bits if none);
+//   [2] how many logits are NaN or infinite (a finite test on the bits, not on float compares);
+//   [3] n, as the program read it.
+// Exactness: picking the largest of a set is order-free if equal values are broken by the lower index, so the
+// result does not depend on which thread saw which element: it is exactly the CPU argmax (no rounding anywhere).
+// -0.0 and +0.0 compare equal, as on the CPU.
+// The comparisons are on integer keys made from the bits, not float compares: NAK compiles float compares with
+// FTZ (`fsetp.*.ftz`: subnormal numbers taken as 0), the CPU does not; the key orders every finite float exactly
+// as the CPU does (subnormals included), with -0.0 turned into +0.0 first.
+//
+// Shape: thread t looks at elements t, t+256, t+512, ... in rounds of 8 (8 loads issued back to back, no branch around
+// them: an index past the end loads element n-1, never used); then a butterfly inside each warp (shuffle xor 16..1),
+// lane 0 of each warp writes its pick to shared memory, one barrier, thread 0 combines the 8 picks in order and writes.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) writeonly buffer Out { uvec4 v[]; };
+layout(push_constant) uniform Args { In logits; Out res; uint n; } args;
+shared uint pk[8];
+shared uint pi[8];
+shared uint pc[8];
+
+const uint NONE = 0xffffffffu;
+
+// The order key of a finite float: unsigned order of keys = the float order; -0.0 has the key of +0.0. Key 0 is
+// below every finite float (the smallest, -FLT_MAX, has key 0x00800000): "nothing seen yet".
+uint key_of(float f) {
+    uint b = floatBitsToUint(f);
+    if (b == 0x80000000u) {
+        b = 0u;
+    }
+    return (b & 0x80000000u) != 0u ? ~b : (b | 0x80000000u);
+}
+
+// The float bits of a key (key 0 = nothing seen: -inf).
+uint bits_of(uint k) {
+    if (k == 0u) {
+        return 0xff800000u;
+    }
+    return (k & 0x80000000u) != 0u ? (k & 0x7fffffffu) : ~k;
+}
+
+// true if (k2, i2) beats (k1, i1): larger value, or the same value at a lower index.
+bool beats(uint k2, uint i2, uint k1, uint i1) {
+    return k2 > k1 || (k2 == k1 && i2 < i1);
+}
+
+void main() {
+    uint t = gl_LocalInvocationID.x;
+    uint n = args.n;
+    uint bk = 0u; // nothing seen yet: every finite logit beats it
+    uint bi = NONE;
+    uint cnt = 0u;
+    for (uint base = 0u; base < n; base += 2048u) {
+        float xv[8];
+        for (uint k = 0u; k < 8u; k++) {
+            xv[k] = args.logits.v[min(base + t + 256u * k, n - 1u)];
+        }
+        for (uint k = 0u; k < 8u; k++) {
+            uint i = base + t + 256u * k;
+            if (i < n) {
+                if ((floatBitsToUint(xv[k]) & 0x7f800000u) == 0x7f800000u) {
+                    cnt += 1u;
+                } else {
+                    uint kk = key_of(xv[k]);
+                    if (kk > bk) { // the indices of one thread grow: strict > keeps the lowest
+                        bk = kk;
+                        bi = i;
+                    }
+                }
+            }
+        }
+    }
+    for (uint s = 16u; s > 0u; s >>= 1u) {
+        uint ok = subgroupShuffleXor(bk, s);
+        uint oi = subgroupShuffleXor(bi, s);
+        cnt += subgroupShuffleXor(cnt, s);
+        if (beats(ok, oi, bk, bi)) {
+            bk = ok;
+            bi = oi;
+        }
+    }
+    if ((t & 31u) == 0u) {
+        pk[t >> 5u] = bk;
+        pi[t >> 5u] = bi;
+        pc[t >> 5u] = cnt;
+    }
+    barrier();
+    if (t == 0u) {
+        uint rk = pk[0];
+        uint ri = pi[0];
+        uint rc = pc[0];
+        for (uint w = 1u; w < 8u; w++) {
+            if (beats(pk[w], pi[w], rk, ri)) {
+                rk = pk[w];
+                ri = pi[w];
+            }
+            rc += pc[w];
+        }
+        args.res.v[0] = uvec4(rc == 0u ? ri : NONE, bits_of(rk), rc, n);
+    }
+}

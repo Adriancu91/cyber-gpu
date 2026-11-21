@@ -57,6 +57,22 @@ pub trait TokenRunner {
     fn run_token(&mut self, token: usize, pos: usize) -> GpuResult<TokenOutput>;
 }
 
+/// C-155 point 3: what one token's run gave back when the board picked the token itself (the argmax launch,
+/// [`crate::argmax`]): the 16 bytes it wrote and the board's clock, as in [`TokenOutput`]. No logits: they stayed
+/// in VRAM.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TopOutput {
+    pub result: crate::argmax::ArgmaxResult,
+    pub start_ns: u64,
+    pub end_ns: u64,
+    pub busy_ns: u64,
+}
+
+/// C-155 point 3: [`TokenRunner`] for a token whose argmax runs on the board.
+pub trait TopRunner {
+    fn run_top(&mut self, token: usize, pos: usize) -> GpuResult<TopOutput>;
+}
+
 /// The CPU engine's logits for the same (token, position), to judge the GPU's against (optional).
 pub trait TokenCheck {
     fn cpu_logits(&mut self, token: usize, pos: usize) -> GpuResult<Vec<f32>>;
@@ -288,10 +304,15 @@ impl Generation {
                 },
             }
         }
-        self.first_ns.get_or_insert(out.start_ns);
-        self.last_ns = out.end_ns;
-        self.busy_ns += out.busy_ns;
-        self.per_token.push(out.end_ns - out.start_ns);
+        self.advance(top, out.start_ns, out.end_ns, out.busy_ns)
+    }
+
+    /// The common end of [`Self::accept`] and [`Self::accept_top`]: the clock, the token, the stop.
+    fn advance(&mut self, top: usize, start_ns: u64, end_ns: u64, busy_ns: u64) -> Option<&Stop> {
+        self.first_ns.get_or_insert(start_ns);
+        self.last_ns = end_ns;
+        self.busy_ns += busy_ns;
+        self.per_token.push(end_ns - start_ns);
         self.pos += 1;
         if self.pos >= self.seq.len() {
             self.seq.push(top);
@@ -307,6 +328,48 @@ impl Generation {
             }
         }
         self.stop.as_ref()
+    }
+
+    /// C-155 point 3: [`Self::accept`] for a token picked on the board: the same clock checks and stops, the token
+    /// from [`crate::argmax::ArgmaxResult::token`] (a result that is not this launch's = `Stop::Eroare`, a logit
+    /// not finite = `Stop::LogitiNefiniti`). There are no logits, so no CPU check here: the check runs are the ones
+    /// with the copy of the logits ([`Self::accept`]).
+    pub fn accept_top(&mut self, out: GpuResult<TopOutput>) -> Option<&Stop> {
+        let Some((_, pos)) = self.next() else {
+            return self.stop.as_ref();
+        };
+        let out = match out {
+            Ok(o) => o,
+            Err(err) => {
+                self.end(Stop::Eroare { pos, err });
+                return self.stop.as_ref();
+            }
+        };
+        if out.end_ns < out.start_ns || out.start_ns < self.last_ns {
+            self.end(Stop::CeasInapoi { pos });
+            return self.stop.as_ref();
+        }
+        let top = match out.result.token(self.plan.vocab) {
+            Err(err) => {
+                self.end(Stop::Eroare { pos, err });
+                return self.stop.as_ref();
+            }
+            Ok(None) => {
+                self.end(Stop::LogitiNefiniti { pos });
+                return self.stop.as_ref();
+            }
+            Ok(Some(t)) => t,
+        };
+        self.advance(top, out.start_ns, out.end_ns, out.busy_ns)
+    }
+
+    /// C-155 point 3: [`Self::run`] with the token picked on the board, no check; stops at the first error.
+    pub fn run_top<R: TopRunner + ?Sized>(&mut self, r: &mut R) -> &Stop {
+        while let Some((tok, pos)) = self.next() {
+            let out = r.run_top(tok, pos);
+            self.accept_top(out);
+        }
+        self.stop.as_ref().unwrap_or(&Stop::Gata)
     }
 
     /// Runs to the end: one `run_token` per position, the check (if any) after each; stops at the first error.

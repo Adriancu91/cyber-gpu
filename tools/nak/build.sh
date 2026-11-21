@@ -13,6 +13,7 @@
 #   sh tools/nak/build.sh q8_fused       # C-147 step 2: q8_matvec + bias / residual / GELU / K-V copy (session 120)
 #   sh tools/nak/build.sh q8_matvec32    # C-147 step 3: q8_matvec with all 32 threads + 128-bit x loads (session 121)
 #   sh tools/nak/build.sh layernorm256   # C-155 point 2: LayerNorm with 256 threads, one read of x (session 132)
+#   sh tools/nak/build.sh argmax         # C-155 point 3: the greedy token on the board, 16-byte result (session 134)
 #   sh tools/nak/build.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): apt install glslang-tools spirv-tools libvulkan-dev libdrm-dev
@@ -71,6 +72,9 @@ q8_matvec32)
 layernorm256)
     exec sh "$0" kernel layernorm256 44
     ;;
+argmax)
+    exec sh "$0" kernel argmax 20
+    ;;
 kernel)
     NAME=${2:?nume}; PUSH=${3:?octeti push constants}
     OUT=$HERE/out; TMP=$(mktemp -d); mkdir -p "$OUT"
@@ -95,6 +99,6 @@ kernel)
     rm -rf "$TMP"
     ;;
 *)
-    echo "usage: $0 mesa|add64|matmul_naive|matmul_coalesced|matmul_smem|matmul_1d|matmul_2d|matmul_vec4|q8_fused|q8_matvec32|layernorm256|kernel <nume> <octeti>" >&2; exit 2
+    echo "usage: $0 mesa|add64|matmul_naive|matmul_coalesced|matmul_smem|matmul_1d|matmul_2d|matmul_vec4|q8_fused|q8_matvec32|layernorm256|argmax|kernel <nume> <octeti>" >&2; exit 2
     ;;
 esac

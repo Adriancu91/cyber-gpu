@@ -1488,6 +1488,32 @@ pub fn layernorm256_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// C-155 point 3: what `argmax` needs: 96 bytes of shared memory (8 warp picks) and one hardware barrier.
+pub const ARGMAX_NEEDS: Needs = Needs {
+    shared_bytes: 96,
+    barriers: 1,
+};
+
+/// C-155 point 3: `argmax.comp` — logits 0x28, result 0x30 (16-aligned), n 0x38; one block of 256. Writes the 4
+/// words of `gpu_compute::model::argmax_result` (the program's result for any split of the elements: a maximum
+/// with the lower index on ties needs no arithmetic) at the result address.
+pub fn argmax_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [256, 1, 1] || l.grid != [1, 1, 1] {
+        return Err(bad("SIM: argmax cere un bloc de 256x1x1"));
+    }
+    let logits = l.mem.read_u64(l.cbuf0 + 0x28)?;
+    let res = l.mem.read_u64(l.cbuf0 + 0x30)?;
+    let n = l.mem.read_u32(l.cbuf0 + 0x38)? as usize;
+    if !logits.is_multiple_of(4) || !res.is_multiple_of(16) {
+        return Err(bad("SIM: argmax cu adrese nealiniate"));
+    }
+    let words = gpu_compute::model::argmax_result(&l.mem.read_f32s(logits, n)?);
+    for (i, w) in words.iter().enumerate() {
+        l.mem.write_u32(res + 4 * i as u64, *w);
+    }
+    Ok(())
+}
+
 /// C-83 I13: `layernorm.comp` — x 0x28, g 0x30, b 0x38, y 0x40, n 0x48, inv_n 0x4c, eps 0x50; one block of 32.
 pub fn layernorm_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     if l.block != [32, 1, 1] || l.grid != [1, 1, 1] {
