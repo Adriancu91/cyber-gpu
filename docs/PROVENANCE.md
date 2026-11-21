@@ -441,3 +441,11 @@ Datele de test `crates/gpu-compute/tests/date/pas_de_aur_mic/` = copia exactă a
 greutăți din sămânța 1132, fără date personale); SHA-256 al fiecărui fișier verificat față de `reteta.json` la copiere (198/198),
 `reteta.json` = `5e3c5824…e3a8`. Nimic copiat din PyTorch, nimic GPL, niciun octet de firmware NVIDIA.
 
+
+### C-160 punctul 4 — `mm_train` (sesiunea 142)
+`tools/nak/mm_train.comp`, `crates/nvidia-ga104/src/mm_train.rs`, `gpu_sim::cmdproc::mm_train_on_cpu`,
+`gpu_compute::reference::matmul_t_fma_ftz`, testul `crates/nvidia-ga104/tests/sim_mm_train.rs`: scrise de noi, după propriul nostru
+`matmul_smem.comp` (ideea plăcilor în memoria partajată: siboehm SGEMM_CUDA, MIT, doar ideea). Formele celor trei produse ale unui strat
+`Linear` (Y = X·Wᵀ + b, dX = dY·W, dW = dYᵀ·X) sunt formulele standard (documentația PyTorch `Linear`, BSD). Marginea de eroare a unui lanț
+de FMA în f32, γ_K ≈ K·2⁻²⁴·Σ|aᵢbᵢ|: Higham, „Accuracy and Stability of Numerical Algorithms”, cap. 3. Binarul: Mesa NAK 25.0.7 (MIT),
+compilat pe gazdă. Nimic GPL, niciun octet de firmware NVIDIA.

@@ -282,7 +282,8 @@ fn gelu_and_grad(u: f64) -> (f64, f64) {
 // ---------------------------------------------------------------- building blocks
 
 /// y[r, o] = Σ_k x[r, k]·w[o, k] + b[o]  (PyTorch `Linear`: weight [out, in]).
-fn linear(
+/// Public since C-160 point 4: the f64-accumulated oracle of the board's training matmul (`mm_train`).
+pub fn linear(
     x: &[f32],
     rows: usize,
     k_in: usize,
@@ -309,8 +310,9 @@ fn linear(
 }
 
 /// Backward of [`linear`]: returns dx; writes dW (and db) — the sums over rows in f64.
+/// Public since C-160 point 4 (oracle of `mm_train`'s dX = dY·W and dW = dYᵀ·X).
 #[allow(clippy::too_many_arguments)]
-fn linear_back(
+pub fn linear_back(
     dy: &[f32],
     x: &[f32],
     rows: usize,

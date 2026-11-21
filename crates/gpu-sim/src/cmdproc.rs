@@ -978,6 +978,102 @@ pub fn matmul_smem_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// C-160 point 4: what `tools/nak/out/mm_train.sm86.sass` needs — the same two
+/// 16×16 f32 tiles and one barrier as step 3.
+pub const MM_TRAIN_NEEDS: Needs = MATMUL_SMEM_NEEDS;
+
+/// `mm_train` flags (cbuf0 0x54): A stored transposed, B stored transposed, add bias.
+pub const MM_TRAIN_TA: u32 = 1;
+pub const MM_TRAIN_TB: u32 = 2;
+pub const MM_TRAIN_BIAS: u32 = 4;
+
+/// The CPU stand-in for C-160 point 4's training matmul (`mm_train.sm86.sass`):
+/// `C = op(A)·op(B) (+ bias)`, the three products of a `Linear` layer
+/// (forward NT + bias, dX = NN, dW = TN). It follows the kernel's algorithm
+/// like [`matmul_smem_on_cpu`] (tiles of op(A) and op(B) filled as the
+/// threads would, zeros outside, `ffma.ftz` chain over min(16, K − t)
+/// entries), then `fadd.ftz` of `bias[col]`. cbuf0: a/b/c/bias at
+/// 0x28/0x30/0x38/0x40, m/n/k/flags at 0x48/0x4c/0x50/0x54 (NAK dump).
+/// Unknown flag bits are refused: the program would ignore them, a caller
+/// that sets them has a bug.
+pub fn mm_train_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    const T: usize = 16;
+    if l.block != [16, 16, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: mm_train cere blocuri de 16x16x1"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let a = l.mem.read_u64(l.cbuf0 + 0x28)?;
+    let b = l.mem.read_u64(l.cbuf0 + 0x30)?;
+    let c = l.mem.read_u64(l.cbuf0 + 0x38)?;
+    let bias_va = l.mem.read_u64(l.cbuf0 + 0x40)?;
+    let m = l.mem.read_u32(l.cbuf0 + 0x48)? as usize;
+    let n = l.mem.read_u32(l.cbuf0 + 0x4c)? as usize;
+    let k = l.mem.read_u32(l.cbuf0 + 0x50)? as usize;
+    let flags = l.mem.read_u32(l.cbuf0 + 0x54)?;
+    if flags & !(MM_TRAIN_TA | MM_TRAIN_TB | MM_TRAIN_BIAS) != 0 {
+        return Err(bad("SIM: mm_train: biti de optiuni necunoscuti"));
+    }
+    let (ta, tb) = (flags & MM_TRAIN_TA != 0, flags & MM_TRAIN_TB != 0);
+    let x = l.mem.read_f32s(a, m * k)?;
+    let y = l.mem.read_f32s(b, k * n)?;
+    let bias = if flags & MM_TRAIN_BIAS != 0 {
+        Some(l.mem.read_f32s(bias_va, n)?)
+    } else {
+        None
+    };
+    let op_a = |r: usize, p: usize| if ta { x[p * m + r] } else { x[r * k + p] };
+    let op_b = |p: usize, col: usize| if tb { y[col * k + p] } else { y[p * n + col] };
+    let fma_f32_ftz = gpu_compute::math::fma_f32_ftz;
+    for gy in 0..l.grid[1] as usize {
+        for gx in 0..l.grid[0] as usize {
+            let mut acc = [[0.0f32; T]; T]; // [ty][tx]
+            let mut t = 0;
+            while t < k {
+                let (mut as_, mut bs_) = ([[0.0f32; T]; T], [[0.0f32; T]; T]);
+                for ty in 0..T {
+                    for tx in 0..T {
+                        let (row, col) = (gy * T + ty, gx * T + tx);
+                        if row < m && t + tx < k {
+                            as_[ty][tx] = op_a(row, t + tx);
+                        }
+                        if t + ty < k && col < n {
+                            bs_[ty][tx] = op_b(t + ty, col);
+                        }
+                    }
+                }
+                // barrier()
+                let len = T.min(k - t);
+                for (ty, acc_row) in acc.iter_mut().enumerate() {
+                    for (tx, acc_el) in acc_row.iter_mut().enumerate() {
+                        for p in 0..len {
+                            *acc_el = fma_f32_ftz(as_[ty][p], bs_[p][tx], *acc_el);
+                        }
+                    }
+                }
+                // barrier()
+                t += T;
+            }
+            for (ty, acc_row) in acc.iter().enumerate() {
+                for (tx, &v) in acc_row.iter().enumerate() {
+                    let (row, col) = (gy * T + ty, gx * T + tx);
+                    if row < m && col < n {
+                        let v = match &bias {
+                            Some(bv) => gpu_compute::math::add_f32_ftz(v, bv[col]),
+                            None => v,
+                        };
+                        l.mem.write_u32(c + 4 * (row * n + col) as u64, v.to_bits());
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// What `tools/nak/out/matmul_1d.sm86.sass` (step 4) needs: the 64×8 tile of
 /// A at 0 and the 8×64 tile of B at 0x800 (4 KiB) and one barrier.
 pub const MATMUL_1D_NEEDS: Needs = Needs {

@@ -1,0 +1,75 @@
+// C-160 point 4, training program 1: C[M,N] = op(A)[M,K] * op(B)[K,N] (+ bias[N]), f32, for the training step of
+// Kronos (docs/C-160_MOTOR_STUDIU.md, table "Programele de placă", #1). One program covers the three products of a
+// Linear layer: forward  Y = X * W^T + b   (A = X [M,K], B = W stored [N,K]: flags TB | BIAS)
+//           backward dX = dY * W          (A = dY [M,K], B = W stored [K,N]: flags 0)
+//                    dW = dY^T * X        (A = dY stored [K,M], B = X [K,N]: flags TA)
+// Layout: matmul step 3 (siboehm SGEMM_CUDA kernel 3 "shared memory cache-blocking", MIT, idea only; our own
+// matmul_smem.comp): 16x16 threads per workgroup, thread x -> column, y -> row; the workgroup copies a 16x16 tile of
+// op(A) and one of op(B) into shared memory, barrier, every thread accumulates min(16, K - t) products, barrier, next
+// tile. The inner loop stops at K exactly (no zero padding is accumulated), so each element is the chain of fused
+// multiply-adds p = 0..K-1 starting from 0.0, then one add of bias[col]: the bit-exact oracle is
+// gpu-compute::reference::matmul_t_fma_ftz. Threads outside C take part in the loads and barriers (they load zeros)
+// and only skip the store. Speed is not the goal here (point 7 is): correctness of the three forms first.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+#define TILE 16u
+#define TA 1u
+#define TB 2u
+#define BIAS 4u
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+
+layout(push_constant) uniform Args {
+    In a;
+    In b;
+    Out c;
+    In bias;
+    uint m;
+    uint n;
+    uint k;
+    uint flags;
+} args;
+
+shared float as_[TILE * TILE];
+shared float bs_[TILE * TILE];
+
+// op(A)[r, p]: A stored [M,K] row-major, or [K,M] when transposed.
+float load_a(uint r, uint p) {
+    return (args.flags & TA) != 0u ? args.a.v[p * args.m + r] : args.a.v[r * args.k + p];
+}
+
+// op(B)[p, col]: B stored [K,N] row-major, or [N,K] when transposed.
+float load_b(uint p, uint col) {
+    return (args.flags & TB) != 0u ? args.b.v[col * args.k + p] : args.b.v[p * args.n + col];
+}
+
+void main() {
+    uint tx = gl_LocalInvocationID.x;
+    uint ty = gl_LocalInvocationID.y;
+    uint row = gl_WorkGroupID.y * TILE + ty;
+    uint col = gl_WorkGroupID.x * TILE + tx;
+    float acc = 0.0;
+    for (uint t = 0; t < args.k; t += TILE) {
+        uint ak = t + tx;
+        uint bk = t + ty;
+        as_[ty * TILE + tx] = (row < args.m && ak < args.k) ? load_a(row, ak) : 0.0;
+        bs_[ty * TILE + tx] = (bk < args.k && col < args.n) ? load_b(bk, col) : 0.0;
+        barrier();
+        uint len = min(TILE, args.k - t);
+        for (uint p = 0; p < len; p++) {
+            acc += as_[ty * TILE + p] * bs_[p * TILE + tx];
+        }
+        barrier();
+    }
+    if (row < args.m && col < args.n) {
+        if ((args.flags & BIAS) != 0u) {
+            acc += args.bias.v[col];
+        }
+        args.c.v[row * args.n + col] = acc;
+    }
+}

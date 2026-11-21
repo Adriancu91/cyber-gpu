@@ -233,3 +233,14 @@ să nu se schimbe. `nak_dump_cm.c` cere în plus `VK_KHR_cooperative_matrix` și
 | Ieșire | **4 384 octeți**, 22 de registre, 128 B partajați, fără `bar.sync` (un singur grup de 32) |
 | SHA-256 `q8_fused32.sm86.sass` | `f26faedd659916b8d0508831329319b754213c7637a6ba40d42f8ab02344bcb2` |
 | Verificat în listare | bucla = `q8_matvec32` instrucțiune cu instrucțiune (doar `c[0x0][0x40/0x44]` → `0x60/0x64`); coada = `q8_fused` identic |
+
+## C-160 punctul 4: `mm_train` — înmulțirea pentru antrenare (21 nov 2026, sesiunea 142, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh mm_train` (Mesa 25.0.7 reconstruit în cloud; `matmul_smem` a ieșit **identic**, aceeași sumă; `mm_train` identic la două compilări).
+
+| Ce | Valoare |
+|---|---|
+| Program | `mm_train.comp`: C = op(A)·op(B) (+ deplasare), f32, plăci 16×16 în memoria partajată (aranjamentul treptei 3). Opțiuni: `TA` = 1 (A stocată [K,M]), `TB` = 2 (B stocată [N,K], ca `weight [out, in]`), `BIAS` = 4. Cele trei produse ale unui strat `Linear`: înainte `TB|BIAS`, dX `0`, dW `TA` |
+| Ieșire | 258 de instrucțiuni, **4 128 octeți**, 19 registre; memorie partajată 2 KiB (`as_` la 0, `bs_` la 0x400), o barieră (`bar.sync` de 2 ori) |
+| SHA-256 `mm_train.sm86.sass` | `69d54ef2334cca67d66fff11cbca838cfd366e33f12a5f9340196c16063fa350` |
+| Argumente în bufferul constant 0 | a/b/c/bias la 0x28/0x30/0x38/0x40, **m/n/k/flags la 0x48/0x4c/0x50/0x54** (citite în listare); baza grupurilor la 0x0/0x4 = 0 |
+| Aritmetica | 16 × `ffma.ftz` pe placă (bucla desfăcută), apoi un `fadd.ftz` pentru deplasare → oracolul bit cu bit `reference::matmul_t_fma_ftz` |

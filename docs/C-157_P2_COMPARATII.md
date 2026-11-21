@@ -2,6 +2,17 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-332 `test-placa --ln-nou` + încălzirea poziției 0 (21 nov 2026, ~19:16) — sesiunea 142
+- **Estimat** (`C-157_P2c_pozitia-0.md` + os-331, DEDUS): 0 poziții lente; ~348 simb/s și la prima rulare cu LayerNorm nou; încălzirea
+  scrie ~11 264 + 1 064 = 12 328 de cuvinte pe prima listă; nimic schimbat în amprentă.
+- **Ieșit:** `pozitiile lente: 0 din 18`, cea mai lentă poziție 2 494 µs (lista veche) / 2 049 µs (LayerNorm nou), față de ~12 ms în os-329;
+  **media cu driverul 351,39 simb/s** (estimat ~348, +1 %); amprenta `0x46a07914` ca în os-331; 16 simboluri identice cu procesorul.
+- **Încălzirea:** 15 553 µs în afara ceasului, **12 687** cuvinte pe prima listă — cu 359 (+3 %) peste socoteala mea; mărunt, probabil
+  cuvintele de început ale pushbuffer-ului pe care nu le-am numărat; nu schimbă nimic în ceas.
+- **Driverul 818 µs** (os-331: 819): neschimbat, cum era de așteptat — dieta 2 încă nu e în OS. Placa 1 977 µs, la fel ca os-331.
+- **Ce tai mai departe:** neschimbat față de os-331 — dieta 2 (driver ~818 → ~330–410 µs) și cursa înmulțirilor (fc + proj + qkv + logit
+  = 1 458 din 1 977 µs). Cu dieta 2: ~2,47 ms pe simbol → **~405 simb/s** (DEDUS). Nimic nou de cerut OS-ului din acest test.
+
 ## os-331 `test-placa --ln-nou` (LayerNorm nou, 21 nov 2026, 17:26) — sesiunea 140
 - **Estimat** (`C-155_LayerNorm-nou.md`, DEDUS): ~3–5 µs pe lansare în loc de ~21,8 → **~0,45 ms mai puțin pe simbol**; aceleași simboluri.
 - **Ieșit:** **~4 µs pe lansare** (ln1 48 + ln2 46 + ln_final 4 = 98 µs pe simbol); placa 2 423 → **1 978 µs** (−445 µs) în aceeași pornire,

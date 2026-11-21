@@ -15,6 +15,7 @@
 #   sh tools/nak/build.sh layernorm256   # C-155 point 2: LayerNorm with 256 threads, one read of x (session 132)
 #   sh tools/nak/build.sh argmax         # C-155 point 3: the greedy token on the board, 16-byte result (session 134)
 #   sh tools/nak/build.sh q8_fused32     # C-155 point 4: q8_fused with q8_matvec32's work split (session 135)
+#   sh tools/nak/build.sh mm_train       # C-160 point 4: training matmul, op(A)*op(B) (+bias), NN/NT/TN (session 142)
 #   sh tools/nak/build.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): apt install glslang-tools spirv-tools libvulkan-dev libdrm-dev
@@ -78,6 +79,9 @@ argmax)
     ;;
 q8_fused32)
     exec sh "$0" kernel q8_fused32 72
+    ;;
+mm_train)
+    exec sh "$0" kernel mm_train 48
     ;;
 kernel)
     NAME=${2:?nume}; PUSH=${3:?octeti push constants}

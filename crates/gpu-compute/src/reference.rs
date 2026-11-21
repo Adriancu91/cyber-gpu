@@ -135,6 +135,45 @@ pub fn matmul_fma_ftz(
     Ok(())
 }
 
+/// C-160 point 4: what NAK's `mm_train` (training program 1) computes on SM86:
+/// `out[i, j] = Σ_p op(a)[i, p]·op(b)[p, j]` as one `FFMA.FTZ` chain over
+/// p = 0..k starting from +0.0, then (if `bias`) one `FADD.FTZ` of `bias[j]`.
+/// `op(a)` is `a` stored `[m, k]`, or `[k, m]` when `ta`; `op(b)` is `b` stored
+/// `[k, n]`, or `[n, k]` when `tb` (row-major, as PyTorch's `weight [out, in]`).
+#[allow(clippy::too_many_arguments)]
+pub fn matmul_t_fma_ftz(
+    a: &[f32],
+    b: &[f32],
+    bias: Option<&[f32]>,
+    out: &mut [f32],
+    m: usize,
+    k: usize,
+    n: usize,
+    ta: bool,
+    tb: bool,
+) -> GpuResult<()> {
+    need(
+        a.len() == m * k && b.len() == k * n && out.len() == m * n,
+        "matmul_t: forme",
+    )?;
+    need(bias.is_none_or(|x| x.len() == n), "matmul_t: deplasarea")?;
+    for i in 0..m {
+        for j in 0..n {
+            let mut acc = 0.0f32;
+            for p in 0..k {
+                let x = if ta { a[p * m + i] } else { a[i * k + p] };
+                let y = if tb { b[j * k + p] } else { b[p * n + j] };
+                acc = math::fma_f32_ftz(x, y, acc);
+            }
+            if let Some(bias) = bias {
+                acc = math::add_f32_ftz(acc, bias[j]);
+            }
+            out[i * n + j] = acc;
+        }
+    }
+    Ok(())
+}
+
 /// Per-row layer normalization with affine gamma/beta (biased variance, as PyTorch).
 pub fn layernorm(
     x: &[f32],

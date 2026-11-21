@@ -1,5 +1,32 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 142 — 21 noiembrie 2026, ~20:11–21:05 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (os-332) + C-160 punctul 4 (programul 1: înmulțirea)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă: **os-332** (încălzirea poziției 0) → C-157 p.2 întâi.
+(Dosarele locale vechi aveau ramurile divergente; am lucrat pe ramuri locale noi, `s142`, din cele de pe GitHub; istoria neatinsă.)
+
+**C-157 p.2 (os-332):** 0 poziții lente (cum estimasem), media cu driverul **351,39 simb/s** față de ~348 estimat (+1 %); încălzirea
+12 687 cuvinte față de 12 328 socotite (+3 %, mărunt). Driverul 818 µs neschimbat (dieta 2 nu e încă în OS). `docs/C-157_P2_COMPARATII.md`.
+
+**C-160 p.4, programul 1:** `mm_train` — C = op(A)·op(B) (+ deplasare) în f32, un singur program pentru cele trei înmulțiri ale unui strat
+`Linear` (înainte, dX, dW). Compilat cu Mesa NAK (SHA-256 `69d54ef2…3fa350`, 4 128 octeți, 19 registre), modulul `nvidia_ga104::mm_train`
+(argumentele, grila, QMD), oracolul bit cu bit `reference::matmul_t_fma_ftz`, modelul `gpu_sim::cmdproc::mm_train_on_cpu`.
+`train::linear` / `linear_back` devin publice (adăugare). Nota: `docs/C-160_P4_MATMUL.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| os-332 comparat | estimarea încălzirii față de `ciclu-auto-20261121-1916.txt` | PASS (comparație) |
+| T152 bit cu bit | 4 forme × 6 combinații de opțiuni, plăci parțiale, −0,0 | PASS (SIMULARE) |
+| T152 față de oracolul de antrenare | greutățile `in_proj` reale (modelul mic): Y 9,5e-7, dX 1,9e-8, dW 1,2e-7, sub marginea scrisă (≤ 4,6 % din ea) | PASS (SIMULARE) |
+| T152 refuzuri + greșeli plantate | opțiuni necunoscute, fără memorie partajată; model fără opțiuni, dW fără `TA` | PASS |
+| `tools/check.sh` | format, clippy `-D warnings`, **681 de teste**, build no_std | PASS |
+| Pe RTX 3070 Ti | nimic nou trimis; `mm_train` nu e predat încă (punctul 6) | NOT TESTED |
+
+**Următorul pas:** C-160 punctul 4, programul 7 din studiu — eroarea (softmax + entropia încrucișată) cu gradientul ei, în SIMULARE față de
+`train::loss_and_grad` — sau C-157 p.2 dacă apare un test nou pe placă.
+
+---
+
 ## Sesiunea 141 — 21 noiembrie 2026, ~19:11–19:29 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 3 (oracolul pasului de antrenare)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun rezultat nou pe placă (os-332 e doar pornit) → C-160 punctul 3.
