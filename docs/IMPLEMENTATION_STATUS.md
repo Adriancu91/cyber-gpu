@@ -1,5 +1,24 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 129 — 21 noiembrie 2026, ~04:20–04:35 (ora României), în cloud, FĂRĂ placă — **oprire scurtă: nimic nou de făcut fără placă**
+
+Pornită de programare. Nicio altă sesiune Cyber-GPU nu lucra (ultimul commit: 21 nov 01:28). De la sesiunea 128: nicio comandă nouă
+pentru noi în `COMENZI.md`, nicio decizie nouă în `DECIZII.md`, niciun jurnal nou de pe placă (ultimul: `os-322`); sesiunea OS e tot
+oprită (regula 5, `os-323`). Din C-151 rămâne doar punctul 2 (după ce tabloul de bord merge pe placă). Lucrul „la cerere” nu e început
+fără cerere. (În hub și în `cyber-universe`, ramurile locale vechi `main` divergeau de origin din cauza clonelor scurte — lucrul s-a
+făcut pe `origin/main`, nimic rescris.)
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Verificări | nicio linie de cod schimbată de la `12fe41a`; CI GitHub pe `12fe41a` (rularea 44837105997) | verde (614 teste, SIMULARE) |
+| Pe RTX 3070 Ti | nimic | NOT TESTED |
+
+Interfața publică: neschimbată.
+
+**Următorul pas:** C-151 punctul 2 după ce tabloul merge pe placă; altfel, doar la cerere. **Regula 8:** 128 și 129 n-au pas (opriri
+scurte, nu eșecuri); 127 a avut pas. Dacă și sesiunea 130 nu găsește nimic nou, regula 8 se aplică: „OPRIT: necesită analiza lui Adrian”.
+
+---
 ## Sesiunea 128 — 21 noiembrie 2026, ~01:25–01:40 (ora României), în cloud, FĂRĂ placă — **oprire scurtă: nimic nou de făcut fără placă**
 
 Pornită de programare. Nicio altă sesiune Cyber-GPU nu lucra (ultimul commit: 20 nov 22:34). De la sesiunea 127: nicio comandă nouă pentru
