@@ -1205,6 +1205,43 @@ pub fn ln_fwd_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// The CPU stand-in for C-160 point 4's training GELU program (`gelu_tr.sm86.sass`, program 5): blocks of 256, one
+/// element per thread (grid x = ⌈n/256⌉); cbuf0 u/g/y at 0x28/0x30/0x38, n at 0x40, the mode at 0x44 (0 = forward,
+/// anything else = backward, as the program's `isetp.eq`) (NAK dump). Each element is
+/// `gpu_compute::layer::gelu_tr_gpu` (the program's order; `MUFU.RCP` / `MUFU.EX2` modelled correctly rounded);
+/// threads with i ≥ n write nothing; g is read only in the backward mode.
+pub fn gelu_tr_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [256, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 {
+        return Err(bad("SIM: gelu_tr cere blocuri de 256x1x1, grila 1D"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let r = |l: &Launch<'_>, o: u64| l.mem.read_u64(l.cbuf0 + o);
+    let (u, g, y) = (r(l, 0x28)?, r(l, 0x30)?, r(l, 0x38)?);
+    let n = (l.mem.read_u32(l.cbuf0 + 0x40)? as u64).min(l.grid[0] as u64 * 256) as usize;
+    let back = l.mem.read_u32(l.cbuf0 + 0x44)? != 0;
+    if n == 0 {
+        return Ok(());
+    }
+    let us = l.mem.read_f32s(u, n)?;
+    let out: Vec<f32> = if back {
+        let gs = l.mem.read_f32s(g, n)?;
+        us.iter()
+            .zip(&gs)
+            .map(|(&ui, &gi)| gpu_compute::layer::gelu_tr_gpu(ui, Some(gi)))
+            .collect()
+    } else {
+        us.iter()
+            .map(|&ui| gpu_compute::layer::gelu_tr_gpu(ui, None))
+            .collect()
+    };
+    l.mem.write_f32s(y, &out);
+    Ok(())
+}
+
 /// The CPU stand-in for C-160 point 4's column-sum program (`colsum.sm86.sass`): blocks of 256 (one thread per
 /// column, grid x = ⌈c/256⌉); cbuf0 dy/x/μ/rstd/s0/s1 at 0x28/0x30/0x38/0x40/0x48/0x50, rows at 0x58, c at 0x5c, the
 /// mode at 0x60 (0 = bias, else LayerNorm: dγ in s0, dβ in s1) (NAK dump). The columns are

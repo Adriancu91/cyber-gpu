@@ -541,6 +541,78 @@ pub fn gelu_gpu(x: f32) -> f32 {
     0.5 * x * (1.0 + erf)
 }
 
+/// 2^w as `MUFU.EX2.FTZ` would give it if it were exact: the input and the result flushed, the power correctly rounded
+/// (f64 range reduction + Taylor). The board's unit is approximate (~2 ulp), so programs using it are compared with
+/// an oracle in a margin, not bit for bit.
+fn ex2_ftz(w: f32) -> f32 {
+    let w = ftz(w);
+    if w.is_nan() {
+        return w;
+    }
+    if w >= 128.0 {
+        return f32::INFINITY;
+    }
+    if w < -151.0 {
+        return 0.0;
+    }
+    let wd = w as f64;
+    let k = if wd >= 0.0 {
+        (wd + 0.5) as i64
+    } else {
+        (wd - 0.5) as i64
+    };
+    let r = (wd - k as f64) * core::f64::consts::LN_2; // |r| ≤ ln2/2, w − k exact in f64
+    let (mut term, mut sum) = (1.0f64, 1.0f64);
+    for i in 1..=14 {
+        term *= r / i as f64;
+        sum += term;
+    }
+    let p = f64::from_bits(((1023 + k) as u64) << 52); // k in [-151, 127]: a normal f64
+    ftz((sum * p) as f32)
+}
+
+/// The f32 constants of `gelu_tr.comp` as NAK 25.0.7 encoded them (`tools/nak/out/gelu_tr.sm86.txt`).
+mod gelu_k {
+    pub const RSQRT2: u32 = 0x3f35_04f3; // 1/√2
+    pub const A: u32 = 0x3ea7_ba05; // 0.3275911
+    pub const C5: u32 = 0x3f87_dc22; // 1.061405429
+    pub const C4: u32 = 0xbfba_00e3; // −1.453152027
+    pub const C3: u32 = 0x3fb5_f0e3; // 1.421413741
+    pub const C2: u32 = 0xbe91_a98e; // −0.284496736
+    pub const C1: u32 = 0x3e82_7906; // 0.254829592
+    pub const LOG2E: u32 = 0x3fb8_aa3b; // log2(e): exp(x) = ex2(x·log2 e)
+    pub const RSQRT2PI: u32 = 0x3ecc_422a; // 1/√(2π)
+}
+
+/// One element of the board's training GELU program, `gelu_tr.comp` (C-160 point 4, program 5), in the order of the
+/// code NAK 25.0.7 made (`tools/nak/out/gelu_tr.sm86.txt`): z = `fmul.ftz`(u, 1/√2); a = |z|;
+/// t = `MUFU.RCP`(`ffma.ftz`(a, 0.3275911, 1)); the A&S 7.1.26 polynomial by `ffma.ftz` (Horner from c5), p = `fmul.ftz`(t, ·);
+/// ex = `MUFU.EX2`(−`fmul.ftz`(`fmul.ftz`(a, log2 e), a)) = e^(−a²); e = `ffma.ftz`(−p, ex, 1); erf = ±e by the sign of z;
+/// Φ = `fmul.ftz`(`fadd.ftz`(erf, 1), 0.5). `g = None` is mode 0 (forward): `fmul.ftz`(u, Φ). `Some(g)` is mode 1
+/// (backward): `fmul.ftz`(g, `ffma.ftz`(u, `fmul.ftz`(ex, 1/√(2π)), Φ)). `MUFU.RCP` / `MUFU.EX2` are modelled correctly
+/// rounded (the board's are approximate): board and model are judged against the f64 training oracle
+/// (`train::gelu_rows`, `train::gelu_back_rows`) in a written margin.
+pub fn gelu_tr_gpu(u: f32, g: Option<f32>) -> f32 {
+    use gelu_k::*;
+    let k = f32::from_bits;
+    let z = mul_ftz(u, k(RSQRT2));
+    let a = ftz(z.abs());
+    let t = ftz(1.0 / fma_f32_ftz(a, k(A), 1.0));
+    let mut q = fma_f32_ftz(t, k(C5), k(C4));
+    q = fma_f32_ftz(t, q, k(C3));
+    q = fma_f32_ftz(t, q, k(C2));
+    q = fma_f32_ftz(t, q, k(C1));
+    let p = mul_ftz(t, q);
+    let ex = ex2_ftz(-mul_ftz(mul_ftz(a, k(LOG2E)), a));
+    let e = fma_f32_ftz(-p, ex, 1.0);
+    let erf = if z < 0.0 { -e } else { e };
+    let cdf = mul_ftz(add_f32_ftz(erf, 1.0), 0.5);
+    match g {
+        None => mul_ftz(u, cdf),
+        Some(g) => mul_ftz(g, fma_f32_ftz(u, mul_ftz(ex, k(RSQRT2PI)), cdf)),
+    }
+}
+
 /// C-139: every vector one position leaves in the activation scratch of a layer, computed with the **program
 /// models** above (`layernorm_gpu`, `q8::matvec_gpu_order`, `vadd_gpu`, `attention_head_gpu`, `gelu_gpu`) in the order
 /// of the 16 launches — what each launch should have written, to find the first one that did not. In SIMULARE the

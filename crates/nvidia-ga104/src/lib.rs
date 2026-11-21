@@ -69,6 +69,7 @@ pub mod fuse;
 pub mod fw_check;
 pub mod fw_hdr;
 pub mod fwsec;
+pub mod gelu_tr;
 pub mod gfw;
 pub mod gsp;
 pub mod i6_check;

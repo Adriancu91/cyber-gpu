@@ -283,3 +283,16 @@ Oracolul: `gpu_compute::train::layernorm_back_rows` (f64), într-o margine scris
 | Aritmetica | `fadd.ftz`, `fmul.ftz`, `ffma.ftz`, `shfl.bfly`, **un `mufu.rsq` pe rând**; μ rotunjit o dată (`precise`) |
 
 Oracolul: `gpu_compute::train::layernorm_rows` + `layernorm_stats` (f64), într-o margine scrisă. Testul T157. Nota: `docs/C-160_P4_LN_FWD.md`.
+
+## C-160 punctul 4, programul 5: `gelu_tr` (22 nov 2026, sesiunea 147, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh gelu_tr` (Mesa 25.0.7 reconstruit în cloud; `ln_fwd` a ieșit **identic**).
+
+| Ce | `gelu_tr` |
+|---|---|
+| Program | GELU al antrenării, element cu element (256 de fire pe bloc): modul 0 = înainte, u·Φ(u); modul 1 = înapoi, g·(Φ(u) + u·φ(u)) |
+| Ieșire | **912 octeți**, 57 de instrucțiuni, 19 registre, fără memorie partajată, fără barieră |
+| SHA-256 | `52dd5f9a81fd88a864d77ebbeab5a3cc3ab537b89362f1dd36424e21c4ae54f1` |
+| Bufferul constant 0 | u / g / y la 0x28 / 0x30 / 0x38, n la 0x40, modul la 0x44 |
+| Aritmetica | `fmul.ftz`, `fadd.ftz`, `ffma.ftz`, **un `mufu.rcp` și un `mufu.exp2` pe element** (aceeași exponențială pentru Φ și φ) |
+
+Oracolul: `gpu_compute::train::gelu_rows` / `gelu_back_rows` (f64), într-o margine scrisă. Testul T158. Nota: `docs/C-160_P4_GELU.md`.

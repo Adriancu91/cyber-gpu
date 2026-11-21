@@ -252,6 +252,9 @@ fn erf64(x: f64) -> f64 {
     if a >= 6.0 {
         return if x < 0.0 { -1.0 } else { 1.0 };
     }
+    if a == 0.0 {
+        return x; // ±0 (the series below would never meet its stop test: every term is 0)
+    }
     let x2 = a * a;
     let mut term = a;
     let mut sum = a;
@@ -497,6 +500,24 @@ pub fn layernorm_back_rows(
     let mut db = vec![0.0f32; c];
     let dx = layernorm_back(dy, &cache, rows, c, g, &mut dg, &mut db);
     Ok((dx, dg, db))
+}
+
+/// GELU forward element by element, exactly the calculation [`loss_and_grad`] does for the MLP activation (exact erf
+/// in f64, rounded once to f32): the oracle of mode 0 of the board's `gelu_tr` program (C-160 point 4, program 5).
+pub fn gelu_rows(u: &[f32]) -> Vec<f32> {
+    u.iter()
+        .map(|&ui| gelu_and_grad(ui as f64).0 as f32)
+        .collect()
+}
+
+/// GELU backward element by element: `du = g·(Φ(u) + u·φ(u))` in f64, rounded once — exactly [`loss_and_grad`]'s
+/// line for the MLP. The oracle of mode 1 of `gelu_tr` (C-160 point 4, program 5).
+pub fn gelu_back_rows(g: &[f32], u: &[f32]) -> GpuResult<Vec<f32>> {
+    need(g.len() == u.len(), "gelu: forma")?;
+    Ok(g.iter()
+        .zip(u)
+        .map(|(&gi, &ui)| (gi as f64 * gelu_and_grad(ui as f64).1) as f32)
+        .collect())
 }
 
 /// What one layer keeps for the backward pass.

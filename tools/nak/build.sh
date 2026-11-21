@@ -20,6 +20,7 @@
 #   sh tools/nak/build.sh ln_back        # C-160 point 4, program 4: LayerNorm backward, dx (session 144)
 #   sh tools/nak/build.sh colsum         # C-160 point 4, program 2 (+ dγ, dβ of program 4): column sums (session 144)
 #   sh tools/nak/build.sh ln_fwd         # C-160 point 4, program 3: LayerNorm forward over rows, keeps μ and rstd (session 146)
+#   sh tools/nak/build.sh gelu_tr        # C-160 point 4, program 5: GELU forward (mode 0) / backward (mode 1) (session 147)
 #   sh tools/nak/build.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): apt install glslang-tools spirv-tools libvulkan-dev libdrm-dev
@@ -98,6 +99,9 @@ colsum)
     ;;
 ln_fwd)
     exec sh "$0" kernel ln_fwd 60
+    ;;
+gelu_tr)
+    exec sh "$0" kernel gelu_tr 32
     ;;
 kernel)
     NAME=${2:?nume}; PUSH=${3:?octeti push constants}

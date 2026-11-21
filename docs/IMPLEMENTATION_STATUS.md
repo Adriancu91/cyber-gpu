@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 147 — 22 noiembrie 2026, ~01:10–02:00 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 4, programul 5 (`gelu_tr`)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-335 (os-336 / os-339 sunt doar GATA DE TEST) →
+C-160 punctul 4 mai departe. (Dosarul local vechi avea ramura în urmă; am lucrat într-o clonă proaspătă; istoria neatinsă.)
+
+**Ce s-a făcut:** programul 5 al antrenării, GELU înainte (modul 0, u·Φ(u)) și înapoi (modul 1, g·(Φ + u·φ)) într-un singur binar:
+`tools/nak/gelu_tr.comp` → Mesa NAK 25.0.7, 912 octeți, 57 de instrucțiuni, 19 registre, fără memorie partajată, un `MUFU.RCP` + un
+`MUFU.EX2` pe element, SHA-256 `52dd5f9a…4ae54f1`. Adăugări (nimic redenumit, OS-ul compilează neschimbat): modulul `nvidia_ga104::gelu_tr`
+(`GELU_TR`, `GELU_TR_SHA256`, `REGISTERS`, `BLOCK`, `CBUF_BYTES`, `Mode`, `Args::{cbuf, grid}`), `gpu_compute::layer::gelu_tr_gpu`,
+`gpu_compute::train::{gelu_rows, gelu_back_rows}`, `gpu_sim::cmdproc::gelu_tr_on_cpu`. Reparat: `train::erf64(0)` se învârtea la nesfârșit
+(acum întoarce ±0; numerele pasului de aur neschimbate). Nota: `docs/C-160_P4_GELU.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Compilarea NAK | Mesa reconstruit în cloud; `ln_fwd` identic; `gelu_tr` nou | PASS (compilat, nerulat) |
+| T158 înainte / înapoi față de oracolul f64 | u ∈ [−12, 12], valori speciale, valori ca ieșirea `fc`: ≤ 81 % din marginea scrisă; max \|Δ\| 4,8e-7 / 1,8e-7; modelul încape și fără locul plăcii | PASS (SIMULARE) |
+| T158 lanțul înainte → înapoi, biți, grila scurtă, refuzuri, 7 greșeli plantate | toate | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy `-D warnings` (Rust 1.97), **718 teste**, build no_std | PASS |
+| `gelu_tr` pe RTX 3070 Ti | nepredat (C-160 p.6: întâi un program „înapoi”) | NOT TESTED |
+
+**Următorul pas:** C-160 punctul 4, atenția înapoi (apoi încorporările, norma + tăierea, AdamW); la primul test nou pe placă: C-157 punctul 2.
+
+---
+
 ## Sesiunea 146 — 22 noiembrie 2026, ~00:10–00:35 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 4, programul 3 (`ln_fwd`)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-335 (doar rapoartele automate ale ciclului) →

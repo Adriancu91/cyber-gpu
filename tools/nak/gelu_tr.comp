@@ -1,0 +1,34 @@
+// C-160 point 4, program 5: the GELU of the training step, forward and backward in one program.
+//   mode 0 (forward):  y[i] = u·Φ(u)                       (the MLP activation, kept for proj's backward)
+//   mode 1 (backward): y[i] = g[i]·(Φ(u) + u·φ(u))          (du from dact, through GELU's derivative)
+// Φ(u) = 0.5·(1 + erf(u/√2)), erf by Abramowitz & Stegun 7.1.26 in f32 (as gelu.comp); φ(u) = e^(−u²/2)/√(2π) reuses
+// the same exponential e^(−a²), a = |u/√2|, so one MUFU.EX2 and one MUFU.RCP per element. Element-wise, 256 threads per
+// block, i < n; no shared memory, no barrier. g is never read in mode 0.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args { In u; In g; Out y; uint n; uint mode; } args;
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= args.n) {
+        return;
+    }
+    float u = args.u.v[i];
+    float z = u * 0.70710678118654752;
+    float a = abs(z);
+    float t = 1.0 / (1.0 + 0.3275911 * a);
+    float p = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+    float ex = exp(-a * a);
+    float e = 1.0 - p * ex;
+    float erf = z < 0.0 ? -e : e;
+    float cdf = 0.5 * (1.0 + erf);
+    if (args.mode == 0u) {
+        args.y.v[i] = u * cdf;
+    } else {
+        float pdf = 0.39894228040143268 * ex;
+        args.y.v[i] = args.g.v[i] * (cdf + u * pdf);
+    }
+}
