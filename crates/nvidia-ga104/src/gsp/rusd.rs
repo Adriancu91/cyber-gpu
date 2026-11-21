@@ -202,6 +202,8 @@ pub mod rows {
     pub const STOP_MASK: &str = "kd oprirea citirilor (0 = acceptata; 8000xxxx = refuz)";
     pub const STOP_INIT: &str = "kd oprirea zonei comune (0 = acceptata; 8000xxxx = refuz)";
     pub const KEEP_PAGE: &str = "kd zona comuna NU s-a oprit: pagina ramane rezervata pana la repornire (nu se refoloseste)";
+    /// os-323 (sesiunea 132): the stop without `INIT(0)`, as NVIDIA's own driver does.
+    pub const KEEP_PAGE_ON_PURPOSE: &str = "kd zona comuna lasata pornita (ca driverul NVIDIA, fara INIT(0)): pagina ramane rezervata pana la FLR sau repornire";
 }
 
 /// What the start did.
@@ -326,6 +328,39 @@ pub fn rusd_stop(
     if v != 0 {
         j.push(Event::Note(rows::KEEP_PAGE));
     }
+    Ok(out)
+}
+
+/// The stop **without** `INIT(0)` (sesiunea 132, after `os-323`): on the RTX 3070 Ti GSP-RM refused `INIT(0)` with
+/// `0x8000001f` (`NV_ERR_INVALID_ARGUMENT`) and one NOCAT `ASSERT`; NVIDIA 570.144's own driver never sends it
+/// (`gpuDestroyRusdMemory` only frees its memory; `_gpushareddataInitGsp` is the only sender of `INIT`, always with
+/// a real address). So: polling off (mask 0, accepted on the board), then the page stays reserved until the next
+/// FLR or power-on — the `KEEP_PAGE_ON_PURPOSE` note. Nothing new is sent to the board, one control fewer.
+pub fn rusd_stop_poll_only(
+    start: &RusdStart,
+    h_client: u32,
+    h_subdevice: u32,
+    rm: &mut RmControl<'_>,
+    j: &mut Journal,
+) -> GpuResult<RusdStop> {
+    let mut out = RusdStop {
+        mask: None,
+        deinit: None,
+    };
+    if !start.page_given() {
+        return Ok(out);
+    }
+    if start.mask == Some(0) {
+        let sent = encode_set_poll(h_client, h_subdevice, 0, 0)?;
+        let reply = rm(&sent)?;
+        let v = answer(&sent, &reply)?;
+        j.push(Event::Value {
+            what: rows::STOP_MASK,
+            value: v,
+        });
+        out.mask = Some(v);
+    }
+    j.push(Event::Note(rows::KEEP_PAGE_ON_PURPOSE));
     Ok(out)
 }
 
@@ -532,6 +567,29 @@ pub fn dashboard_at_end(
     Ok((s, d, e))
 }
 
+/// [`dashboard_at_end`] with [`rusd_stop_poll_only`] (sesiunea 132): the same start and reading, no `INIT(0)`.
+#[allow(clippy::too_many_arguments)]
+pub fn dashboard_at_end_keep_page(
+    plan: &RusdPlan,
+    phys: u64,
+    h_client: u32,
+    h_subdevice: u32,
+    rm: &mut RmControl<'_>,
+    mem: &mut dyn RusdMem,
+    sleep_ms: &mut dyn FnMut(u32),
+    j: &mut Journal,
+) -> GpuResult<(RusdStart, Option<Dashboard>, RusdStop)> {
+    let s = rusd_start(plan, phys, h_client, h_subdevice, rm, j)?;
+    let d = if s.polling() {
+        sleep_ms(plan.poll_ms.saturating_mul(3));
+        Some(read_dashboard(mem, j))
+    } else {
+        None
+    };
+    let e = rusd_stop_poll_only(&s, h_client, h_subdevice, rm, j)?;
+    Ok((s, d, e))
+}
+
 /// What a stick journal's `kd` rows say (the last value of each).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ParsedKd {
@@ -569,7 +627,7 @@ pub fn parse_kd(text: &str) -> ParsedKd {
         if line.contains(rows::OFF) {
             k.off = true;
         }
-        if line.contains(rows::KEEP_PAGE) {
+        if line.contains(rows::KEEP_PAGE) || line.contains(rows::KEEP_PAGE_ON_PURPOSE) {
             k.keep_page = true;
         }
         let Some((name, v)) = kd_value(line) else {

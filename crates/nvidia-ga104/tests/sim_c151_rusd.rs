@@ -374,3 +374,49 @@ fn t140g_dashboard_at_end_in_one_call() {
     assert!(e.page_free(&s));
     assert_eq!(slept, 1500);
 }
+
+#[test]
+fn t140h_stop_without_deinit_as_on_the_board() {
+    // os-323 on the RTX 3070 Ti: INIT(0) refused with 0x8000001f (NV_ERR_INVALID_ARGUMENT). The model plays that
+    // refusal; the new stop never sends INIT(0), so the refusal (and its ASSERT on the board) cannot happen.
+    let mut rm = rm_with(Some(SimRusd::new(RusdRule::RefuseDeinit(0x1f))));
+    let mut snap = SimRusd::new(RusdRule::Accept);
+    snap.phys = Some(PAGE);
+    snap.poll_ms = 500;
+    snap.mask = poll::DASHBOARD;
+    let bytes = snap.render(42);
+    let mut mem: &[u8] = &bytes;
+    let mut sent_cmds = Vec::new();
+    let mut call = |sent: &[u8]| -> gpu_core::error::GpuResult<Vec<u8>> {
+        sent_cmds.push(sent.to_vec());
+        let (_, reply) = rm.handle(FN_GSP_RM_CONTROL, sent).unwrap();
+        Ok(reply)
+    };
+    let mut sleep = |_ms: u32| {};
+    let mut j = Journal::new(64);
+    let (s, d, e) = kd::dashboard_at_end_keep_page(
+        &on(),
+        PAGE,
+        CLIENT,
+        SUB,
+        &mut call,
+        &mut mem,
+        &mut sleep,
+        &mut j,
+    )
+    .unwrap();
+    assert!(s.polling());
+    assert_eq!(d.unwrap().sections, 0x7f);
+    assert_eq!(e.mask, Some(0));
+    assert_eq!(e.deinit, None);
+    // INIT, interval, mask, mask 0: four controls, no INIT(0).
+    assert_eq!(sent_cmds.len(), 4);
+    assert_eq!(rm.log.controls.len(), 4);
+    let text: String = j.events().map(|e| format!("{e}\n")).collect();
+    assert!(text.contains(rows::KEEP_PAGE_ON_PURPOSE));
+    assert!(!text.contains(rows::STOP_INIT));
+    let k = kd::parse_kd(&text);
+    assert!(k.keep_page);
+    assert_eq!(k.stop_init, None);
+    assert_eq!(k.stop_mask, Some(0));
+}
