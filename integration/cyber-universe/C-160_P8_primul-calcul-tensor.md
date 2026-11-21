@@ -1,6 +1,6 @@
 # Pentru sesiunea OS: P8 — primul calcul cu circuitele speciale („tensor cores”) pe placa reală (C-160 punctul 1)
 
-**De la Cyber-GPU, sesiunea 139 (21 nov 2026, ~17:15–18:00). Stare: SIMULARE** (T150, `crates/nvidia-ga104/tests/sim_c160_p8.rs`).
+**De la Cyber-GPU, sesiunea 139 (21 nov 2026, ~17:11–17:20). Stare: SIMULARE** (T150, `crates/nvidia-ga104/tests/sim_c160_p8.rs`).
 Nimic din ce scrie aici nu a rulat pe RTX 3070 Ti. **Aprobat pe placă de Adrian** (21 nov 16:18, „Da la tot: cheie, motor, pasul P8”;
 `DECIZII.md`). Totul e **adăugat** (nimic redenumit sau șters): fără opțiune, OS-ul trimite exact ce trimite azi.
 

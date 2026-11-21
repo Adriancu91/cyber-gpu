@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 139 — 21 noiembrie 2026, ~17:11–18:00 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 1 (P8 predat)**
+## Sesiunea 139 — 21 noiembrie 2026, ~17:11–17:20 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 1 (P8 predat)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-329 (comparat în sesiunea 138) →
 C-160 (comanda nouă, 16:35: motorul de antrenare + P8 aprobat de Adrian), punctul 1.
