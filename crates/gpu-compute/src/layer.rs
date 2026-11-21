@@ -358,6 +358,95 @@ pub fn xent_gpu256(z: &[f32], tgt: u32, scale: f32) -> (Vec<f32>, f32) {
     (d, loss)
 }
 
+/// The row of the board's LayerNorm-backward program, `ln_back.comp` (C-160 point 4, program 4, `dx` half), for one
+/// row of `c = x.len()` numbers with the row's `mu` and `rs` (= 1/√(var + eps)) kept by the forward pass and
+/// `inv_c` = 1/c as f32. In the order of the code NAK 25.0.7 made (`tools/nak/out/ln_back.sm86.txt`):
+/// x̂ = `fmul.ftz`(`fadd.ftz`(x, −μ), rs); g = `fmul.ftz`(dy, γ); thread t over k = t, t+256, … from 0.0:
+/// s1 = `fadd.ftz`(s1, g), s2 = `ffma.ftz`(g, x̂, s2); both through [`block_sum256`]; m1 = `fmul.ftz`(S1, inv_c),
+/// m2 = `fmul.ftz`(S2, inv_c); in the last pass NAK fused g − m1 into one fma (g is not rounded there):
+/// dx = `fmul.ftz`(rs, `ffma.ftz`(−x̂, m2, `ffma.ftz`(dy, γ, −m1))). Only add / mul / fma, no `MUFU`: this is meant to
+/// be the board's result bit for bit (not proven on the board).
+pub fn ln_back_gpu256(
+    x: &[f32],
+    dy: &[f32],
+    gamma: &[f32],
+    mu: f32,
+    rs: f32,
+    inv_c: f32,
+) -> Vec<f32> {
+    let c = x.len();
+    let hat = |k: usize| mul_ftz(add_f32_ftz(x[k], -mu), rs);
+    let grad = |k: usize| mul_ftz(dy[k], gamma[k]);
+    let mut p1 = [0.0f32; 256];
+    let mut p2 = [0.0f32; 256];
+    for t in 0..256 {
+        let (mut s1, mut s2) = (0.0f32, 0.0f32);
+        for k in (t..c).step_by(256) {
+            let g = grad(k);
+            s1 = add_f32_ftz(s1, g);
+            s2 = fma_f32_ftz(g, hat(k), s2);
+        }
+        p1[t] = s1;
+        p2[t] = s2;
+    }
+    let m1 = mul_ftz(block_sum256(&p1), inv_c);
+    let m2 = mul_ftz(block_sum256(&p2), inv_c);
+    (0..c)
+        .map(|k| {
+            mul_ftz(
+                rs,
+                fma_f32_ftz(-hat(k), m2, fma_f32_ftz(dy[k], gamma[k], -m1)),
+            )
+        })
+        .collect()
+}
+
+/// The forward statistics the LayerNorm mode of [`colsum_gpu`] recomputes x̂ from: `x` `[rows, c]`, μ and rstd
+/// `[rows]`.
+#[derive(Clone, Copy, Debug)]
+pub struct LnStats<'a> {
+    pub x: &'a [f32],
+    pub mean: &'a [f32],
+    pub rstd: &'a [f32],
+}
+
+/// The board's column-sum program, `colsum.comp` (C-160 point 4, program 2 + dγ/dβ of program 4), over `rows × c`:
+/// each column's thread adds its rows in order r = 0, 1, … from 0.0. Without `ln`: s0 = Σ dy (`fadd.ftz`), s1 empty.
+/// With `ln`: x̂ = `fmul.ftz`(`fadd.ftz`(x, −μ_r), rstd_r), s0 = `ffma.ftz`(dy, x̂, s0) (dγ), s1 = `fadd.ftz`(s1, dy)
+/// (dβ). In the order of the code NAK 25.0.7 made (`tools/nak/out/colsum.sm86.txt`); only add / mul / fma, meant to
+/// be the board's bits (not proven on the board). Returns `(s0, s1)`.
+pub fn colsum_gpu(
+    dy: &[f32],
+    rows: usize,
+    c: usize,
+    ln: Option<LnStats<'_>>,
+) -> (Vec<f32>, Vec<f32>) {
+    match ln {
+        None => {
+            let s0 = (0..c)
+                .map(|k| (0..rows).fold(0.0f32, |s, r| add_f32_ftz(s, dy[r * c + k])))
+                .collect();
+            (s0, Vec::new())
+        }
+        Some(st) => {
+            let mut s0 = alloc::vec![0.0f32; c];
+            let mut s1 = alloc::vec![0.0f32; c];
+            for k in 0..c {
+                let (mut sg, mut sb) = (0.0f32, 0.0f32);
+                for r in 0..rows {
+                    let d = dy[r * c + k];
+                    let h = mul_ftz(add_f32_ftz(st.x[r * c + k], -st.mean[r]), st.rstd[r]);
+                    sg = fma_f32_ftz(d, h, sg);
+                    sb = add_f32_ftz(sb, d);
+                }
+                s0[k] = sg;
+                s1[k] = sb;
+            }
+            (s0, s1)
+        }
+    }
+}
+
 /// The scalar arguments of `attention.comp` (cbuf0 0x48..0x58).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AttnArgs {

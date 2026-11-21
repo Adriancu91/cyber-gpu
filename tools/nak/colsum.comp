@@ -1,0 +1,47 @@
+// C-160 point 4, training program 2 (docs/C-160_MOTOR_STUDIU.md, table "Programele de placă", #2) and the second half
+// of program 4: column sums over the rows of a [rows, c] gradient, for the gradients of the biases and of LayerNorm's
+// γ and β.
+//   hat = 0 (a bias):       s0[k] = Σ_r dy[r, k]
+//   hat = 1 (LayerNorm):    s0[k] = Σ_r dy[r, k] * x̂[r, k]   (dγ),  s1[k] = Σ_r dy[r, k]   (dβ)
+//                           with x̂[r, k] = (x[r, k] - μ_r) * rstd_r recomputed from the forward pass's μ, rstd
+//                           (the same two operations as ln_back.comp).
+// One thread per column, grid x = ⌈c/256⌉ blocks of 256; the thread adds its rows in order r = 0, 1, ... from 0.0.
+// Neighbouring threads read neighbouring columns (one row at a time); no thread adds into another's column: no atomics,
+// no shared memory, the same bits at every run. First version: correct, not fast (c = 768 gives only 3 blocks; rows
+// split over more blocks + a second pass is the later speed-up). No MUFU: only add / mul / fma, so the CPU model
+// (gpu_compute::layer::colsum_gpu) is the board's arithmetic in the order of the code NAK made.
+// The formulas are the usual ones (PyTorch / llm.c bias and layernorm backward, BSD / MIT: idea only).
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args { In dy; In x; In mean; In rstd; Out s0; Out s1; uint rows; uint c; uint hat; } args;
+
+void main() {
+    uint k = gl_GlobalInvocationID.x;
+    uint c = args.c;
+    if (k >= c) {
+        return;
+    }
+    uint rows = args.rows;
+    if (args.hat == 0u) {
+        float s = 0.0;
+        for (uint r = 0u; r < rows; r++) {
+            s = s + args.dy.v[r * c + k];
+        }
+        args.s0.v[k] = s;
+    } else {
+        float sg = 0.0;
+        float sb = 0.0;
+        for (uint r = 0u; r < rows; r++) {
+            float d = args.dy.v[r * c + k];
+            float h = (args.x.v[r * c + k] - args.mean.v[r]) * args.rstd.v[r];
+            sg = sg + d * h;
+            sb = sb + d;
+        }
+        args.s0.v[k] = sg;
+        args.s1.v[k] = sb;
+    }
+}

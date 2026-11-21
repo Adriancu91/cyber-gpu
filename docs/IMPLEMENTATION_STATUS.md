@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 144 — 21 noiembrie 2026, ~22:10–22:35 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 4 (programele 4 și 2: LayerNorm înapoi + sumele pe coloane)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-332 (os-335 e doar GATA DE TEST) → C-160 punctul 4.
+(Dosarele locale vechi aveau ramurile în urmă; am lucrat pe ramuri locale noi, `s144`, din cele de pe GitHub; istoria neatinsă.)
+Mesa NAK 25.0.7 reconstruit în cloud (~13 min); `xent` a ieșit identic (`44cc3536…`).
+
+**Ce s-a făcut:** „înapoi” prin LayerNorm, despărțit în două programe de placă fără `atomic` (aceiași biți la fiecare rulare):
+`ln_back` (dx, un bloc de 256 de fire pe rând; SHA-256 `369afd8d…85cd7063`, 2 736 octeți) și `colsum` (un fir pe coloană: suma deplasării =
+programul 2, sau dγ + dβ; SHA-256 `7a0fa2bd…a47fb10`, 1 136 octeți). Fără MUFU: modelul pe procesor urmează codul NAK operație cu operație
+(NAK a lipit `dy·γ − m1` într-un `ffma` — modelul corectat după listare). Module `nvidia_ga104::ln_back`, `nvidia_ga104::colsum`; modele
+`gpu_sim::cmdproc::ln_back_on_cpu` / `colsum_on_cpu`, `gpu_compute::layer::ln_back_gpu256` / `colsum_gpu`; adăugări în `train` (nimic
+redenumit): `layernorm_stats`, `layernorm_back_rows` (oracolul = exact calculul din `loss_and_grad`). Nota: `docs/C-160_P4_LN_BACK.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| T154 `ln_back` față de oracolul f64 | C = 1…2 048 (768 = #513), media 100, γ-urile reale ale modelului mic după 10 pași: totul în marginea scrisă (≤ 21 %); Σ dx ≈ 0; aceiași biți la două rulări | PASS (SIMULARE) |
+| T155 `colsum` față de oracolul f64 | 1…2 048 rânduri, C = 1…768: dγ, dβ în marginea scrisă (≤ 50 %); suma deplasării = dβ bit cu bit; grila scurtă vizibilă | PASS (SIMULARE) |
+| Refuzuri + greșeli plantate | bloc, memorie partajată, barieră; modelul altui program, μ/r ale altui rând, fără x̂·m2, fără r, dβ în loc de dγ, un rând lipsă | PASS |
+| `tools/check.sh` | format, clippy `-D warnings` (Rust 1.97 local), **697 de teste**, build no_std | PASS |
+| Pe RTX 3070 Ti | nimic nou trimis; `ln_back` / `colsum` nepredate (punctul 6) | NOT TESTED |
+
+**Următorul pas:** C-160 punctul 4, programul 3 (LayerNorm înainte pe multe rânduri, care scrie μ și r) sau 5 (GELU înainte / înapoi) —
+sau C-157 p.2 dacă apare un test nou pe placă (os-335: P8).
+
+---
+
 ## Sesiunea 143 — 21 noiembrie 2026, ~21:10–21:35 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 4 (programul 7: eroarea + gradientul ei)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-332 → C-160 punctul 4.

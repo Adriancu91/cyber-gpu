@@ -1111,6 +1111,103 @@ pub fn xent_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// C-160 point 4, program 4 (`dx` half): what `tools/nak/out/ln_back.sm86.sass` needs — 64 bytes of shared memory
+/// (the 8 warp results of both sums) and one barrier.
+pub const LN_BACK_NEEDS: Needs = Needs {
+    shared_bytes: 64,
+    barriers: 1,
+};
+
+/// The CPU stand-in for C-160 point 4's LayerNorm-backward program (`ln_back.sm86.sass`): one block of 256 per row
+/// (grid x = rows); cbuf0 x/dy/γ/μ/rstd/dx at 0x28/0x30/0x38/0x40/0x48/0x50, c at 0x58, 1/c at 0x5c (NAK dump). Each
+/// row is `gpu_compute::layer::ln_back_gpu256` (the program's order; only add / mul / fma).
+pub fn ln_back_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [256, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 {
+        return Err(bad("SIM: ln_back cere blocuri de 256x1x1, grila = randuri"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let r = |l: &Launch<'_>, o: u64| l.mem.read_u64(l.cbuf0 + o);
+    let (x, dy, gm, mu, rs, dx) = (
+        r(l, 0x28)?,
+        r(l, 0x30)?,
+        r(l, 0x38)?,
+        r(l, 0x40)?,
+        r(l, 0x48)?,
+        r(l, 0x50)?,
+    );
+    let c = l.mem.read_u32(l.cbuf0 + 0x58)? as usize;
+    let inv_c = f32::from_bits(l.mem.read_u32(l.cbuf0 + 0x5c)?);
+    if c == 0 {
+        return Ok(()); // the program returns at once
+    }
+    let gamma = l.mem.read_f32s(gm, c)?;
+    for row in 0..l.grid[0] as usize {
+        let off = 4 * (row * c) as u64;
+        let xr = l.mem.read_f32s(x + off, c)?;
+        let dyr = l.mem.read_f32s(dy + off, c)?;
+        let m = f32::from_bits(l.mem.read_u32(mu + 4 * row as u64)?);
+        let s = f32::from_bits(l.mem.read_u32(rs + 4 * row as u64)?);
+        let out = gpu_compute::layer::ln_back_gpu256(&xr, &dyr, &gamma, m, s, inv_c);
+        l.mem.write_f32s(dx + off, &out);
+    }
+    Ok(())
+}
+
+/// The CPU stand-in for C-160 point 4's column-sum program (`colsum.sm86.sass`): blocks of 256 (one thread per
+/// column, grid x = ⌈c/256⌉); cbuf0 dy/x/μ/rstd/s0/s1 at 0x28/0x30/0x38/0x40/0x48/0x50, rows at 0x58, c at 0x5c, the
+/// mode at 0x60 (0 = bias, else LayerNorm: dγ in s0, dβ in s1) (NAK dump). The columns are
+/// `gpu_compute::layer::colsum_gpu`; threads past `c` (and blocks past the grid) do nothing, as the program.
+pub fn colsum_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [256, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 {
+        return Err(bad("SIM: colsum cere blocuri de 256x1x1, grila 1D"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let r = |l: &Launch<'_>, o: u64| l.mem.read_u64(l.cbuf0 + o);
+    let (dy, x, mu, rs, s0, s1) = (
+        r(l, 0x28)?,
+        r(l, 0x30)?,
+        r(l, 0x38)?,
+        r(l, 0x40)?,
+        r(l, 0x48)?,
+        r(l, 0x50)?,
+    );
+    let rows = l.mem.read_u32(l.cbuf0 + 0x58)? as usize;
+    let c = l.mem.read_u32(l.cbuf0 + 0x5c)? as usize;
+    let hat = l.mem.read_u32(l.cbuf0 + 0x60)? != 0;
+    // Only the columns the launched threads reach.
+    let cols = c.min(256 * l.grid[0] as usize);
+    if cols == 0 {
+        return Ok(());
+    }
+    let dyv = l.mem.read_f32s(dy, rows * c)?;
+    let (a, b) = if hat {
+        let xv = l.mem.read_f32s(x, rows * c)?;
+        let mv = l.mem.read_f32s(mu, rows)?;
+        let rv = l.mem.read_f32s(rs, rows)?;
+        let st = gpu_compute::layer::LnStats {
+            x: &xv,
+            mean: &mv,
+            rstd: &rv,
+        };
+        gpu_compute::layer::colsum_gpu(&dyv, rows, c, Some(st))
+    } else {
+        gpu_compute::layer::colsum_gpu(&dyv, rows, c, None)
+    };
+    l.mem.write_f32s(s0, &a[..cols]);
+    if hat {
+        l.mem.write_f32s(s1, &b[..cols]);
+    }
+    Ok(())
+}
+
 /// What `tools/nak/out/matmul_1d.sm86.sass` (step 4) needs: the 64×8 tile of
 /// A at 0 and the 8×64 tile of B at 0x800 (4 KiB) and one barrier.
 pub const MATMUL_1D_NEEDS: Needs = Needs {

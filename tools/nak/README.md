@@ -257,3 +257,16 @@ să nu se schimbe. `nak_dump_cm.c` cere în plus `VK_KHR_cooperative_matrix` și
 | Aritmetica | `fadd.ftz`, `fmul.ftz` cu log₂e, **`mufu.exp2`**, **`mufu.rcp`**, **`mufu.log2`** + `ffma.ftz` cu ln 2, `fmnmx.ftz`, `shfl.bfly` |
 
 Oracolul: `gpu_compute::train::softmax_xent` (f64), într-o margine scrisă — MUFU e aproximativ, deci nu bit cu bit. Testul T153.
+
+## C-160 punctul 4, programele 4 și 2: `ln_back` și `colsum` (21 nov 2026, sesiunea 144, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh ln_back` / `colsum` (Mesa 25.0.7 reconstruit în cloud; `xent` a ieșit **identic**, `44cc3536…f420e339d`).
+
+| Ce | `ln_back` | `colsum` |
+|---|---|---|
+| Program | LayerNorm înapoi pentru dx, un bloc de 256 de fire pe rând | sume pe coloane (un fir pe coloană): Σ dy (deplasare) sau Σ dy·x̂ și Σ dy (dγ, dβ) |
+| Ieșire | **2 736 octeți**, 171 de instrucțiuni, 19 registre, 64 de octeți partajați, o barieră | **1 136 octeți**, 71 de instrucțiuni, 19 registre, fără memorie partajată |
+| SHA-256 | `369afd8dd343b9a508d481998b75de899d417d33c991c11351ec21db85cd7063` | `7a0fa2bde1b464cff50af588371bb09adf0f03399e880a07d75021431a47fb10` |
+| Bufferul constant 0 | x / dy / γ / μ / r / dx la 0x28…0x50, C la 0x58, 1/C la 0x5c | dy / x / μ / r / s0 / s1 la 0x28…0x50, rânduri 0x58, C 0x5c, modul 0x60 |
+| Aritmetica | `fadd.ftz`, `fmul.ftz`, `ffma.ftz`, `shfl.bfly`; NAK a lipit `dy·γ − m1` într-un singur `ffma` | `fadd.ftz`, `fmul.ftz`, `ffma.ftz` |
+
+Oracolul: `gpu_compute::train::layernorm_back_rows` (f64), într-o margine scrisă. Testele T154, T155.

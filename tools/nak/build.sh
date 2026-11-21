@@ -17,6 +17,8 @@
 #   sh tools/nak/build.sh q8_fused32     # C-155 point 4: q8_fused with q8_matvec32's work split (session 135)
 #   sh tools/nak/build.sh mm_train       # C-160 point 4: training matmul, op(A)*op(B) (+bias), NN/NT/TN (session 142)
 #   sh tools/nak/build.sh xent           # C-160 point 4, program 7: softmax + cross-entropy and its gradient (session 143)
+#   sh tools/nak/build.sh ln_back        # C-160 point 4, program 4: LayerNorm backward, dx (session 144)
+#   sh tools/nak/build.sh colsum         # C-160 point 4, program 2 (+ dγ, dβ of program 4): column sums (session 144)
 #   sh tools/nak/build.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): apt install glslang-tools spirv-tools libvulkan-dev libdrm-dev
@@ -86,6 +88,12 @@ mm_train)
     ;;
 xent)
     exec sh "$0" kernel xent 40
+    ;;
+ln_back)
+    exec sh "$0" kernel ln_back 56
+    ;;
+colsum)
+    exec sh "$0" kernel colsum 60
     ;;
 kernel)
     NAME=${2:?nume}; PUSH=${3:?octeti push constants}

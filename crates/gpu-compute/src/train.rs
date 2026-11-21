@@ -439,6 +439,49 @@ fn layernorm_back(
     dx
 }
 
+/// The mean μ and `rstd = 1/√(var + eps)` of every row of `x` (`rows × c`), as the forward pass of [`loss_and_grad`]
+/// computes them (f64), rounded once to f32: what a board forward program keeps for the backward one (C-160 point 4,
+/// programs 3/4).
+pub fn layernorm_stats(x: &[f32], rows: usize, c: usize) -> GpuResult<(Vec<f32>, Vec<f32>)> {
+    need(rows > 0 && c > 0 && x.len() == rows * c, "layernorm: forma")?;
+    let mut mean = vec![0.0f32; rows];
+    let mut rstd = vec![0.0f32; rows];
+    for r in 0..rows {
+        let row = &x[r * c..(r + 1) * c];
+        let m = row.iter().map(|&v| v as f64).sum::<f64>() / c as f64;
+        let var = row
+            .iter()
+            .map(|&v| (v as f64 - m) * (v as f64 - m))
+            .sum::<f64>()
+            / c as f64;
+        mean[r] = m as f32;
+        rstd[r] = (1.0 / sqrt64(var + LN_EPS)) as f32;
+    }
+    Ok((mean, rstd))
+}
+
+/// LayerNorm backward over `rows × c` (`x` the forward input, `dy` the gradient of the output, `g` = γ), exactly the
+/// calculation [`loss_and_grad`] does for LN1 / LN2 / the final LN: returns `(dx, dγ, dβ)`. The oracle of the board's
+/// `ln_back` program (C-160 point 4, program 4) and of the column sums for dγ, dβ.
+pub fn layernorm_back_rows(
+    x: &[f32],
+    dy: &[f32],
+    g: &[f32],
+    rows: usize,
+    c: usize,
+) -> GpuResult<(Vec<f32>, Vec<f32>, Vec<f32>)> {
+    need(
+        rows > 0 && c > 0 && x.len() == rows * c && dy.len() == rows * c && g.len() == c,
+        "layernorm inapoi: forma",
+    )?;
+    let zeros = vec![0.0f32; c];
+    let (_, cache) = layernorm(x, rows, c, g, &zeros);
+    let mut dg = vec![0.0f32; c];
+    let mut db = vec![0.0f32; c];
+    let dx = layernorm_back(dy, &cache, rows, c, g, &mut dg, &mut db);
+    Ok((dx, dg, db))
+}
+
 /// What one layer keeps for the backward pass.
 struct LayerCache {
     ln1: LnCache,

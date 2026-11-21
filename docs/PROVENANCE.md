@@ -457,3 +457,13 @@ scrise de noi. Formula (softmax cu scăderea maximului, gradientul (p − unu-la
 (BSD) și llm.c `crossentropy_softmax_backward` (MIT), doar ideea. Forma reducerilor: propriul nostru `layernorm256.comp`. Marginea: rotunjirile
 f32 (Higham, cap. 3) + o margine generoasă pentru unitățile MUFU (fără cifre de la NVIDIA). Binarul: Mesa NAK 25.0.7 (MIT), compilat pe gazdă
 (Mesa reconstruit în cloud; `mm_train` a ieșit identic, aceeași sumă). Nimic GPL, niciun octet de firmware NVIDIA.
+
+### C-160 punctul 4 — `ln_back` (programul 4, dx) și `colsum` (programul 2 + dγ/dβ) (sesiunea 144)
+`tools/nak/ln_back.comp`, `tools/nak/colsum.comp`, `crates/nvidia-ga104/src/ln_back.rs`, `crates/nvidia-ga104/src/colsum.rs`,
+`gpu_sim::cmdproc::ln_back_on_cpu` / `colsum_on_cpu`, `gpu_compute::layer::ln_back_gpu256` / `colsum_gpu` / `LnStats`,
+`gpu_compute::train::layernorm_stats` / `layernorm_back_rows` (adăugate; folosesc exact `layernorm` / `layernorm_back` din `loss_and_grad`),
+testele `crates/nvidia-ga104/tests/sim_ln_back.rs` și `sim_colsum.rs`: scrise de noi. Formulele (dx = r·(g − media g − x̂·media g·x̂),
+dγ = Σ dy·x̂, dβ = Σ dy): standard — documentația PyTorch `LayerNorm` (BSD) și llm.c `layernorm_backward` (MIT), doar ideea; despărțirea în
+două programe (fără `atomic`) e alegerea noastră. Forma reducerii: propriul nostru `layernorm256.comp` / `xent.comp`. Marginile: rotunjirile
+f32 (Higham, cap. 3). Binarele: Mesa NAK 25.0.7 (MIT), compilat pe gazdă (Mesa reconstruit în cloud; `xent` a ieșit identic). Nimic GPL,
+niciun octet de firmware NVIDIA.
