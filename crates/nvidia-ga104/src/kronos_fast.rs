@@ -144,6 +144,26 @@ impl WriteShadow {
     pub fn known_words(&self) -> usize {
         self.known.iter().filter(|&&k| k).count()
     }
+
+    /// C-157 point 2b: forgets only the words of `[pa, pa + len)` that fall inside the shadow's area (widened to
+    /// whole words); a write elsewhere (e.g. the diagnosis writing the activations) leaves the shadow intact.
+    /// Returns how many known words were forgotten. On `os-324` the ladder's `write` made the OS forget the whole
+    /// launch area, so the first position rewrote all 196 slots (~25 000 words, ~17 ms).
+    pub fn forget_range(&mut self, pa: u64, len: u64) -> usize {
+        let end = pa.saturating_add(len);
+        let area_end = self.base + 4 * self.words.len() as u64;
+        if len == 0 || end <= self.base || pa >= area_end {
+            return 0;
+        }
+        let i0 = ((pa.max(self.base) - self.base) / 4) as usize;
+        let i1 = (end.min(area_end) - self.base).div_ceil(4) as usize;
+        let mut n = 0;
+        for k in &mut self.known[i0..i1] {
+            n += usize::from(*k);
+            *k = false;
+        }
+        n
+    }
 }
 
 /// C-147 point 7 (the driver's diet): a [`ChannelMemory`] that sends a word on to `inner` only when the shadow
@@ -346,6 +366,174 @@ impl TimeSplit {
     }
 }
 
+/// C-157 point 2b: a position is "slow" when its host time is above `SLOW_FACTOR` × the median.
+pub const SLOW_FACTOR: u64 = 2;
+/// At most this many slow positions get their own rows (5 rows each; every value row is one stick write).
+pub const SLOW_MAX: usize = 8;
+
+/// C-157 point 2b: what the median hides — the sum over all positions and the slow ones, each split.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SlowReport {
+    pub tokens: usize,
+    pub median_host_us: u64,
+    /// Sum of `host_us` over every position (the mean = `sum_host_us / tokens`).
+    pub sum_host_us: u64,
+    /// All slow positions (not only the first [`SLOW_MAX`]).
+    pub slow_count: usize,
+    /// Σ (host − median) over the slow positions: what removing them would save.
+    pub extra_us: u64,
+    /// The first [`SLOW_MAX`] slow positions, in order.
+    pub slow: Vec<TokenSplit>,
+}
+
+impl SlowReport {
+    /// Tokens per second × 100 over the sum (the "mean" rate of the speed rows), 0 without tokens.
+    pub fn mean_per_s_x100(&self) -> u64 {
+        (self.tokens as u64)
+            .saturating_mul(100_000_000)
+            .checked_div(self.sum_host_us)
+            .unwrap_or(0)
+    }
+}
+
+impl TimeSplit {
+    /// C-157 point 2b: the sum and the slow positions.
+    pub fn slow_report(&self) -> SlowReport {
+        let med = self.summary().host_us;
+        let slow: Vec<TokenSplit> = self
+            .tokens
+            .iter()
+            .copied()
+            .filter(|t| med > 0 && t.host_us > SLOW_FACTOR * med)
+            .collect();
+        SlowReport {
+            tokens: self.tokens.len(),
+            median_host_us: med,
+            sum_host_us: self.tokens.iter().map(|t| t.host_us).sum(),
+            slow_count: slow.len(),
+            extra_us: slow.iter().map(|t| t.host_us - med).sum(),
+            slow: slow.into_iter().take(SLOW_MAX).collect(),
+        }
+    }
+
+    /// `kt` rows of [`Self::slow_report`]: 3 summary rows, then 5 per slow position (at most [`SLOW_MAX`]).
+    pub fn slow_rows(&self) -> Vec<(&'static str, u32)> {
+        let r = self.slow_report();
+        let c = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
+        let mut out = alloc::vec![
+            ("kt suma simbol fara verificare (us)", c(r.sum_host_us)),
+            (
+                "kt pozitii lente (peste 2 x mediana)",
+                c(r.slow_count as u64)
+            ),
+            ("kt timp in plus in pozitiile lente (us)", c(r.extra_us)),
+        ];
+        for t in &r.slow {
+            out.extend([
+                ("kt lenta: pozitia", c(t.pos as u64)),
+                ("kt lenta: simbol (us)", c(t.host_us)),
+                ("kt lenta: placa (us)", c(t.board_us)),
+                ("kt lenta: jurnal (us)", c(t.journal_us)),
+                ("kt lenta: driver (us)", c(t.driver_us())),
+            ]);
+        }
+        out
+    }
+
+    pub fn journal_slow(&self, j: &mut Journal) {
+        for (what, value) in self.slow_rows() {
+            j.push(Event::Value { what, value });
+        }
+    }
+
+    /// Report lines of [`Self::slow_report`] (`label`: "SIMULARE" or "placa").
+    pub fn slow_lines(&self, label: &str) -> Vec<String> {
+        let r = self.slow_report();
+        let x = |v: u64| format!("{}.{:02}", v / 100, v % 100);
+        let mut out = alloc::vec![format!(
+            "pozitiile lente ({label}): {} din {} peste {} x mediana ({} us); in plus {} us; suma {} us = {} simboluri/s in medie",
+            r.slow_count,
+            r.tokens,
+            SLOW_FACTOR,
+            r.median_host_us,
+            r.extra_us,
+            r.sum_host_us,
+            x(r.mean_per_s_x100())
+        )];
+        for t in &r.slow {
+            out.push(format!(
+                "pozitia lenta {} ({label}): {} us = placa {} + jurnal {} + driver {}",
+                t.pos,
+                t.host_us,
+                t.board_us,
+                t.journal_us,
+                t.driver_us()
+            ));
+        }
+        out
+    }
+}
+
+/// C-157 point 2b: the slow-position rows read back from a stick journal.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ParsedSlow {
+    pub sum_host_us: Option<u32>,
+    pub slow_count: Option<u32>,
+    pub extra_us: Option<u32>,
+    /// (pos, host, board, journal, driver), in order; a position missing a row is left out.
+    pub slow: Vec<[u32; 5]>,
+}
+
+/// Reads the rows of [`TimeSplit::slow_rows`] (`gpu: valoare kt … = 0x…`).
+pub fn parse_slow(text: &str) -> ParsedSlow {
+    let mut p = ParsedSlow::default();
+    let mut cur: Option<([u32; 5], u8)> = None;
+    for line in text.lines() {
+        let Some(rest) = line.split("gpu: valoare kt ").nth(1) else {
+            continue;
+        };
+        let Some((name, val)) = rest.rsplit_once(" = 0x") else {
+            continue;
+        };
+        let Ok(v) = u32::from_str_radix(val.trim(), 16) else {
+            continue;
+        };
+        let field = match name {
+            "suma simbol fara verificare (us)" => {
+                p.sum_host_us = Some(v);
+                continue;
+            }
+            "pozitii lente (peste 2 x mediana)" => {
+                p.slow_count = Some(v);
+                continue;
+            }
+            "timp in plus in pozitiile lente (us)" => {
+                p.extra_us = Some(v);
+                continue;
+            }
+            "lenta: pozitia" => 0,
+            "lenta: simbol (us)" => 1,
+            "lenta: placa (us)" => 2,
+            "lenta: jurnal (us)" => 3,
+            "lenta: driver (us)" => 4,
+            _ => continue,
+        };
+        if field == 0 {
+            cur = Some(([v, 0, 0, 0, 0], 1));
+            continue;
+        }
+        if let Some((row, seen)) = cur.as_mut() {
+            row[field] = v;
+            *seen |= 1 << field;
+            if *seen == 0b11111 {
+                p.slow.push(*row);
+                cur = None;
+            }
+        }
+    }
+    p
+}
+
 /// The `kt` rows read back from a stick journal (`None` = row missing).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ParsedSplit {
@@ -412,6 +600,88 @@ pub const FIGURES: [(&str, &str); 3] = [
 mod tests {
     use super::*;
     use gpu_core::diag::Flush;
+
+    /// C-157 point 2b: the 18 positions of `os-324` as the stick journal's clocks show them (µs, DEDUS from the
+    /// row timestamps of `gpu-jurnal-024.txt`): position 0 ~40 ms (the launch slots rewritten whole + a stick write
+    /// forced by the ladder's held rows), position 15 ~58 ms (the stick write of the 16th token), the rest ~4,1 ms.
+    fn os324() -> TimeSplit {
+        let mut s = TimeSplit::new();
+        for pos in 0..18 {
+            let (host, journal) = match pos {
+                0 => (40_200, 20_400),
+                15 => (58_400, 54_300),
+                _ => (4_083, 62),
+            };
+            s.add(TokenSplit {
+                pos,
+                host_us: host,
+                board_us: 2_624,
+                journal_us: journal,
+                screen_us: 0,
+                check_us: 0,
+            })
+            .unwrap();
+        }
+        s
+    }
+
+    #[test]
+    fn slow_positions_explain_the_mean() {
+        let s = os324();
+        let r = s.slow_report();
+        assert_eq!(r.median_host_us, 4_083);
+        assert_eq!(r.slow_count, 2);
+        assert_eq!(r.slow.iter().map(|t| t.pos).collect::<Vec<_>>(), [0, 15]);
+        assert_eq!(r.sum_host_us, 16 * 4_083 + 40_200 + 58_400);
+        // The mean of the speed rows: 109,11 simb/s on the board, 109,80 here; without the two: the median's ~245.
+        assert_eq!(r.mean_per_s_x100(), 10_980);
+        assert_eq!(r.extra_us, 40_200 + 58_400 - 2 * 4_083);
+        let rows = s.slow_rows();
+        assert_eq!(rows.len(), 3 + 2 * 5);
+        let text: String = rows
+            .iter()
+            .map(|(w, v)| format!("[  1.000000] gpu: valoare {w} = {v:#010x}\n"))
+            .collect();
+        let p = parse_slow(&text);
+        assert_eq!(p.sum_host_us, Some(r.sum_host_us as u32));
+        assert_eq!(p.slow_count, Some(2));
+        assert_eq!(
+            p.slow[1],
+            [15, 58_400, 2_624, 54_300, 58_400 - 2_624 - 54_300]
+        );
+        assert!(s.slow_lines("SIMULARE")[0].contains("2 din 18"));
+        // No slow position: three rows only, nothing invented.
+        let mut even = TimeSplit::new();
+        for pos in 0..4 {
+            even.add(TokenSplit {
+                pos,
+                host_us: 4_000,
+                board_us: 2_600,
+                ..Default::default()
+            })
+            .unwrap();
+        }
+        assert_eq!(even.slow_rows().len(), 3);
+        assert_eq!(TimeSplit::new().slow_report().mean_per_s_x100(), 0);
+    }
+
+    #[test]
+    fn forget_range_keeps_the_rest() {
+        let mut sh = WriteShadow::new(0x1000, 64).unwrap();
+        sh.remember(0x1000, &[7u8; 64]).unwrap();
+        assert_eq!(sh.known_words(), 16);
+        // Outside the area: nothing forgotten (the ladder writing the activations).
+        assert_eq!(sh.forget_range(0x8000, 3072), 0);
+        assert_eq!(sh.forget_range(0x0f00, 0x100), 0);
+        // Overlapping the start, unaligned: words 0..2 (0x1000..0x100a widened to 0x100c).
+        assert_eq!(sh.forget_range(0x0ff0, 0x1a), 3);
+        assert_eq!(sh.known_words(), 13);
+        assert_eq!(sh.changes(0x1000, &[7u8; 16]).unwrap(), [(0x1000, 0..12)]);
+        // Over the end.
+        assert_eq!(sh.forget_range(0x103c, 0x100), 1);
+        assert_eq!(sh.forget_range(0x1000, 0), 0);
+        assert_eq!(sh.known_words(), 12);
+    }
 
     /// A memory that records every write (and can fail one).
     struct Log(Vec<(u64, u32)>, Option<u64>);
