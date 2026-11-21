@@ -23,7 +23,7 @@ refuză acum și `LayerNorm256` / `Argmax` (`token.comp` nu le are; OS-ul nu fol
 | T145b | doar argmax: `run_top` = aceleași simboluri ca `run` cu copie și verificare; logit-urile nu ajung în RAM | PASS (SIMULARE) |
 | T145c | algoritmul programului refăcut fir cu fir = oracolul (n 1…50 257; egalități, −0/+0, NaN, ±∞, subnormale) | PASS |
 | T145d–g | octeții = dump-ul NAK, QMD; NaN → fără simbol; program plantat greșit → prins; umplutura → eroare | PASS (SIMULARE) |
-| `tools/check.sh` | format, clippy `-D warnings`, **636 de teste**, build no_std | PASS |
+| `tools/check.sh` | format, clippy `-D warnings`, **636 de teste**, build no_std; CI GitHub pe `3683ef4` (rularea 44894336572) verde | PASS |
 | Pe RTX 3070 Ti | nimic | NOT TESTED |
 
 Estimare (DEDUS): ~130 µs mai puțin pe simbol (~4,08 → ~3,95 ms); câștig mic, rostul e etapa 5 (simbolul rămâne pe placă).
