@@ -1,5 +1,34 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 133 — 21 noiembrie 2026, ~11:15–12:05 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2b (pozițiile lente din os-324)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Testul `os-324` (dieta, 11:01) a apărut în `rezultate/`, iar centrul de
+comandă a adăugat punctul 2b înaintea punctului 3: de ce media (109 simb/s) e mult sub mediană (245) și de ce 238 de cuvinte pe simbol.
+
+**Comparația cu estimarea:** dieta a ieșit cum am scris în `docs/C-147_PUNCTUL7_ESTIMARE.md` (driverul ~1 300 → 1 347 µs; simbolul
+~4,0 → 4,08 ms; ~250 → 245 simb/s; „~200 de cuvinte” → 238; logit-urile ca în os-322). Altfel decât am crezut: **media**. Din ceasurile
+rândurilor din `gpu-jurnal-024.txt`: doar două poziții sunt lente — poziția 0 (~40 ms: locurile de lansare rescrise întregi pentru că
+`write` din scară uită toată umbra, ~17 ms, + o scriere pe stick forțată de rândurile rămase de la scară, ~20 ms) și poziția 15 (~58 ms:
+scrierea pe stick la al 16-lea simbol). 40 + 58 + 16 × 4,1 ≈ 165 ms = suma raportată. La generări lungi scrierea la 16 simboluri ar costa
+~3,4 ms pe simbol în medie. Propuneri pentru OS (nimic nou pe placă) + rândul `kt` cu pozițiile lente: nota
+`integration/cyber-universe/C-157_P2b_pozitii-lente.md`.
+
+Adăugat (doar adăugări): `kronos_fast::{WriteShadow::forget_range, SLOW_FACTOR, SLOW_MAX, SlowReport, TimeSplit::{slow_report,
+slow_rows, journal_slow, slow_lines}, ParsedSlow, parse_slow}`. Commit `46078f4`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| T144 | cuvintele pe simbol cu dieta, forma lui #513, două poziții la rând: pushbuffer 197 + cbuf 38 + QMD 0 + inel 3 (presupus) = **238** = placa | PASS (aritmetică) |
+| `slow_positions_explain_the_mean` | cele 18 poziții os-324 (DEDUS din jurnal): 2 lente (0 și 15), media 109,80 simb/s (placa: 109,11), rânduri + citire înapoi | PASS |
+| `forget_range_keeps_the_rest` | uitare doar în zona scrisă (în afara ei: nimic) | PASS |
+| `tools/check.sh` | format, clippy `-D warnings`, **627 de teste**, build no_std | PASS |
+| Pe RTX 3070 Ti | nimic nou | NOT TESTED |
+
+Estimare (DEDUS): cu cele 3 propuneri, media ≈ mediana → ~245 simb/s „cu driverul” (azi 109,11).
+
+**Următorul pas:** C-155 punctul 3 — argmax pe placă (4 octeți citiți în loc de 64 KiB), în SIMULARE.
+
+---
 ## Sesiunea 132 — 21 noiembrie 2026, ~10:10–10:40 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2 (os-323) + C-155 punctul 2 (LayerNorm nou)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Întâi testele noi pe placă (au întâietate, C-157 punctul 2), apoi LayerNorm.
