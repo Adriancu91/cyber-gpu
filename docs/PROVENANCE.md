@@ -367,6 +367,9 @@ sau copiat din ele în această sesiune. Nicio sursă GPL. Niciun octet de firmw
 | tinygrad `runtime/ops_nv.py` (`NVDevice.__init__`), `runtime/support/nv/ip.py` (`rpc_rm_control`), MIT, `master` la 19 nov 2026 (`7755a04`) | MIT | sesiunea 119 (C-147 punctul 4): **doar citit**: ei trimit la GSP direct `PERF_BOOST` cu `CUDA_YES \| CUDA_PRIORITY_HIGH \| BOOST_TO_MAX` și durata `0xffffffff`, fără să verifice răspunsul → forma B din `gsp::perf` (oprită; implicit forma A, a driverului NVIDIA). Niciun cod copiat |
 | Kronos (cyberspace) `config/conv_w2_mare_24zc.toml` | proprietar (proiectul lui Adrian) | sesiunea 119 (C-150): doar citit: forma lui #651 (24 straturi, 12 capete, E 768, context 512, `bpe_16384`) → `kronos_speed::K651_*` |
 
+**Sesiunea 131 (21 nov), C-155 punctul 1 (P3 gata de legat):** `kronos_diag::{TokenList, send_token_list, submissions_of, push_bytes_of}`
+și testul `sim_c155_p3` sunt scrise de noi, fără nicio sursă externă (doar codul nostru din `kronos_diag`, `kronos_model`, `kronos_layer`).
+
 **Sesiunea 121 (20 nov, ~04:30), C-147 punctul 3 (etapa 4):** programul `tools/nak/q8_matvec32.comp` e scris de noi, din programul nostru
 `q8_matvec.comp` (aceeași formulă, același arbore de adunare, altă împărțire a muncii); compilat cu Mesa NAK 25.0.7 (MIT, sursa verificată cu SHA-256
 în `build.sh`). Codul Rust nou (`q8::row_gpu_order_w32`, `q8_matvec32_on_cpu`, modulele `q8_matvec32` și `q8_race`, testul `sim_c147_w32`) e scris de

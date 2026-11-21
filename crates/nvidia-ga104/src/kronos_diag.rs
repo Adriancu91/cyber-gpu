@@ -136,7 +136,13 @@ impl Way {
     /// The submissions of the first `n` launches of a token's list in this way: [`submissions`], without launch 0
     /// when the driver writes the embedding. The ranges index the token's list (and its launch slots).
     pub fn submissions(&self, layers: usize, n: usize) -> Vec<Range<usize>> {
-        let mut s = submissions(self.mode, layers, n);
+        self.submissions_of(TokenList::Plain, layers, n)
+    }
+
+    /// C-155: [`Self::submissions`] for a token built from `list` (the layer ends move with the list: 16 or 7
+    /// launches per layer).
+    pub fn submissions_of(&self, list: TokenList, layers: usize, n: usize) -> Vec<Range<usize>> {
+        let mut s = submissions_of(list, self.mode, layers, n);
         if self.embed == EmbedBy::Driver
             && let Some(first) = s.first_mut()
         {
@@ -177,6 +183,77 @@ pub fn driver_embedding(w: &ModelWeights<'_>, token: usize, pos: usize) -> GpuRe
 /// The submissions of the first `n` launches of a token's list (`n` may include launches the caller appends after
 /// [`km::token_launches`], e.g. the copy of the logits): index ranges, in order.
 pub fn submissions(mode: SeqMode, layers: usize, n: usize) -> Vec<Range<usize>> {
+    submissions_of(TokenList::Plain, mode, layers, n)
+}
+
+/// C-155 (P3): which launch list a token is built from. `Plain` is the list every OS Release has sent so far
+/// ([`km::token_launches`], 16 launches per layer, the programs [`kl::PROGRAMS`]); `Fused` is the glued list of
+/// C-147 etapa 3a ([`km::token_launches_fused`], 7 per layer, the programs [`kl::PROGRAMS_FUSED`]). Both give the
+/// same bits for `x`, the caches and the logits (tested in SIMULARE); the diagnosis ([`ladder`], [`explain`],
+/// [`locate`]) knows only `Plain` — after a fused token fails, run the same position again with `Plain`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TokenList {
+    Plain = 0,
+    Fused = 1,
+}
+
+impl TokenList {
+    /// Launches of one layer.
+    pub const fn per_layer(self) -> usize {
+        match self {
+            TokenList::Plain => LAUNCHES_PER_TOKEN,
+            TokenList::Fused => kl::LAUNCHES_PER_TOKEN_FUSED,
+        }
+    }
+
+    /// Launches of a whole token of a model of `layers` layers (without what the caller appends).
+    pub fn launches_per_token(self, layers: usize) -> usize {
+        match self {
+            TokenList::Plain => km::launches_per_token(layers),
+            TokenList::Fused => km::launches_per_token_fused(layers),
+        }
+    }
+
+    /// The programs the list launches: what must be in VRAM before the first token.
+    pub fn programs(self) -> &'static [kl::Prog] {
+        match self {
+            TokenList::Plain => &kl::PROGRAMS,
+            TokenList::Fused => &kl::PROGRAMS_FUSED,
+        }
+    }
+
+    /// The launches of `token` at `pos`.
+    pub fn launches(
+        self,
+        w: &ModelWeights<'_>,
+        vas: &ModelVas,
+        token: usize,
+        pos: usize,
+    ) -> GpuResult<Vec<Launch>> {
+        match self {
+            TokenList::Plain => km::token_launches(&w.shape, w.vocab, w.context, vas, token, pos),
+            TokenList::Fused => {
+                km::token_launches_fused(&w.shape, w.vocab, w.context, vas, token, pos)
+            }
+        }
+    }
+
+    /// The journal's word for it (`kt lista …`).
+    pub fn name(self) -> &'static str {
+        match self {
+            TokenList::Plain => "simpla",
+            TokenList::Fused => "lipita",
+        }
+    }
+}
+
+/// [`submissions`] for a token built from `list`.
+pub fn submissions_of(
+    list: TokenList,
+    mode: SeqMode,
+    layers: usize,
+    n: usize,
+) -> Vec<Range<usize>> {
     if n == 0 {
         return Vec::new();
     }
@@ -187,7 +264,7 @@ pub fn submissions(mode: SeqMode, layers: usize, n: usize) -> Vec<Range<usize>> 
             let mut start = 0;
             // Ends of the layers: the embedding rides with layer 0.
             for l in 0..layers {
-                let end = (1 + LAUNCHES_PER_TOKEN * (l + 1)).min(n);
+                let end = (1 + list.per_layer() * (l + 1)).min(n);
                 if end > start {
                     out.push(start..end);
                     start = end;
@@ -230,7 +307,13 @@ pub const fn words(mode: SeqMode, n: usize) -> usize {
 /// one is in flight). #513 with the copy of the logits (196 launches): 7 872 B as before, 9 440 B with `EachLaunch`,
 /// 712 B per layer.
 pub fn push_bytes(mode: SeqMode, layers: usize, launches: usize) -> usize {
-    submissions(mode, layers, launches)
+    push_bytes_of(TokenList::Plain, mode, layers, launches)
+}
+
+/// C-155: [`push_bytes`] for a token built from `list`. #513 glued, with the copy of the logits (88 launches):
+/// 4 256 B with `EachLaunch` (less than the plain list's, so the area that holds that one holds this one).
+pub fn push_bytes_of(list: TokenList, mode: SeqMode, layers: usize, launches: usize) -> usize {
+    submissions_of(list, mode, layers, launches)
         .iter()
         .map(|r| 4 * words(mode, r.len()))
         .max()
@@ -267,11 +350,25 @@ fn send<I: TokenIo + ?Sized>(
     pos: usize,
     way: Way,
 ) -> GpuResult<()> {
+    send_as(io, TokenList::Plain, w, vas, list, token, pos, way)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn send_as<I: TokenIo + ?Sized>(
+    io: &mut I,
+    kind: TokenList,
+    w: &ModelWeights<'_>,
+    vas: &ModelVas,
+    list: &[Launch],
+    token: usize,
+    pos: usize,
+    way: Way,
+) -> GpuResult<()> {
     vas.check()?;
     if way.embed == EmbedBy::Driver {
         io.write(vas.layers[0].x, &driver_embedding(w, token, pos)?)?;
     }
-    for r in way.submissions(w.layers.len(), list.len()) {
+    for r in way.submissions_of(kind, w.layers.len(), list.len()) {
         io.submit(&list[r.clone()], r.start, way.mode)?;
     }
     Ok(())
@@ -293,6 +390,25 @@ pub fn send_token<I: TokenIo + ?Sized>(
     let mut list = km::token_launches(&w.shape, w.vocab, w.context, vas, token, pos)?;
     list.extend_from_slice(extra);
     send(io, w, vas, &list, token, pos, way)
+}
+
+/// C-155 (P3): [`send_token`] with the launches of `list` — `TokenList::Fused` is the glued list (7 launches per
+/// layer; #513: 87 + `extra`). The programs of `list.programs()` must be in VRAM. The launch area needs
+/// `list.launches_per_token(layers) + extra.len()` slots; `TokenList::Plain` is exactly [`send_token`].
+#[allow(clippy::too_many_arguments)]
+pub fn send_token_list<I: TokenIo + ?Sized>(
+    io: &mut I,
+    list: TokenList,
+    w: &ModelWeights<'_>,
+    vas: &ModelVas,
+    token: usize,
+    pos: usize,
+    way: Way,
+    extra: &[Launch],
+) -> GpuResult<()> {
+    let mut launches = list.launches(w, vas, token, pos)?;
+    launches.extend_from_slice(extra);
+    send_as(io, list, w, vas, &launches, token, pos, way)
 }
 
 // ------------------------------------------------------------------------------------------------ the logits

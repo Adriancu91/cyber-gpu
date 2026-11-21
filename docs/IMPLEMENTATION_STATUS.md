@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 131 — 21 noiembrie 2026, ~09:10–09:30 (ora României), în cloud, FĂRĂ placă — **C-155 punctul 1 (P3 gata de legat)**
+
+Pornită de programare, sub regula „Lucrul continuu” (REGULI.md din hub, 21 nov 08:01): semnul `in-lucru/cyber-gpu.md` era `liber`, l-am
+pus `ocupat`. Oprirea din sesiunea 130 (regula 8) e ridicată de C-155 („Ridică oprirea de la regula 8”) și de coada permanentă C-157.
+
+Ce lipsea ca P3 să fie „gata de legat”: OS-ul trimite fiecare simbol prin `kronos_diag::send_token`, care construia doar lista simplă
+(16 lansări pe strat), iar tăieturile `PerLayer` presupuneau 16 pe strat. Am adăugat (nimic redenumit sau șters):
+`kronos_diag::{TokenList, send_token_list, submissions_of, push_bytes_of}`, `Way::submissions_of`. Nota pentru OS:
+`integration/cyber-universe/C-155_P3-gata-de-legat.md` (ce legi în `gpu_i14.rs`, compatibilitatea cu dieta și viteza maximă, proba:
+oracolul pe procesor + prag 0 față de lista simplă, adică bit cu bit).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| T142a | text întreg lipit + dietă, prin `send_token_list`: bit cu bit = lista simplă; oracolul trece (max 3,3e-7); `EachLaunch` și `PerLayer` | PASS (SIMULARE) |
+| T142b | tăieturi pe strat, 88 vs 196, pushbuffer 4 256 B vs 9 440 B | PASS |
+| T142c | program lipit greșit plantat → prins de oracol | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy `-D warnings`, **617 teste** (6 ignorate), build no_std | PASS |
+| Pe RTX 3070 Ti | nimic | NOT TESTED |
+
+Interfața publică: doar adăugări (`kronos_diag`).
+
+**Următorul pas:** C-155 punctul 2 — LayerNorm nou (un program mai bun pentru ln1/ln2, ~260 µs fiecare pe simbol la P0), în SIMULARE.
+
+---
 ## Sesiunea 130 — 21 noiembrie 2026, ~07:25–07:35 (ora României), în cloud, FĂRĂ placă — **OPRIT: necesită analiza lui Adrian**
 
 Pornită de programare. Nicio altă sesiune Cyber-GPU nu lucra (ultimul commit: 21 nov 04:27). De la sesiunea 129: nicio comandă nouă
