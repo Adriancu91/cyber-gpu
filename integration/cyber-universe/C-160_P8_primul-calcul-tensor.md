@@ -26,7 +26,7 @@ schimbă; niciun simbol nu depinde de acest test.
 
 **Nimic altceva:** nicio scriere nouă în registre, nimic nou prin GSP, aceleași canale, aceeași secvență cu înregistrări de timp.
 
-## Ce e nou la noi (ramura `g0-g2-fundatie`, commit `82178f7`)
+## Ce e nou la noi (ramura `g0-g2-fundatie`, commit de legat `3199fa2`; codul: `82178f7`)
 - Modulul **`nvidia_ga104::mma16_probe`**:
   - `SETS` (6 seturi: `identitate`, `uniform-1..3`, `scari-1..2`), `ProbeSet::{inputs, page, inputs_fnv}`;
   - pagina de 4 KiB a unui set: A la `A_OFF` = 0x000, B la `B_OFF` = 0x200, C la `C_OFF` = 0x400, **D la `D_OFF` = 0x800 umplut cu NaN**

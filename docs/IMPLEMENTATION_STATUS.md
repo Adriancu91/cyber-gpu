@@ -17,7 +17,7 @@ Nota: `integration/cyber-universe/C-160_P8_primul-calcul-tensor.md`; cod: `82178
 | T150a | cele 6 seturi prin procesorul de comenzi simulat: 6/6 în toleranță, 650/1 536 exacte, 107 ‰, masca = `bloc8-taiere` (ipoteza modelului) | PASS (SIMULARE) |
 | T150b | orice două din cele 10 modele diferă pe cel puțin un set; toate 10 rămân în toleranță | PASS (aritmetică) |
 | T150c–d | rândurile `kt` citite înapoi; D nescris = invalid, B transpus / D al altui set / set lipsă = nu trece | PASS (SIMULARE) |
-| `tools/check.sh` | format, clippy `-D warnings`, **667 de teste**, build no_std | PASS |
+| `tools/check.sh` | format, clippy `-D warnings`, **667 de teste**, build no_std; CI verde pe `3199fa2` (o reparație pentru clippy 1.100) | PASS |
 | Pe RTX 3070 Ti | `hmma` niciodată rulat de noi; îl leagă OS-ul (C-161 punctul 2) | NOT TESTED |
 
 **Următorul pas:** C-160 punctul 2 (studiul motorului: calculele înainte/înapoi ale lui Kronos, bugetul de memorie, `docs/C-160_MOTOR_STUDIU.md`)
