@@ -425,3 +425,9 @@ copiată, nimic GPL, niciun octet de firmware NVIDIA.
 **C-157 punctul 4 (sesiunea 137, 21 nov 2026) — #651:** `kronos_speed::ModelLimits::{of_lists, k651_lists}`,
 `kronos_gen::VramBudget::with_programs`, `tests/sim_c157_k651.rs` — scrise de noi. Cifrele modelului: hub `integrare/kronos/MODEL_651.md`;
 constantele OS: codul `cyber-universe` doar citit. Nicio sursă externă copiată, nimic GPL, niciun octet de firmware NVIDIA.
+
+**C-160 punctul 2 (sesiunea 140, 21 nov 2026) — studiul motorului de antrenare, fără cod de driver:** `docs/C-160_MOTOR_STUDIU.md`,
+`tools/buget-antrenare/buget.py` (Python simplu, scris de noi; socoteala memoriei). Arhitectura și rețetele: hub
+`integrare/kronos/PAS_DE_AUR.md`. Formulele înapoi și ideile (activările păstrate, P recalculat, scalarea erorii la f16, AdamW) din
+studiul anterior al surselor deschise / publicate, notate în secțiunea 5 a documentului: PyTorch (BSD-3), llm.c (MIT), tinygrad (MIT),
+articolele arXiv 2205.05198, 2205.14135, 1710.03740, 1711.05101. Nimic copiat, nimic GPL, niciun octet de firmware NVIDIA.

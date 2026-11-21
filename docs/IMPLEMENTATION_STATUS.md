@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 140 — 21 noiembrie 2026, ~18:11–18:25 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (os-331) + C-160 punctul 2**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă: **os-331** (17:26, LayerNorm nou) → C-157 p.2 întâi.
+(Dosarul local vechi al repo-ului avea ramura divergentă; am lucrat pe o clonă nouă a `g0-g2-fundatie`, istoria de pe GitHub neatinsă.)
+
+**C-157 p.2 (os-331):** LayerNorm nou ~4 µs pe lansare, placa −445 µs pe simbol, **exact cât estimasem** (DEDUS → MĂSURAT); 348,47 simb/s e
+a doua rulare (încălzită). Răspuns la „logit-uri identice cu os-322? NU”: normal (sumele pe 256 de fire, altă ordine), abaterea 1,74e-5.
+Înmulțirile = 74 % din placă → cursa pe sferturi e următorul câștig. `docs/C-157_P2_COMPARATII.md`, nota `integration/cyber-universe/C-157_P2d_os-331.md`.
+
+**C-160 p.2 (studiul motorului):** `docs/C-160_MOTOR_STUDIU.md` — pasul întreg în ordine (înainte cu ce se păstrează, eroarea, înapoi,
+tăierea, AdamW), cele 10 programe de placă necesare și ordinea lor, memoria (`tools/buget-antrenare/buget.py`): starea fixă #513 1,46 GiB,
+#651 2,73 GiB; pașii de aur încap ușor în F32; #513 12 × 512 cere atenția cu P recalculat; #651 4–11 texte de 512 după variantă;
+pe NAK doar f16 (nu bf16) → scalarea erorii; întâi totul F32.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| os-331 comparat | estimarea LayerNorm față de jurnal (`gpu-jurnal-030.txt`, ceasul soneriilor) | PASS (comparație) |
+| Studiul C-160 p.2 | document + socoteala memoriei (DEDUS, nimic măsurat) | GATA |
+| `tools/check.sh` | format, clippy `-D warnings`, 667 de teste, build no_std (cod Rust neschimbat) | PASS |
+| Pe RTX 3070 Ti | nimic nou trimis | NOT TESTED |
+
+**Următorul pas:** C-160 punctul 3 — oracolul Rust al pasului întreg (întâi `sgd` pe pasul de aur mic: eroarea pe 10 pași, gradientul
+pasului 1, greutățile după 1 și 10), sau C-157 p.2 dacă apare un test nou (P8 / încălzirea os-332).
+
+---
+
 ## Sesiunea 139 — 21 noiembrie 2026, ~17:11–17:20 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 1 (P8 predat)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-329 (comparat în sesiunea 138) →
