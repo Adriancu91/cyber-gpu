@@ -109,6 +109,28 @@ pub fn token_launches_fused_ln(
     ))
 }
 
+/// C-155 point 4: [`token_launches_fused`] with every glued product on `q8_fused32` (a quarter block per thread,
+/// 128-bit x loads) when its `x` is 16-aligned ([`crate::q8_fused32::narrow`]); the same 88 launches at #513, the same
+/// cbuf bytes. Needs [`kl::PROGRAMS_FUSED32`] uploaded.
+pub fn token_launches_fused32(
+    s: &Shape,
+    vocab: usize,
+    context: usize,
+    v: &ModelVas,
+    token: usize,
+    pos: usize,
+) -> GpuResult<Vec<Launch>> {
+    Ok(crate::q8_fused32::narrow(launches_with(
+        s,
+        vocab,
+        context,
+        v,
+        token,
+        pos,
+        kl::token_launches_fused,
+    )?))
+}
+
 type LayerFn = fn(&Shape, &kl::LayerVas, usize) -> GpuResult<Vec<Launch>>;
 
 fn launches_with(

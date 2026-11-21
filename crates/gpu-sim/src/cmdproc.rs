@@ -1596,6 +1596,23 @@ pub const Q8_FUSED_NEEDS: Needs = Needs {
 /// `gelu_gpu` (as `gelu`): the composition of the separate launches' models, in their order. Blocks past `rows`
 /// write nothing; a pointer the flags do not use is never read.
 pub fn q8_fused_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    q8_fused_with(l, false)
+}
+
+/// C-155 point 4: what `q8_fused32` needs: the same 32 partial sums (128 B), no hardware barrier (one warp).
+pub const Q8_FUSED32_NEEDS: Needs = Needs {
+    shared_bytes: 128,
+    barriers: 0,
+};
+
+/// C-155 point 4: the CPU stand-in for `tools/nak/out/q8_fused32.sm86.sass` — the cbuf of `q8_fused`, byte for byte;
+/// x must be 16-aligned (the 128-bit loads: otherwise the launch is refused, as an unaligned `LDG.128` would fault).
+/// Every row: `q8::row_gpu_order_w32` (as `q8_matvec32`), then the tail of `q8_fused`.
+pub fn q8_fused32_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    q8_fused_with(l, true)
+}
+
+fn q8_fused_with(l: &mut Launch<'_>, w32: bool) -> GpuResult<()> {
     use gpu_compute::math::add_f32_ftz;
     if l.block != [32, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 || l.mem.read_u64(l.cbuf0)? != 0 {
         return Err(bad(
@@ -1612,12 +1629,19 @@ pub fn q8_fused_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     if !(w | x | bias | res | y | k | v).is_multiple_of(4) {
         return Err(bad("SIM: q8_fused cu adrese nealiniate la 4"));
     }
+    if w32 && !x.is_multiple_of(16) {
+        return Err(bad("SIM: q8_fused32 cere x aliniat la 16"));
+    }
     let row_bytes = blocks * gpu_compute::q8::BLOCK_BYTES;
     let xs = l.mem.read_f32s(x, blocks * gpu_compute::q8::BLOCK)?;
     let mut row = alloc::vec![0u8; row_bytes];
     for i in 0..rows.min(l.grid[0] as u64) {
         l.mem.read(w + i * row_bytes as u64, &mut row)?;
-        let dot = gpu_compute::q8::row_gpu_order(&row, &xs);
+        let dot = if w32 {
+            gpu_compute::q8::row_gpu_order_w32(&row, &xs)
+        } else {
+            gpu_compute::q8::row_gpu_order(&row, &xs)
+        };
         let mut val = add_f32_ftz(dot, f32::from_bits(l.mem.read_u32(bias + 4 * i)?));
         if flags & 1 != 0 {
             val = add_f32_ftz(f32::from_bits(l.mem.read_u32(res + 4 * i)?), val);

@@ -1,0 +1,109 @@
+// C-155 point 4 (the race of the products, stage 4): q8_fused with the work split of q8_matvec32.
+//   v = W·x exactly as q8_matvec32.comp (a QUARTER block per thread: all 32 threads at work at 768 inputs,
+//       the 32 threads read 8 whole consecutive blocks per step, x read with two 16-byte loads per quarter),
+//       then the same reduction tree (stride 16, 8, 4, 2, 1)
+//   then exactly the tail of q8_fused.comp:
+//   v = v + bias[row]                      (always)
+//   if (flags & 1) v = res[row] + v        (the residual add)
+//   if (flags & 2) v = gelu(v)             (the same formula and operations as gelu.comp / q8_fused.comp)
+//   y[row] = v
+//   if (flags & 4) rows [split, 2 split) are also written to k[row - split], rows [2 split, 3 split) to v[row - 2 split]
+// The push constants are q8_fused's, byte for byte (the launcher swaps only the program); the one extra requirement
+// is x aligned to 16 bytes (the 128-bit loads). The CPU oracle: gpu-compute::q8::row_gpu_order_w32, then the tail of
+// q8_fused (add_f32_ftz, gelu_gpu) — what NAK emitted is checked in q8_fused32.sm86.txt.
+// Requirements (the launcher checks them): w, bias, res, y, k, v 4-byte aligned, x 16-byte aligned, grid x = rows,
+// block 32x1x1.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Words { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer In4 { vec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+
+layout(push_constant) uniform Args {
+    Words w;     // 0x28
+    In4 x;       // 0x30
+    In bias;     // 0x38
+    In res;      // 0x40
+    Out y;       // 0x48
+    Out k;       // 0x50
+    Out vv;      // 0x58
+    uint rows;   // 0x60
+    uint blocks; // 0x64
+    uint flags;  // 0x68
+    uint split;  // 0x6c
+} args;
+
+shared float parts[32];
+
+float q(int word, int j) {
+    return float(bitfieldExtract(word, 8 * j, 8));
+}
+
+float gelu(float x) {
+    float z = x * 0.70710678118654752;
+    float a = abs(z);
+    float t = 1.0 / (1.0 + 0.3275911 * a);
+    float p = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+    float e = 1.0 - p * exp(-a * a);
+    float erf = z < 0.0 ? -e : e;
+    return 0.5 * x * (1.0 + erf);
+}
+
+void main() {
+    uint row = gl_WorkGroupID.x;
+    uint t = gl_LocalInvocationID.x;
+    float part = 0.0;
+    if (row < args.rows) {
+        uint base = row * args.blocks * 9u;   // 36 bytes = 9 words per block
+        uint units = args.blocks * 4u;
+        for (uint u = t; u < units; u += 32u) {
+            uint b = u >> 2u;
+            uint k = u & 3u;
+            uint wb = base + b * 9u;
+            float scale = uintBitsToFloat(args.w.v[wb]);
+            int q0 = int(args.w.v[wb + 1u + 2u * k]);
+            int q1 = int(args.w.v[wb + 2u + 2u * k]);
+            vec4 xa = args.x.v[b * 8u + 2u * k];
+            vec4 xb = args.x.v[b * 8u + 2u * k + 1u];
+            float s = q(q0, 0) * xa.x;
+            s += q(q0, 1) * xa.y;
+            s += q(q0, 2) * xa.z;
+            s += q(q0, 3) * xa.w;
+            s += q(q1, 0) * xb.x;
+            s += q(q1, 1) * xb.y;
+            s += q(q1, 2) * xb.z;
+            s += q(q1, 3) * xb.w;
+            part += scale * s;
+        }
+    }
+    parts[t] = part;
+    barrier();
+    for (uint stride = 16u; stride > 0u; stride >>= 1u) {
+        if (t < stride) {
+            parts[t] = parts[t] + parts[t + stride];
+        }
+        barrier();
+    }
+    if (t == 0u && row < args.rows) {
+        float v = parts[0] + args.bias.v[row];
+        if ((args.flags & 1u) != 0u) {
+            v = args.res.v[row] + v;
+        }
+        if ((args.flags & 2u) != 0u) {
+            v = gelu(v);
+        }
+        args.y.v[row] = v;
+        if ((args.flags & 4u) != 0u && row >= args.split) {
+            if (row < 2u * args.split) {
+                args.k.v[row - args.split] = v;
+            } else if (row < 3u * args.split) {
+                args.vv.v[row - 2u * args.split] = v;
+            }
+        }
+    }
+}

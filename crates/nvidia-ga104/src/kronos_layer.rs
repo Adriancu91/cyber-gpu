@@ -47,6 +47,14 @@ pub enum Prog {
     /// C-155 point 3: the greedy token on the board (`argmax.comp`, [`crate::argmax`]): one block of 256, a 16-byte
     /// result instead of the copy of the logits. Appended after a token's list by the caller, never part of it.
     Argmax,
+    /// C-155 point 4: [`Prog::Q8Fused`] with the work split of `q8_matvec32` (`q8_fused32.comp`,
+    /// [`crate::q8_fused32`]): a quarter block per thread, x read with 128-bit loads (x aligned to 16). The same cbuf
+    /// bytes as [`Prog::Q8Fused`]. Used only by [`crate::kronos_model::token_launches_fused32`].
+    Q8Fused32,
+    /// C-147 step 3 / C-155 point 4: `q8_matvec` with the quarter-block split (`q8_matvec32.comp`,
+    /// [`crate::q8_matvec32`]): the same cbuf as [`Prog::Q8Matvec`], x aligned to 16. In the token list only for the
+    /// logits of [`crate::kronos_model::token_launches_fused32`].
+    Q8Matvec32,
 }
 
 pub const PROGRAMS: [Prog; 7] = [
@@ -89,6 +97,21 @@ pub const PROGRAMS_ARGMAX: [Prog; 10] = [
     Prog::Argmax,
 ];
 
+/// C-155 point 4: [`PROGRAMS_FUSED`] + [`Prog::Q8Fused32`] + [`Prog::Q8Matvec32`] (the old programs stay loaded: a
+/// launch whose `x` is not 16-aligned keeps them).
+pub const PROGRAMS_FUSED32: [Prog; 10] = [
+    Prog::Copy,
+    Prog::Q8Matvec,
+    Prog::Vadd,
+    Prog::LayerNorm,
+    Prog::Attention,
+    Prog::Gelu,
+    Prog::Embed,
+    Prog::Q8Fused,
+    Prog::Q8Fused32,
+    Prog::Q8Matvec32,
+];
+
 pub const PROGRAMS_FUSED: [Prog; 8] = [
     Prog::Copy,
     Prog::Q8Matvec,
@@ -119,6 +142,8 @@ impl Prog {
             Prog::Q8Fused => crate::q8_fused::Q8_FUSED,
             Prog::LayerNorm256 => crate::layernorm256::LAYERNORM256,
             Prog::Argmax => crate::argmax::ARGMAX,
+            Prog::Q8Fused32 => crate::q8_fused32::Q8_FUSED32,
+            Prog::Q8Matvec32 => crate::q8_matvec32::Q8_MATVEC32,
         }
     }
 
@@ -128,6 +153,8 @@ impl Prog {
             Prog::Q8Fused => crate::q8_fused::REGISTERS,
             Prog::LayerNorm256 => crate::layernorm256::REGISTERS,
             Prog::Argmax => crate::argmax::REGISTERS,
+            Prog::Q8Fused32 => crate::q8_fused32::REGISTERS,
+            Prog::Q8Matvec32 => crate::q8_matvec32::Q8_MATVEC32_REGISTERS,
             _ => 19,
         }
     }
@@ -141,7 +168,12 @@ impl Prog {
             | Prog::Embed
             | Prog::LayerNorm256
             | Prog::Argmax => 256,
-            Prog::Q8Matvec | Prog::LayerNorm | Prog::Attention | Prog::Q8Fused => 32,
+            Prog::Q8Matvec
+            | Prog::LayerNorm
+            | Prog::Attention
+            | Prog::Q8Fused
+            | Prog::Q8Fused32
+            | Prog::Q8Matvec32 => 32,
         }
     }
 
@@ -152,6 +184,12 @@ impl Prog {
         }
         if self == Prog::Argmax {
             return Some(crate::argmax::SHARED);
+        }
+        if self == Prog::Q8Fused32 {
+            return Some(crate::q8_fused32::SHARED);
+        }
+        if self == Prog::Q8Matvec32 {
+            return Some(crate::q8_matvec32::Q8_MATVEC32_SHARED);
         }
         let bytes = match self {
             Prog::Q8Matvec | Prog::LayerNorm | Prog::Q8Fused => 128,

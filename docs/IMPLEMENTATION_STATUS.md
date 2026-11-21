@@ -1,5 +1,42 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 135 — 21 noiembrie 2026, ~13:13–13:30 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2 (os-328) + C-155 punctul 4 (cursa înmulțirilor, în lista de simbol)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Testul `os-328` (P3 pe placă, 12:56) a apărut în `rezultate/` → întâi
+comparația (punctul 2 al cozii, cu întâietate), apoi punctul 4 din C-155.
+
+**Comparația os-328** (`docs/C-157_P2_COMPARATII.md`): 3 284 µs pe simbol față de ~3 600 estimat; câștigul a venit mai mult din driver
+(−588 µs) decât din placă (−203). Pauza de 0,9 s din prima rulare (17,57 simb/s) = scrierea jurnalului pe stick înainte de poziția 16
+(DEDUS din ora rândurilor). Înmulțirile: 60 % din placă, la ~60–75 GB/s (≈ 12 % din 608) → ținta punctului 4.
+
+**Cursa mutată în lista de simbol:** programul nou `q8_fused32` (`tools/nak/q8_fused32.comp`) = miezul lui `q8_matvec32` (un sfert de
+bloc pe fir, toate 32 de fire, x cu citiri de 128 de biți) + coada lui `q8_fused` (bias, rezidual, GELU, copia K/V). Listarea NAK: bucla
+**identică** instrucțiune cu instrucțiune cu `q8_matvec32` (doar adresele din cbuf), coada **identică** cu `q8_fused` → oracolul =
+`row_gpu_order_w32` + coada lui `q8_fused`. 4 384 B, 22 de registre, 128 B partajați, fără barieră, SHA-256 `f26faedd…bcb2`. Unealta
+NAK reconstruită: `q8_matvec32` ieșit identic. `TokenList::Fused32` = lista lipită cu cele 4 înmulțiri pe strat pe `q8_fused32` și
+logit-urile pe `q8_matvec32`, **aceleași cbuf-uri octet cu octet**; o lansare cu x nealiniat la 16 își păstrează programul.
+
+Adăugat (doar adăugări): modulul `q8_fused32` (`Q8_FUSED32`, `Q8_FUSED32_SHA256`, `REGISTERS`, `BLOCK`, `X_ALIGN`, `SHARED`, `quarter`,
+`narrow`, `count`), `kronos_layer::{Prog::Q8Fused32, Prog::Q8Matvec32, PROGRAMS_FUSED32}`, `kronos_model::token_launches_fused32`,
+`kronos_diag::TokenList::Fused32`, `gpu_sim::cmdproc::{q8_fused32_on_cpu, Q8_FUSED32_NEEDS}`; `work_list` le refuză. Nota pentru OS:
+`integration/cyber-universe/C-155_cursa-pe-sferturi.md` (proba: `Fused`, apoi `Fused32`, pe același text; regula: un fel trece pe
+sferturi doar corect și mai rapid cu ≥ 50 ‰).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| T146a | 16 poziții, `EachLaunch` și `PerLayer`, dieta pornită: oracolul trece peste tot, aceleași simboluri ca `Fused`; abaterea față de `Fused` 3,6e-7 (3 714 logit-uri diferite în ultimii biți = programul nou chiar a rulat) | PASS (SIMULARE) |
+| T146b | toate înmulțirile lipite pe `q8_fused32`, logit-urile pe `q8_matvec32`, cbuf-uri și grile neschimbate; 88 de lansări la #513; QMD | PASS |
+| T146c | octeții = dump-ul NAK (SHA), citiri `.b128`, fără `bar.sync` | PASS |
+| T146d | x nealiniat: `narrow` nu-l dă programului nou; modelul refuză lansarea | PASS (SIMULARE) |
+| T146e | program plantat greșit (ordinea veche sub numele nou → nu e bit cu bit; nimic scris → prins de oracol) | PASS (SIMULARE) |
+| T146f | lățimea lui #513 (768; proj pe 3 072 de intrări): oracolul trece, aceleași simboluri | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy `-D warnings`, **644 de teste**, build no_std | PASS |
+| Pe RTX 3070 Ti | nimic; care program e mai rapid se vede doar pe placă | NOT TESTED |
+
+**Următorul pas:** C-157 punctul 3 (dieta, partea a doua: driverul sub 0,5 ms) — sau punctul 2, dacă apare un test nou pe placă;
+după cifrele cursei pe placă: lista mixtă (doar felurile care câștigă).
+
+---
 ## Sesiunea 134 — 21 noiembrie 2026, ~12:10–12:35 (ora României), în cloud, FĂRĂ placă — **C-155 punctul 3 (argmax pe placă)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă în `rezultate/` de la 11:25 (punctul 2 al

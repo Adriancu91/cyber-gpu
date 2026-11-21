@@ -197,6 +197,9 @@ pub enum TokenList {
     Fused = 1,
     /// C-155 point 2: `Fused` with the new LayerNorm (`layernorm256`); the same 7 launches per layer.
     FusedLn = 2,
+    /// C-155 point 4: `Fused` with the glued products on `q8_fused32` (the race of the products, in the token list);
+    /// the same 7 launches per layer, the same cbufs.
+    Fused32 = 3,
 }
 
 impl TokenList {
@@ -204,7 +207,9 @@ impl TokenList {
     pub const fn per_layer(self) -> usize {
         match self {
             TokenList::Plain => LAUNCHES_PER_TOKEN,
-            TokenList::Fused | TokenList::FusedLn => kl::LAUNCHES_PER_TOKEN_FUSED,
+            TokenList::Fused | TokenList::FusedLn | TokenList::Fused32 => {
+                kl::LAUNCHES_PER_TOKEN_FUSED
+            }
         }
     }
 
@@ -212,7 +217,9 @@ impl TokenList {
     pub fn launches_per_token(self, layers: usize) -> usize {
         match self {
             TokenList::Plain => km::launches_per_token(layers),
-            TokenList::Fused | TokenList::FusedLn => km::launches_per_token_fused(layers),
+            TokenList::Fused | TokenList::FusedLn | TokenList::Fused32 => {
+                km::launches_per_token_fused(layers)
+            }
         }
     }
 
@@ -222,6 +229,7 @@ impl TokenList {
             TokenList::Plain => &kl::PROGRAMS,
             TokenList::Fused => &kl::PROGRAMS_FUSED,
             TokenList::FusedLn => &kl::PROGRAMS_FUSED_LN,
+            TokenList::Fused32 => &kl::PROGRAMS_FUSED32,
         }
     }
 
@@ -241,6 +249,9 @@ impl TokenList {
             TokenList::FusedLn => {
                 km::token_launches_fused_ln(&w.shape, w.vocab, w.context, vas, token, pos)
             }
+            TokenList::Fused32 => {
+                km::token_launches_fused32(&w.shape, w.vocab, w.context, vas, token, pos)
+            }
         }
     }
 
@@ -250,6 +261,7 @@ impl TokenList {
             TokenList::Plain => "simpla",
             TokenList::Fused => "lipita",
             TokenList::FusedLn => "lipita-ln",
+            TokenList::Fused32 => "lipita-32",
         }
     }
 }

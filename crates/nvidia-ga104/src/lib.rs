@@ -89,6 +89,7 @@ pub mod mmu;
 pub mod probe;
 pub mod push;
 pub mod q8_fused;
+pub mod q8_fused32;
 pub mod q8_matvec;
 pub mod q8_matvec32;
 pub mod q8_race;

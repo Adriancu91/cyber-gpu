@@ -223,3 +223,13 @@ să nu se schimbe. `nak_dump_cm.c` cere în plus `VK_KHR_cooperative_matrix` și
 | Ieșire | 493 de instrucțiuni, **7 888 octeți**, **25 de registre**, memorie partajată 96 B, o barieră; argumente: logit-uri 0x28, rezultat 0x30, n 0x38 |
 | SHA-256 `argmax.sm86.sass` | `4d67cd3495e67cbb63a598e2ad4298925bed51d9660b65094c05586f0cb80572` |
 | De ce chei întregi | prima variantă (comparații de numere) a ieșit cu `fsetp.*.ftz`: numerele subnormale ar fi fost luate drept 0, deci alt simbol decât procesorul în cazuri-limită. Cu chei: 0 `fsetp` în cod, ordinea exactă a procesorului. Oracolul: `gpu_compute::model::argmax_result` |
+
+## C-155 punctul 4: `q8_fused32` (21 nov 2026, sesiunea 135, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh q8_fused32` (Mesa 25.0.7 reconstruit în cloud; `q8_matvec32` a ieșit **identic**, aceeași sumă).
+
+| Ce | Valoare |
+|---|---|
+| Program | `q8_fused32.comp`: miezul lui `q8_matvec32` (un sfert de bloc pe fir, x cu `ld.global.constant.b128`) + coada lui `q8_fused` (bias, rezidual, GELU, K/V); push constants ale lui `q8_fused` (72 B) |
+| Ieșire | **4 384 octeți**, 22 de registre, 128 B partajați, fără `bar.sync` (un singur grup de 32) |
+| SHA-256 `q8_fused32.sm86.sass` | `f26faedd659916b8d0508831329319b754213c7637a6ba40d42f8ab02344bcb2` |
+| Verificat în listare | bucla = `q8_matvec32` instrucțiune cu instrucțiune (doar `c[0x0][0x40/0x44]` → `0x60/0x64`); coada = `q8_fused` identic |

@@ -10,9 +10,10 @@ use gpu_core::diag::Journal;
 use gpu_core::error::{GpuError, GpuResult};
 use gpu_sim::cmdproc::{
     ARGMAX_NEEDS, ATTENTION_NEEDS, LAYERNORM_NEEDS, LAYERNORM256_NEEDS, Needs, ProgramFn,
-    Q8_FUSED_NEEDS, Q8_MATVEC_NEEDS, argmax_on_cpu, attention_on_cpu, copy_b128_on_cpu,
-    embed_on_cpu, gelu_on_cpu, layernorm_on_cpu, layernorm256_on_cpu, q8_fused_on_cpu,
-    q8_matvec_on_cpu, vadd_on_cpu,
+    Q8_FUSED_NEEDS, Q8_FUSED32_NEEDS, Q8_MATVEC_NEEDS, Q8_MATVEC32_NEEDS, argmax_on_cpu,
+    attention_on_cpu, copy_b128_on_cpu, embed_on_cpu, gelu_on_cpu, layernorm_on_cpu,
+    layernorm256_on_cpu, q8_fused_on_cpu, q8_fused32_on_cpu, q8_matvec_on_cpu, q8_matvec32_on_cpu,
+    vadd_on_cpu,
 };
 use nvidia_ga104::gsp::golden::{GoldenMemory, Mapping};
 use nvidia_ga104::kronos_diag::{self as kd, SeqMode, TokenIo, Way};
@@ -35,8 +36,8 @@ pub const NONE: Needs = Needs {
 };
 
 /// The nine programs with their models (what `gpu-sim` runs for each; C-147: + the glued `q8_fused`; C-155: + the
-/// new `layernorm256`; C-155 point 3: + `argmax`).
-pub const MODELS: [(Prog, ProgramFn, Needs); 10] = [
+/// new `layernorm256`; C-155 point 3: + `argmax`; C-155 point 4: + `q8_fused32`, `q8_matvec32`).
+pub const MODELS: [(Prog, ProgramFn, Needs); 12] = [
     (Prog::Copy, copy_b128_on_cpu, NONE),
     (Prog::Q8Matvec, q8_matvec_on_cpu, Q8_MATVEC_NEEDS),
     (Prog::Vadd, vadd_on_cpu, NONE),
@@ -47,6 +48,8 @@ pub const MODELS: [(Prog, ProgramFn, Needs); 10] = [
     (Prog::Q8Fused, q8_fused_on_cpu, Q8_FUSED_NEEDS),
     (Prog::LayerNorm256, layernorm256_on_cpu, LAYERNORM256_NEEDS),
     (Prog::Argmax, argmax_on_cpu, ARGMAX_NEEDS),
+    (Prog::Q8Fused32, q8_fused32_on_cpu, Q8_FUSED32_NEEDS),
+    (Prog::Q8Matvec32, q8_matvec32_on_cpu, Q8_MATVEC32_NEEDS),
 ];
 
 fn f32s(v: &[f32]) -> Vec<u8> {
@@ -118,6 +121,7 @@ impl<'a> TokenSim<'a> {
         r.stale_line = stale_line;
         let progs: Vec<(Prog, Mapping)> = PROGRAMS_ARGMAX
             .iter()
+            .chain(&[Prog::Q8Fused32, Prog::Q8Matvec32])
             .map(|&p| {
                 let mm = r.mem.alloc_mapped(p.code().len() as u64, 0x1000).unwrap();
                 put_bytes(r.mem.writer_mut(), mm.pa, p.code());
