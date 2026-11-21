@@ -1455,6 +1455,39 @@ pub const ATTENTION_NEEDS: Needs = Needs {
     barriers: 0,
 };
 
+/// C-155 point 2: what `layernorm256` needs: 32 bytes of shared memory (8 warp sums) and one hardware barrier.
+pub const LAYERNORM256_NEEDS: Needs = Needs {
+    shared_bytes: 32,
+    barriers: 1,
+};
+
+/// C-155 point 2: `layernorm256.comp` — the same cbuf as `layernorm.comp` (x 0x28, g 0x30, b 0x38, y 0x40, n 0x48,
+/// inv_n 0x4c, eps 0x50); one block of 256; n at most 1024.
+pub fn layernorm256_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [256, 1, 1] || l.grid != [1, 1, 1] {
+        return Err(bad("SIM: layernorm256 cere un bloc de 256x1x1"));
+    }
+    let r = |l: &Launch<'_>, o: u64| l.mem.read_u64(l.cbuf0 + o);
+    let (x, g, b, y) = (r(l, 0x28)?, r(l, 0x30)?, r(l, 0x38)?, r(l, 0x40)?);
+    let n = l.mem.read_u32(l.cbuf0 + 0x48)? as usize;
+    let inv_n = f32::from_bits(l.mem.read_u32(l.cbuf0 + 0x4c)?);
+    let eps = f32::from_bits(l.mem.read_u32(l.cbuf0 + 0x50)?);
+    if n == 0 || n > gpu_compute::layer::LN256_MAX_N {
+        return Err(bad("SIM: layernorm256 cu n in afara 1..1024"));
+    }
+    if inv_n.to_bits() != (1.0 / n as f32).to_bits() {
+        return Err(bad("SIM: layernorm256 cu inv_n diferit de 1/n"));
+    }
+    let out = gpu_compute::layer::layernorm_gpu256(
+        &l.mem.read_f32s(x, n)?,
+        &l.mem.read_f32s(g, n)?,
+        &l.mem.read_f32s(b, n)?,
+        eps,
+    )?;
+    l.mem.write_f32s(y, &out);
+    Ok(())
+}
+
 /// C-83 I13: `layernorm.comp` — x 0x28, g 0x30, b 0x38, y 0x40, n 0x48, inv_n 0x4c, eps 0x50; one block of 32.
 pub fn layernorm_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     if l.block != [32, 1, 1] || l.grid != [1, 1, 1] {

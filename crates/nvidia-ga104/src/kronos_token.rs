@@ -57,6 +57,7 @@ pub fn op_number(p: Prog) -> u32 {
         Prog::Embed => 6,
         // C-147: `token.comp` has no such operation; `work_list` refuses it.
         Prog::Q8Fused => 7,
+        Prog::LayerNorm256 => 8,
     }
 }
 

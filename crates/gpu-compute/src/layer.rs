@@ -230,6 +230,78 @@ pub fn layernorm_gpu(x: &[f32], g: &[f32], b: &[f32], eps: f32) -> Vec<f32> {
         .collect()
 }
 
+/// The largest vector `layernorm256.comp` takes (256 threads × 4 values in registers).
+pub const LN256_MAX_N: usize = 1024;
+
+/// The block sum of `layernorm256.comp`: per warp a butterfly (lane ^ 16, 8, 4, 2, 1 — every lane ends with the same
+/// bits, since a + b = b + a), then the 8 warp sums added in order w = 0..7.
+fn block_sum256(p: &[f32; 256]) -> f32 {
+    let mut warps = [0.0f32; 8];
+    for (w, out) in warps.iter_mut().enumerate() {
+        let mut v = [0.0f32; 32];
+        v.copy_from_slice(&p[32 * w..32 * w + 32]);
+        for m in [16usize, 8, 4, 2, 1] {
+            let before = v;
+            for (l, vl) in v.iter_mut().enumerate() {
+                *vl = add_f32_ftz(before[l], before[l ^ m]);
+            }
+        }
+        *out = v[0];
+    }
+    let mut r = warps[0];
+    for &w in &warps[1..] {
+        r = add_f32_ftz(r, w);
+    }
+    r
+}
+
+/// `layernorm256.comp` (C-155 point 2), in the order of the code NAK 25.0.7 made of it (`tools/nak/out/
+/// layernorm256.sm86.txt`): 256 threads; thread t holds x[t], x[t+256], x[t+512], x[t+768]; its partial sum starts
+/// with its first value as read (`sel`, no flush) and adds the rest with `fadd.ftz`; [`block_sum256`]. NAK never
+/// rounds the mean: every deviation is one `ffma.ftz` d = (−sum)·inv_n + x. The variance: d₀² (`fmul.ftz`), then an
+/// FMA chain, [`block_sum256`], `ffma.ftz` (var·inv_n + eps), `MUFU.RSQ` (modelled as 1/√ correctly rounded — the
+/// board's unit is approximate, so the result is compared in a margin); y = (d·inv)·g + b (`fmul`, `ffma`).
+/// `n` must be 1 ..= [`LN256_MAX_N`]. Another summation order than [`layernorm_gpu`]: the two differ in the last
+/// bits; both are within the layer tolerance of [`step_cpu`].
+pub fn layernorm_gpu256(x: &[f32], g: &[f32], b: &[f32], eps: f32) -> GpuResult<Vec<f32>> {
+    let n = x.len();
+    if n == 0 || n > LN256_MAX_N || g.len() != n || b.len() != n {
+        return Err(GpuError::InvalidArgument(
+            "layernorm256: n intre 1 si 1024, g si b de aceeasi lungime",
+        ));
+    }
+    let inv_n = 1.0 / n as f32;
+    let mut p = [0.0f32; 256];
+    for (t, pt) in p.iter_mut().enumerate() {
+        let mut it = x.iter().skip(t).step_by(256);
+        *pt = match it.next() {
+            Some(&first) => it.fold(first, |s, &v| add_f32_ftz(s, v)),
+            None => 0.0,
+        };
+    }
+    let neg_sum = ftz(-block_sum256(&p));
+    let dev = |v: f32| fma_f32_ftz(neg_sum, inv_n, v);
+    for (t, pt) in p.iter_mut().enumerate() {
+        let mut it = x.iter().skip(t).step_by(256);
+        *pt = match it.next() {
+            Some(&first) => {
+                let d0 = dev(first);
+                it.fold(mul_ftz(d0, d0), |q, &v| {
+                    let d = dev(v);
+                    fma_f32_ftz(d, d, q)
+                })
+            }
+            None => 0.0,
+        };
+    }
+    let inv = 1.0 / math::sqrt(fma_f32_ftz(block_sum256(&p), inv_n, eps));
+    Ok(x.iter()
+        .zip(g)
+        .zip(b)
+        .map(|((&v, &g), &b)| fma_f32_ftz(mul_ftz(dev(v), inv), g, b))
+        .collect())
+}
+
 /// The scalar arguments of `attention.comp` (cbuf0 0x48..0x58).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AttnArgs {
@@ -431,6 +503,40 @@ mod tests {
         assert!(first_outside(&[1.0], &[1.0, 2.0]).is_some());
         assert!(first_outside(&[1.001], &[1.0]).is_some());
         assert!(first_outside(&[1.000_05], &[1.0]).is_none());
+    }
+
+    /// C-155 point 2: the new LayerNorm's model is within the layer tolerance of the CPU engine for every length the
+    /// models use (64 … 1024, incl. lengths that are not multiples of 256), close to the old program's model, and
+    /// refuses what the program cannot take.
+    #[test]
+    fn layernorm256_model_matches_the_cpu_engine() {
+        for n in [64usize, 100, 255, 256, 257, 512, 768, 1000, 1024] {
+            let x: Vec<f32> = (0..n)
+                .map(|i| ((i * 37 % 101) as f32 - 50.0) / 25.0 + 3.0)
+                .collect();
+            let g: Vec<f32> = (0..n).map(|i| 1.0 + (i % 7) as f32 / 10.0).collect();
+            let b: Vec<f32> = (0..n).map(|i| (i % 5) as f32 / 100.0).collect();
+            let a = layernorm_cpu(&x, &g, &b, 1e-5);
+            let c = layernorm_gpu256(&x, &g, &b, 1e-5).unwrap();
+            assert_eq!(first_outside(&c, &a), None, "n = {n}");
+            let old = layernorm_gpu(&x, &g, &b, 1e-5);
+            let d = c
+                .iter()
+                .zip(&old)
+                .map(|(p, q)| (p - q).abs())
+                .fold(0.0f32, f32::max);
+            assert!(d < 1e-5, "n = {n}: {d}");
+        }
+        // One warp's butterfly: 32 ones in lane order give exactly 32 per warp, 256 for the block.
+        let mut p = [1.0f32; 256];
+        assert_eq!(block_sum256(&p), 256.0);
+        p[0] = f32::MIN_POSITIVE / 2.0;
+        p[1] = 0.0;
+        assert_eq!(block_sum256(&p), 254.0);
+        assert!(layernorm_gpu256(&[], &[], &[], 1e-5).is_err());
+        let big = alloc::vec![0.0f32; 1025];
+        assert!(layernorm_gpu256(&big, &big, &big, 1e-5).is_err());
+        assert!(layernorm_gpu256(&[1.0, 2.0], &[1.0], &[0.0, 0.0], 1e-5).is_err());
     }
 
     /// C-139: the trace of the program models ends where the CPU engine ends (inside the layer tolerance), position

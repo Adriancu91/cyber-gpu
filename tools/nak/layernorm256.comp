@@ -1,0 +1,77 @@
+// C-155 point 2: the new LayerNorm. y = (x - mean) * inversesqrt(var + eps) * g + b over one vector of n <= 1024 values.
+// Same arguments (and the same cbuf bytes) as layernorm.comp; different shape:
+// - one workgroup of 256 threads (8 warps) instead of one warp of 32;
+// - x, g and b are read from global memory ONCE, the 12 loads issued back to back with no branch between them (thread
+//   t holds elements t, t+256, t+512, t+768 in registers); the old program read x three times in dependent loops;
+// - the reductions: each thread adds its values in order (k = 0..3, starting from 0.0); a butterfly inside the warp
+//   (shuffle xor 16, 8, 4, 2, 1: every lane ends with the same bits, a + b = b + a); lane 0 of each warp writes its
+//   sum to shared memory; after one barrier every thread adds the 8 warp sums in order w = 0..7.
+// The variance is the sum of (x - mean)^2 from the same registers (two passes over registers, not memory).
+// The CPU oracle that mirrors this order: gpu_compute::layer::layernorm_gpu256.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args { In x; In g; In b; Out y; uint n; float inv_n; float eps; } args;
+shared float parts[8];
+float block_sum(float v, uint t) {
+    v = v + subgroupShuffleXor(v, 16u);
+    v = v + subgroupShuffleXor(v, 8u);
+    v = v + subgroupShuffleXor(v, 4u);
+    v = v + subgroupShuffleXor(v, 2u);
+    v = v + subgroupShuffleXor(v, 1u);
+    if ((t & 31u) == 0u) {
+        parts[t >> 5u] = v;
+    }
+    barrier();
+    float r = parts[0];
+    for (uint w = 1u; w < 8u; w++) {
+        r = r + parts[w];
+    }
+    barrier();
+    return r;
+}
+void main() {
+    uint t = gl_LocalInvocationID.x;
+    uint n = args.n;
+    if (n == 0u) {
+        return; // the same for every thread, before any barrier; the driver never sends n = 0
+    }
+    float xv[4];
+    float gv[4];
+    float bv[4];
+    // No branch around the loads (a branch makes the program wait for each group of loads before the next):
+    // an index past the end reads element n-1 instead (always inside the vectors, n >= 1); those values are
+    // never used below.
+    for (uint k = 0u; k < 4u; k++) {
+        uint j = min(t + 256u * k, n - 1u);
+        xv[k] = args.x.v[j];
+        gv[k] = args.g.v[j];
+        bv[k] = args.b.v[j];
+    }
+    float s = 0.0;
+    for (uint k = 0u; k < 4u; k++) {
+        if (t + 256u * k < n) {
+            s += xv[k];
+        }
+    }
+    float mean = block_sum(s, t) * args.inv_n;
+    float q = 0.0;
+    for (uint k = 0u; k < 4u; k++) {
+        if (t + 256u * k < n) {
+            float d = xv[k] - mean;
+            q += d * d;
+        }
+    }
+    float inv = inversesqrt(block_sum(q, t) * args.inv_n + args.eps);
+    for (uint k = 0u; k < 4u; k++) {
+        uint i = t + 256u * k;
+        if (i < n) {
+            args.y.v[i] = (xv[k] - mean) * inv * gv[k] + bv[k];
+        }
+    }
+}

@@ -195,6 +195,8 @@ pub fn submissions(mode: SeqMode, layers: usize, n: usize) -> Vec<Range<usize>> 
 pub enum TokenList {
     Plain = 0,
     Fused = 1,
+    /// C-155 point 2: `Fused` with the new LayerNorm (`layernorm256`); the same 7 launches per layer.
+    FusedLn = 2,
 }
 
 impl TokenList {
@@ -202,7 +204,7 @@ impl TokenList {
     pub const fn per_layer(self) -> usize {
         match self {
             TokenList::Plain => LAUNCHES_PER_TOKEN,
-            TokenList::Fused => kl::LAUNCHES_PER_TOKEN_FUSED,
+            TokenList::Fused | TokenList::FusedLn => kl::LAUNCHES_PER_TOKEN_FUSED,
         }
     }
 
@@ -210,7 +212,7 @@ impl TokenList {
     pub fn launches_per_token(self, layers: usize) -> usize {
         match self {
             TokenList::Plain => km::launches_per_token(layers),
-            TokenList::Fused => km::launches_per_token_fused(layers),
+            TokenList::Fused | TokenList::FusedLn => km::launches_per_token_fused(layers),
         }
     }
 
@@ -219,6 +221,7 @@ impl TokenList {
         match self {
             TokenList::Plain => &kl::PROGRAMS,
             TokenList::Fused => &kl::PROGRAMS_FUSED,
+            TokenList::FusedLn => &kl::PROGRAMS_FUSED_LN,
         }
     }
 
@@ -235,6 +238,9 @@ impl TokenList {
             TokenList::Fused => {
                 km::token_launches_fused(&w.shape, w.vocab, w.context, vas, token, pos)
             }
+            TokenList::FusedLn => {
+                km::token_launches_fused_ln(&w.shape, w.vocab, w.context, vas, token, pos)
+            }
         }
     }
 
@@ -243,6 +249,7 @@ impl TokenList {
         match self {
             TokenList::Plain => "simpla",
             TokenList::Fused => "lipita",
+            TokenList::FusedLn => "lipita-ln",
         }
     }
 }

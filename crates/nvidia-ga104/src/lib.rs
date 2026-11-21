@@ -82,6 +82,7 @@ pub mod kronos_perf;
 pub mod kronos_speed;
 pub mod kronos_token;
 pub mod launch_cost;
+pub mod layernorm256;
 pub mod mma16;
 pub mod mmu;
 pub mod probe;

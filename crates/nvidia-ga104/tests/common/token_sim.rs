@@ -9,13 +9,15 @@
 use gpu_core::diag::Journal;
 use gpu_core::error::{GpuError, GpuResult};
 use gpu_sim::cmdproc::{
-    ATTENTION_NEEDS, LAYERNORM_NEEDS, Needs, ProgramFn, Q8_FUSED_NEEDS, Q8_MATVEC_NEEDS,
-    attention_on_cpu, copy_b128_on_cpu, embed_on_cpu, gelu_on_cpu, layernorm_on_cpu,
-    q8_fused_on_cpu, q8_matvec_on_cpu, vadd_on_cpu,
+    ATTENTION_NEEDS, LAYERNORM_NEEDS, LAYERNORM256_NEEDS, Needs, ProgramFn, Q8_FUSED_NEEDS,
+    Q8_MATVEC_NEEDS, attention_on_cpu, copy_b128_on_cpu, embed_on_cpu, gelu_on_cpu,
+    layernorm_on_cpu, layernorm256_on_cpu, q8_fused_on_cpu, q8_matvec_on_cpu, vadd_on_cpu,
 };
 use nvidia_ga104::gsp::golden::{GoldenMemory, Mapping};
 use nvidia_ga104::kronos_diag::{self as kd, SeqMode, TokenIo, Way};
-use nvidia_ga104::kronos_layer::{self as kl, Launch, LayerVas, PROGRAMS_FUSED, Prog, WeightVas};
+use nvidia_ga104::kronos_layer::{
+    self as kl, Launch, LayerVas, PROGRAMS_FUSED_LN, Prog, WeightVas,
+};
 use nvidia_ga104::kronos_model::{self as km, ModelVas, OwnedModel};
 use nvidia_ga104::mmu::SysMapping;
 use nvidia_ga104::push::PushBuf;
@@ -33,8 +35,9 @@ pub const NONE: Needs = Needs {
     barriers: 0,
 };
 
-/// The eight programs with their models (what `gpu-sim` runs for each; C-147: + the glued `q8_fused`).
-pub const MODELS: [(Prog, ProgramFn, Needs); 8] = [
+/// The nine programs with their models (what `gpu-sim` runs for each; C-147: + the glued `q8_fused`; C-155: + the
+/// new `layernorm256`).
+pub const MODELS: [(Prog, ProgramFn, Needs); 9] = [
     (Prog::Copy, copy_b128_on_cpu, NONE),
     (Prog::Q8Matvec, q8_matvec_on_cpu, Q8_MATVEC_NEEDS),
     (Prog::Vadd, vadd_on_cpu, NONE),
@@ -43,6 +46,7 @@ pub const MODELS: [(Prog, ProgramFn, Needs); 8] = [
     (Prog::Gelu, gelu_on_cpu, NONE),
     (Prog::Embed, embed_on_cpu, NONE),
     (Prog::Q8Fused, q8_fused_on_cpu, Q8_FUSED_NEEDS),
+    (Prog::LayerNorm256, layernorm256_on_cpu, LAYERNORM256_NEEDS),
 ];
 
 fn f32s(v: &[f32]) -> Vec<u8> {
@@ -111,7 +115,7 @@ impl<'a> TokenSim<'a> {
         let n = km::launches_per_token(m.layers.len()) + 1;
         let mut r = rig_with_push(push);
         r.stale_line = stale_line;
-        let progs: Vec<(Prog, Mapping)> = PROGRAMS_FUSED
+        let progs: Vec<(Prog, Mapping)> = PROGRAMS_FUSED_LN
             .iter()
             .map(|&p| {
                 let mm = r.mem.alloc_mapped(p.code().len() as u64, 0x1000).unwrap();

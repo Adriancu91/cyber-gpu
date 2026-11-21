@@ -93,6 +93,22 @@ pub fn token_launches_fused(
     launches_with(s, vocab, context, v, token, pos, kl::token_launches_fused)
 }
 
+/// C-155 point 2: [`token_launches_fused`] with every LayerNorm (both per layer and the final one) on the new
+/// program `layernorm256` when `e` ≤ 1024; the same 88 launches at #513.
+pub fn token_launches_fused_ln(
+    s: &Shape,
+    vocab: usize,
+    context: usize,
+    v: &ModelVas,
+    token: usize,
+    pos: usize,
+) -> GpuResult<Vec<Launch>> {
+    Ok(crate::layernorm256::widen(
+        launches_with(s, vocab, context, v, token, pos, kl::token_launches_fused)?,
+        s.e,
+    ))
+}
+
 type LayerFn = fn(&Shape, &kl::LayerVas, usize) -> GpuResult<Vec<Launch>>;
 
 fn launches_with(

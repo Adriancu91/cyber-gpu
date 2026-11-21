@@ -1,5 +1,39 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 132 — 21 noiembrie 2026, ~10:10–11:20 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2 (os-323) + C-155 punctul 2 (LayerNorm nou)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Întâi testele noi pe placă (au întâietate, C-157 punctul 2), apoi LayerNorm.
+
+**1. Comparațiile os-323** (`docs/C-157_P2_COMPARATII.md`): tabloul de bord și resetul FLR au ieșit cum am estimat. Un singur lucru altfel:
+oprirea zonei comune (`INIT(0)`) refuzată cu `0x8000001f` (`NV_ERR_INVALID_ARGUMENT`) + un ASSERT; driverul NVIDIA 570.144 nu trimite
+niciodată această comandă (`gpu_user_shared_data.c`). Am adăugat oprirea fără ea: `gsp::rusd::{rusd_stop_poll_only,
+dashboard_at_end_keep_page, rows::KEEP_PAGE_ON_PURPOSE}`; nota `integration/cyber-universe/os-323_tablou-oprire-fara-init0.md`. Commit `fb22ffb`.
+
+**2. LayerNorm nou** (`tools/nak/layernorm256.comp`, Mesa NAK 25.0.7 reconstruit; `q8_matvec32` ieșit identic): 256 de fire, o singură
+citire a lui x/g/b (12 citiri fără salt între ele — prima variantă, cu `if` în jurul citirilor, aștepta după fiecare grup; am văzut în
+codul NAK și am scos saltul), `shfl.bfly` + o barieră. 286 de instrucțiuni, 4 576 B, 25 de registre, SHA-256 `a407dd68…334d`.
+Oracolul `gpu_compute::layer::layernorm_gpu256` urmează ordinea exactă din codul NAK (media nerotunjită: `ffma` (−sumă)·inv_n + x).
+Legat prin `TokenList::FusedLn` (88 de lansări la #513, cele 25 de LayerNorm pe programul nou). Nota:
+`integration/cyber-universe/C-155_LayerNorm-nou.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| T140h | oprirea tabloului fără `INIT(0)` (modelul refuză ca placa): 4 comenzi, niciun refuz | PASS (SIMULARE) |
+| `layernorm256` model | față de procesor în toleranța stratului, n = 64…1024 (și ne-multipli de 256); față de programul vechi < 1e-5 | PASS |
+| T143a | text întreg 3 straturi / E 64, dietă, `EachLaunch` + `PerLayer`: oracolul trece (max 3,9e-7), aceleași simboluri ca LayerNorm vechi (abatere 3,1e-7) | PASS (SIMULARE) |
+| T143b | toate LayerNorm-urile pe programul nou, cbuf-uri identice, 88 lansări, QMD cu 256 fire / 32 B / o barieră | PASS |
+| T143c | octeții = dump-ul NAK (SHA-256), `shfl` și `bar` în cod | PASS |
+| T143d | program greșit plantat → prins de oracol | PASS (SIMULARE) |
+| T143e | lățimea lui #513 (768), un strat, 4 poziții: oracolul trece, aceleași simboluri | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy `-D warnings`, **624 de teste**, build no_std | PASS |
+| Pe RTX 3070 Ti | nimic | NOT TESTED |
+
+Interfața publică: doar adăugări (`Prog` și `TokenList` au câte o variantă nouă; OS-ul nu face `match` pe ele — verificat în `cyber-universe`).
+Estimare (DEDUS): ~21,8 → ~3–5 µs pe lansare, ~0,45 ms mai puțin pe simbol la #513.
+
+**Următorul pas:** C-155 punctul 3 — argmax pe placă (4 octeți citiți în loc de 64 KiB), în SIMULARE.
+
+---
 ## Sesiunea 131 — 21 noiembrie 2026, ~09:10–09:30 (ora României), în cloud, FĂRĂ placă — **C-155 punctul 1 (P3 gata de legat)**
 
 Pornită de programare, sub regula „Lucrul continuu” (REGULI.md din hub, 21 nov 08:01): semnul `in-lucru/cyber-gpu.md` era `liber`, l-am

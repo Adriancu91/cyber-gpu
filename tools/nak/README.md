@@ -203,3 +203,13 @@ să nu se schimbe. `nak_dump_cm.c` cere în plus `VK_KHR_cooperative_matrix` și
 | `mma16_s8` (16×16×32, s8 → s32) | 2 × `imma.m16n8k32.i8.i8` | 148 | 32 | `7f6bc59aad0871f1164902ad0f19aad5f89d388003f6d3afd5a4551e9e0c84af` |
 
 **Atenție:** NVK 26.3.1 pune argumentele la **cbuf 0 + 0x700** (unealta veche: 0x28). Detalii, oracol, toleranță: `docs/C-147_PUNCTUL5_TENSOR.md`.
+
+## LayerNorm nou (21 nov 2026, sesiunea 132, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh layernorm256` (Mesa 25.0.7 reconstruit în cloud; `q8_matvec32` a ieșit **identic**, aceeași sumă).
+
+| Ce | Valoare |
+|---|---|
+| Program | `layernorm256.comp`: 256 de fire, x/g/b citite o dată (12 citiri fără salt între ele: indicele de după capăt citește elementul n−1, nefolosit), `shfl.bfly` 16…1 în warp, 8 sume prin memoria partajată, `bar.sync` |
+| Ieșire | 286 de instrucțiuni, **4 576 octeți**, **25 de registre**, memorie partajată 32 B, o barieră |
+| SHA-256 `layernorm256.sm86.sass` | `a407dd68507f51d30a8f8ecd0853f8a7d95d9d4aa23a6cdd5644b6fe5b38334d` |
+| Aritmetica (citită din cod) | prima valoare a firului intră fără rotunjire (`sel`), restul `fadd.ftz`; media nu se rotunjește niciodată: abaterea e un singur `ffma.ftz` d = (−sumă)·inv_n + x; d₀² cu `fmul.ftz`, apoi `ffma.ftz`; `mufu.rsq`; y = `ffma.ftz`(`fmul.ftz`(d, inv), g, b). Oracolul: `gpu_compute::layer::layernorm_gpu256` |

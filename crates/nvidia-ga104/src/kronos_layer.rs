@@ -41,6 +41,9 @@ pub enum Prog {
     /// C-147 step 2: `q8_matvec` with the bias, residual, GELU or K/V copy glued in (`q8_fused.comp`,
     /// [`crate::q8_fused`]); used only by [`token_launches_fused`].
     Q8Fused,
+    /// C-155 point 2: the new LayerNorm (`layernorm256.comp`, [`crate::layernorm256`]): 256 threads, one read of
+    /// `x`; the same cbuf as [`Prog::LayerNorm`]. Used only by [`token_launches_fused_ln`].
+    LayerNorm256,
 }
 
 pub const PROGRAMS: [Prog; 7] = [
@@ -54,6 +57,20 @@ pub const PROGRAMS: [Prog; 7] = [
 ];
 
 /// C-147 step 2: the programs of the glued layer ([`token_launches_fused`]): [`PROGRAMS`] + [`Prog::Q8Fused`].
+/// C-155 point 2: the programs of [`token_launches_fused_ln`]: [`PROGRAMS_FUSED`] + [`Prog::LayerNorm256`] (the old
+/// LayerNorm stays loaded, so a model wider than 1024 still runs).
+pub const PROGRAMS_FUSED_LN: [Prog; 9] = [
+    Prog::Copy,
+    Prog::Q8Matvec,
+    Prog::Vadd,
+    Prog::LayerNorm,
+    Prog::Attention,
+    Prog::Gelu,
+    Prog::Embed,
+    Prog::Q8Fused,
+    Prog::LayerNorm256,
+];
+
 pub const PROGRAMS_FUSED: [Prog; 8] = [
     Prog::Copy,
     Prog::Q8Matvec,
@@ -82,6 +99,7 @@ impl Prog {
             Prog::Gelu => GELU,
             Prog::Embed => EMBED,
             Prog::Q8Fused => crate::q8_fused::Q8_FUSED,
+            Prog::LayerNorm256 => crate::layernorm256::LAYERNORM256,
         }
     }
 
@@ -89,6 +107,7 @@ impl Prog {
     pub fn registers(self) -> u32 {
         match self {
             Prog::Q8Fused => crate::q8_fused::REGISTERS,
+            Prog::LayerNorm256 => crate::layernorm256::REGISTERS,
             _ => 19,
         }
     }
@@ -96,13 +115,16 @@ impl Prog {
     /// Threads per block (`local_size_x`).
     pub fn block(self) -> u32 {
         match self {
-            Prog::Copy | Prog::Vadd | Prog::Gelu | Prog::Embed => 256,
+            Prog::Copy | Prog::Vadd | Prog::Gelu | Prog::Embed | Prog::LayerNorm256 => 256,
             Prog::Q8Matvec | Prog::LayerNorm | Prog::Attention | Prog::Q8Fused => 32,
         }
     }
 
     /// Shared memory (one warp each: NAK left no `BAR.SYNC`).
     pub fn shared(self) -> Option<SharedMemory> {
+        if self == Prog::LayerNorm256 {
+            return Some(crate::layernorm256::SHARED);
+        }
         let bytes = match self {
             Prog::Q8Matvec | Prog::LayerNorm | Prog::Q8Fused => 128,
             Prog::Attention => 4 * (MAX_POS as u32 + 32),
@@ -368,6 +390,19 @@ pub const LAUNCHES_PER_TOKEN_FUSED: usize = 7;
 /// gets the same bits (in SIMULARE: tested bit for bit). The intermediate vectors `qkv`, `o`, `ob`, `f`, `fb`, `p`,
 /// `pb` are no longer written (`qkvb`, `att`, `x1`, `h`, `h2`, `g` are, as before).
 pub fn token_launches_fused(s: &Shape, v: &LayerVas, pos: usize) -> GpuResult<Vec<Launch>> {
+    token_launches_fused_inner(s, v, pos)
+}
+
+/// C-155 point 2: [`token_launches_fused`] with both LayerNorms on the new program ([`Prog::LayerNorm256`]) when
+/// `e` ≤ 1024 (otherwise exactly [`token_launches_fused`]). Still 7 launches; the cbufs are the same bytes.
+pub fn token_launches_fused_ln(s: &Shape, v: &LayerVas, pos: usize) -> GpuResult<Vec<Launch>> {
+    Ok(crate::layernorm256::widen(
+        token_launches_fused_inner(s, v, pos)?,
+        s.e,
+    ))
+}
+
+fn token_launches_fused_inner(s: &Shape, v: &LayerVas, pos: usize) -> GpuResult<Vec<Launch>> {
     use crate::q8_fused::{self as qf, Tail};
     // The same checks as the 16 launches (shape, position): build them and keep the three that stay.
     let old = token_launches(s, v, pos)?;
