@@ -1,0 +1,97 @@
+// C-160 point 4, training program 7 (docs/C-160_MOTOR_STUDIU.md, table "Programele de placă", #7): the loss of the
+// training step, softmax + cross-entropy, together with its gradient, over rows of V logits.
+//   for row r (one workgroup per row, grid x = rows):
+//     m      = max_k z[k]
+//     s      = sum_k exp(z[k] - m)
+//     loss_r = log(s) + m - z[tgt]                         (written to loss[r]; the mean over rows is done by the caller)
+//     d[k]   = (exp(z[k] - m) / s - (k == tgt)) * scale    (scale = 1/N: d(mean loss)/d(logits), as PyTorch)
+// The formula is the usual one (PyTorch cross_entropy / llm.c crossentropy_softmax_backward, BSD / MIT: idea only).
+// Shape: 256 threads (8 warps), as layernorm256.comp. Thread t takes k = t, t+256, t+512, ... in that order.
+// - max: each thread in order, butterfly max inside the warp (shuffle xor 16..1), the 8 warp maxima through shared
+//   memory after a barrier, read in order w = 0..7 (max is exact: the order does not change the result);
+// - sum: each thread adds its exp() values in order from 0.0, butterfly add (xor 16..1: every lane gets the same
+//   bits), lane 0 of each warp writes, barrier, every thread adds the 8 warp sums in order w = 0..7;
+// - exp() is recomputed in the last pass (nothing is kept between passes: V can be 50 000+).
+// exp(), log() and 1/s are the GPU's approximate MUFU.EX2 / MUFU.LG2 / MUFU.RCP: the CPU model
+// (gpu_compute::layer::xent_gpu256) follows the order of the sums, and both are compared with the f64 training oracle
+// (gpu_compute::train::softmax_xent) within a margin written before the measurement.
+// A target outside 0..V-1 is a caller bug: the row's loss is written as NaN (visible), no one-hot is subtracted.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer InU { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args { In logits; InU targets; Out dlogits; Out loss; uint v; float scale; } args;
+shared float parts[8];
+
+float block_max(float x, uint t) {
+    x = max(x, subgroupShuffleXor(x, 16u));
+    x = max(x, subgroupShuffleXor(x, 8u));
+    x = max(x, subgroupShuffleXor(x, 4u));
+    x = max(x, subgroupShuffleXor(x, 2u));
+    x = max(x, subgroupShuffleXor(x, 1u));
+    if ((t & 31u) == 0u) {
+        parts[t >> 5u] = x;
+    }
+    barrier();
+    float r = parts[0];
+    for (uint w = 1u; w < 8u; w++) {
+        r = max(r, parts[w]);
+    }
+    barrier();
+    return r;
+}
+
+float block_sum(float x, uint t) {
+    x = x + subgroupShuffleXor(x, 16u);
+    x = x + subgroupShuffleXor(x, 8u);
+    x = x + subgroupShuffleXor(x, 4u);
+    x = x + subgroupShuffleXor(x, 2u);
+    x = x + subgroupShuffleXor(x, 1u);
+    if ((t & 31u) == 0u) {
+        parts[t >> 5u] = x;
+    }
+    barrier();
+    float r = parts[0];
+    for (uint w = 1u; w < 8u; w++) {
+        r = r + parts[w];
+    }
+    barrier();
+    return r;
+}
+
+void main() {
+    uint t = gl_LocalInvocationID.x;
+    uint row = gl_WorkGroupID.x;
+    uint v = args.v;
+    if (v == 0u) {
+        return; // the same for every thread, before any barrier; the launcher never sends v = 0
+    }
+    uint base = row * v;
+    uint tgt = args.targets.v[row];
+    float m = -3.402823466e38;
+    for (uint k = t; k < v; k += 256u) {
+        m = max(m, args.logits.v[base + k]);
+    }
+    m = block_max(m, t);
+    float s = 0.0;
+    for (uint k = t; k < v; k += 256u) {
+        s += exp(args.logits.v[base + k] - m);
+    }
+    s = block_sum(s, t);
+    float inv = 1.0 / s;
+    for (uint k = t; k < v; k += 256u) {
+        float p = exp(args.logits.v[base + k] - m) * inv;
+        if (k == tgt) {
+            p = p - 1.0;
+        }
+        args.dlogits.v[base + k] = p * args.scale;
+    }
+    if (t == 0u) {
+        args.loss.v[row] = tgt < v ? log(s) + m - args.logits.v[base + tgt] : uintBitsToFloat(0x7fc00000u);
+    }
+}

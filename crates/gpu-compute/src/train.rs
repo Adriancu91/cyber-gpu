@@ -563,13 +563,15 @@ fn attention_back(
 
 // ---------------------------------------------------------------- the step
 
-/// Mean cross-entropy of the batch and the gradient of every tensor (before clipping), in `params` order.
-/// `emb_token`'s gradient is the sum of its two uses (input embedding + tied output head).
-pub fn loss_and_grad(
-    a: &Arch,
-    params: &[Vec<f32>],
-    batch: &Batch,
-) -> GpuResult<(f32, Vec<Vec<f32>>)> {
+/// What the forward pass keeps for the backward pass.
+struct Forward {
+    caches: Vec<LayerCache>,
+    hf: Vec<f32>,
+    lnf: LnCache,
+    logits: Vec<f32>,
+}
+
+fn forward(a: &Arch, params: &[Vec<f32>], batch: &Batch) -> GpuResult<Forward> {
     a.check_params(params)?;
     let (bsz, t) = (batch.batch, batch.len);
     need(bsz > 0 && t > 0 && t <= a.ctx, "train: forma lotului")?;
@@ -637,9 +639,31 @@ pub fn loss_and_grad(
     let (lnf_w, lnf_b) = a.final_ln();
     let (hf, lnf) = layernorm(&x, n, c, &params[lnf_w], &params[lnf_b]);
     let logits = linear(&hf, n, c, emb, v, None);
+    Ok(Forward {
+        caches,
+        hf,
+        lnf,
+        logits,
+    })
+}
 
-    // Loss and d(logits) = (softmax − onehot) / N.
-    let mut total = 0.0f64;
+/// The logits `[batch·len, vocab]` of the forward pass (the tied head's output), for checking the loss program of
+/// the board (C-160 point 4, program 7) on the real model.
+pub fn logits(a: &Arch, params: &[Vec<f32>], batch: &Batch) -> GpuResult<Vec<f32>> {
+    Ok(forward(a, params, batch)?.logits)
+}
+
+/// Softmax + cross-entropy over `rows = targets.len()` rows of `v` logits, in f64: the loss of every row
+/// (`ln Σ e^(z−max) + max − z[target]`) and `d(mean loss)/d(logits) = (softmax − onehot) / rows`. The part of
+/// [`loss_and_grad`] between the forward and the backward pass; the oracle of the board's `xent` program.
+pub fn softmax_xent(logits: &[f32], targets: &[u32], v: usize) -> GpuResult<(Vec<f64>, Vec<f32>)> {
+    let n = targets.len();
+    need(v > 0 && n > 0 && logits.len() == n * v, "xent: forma")?;
+    need(
+        targets.iter().all(|&s| (s as usize) < v),
+        "xent: tinta in afara vocabularului",
+    )?;
+    let mut rows = vec![0.0f64; n];
     let mut dlogits = vec![0.0f32; n * v];
     let mut e = vec![0.0f64; v];
     for r in 0..n {
@@ -650,12 +674,41 @@ pub fn loss_and_grad(
             *ek = exp64(z as f64 - max);
             sum += *ek;
         }
-        let tgt = batch.targets[r] as usize;
-        total += ln64(sum) + max - row[tgt] as f64;
+        let tgt = targets[r] as usize;
+        rows[r] = ln64(sum) + max - row[tgt] as f64;
         for k in 0..v {
             let s = e[k] / sum - if k == tgt { 1.0 } else { 0.0 };
             dlogits[r * v + k] = (s / n as f64) as f32;
         }
+    }
+    Ok((rows, dlogits))
+}
+
+/// Mean cross-entropy of the batch and the gradient of every tensor (before clipping), in `params` order.
+/// `emb_token`'s gradient is the sum of its two uses (input embedding + tied output head).
+pub fn loss_and_grad(
+    a: &Arch,
+    params: &[Vec<f32>],
+    batch: &Batch,
+) -> GpuResult<(f32, Vec<Vec<f32>>)> {
+    let Forward {
+        caches,
+        hf,
+        lnf,
+        logits,
+    } = forward(a, params, batch)?;
+    let (bsz, t) = (batch.batch, batch.len);
+    let (c, v) = (a.n_emb, a.vocab);
+    let n = bsz * t;
+    let f = 4 * c;
+    let emb = &params[0];
+    let (lnf_w, lnf_b) = a.final_ln();
+
+    // Loss and d(logits) = (softmax − onehot) / N.
+    let (row_losses, dlogits) = softmax_xent(&logits, batch.targets, v)?;
+    let mut total = 0.0f64;
+    for l in &row_losses {
+        total += *l;
     }
     let loss = (total / n as f64) as f32;
 

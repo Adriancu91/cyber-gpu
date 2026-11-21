@@ -1,5 +1,30 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 143 — 21 noiembrie 2026, ~21:10–21:55 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 4 (programul 7: eroarea + gradientul ei)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-332 → C-160 punctul 4.
+(Dosarul local vechi avea ramura în urmă; am adus-o la `origin/g0-g2-fundatie`, istoria de pe GitHub neatinsă.)
+
+**Ce s-a făcut:** programul de placă `xent` — pe fiecare rând de V logit-uri: eroarea `ln Σ e^(z−m) + m − z[țintă]` și gradientul
+`(softmax − unu-la-țintă)/N`, un bloc de 256 de fire pe rând. Compilat cu Mesa NAK 25.0.7 (reconstruit în cloud; `mm_train` a ieșit identic):
+SHA-256 `44cc3536…f420e339d`, 3 680 octeți, 19 registre. Modulul `nvidia_ga104::xent` (argumentele, grila), modelul
+`gpu_sim::cmdproc::xent_on_cpu` / `gpu_compute::layer::xent_gpu256`. Adăugări în `train` (nimic redenumit): `softmax_xent` (oracolul, scos
+din `loss_and_grad`, același calcul) și `logits`. Nota: `docs/C-160_P4_XENT.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| T153 față de oracolul f64 | V = 1…16 384, răspândiri până la 200, logit-urile reale ale modelului mic: totul în marginea scrisă (gradient ≤ 75 %, doar un element FTZ; eroarea ≤ 13 %); media 44,193805307 față de `loss_and_grad` 44,193805695 | PASS (SIMULARE) |
+| Marginea | scrisă înainte; la prima rulare uitase FTZ (sub 2⁻¹²⁶ placa dă 0) — termenul adăugat, nimic altceva lărgit | notat |
+| T153 refuzuri + greșeli plantate | bloc greșit, fără memorie partajată / barieră; ținta greșită = NaN; modelul altui program, gradientul fără unu-la-țintă | PASS |
+| T151 (pasul de aur mic) după scoaterea `softmax_xent` | neschimbat | PASS (procesor) |
+| `tools/check.sh` | format, clippy `-D warnings` (Rust 1.100, ca CI), **687 de teste**, build no_std | PASS |
+| Pe RTX 3070 Ti | nimic nou trimis; `xent` nu e predat (punctul 6); erorile reale ale MUFU nu se știu | NOT TESTED |
+
+**Următorul pas:** C-160 punctul 4, următorul program din studiu — „înapoi” prin LayerNorm (sau suma pe coloane pentru gradientul
+deplasării) — sau C-157 p.2 dacă apare un test nou pe placă.
+
+---
+
 ## Sesiunea 142 — 21 noiembrie 2026, ~20:11–20:45 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (os-332) + C-160 punctul 4 (programul 1: înmulțirea)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă: **os-332** (încălzirea poziției 0) → C-157 p.2 întâi.

@@ -302,6 +302,62 @@ pub fn layernorm_gpu256(x: &[f32], g: &[f32], b: &[f32], eps: f32) -> GpuResult<
         .collect())
 }
 
+/// The block maximum of `xent.comp`: per warp a butterfly of `max` (lane ^ 16, 8, 4, 2, 1), then the 8 warp maxima
+/// in order. A maximum does not depend on the order (no NaN in the logits), so this is `max` over the 256 values.
+fn block_max256(p: &[f32; 256]) -> f32 {
+    p.iter().fold(-f32::MAX, |m, &v| m.max(v))
+}
+
+/// The row of the board's loss program, `xent.comp` (C-160 point 4, program 7), for one row of `v = z.len()`
+/// logits: m = max (thread t over z[t], z[t+256], … from −f32::MAX, then [`block_max256`]); s = Σ e^(z−m) (thread t
+/// adds its values in order from 0.0 with `fadd.ftz`, then [`block_sum256`]); inv = 1/s; d[k] = (e^(z[k]−m)·inv −
+/// [k = tgt])·scale; loss = log₂s·ln 2 + m − z[tgt] (one `ffma.ftz`, then `fadd.ftz`; NaN when `tgt ≥ v`, as the
+/// program writes it, and then no one-hot). In the order of the code NAK 25.0.7 made (`tools/nak/out/xent.sm86.txt`).
+/// `exp`, `ln` and `1/s` are modelled correctly rounded (`math::exp`, f64 ln, f32 division): the board's
+/// `MUFU.EX2` / `MUFU.LG2` / `MUFU.RCP` are approximate, so board and model are compared with the f64 training
+/// oracle `train::softmax_xent` within a written margin, not bit for bit. Returns `(d, loss)`.
+pub fn xent_gpu256(z: &[f32], tgt: u32, scale: f32) -> (Vec<f32>, f32) {
+    let v = z.len();
+    let e = |x: f32, m: f32| ftz(math::exp(add_f32_ftz(x, -m)));
+    let mut p = [-f32::MAX; 256];
+    for (t, pt) in p.iter_mut().enumerate() {
+        *pt = z
+            .iter()
+            .skip(t)
+            .step_by(256)
+            .fold(-f32::MAX, |m, &x| m.max(x));
+    }
+    let m = block_max256(&p);
+    let mut q = [0.0f32; 256];
+    for (t, qt) in q.iter_mut().enumerate() {
+        *qt = z
+            .iter()
+            .skip(t)
+            .step_by(256)
+            .fold(0.0, |s, &x| add_f32_ftz(s, e(x, m)));
+    }
+    let s = block_sum256(&q);
+    let inv = ftz(1.0 / s);
+    let tgt = tgt as usize;
+    let d = z
+        .iter()
+        .enumerate()
+        .map(|(k, &x)| {
+            let p = mul_ftz(e(x, m), inv);
+            let p = if k == tgt { add_f32_ftz(p, -1.0) } else { p };
+            mul_ftz(p, scale)
+        })
+        .collect();
+    let loss = if tgt < v {
+        // NAK: lg2 = MUFU.LG2(s); ffma.ftz(lg2, ln 2 as f32, m); fadd.ftz(−z[tgt]).
+        let lg2 = (crate::reference::ln(s as f64) / core::f64::consts::LN_2) as f32;
+        add_f32_ftz(fma_f32_ftz(lg2, f32::from_bits(0x3f31_7218), m), -z[tgt])
+    } else {
+        f32::NAN
+    };
+    (d, loss)
+}
+
 /// The scalar arguments of `attention.comp` (cbuf0 0x48..0x58).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AttnArgs {

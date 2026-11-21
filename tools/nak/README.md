@@ -244,3 +244,16 @@ să nu se schimbe. `nak_dump_cm.c` cere în plus `VK_KHR_cooperative_matrix` și
 | SHA-256 `mm_train.sm86.sass` | `69d54ef2334cca67d66fff11cbca838cfd366e33f12a5f9340196c16063fa350` |
 | Argumente în bufferul constant 0 | a/b/c/bias la 0x28/0x30/0x38/0x40, **m/n/k/flags la 0x48/0x4c/0x50/0x54** (citite în listare); baza grupurilor la 0x0/0x4 = 0 |
 | Aritmetica | 16 × `ffma.ftz` pe placă (bucla desfăcută), apoi un `fadd.ftz` pentru deplasare → oracolul bit cu bit `reference::matmul_t_fma_ftz` |
+
+## C-160 punctul 4, programul 7: `xent` (21 nov 2026, sesiunea 143, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh xent` (Mesa 25.0.7 reconstruit în cloud; `mm_train` a ieșit **identic**, `69d54ef2…3fa350`).
+
+| Ce | Valoare |
+|---|---|
+| Program | `xent.comp`: pe fiecare rând de V logit-uri (un bloc de 256 de fire), eroarea `ln Σ e^(z−m) + m − z[t]` și gradientul `(softmax − unu-la-țintă)·scală` |
+| Ieșire | **3 680 octeți**, 19 registre, 32 de octeți partajați, o barieră |
+| SHA-256 `xent.sm86.sass` | `44cc3536ec1dbd0a1cd2440472eaa58b1d8124578dd9defe0edc4e6f420e339d` |
+| Argumente în bufferul constant 0 | logits / ținte / gradient / erori la 0x28 / 0x30 / 0x38 / 0x40, V la 0x48, scala la 0x4c; baza grupurilor la 0x0 (lăsată 0) |
+| Aritmetica | `fadd.ftz`, `fmul.ftz` cu log₂e, **`mufu.exp2`**, **`mufu.rcp`**, **`mufu.log2`** + `ffma.ftz` cu ln 2, `fmnmx.ftz`, `shfl.bfly` |
+
+Oracolul: `gpu_compute::train::softmax_xent` (f64), într-o margine scrisă — MUFU e aproximativ, deci nu bit cu bit. Testul T153.

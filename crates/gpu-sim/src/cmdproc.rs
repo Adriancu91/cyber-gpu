@@ -1074,6 +1074,43 @@ pub fn mm_train_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// C-160 point 4, program 7: what `tools/nak/out/xent.sm86.sass` needs — 32 bytes of shared memory (8 warp
+/// results) and one barrier.
+pub const XENT_NEEDS: Needs = Needs {
+    shared_bytes: 32,
+    barriers: 1,
+};
+
+/// The CPU stand-in for C-160 point 4's loss program (`xent.sm86.sass`): one block of 256 per row (grid x = rows);
+/// cbuf0 logits/targets/dlogits/loss at 0x28/0x30/0x38/0x40, v at 0x48, scale at 0x4c (NAK dump). Each row is
+/// `gpu_compute::layer::xent_gpu256` (the program's order of the sums; `exp`/`ln`/`1/s` correctly rounded, the
+/// board's `MUFU` approximate). A target outside the row gives a NaN loss and no one-hot, as the program.
+pub fn xent_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [256, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 {
+        return Err(bad("SIM: xent cere blocuri de 256x1x1, grila = randuri"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let r = |l: &Launch<'_>, o: u64| l.mem.read_u64(l.cbuf0 + o);
+    let (z, tg, d, loss) = (r(l, 0x28)?, r(l, 0x30)?, r(l, 0x38)?, r(l, 0x40)?);
+    let v = l.mem.read_u32(l.cbuf0 + 0x48)? as usize;
+    let scale = f32::from_bits(l.mem.read_u32(l.cbuf0 + 0x4c)?);
+    if v == 0 {
+        return Ok(()); // the program returns at once
+    }
+    for row in 0..l.grid[0] as usize {
+        let zr = l.mem.read_f32s(z + 4 * (row * v) as u64, v)?;
+        let tgt = l.mem.read_u32(tg + 4 * row as u64)?;
+        let (dr, lr) = gpu_compute::layer::xent_gpu256(&zr, tgt, scale);
+        l.mem.write_f32s(d + 4 * (row * v) as u64, &dr);
+        l.mem.write_u32(loss + 4 * row as u64, lr.to_bits());
+    }
+    Ok(())
+}
+
 /// What `tools/nak/out/matmul_1d.sm86.sass` (step 4) needs: the 64×8 tile of
 /// A at 0 and the 8×64 tile of B at 0x800 (4 KiB) and one barrier.
 pub const MATMUL_1D_NEEDS: Needs = Needs {

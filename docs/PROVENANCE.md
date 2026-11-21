@@ -449,3 +449,11 @@ greutăți din sămânța 1132, fără date personale); SHA-256 al fiecărui fi�
 `Linear` (Y = X·Wᵀ + b, dX = dY·W, dW = dYᵀ·X) sunt formulele standard (documentația PyTorch `Linear`, BSD). Marginea de eroare a unui lanț
 de FMA în f32, γ_K ≈ K·2⁻²⁴·Σ|aᵢbᵢ|: Higham, „Accuracy and Stability of Numerical Algorithms”, cap. 3. Binarul: Mesa NAK 25.0.7 (MIT),
 compilat pe gazdă. Nimic GPL, niciun octet de firmware NVIDIA.
+
+### C-160 punctul 4 — `xent`, programul 7 (sesiunea 143)
+`tools/nak/xent.comp`, `crates/nvidia-ga104/src/xent.rs`, `gpu_sim::cmdproc::xent_on_cpu`, `gpu_compute::layer::xent_gpu256`,
+`gpu_compute::train::softmax_xent` / `logits` (scoase din `loss_and_grad`, același calcul), testul `crates/nvidia-ga104/tests/sim_xent.rs`:
+scrise de noi. Formula (softmax cu scăderea maximului, gradientul (p − unu-la-țintă)/N): standard — documentația PyTorch `cross_entropy`
+(BSD) și llm.c `crossentropy_softmax_backward` (MIT), doar ideea. Forma reducerilor: propriul nostru `layernorm256.comp`. Marginea: rotunjirile
+f32 (Higham, cap. 3) + o margine generoasă pentru unitățile MUFU (fără cifre de la NVIDIA). Binarul: Mesa NAK 25.0.7 (MIT), compilat pe gazdă
+(Mesa reconstruit în cloud; `mm_train` a ieșit identic, aceeași sumă). Nimic GPL, niciun octet de firmware NVIDIA.
