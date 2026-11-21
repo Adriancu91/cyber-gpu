@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 132 — 21 noiembrie 2026, ~10:10–11:20 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2 (os-323) + C-155 punctul 2 (LayerNorm nou)**
+## Sesiunea 132 — 21 noiembrie 2026, ~10:10–10:40 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2 (os-323) + C-155 punctul 2 (LayerNorm nou)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Întâi testele noi pe placă (au întâietate, C-157 punctul 2), apoi LayerNorm.
 
