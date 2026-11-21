@@ -30,7 +30,7 @@ sferturi doar corect și mai rapid cu ≥ 50 ‰).
 | T146d | x nealiniat: `narrow` nu-l dă programului nou; modelul refuză lansarea | PASS (SIMULARE) |
 | T146e | program plantat greșit (ordinea veche sub numele nou → nu e bit cu bit; nimic scris → prins de oracol) | PASS (SIMULARE) |
 | T146f | lățimea lui #513 (768; proj pe 3 072 de intrări): oracolul trece, aceleași simboluri | PASS (SIMULARE) |
-| `tools/check.sh` | format, clippy `-D warnings`, **644 de teste**, build no_std | PASS |
+| `tools/check.sh` | format, clippy `-D warnings`, **644 de teste**, build no_std; CI GitHub pe `9d256ca` (rularea 44899061049) verde | PASS |
 | Pe RTX 3070 Ti | nimic; care program e mai rapid se vede doar pe placă | NOT TESTED |
 
 **Următorul pas:** C-157 punctul 3 (dieta, partea a doua: driverul sub 0,5 ms) — sau punctul 2, dacă apare un test nou pe placă;
