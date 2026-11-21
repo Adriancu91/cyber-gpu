@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 139 — 21 noiembrie 2026, ~17:11–18:00 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 1 (P8 predat)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-329 (comparat în sesiunea 138) →
+C-160 (comanda nouă, 16:35: motorul de antrenare + P8 aprobat de Adrian), punctul 1.
+
+**Ce s-a făcut:** proba P8 gata de legat — programul `mma16_f16` (Mesa NAK 26.3.1, SHA-256 `f8c0db68…a1ef9`) trimis de 6 ori cu 6 seturi
+fixe (`identitate`, `uniform-1..3`, `scari-1..2`), pagina de RAM a fiecărui set (A, B, C, D umplut cu NaN), judecata cu toleranța scrisă
+în C-147 punctul 5 (neschimbată) + **comparația bit cu bit cu 10 modele de adunare** (câte 1/2/4/8/16 termeni × rotunjire/tăiere): seturile
+deosebesc orice două modele, deci pe placă aflăm cum adună GA104. Rândurile `kt mma16 …` și cititorul lor. Doar adăugări:
+`gpu_compute::mma::{Rounding, AddModel, ADD_MODELS, mma16_blocked, matching_models, worst_permille}`, modulul `nvidia_ga104::mma16_probe`.
+Nota: `integration/cyber-universe/C-160_P8_primul-calcul-tensor.md`; cod: `82178f7`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| T150a | cele 6 seturi prin procesorul de comenzi simulat: 6/6 în toleranță, 650/1 536 exacte, 107 ‰, masca = `bloc8-taiere` (ipoteza modelului) | PASS (SIMULARE) |
+| T150b | orice două din cele 10 modele diferă pe cel puțin un set; toate 10 rămân în toleranță | PASS (aritmetică) |
+| T150c–d | rândurile `kt` citite înapoi; D nescris = invalid, B transpus / D al altui set / set lipsă = nu trece | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy `-D warnings`, **667 de teste**, build no_std | PASS |
+| Pe RTX 3070 Ti | `hmma` niciodată rulat de noi; îl leagă OS-ul (C-161 punctul 2) | NOT TESTED |
+
+**Următorul pas:** C-160 punctul 2 (studiul motorului: calculele înainte/înapoi ale lui Kronos, bugetul de memorie, `docs/C-160_MOTOR_STUDIU.md`)
+— sau C-157 punctul 2, dacă apare un test nou pe placă (inclusiv P8).
+
+---
 ## Sesiunea 138 — 21 noiembrie 2026, ~16:10–16:45 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2 (os-329)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă: **os-329** (15:56, `rezultate/2026-11-21-workstation-os329-pozitii/`)
