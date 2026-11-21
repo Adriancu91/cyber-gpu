@@ -366,8 +366,10 @@ fn golden(name: &str, n: usize) -> Vec<f32> {
         .join(name);
     let b = std::fs::read(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
     assert_eq!(b.len(), 4 * n);
-    b.chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+    b.as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| f32::from_le_bytes(*c))
         .collect()
 }
 

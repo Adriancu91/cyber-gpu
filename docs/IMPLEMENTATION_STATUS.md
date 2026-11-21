@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 142 — 21 noiembrie 2026, ~20:11–21:05 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (os-332) + C-160 punctul 4 (programul 1: înmulțirea)**
+## Sesiunea 142 — 21 noiembrie 2026, ~20:11–20:45 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (os-332) + C-160 punctul 4 (programul 1: înmulțirea)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă: **os-332** (încălzirea poziției 0) → C-157 p.2 întâi.
 (Dosarele locale vechi aveau ramurile divergente; am lucrat pe ramuri locale noi, `s142`, din cele de pe GitHub; istoria neatinsă.)
@@ -19,7 +19,7 @@ Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe plac�
 | T152 bit cu bit | 4 forme × 6 combinații de opțiuni, plăci parțiale, −0,0 | PASS (SIMULARE) |
 | T152 față de oracolul de antrenare | greutățile `in_proj` reale (modelul mic): Y 9,5e-7, dX 1,9e-8, dW 1,2e-7, sub marginea scrisă (≤ 4,6 % din ea) | PASS (SIMULARE) |
 | T152 refuzuri + greșeli plantate | opțiuni necunoscute, fără memorie partajată; model fără opțiuni, dW fără `TA` | PASS |
-| `tools/check.sh` | format, clippy `-D warnings`, **681 de teste**, build no_std | PASS |
+| `tools/check.sh` | format, clippy `-D warnings`, **681 de teste**, build no_std; CI: întâi roșu pe `2f4f895` (clippy 1.100 din CI cere `as_chunks` în testul nou), reparat în commit-ul următor | PASS |
 | Pe RTX 3070 Ti | nimic nou trimis; `mm_train` nu e predat încă (punctul 6) | NOT TESTED |
 
 **Următorul pas:** C-160 punctul 4, programul 7 din studiu — eroarea (softmax + entropia încrucișată) cu gradientul ei, în SIMULARE față de
