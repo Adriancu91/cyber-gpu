@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 138 — 21 noiembrie 2026, ~16:10–16:45 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2 (os-329)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă: **os-329** (15:56, `rezultate/2026-11-21-workstation-os329-pozitii/`)
+→ punctul 2 are întâietate.
+
+**Ce a ieșit față de estimare:** 262,04 simb/s în medie (estimat ~280), mediana 299,6; scrierea pe stick a dispărut, identic bit cu bit.
+**Diferit:** poziția 0 a rămas lentă (driver 9 863 µs). Din jurnal: fereastra sloturilor 7,43 ms + pushbuffer 0,69 ms numai la poziția 0.
+Cauza (DEDUS, aritmetica T149): umbra lansărilor pornește goală și scara a folosit lista simplă → primul simbol lipit scrie 11 264 + 1 064
+de cuvinte; 0,66 µs/cuvânt explică ambele ferestre și poziția 0 rece din os-324 (16,6 față de ~16,9 ms). **Remediu propus OS-ului:**
+încălzirea (poziția 0 trimisă o dată înainte de ceas, pe fiecare listă) → ~297 simb/s estimat (DEDUS). Comparația în
+`docs/C-157_P2_COMPARATII.md`; nota: `integration/cyber-universe/C-157_P2c_pozitia-0.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| T149 | poziția 0 rece / după încălzire / poziția 1 = 130 (= placa); costul pe cuvânt verificat pe două rulări de placă | PASS (aritmetică) |
+| `tools/check.sh` | format, clippy `-D warnings`, **656 de teste**, build no_std | PASS |
+| Pe RTX 3070 Ti | nimic nou; încălzirea o face OS-ul, cu lansări deja trecute pe placă | NOT TESTED |
+
+**Următorul pas:** C-157 punctul 5 (C-151 punctul 2: tabloul înainte/după viteza maximă și la N secunde, pragul de temperatură) — sau
+punctul 2, dacă apare un test nou pe placă.
+
+---
 ## Sesiunea 137 — 21 noiembrie 2026, ~15:11–15:30 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 4 (#651 pe placă)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă în `rezultate/` de la os-328 → punctul 4.
