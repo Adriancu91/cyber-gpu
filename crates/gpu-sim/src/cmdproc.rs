@@ -1157,6 +1157,54 @@ pub fn ln_back_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// C-160 point 4, program 3: what `tools/nak/out/ln_fwd.sm86.sass` needs — 32 bytes of shared memory (the 8 warp
+/// results, reused by both sums) and one barrier.
+pub const LN_FWD_NEEDS: Needs = Needs {
+    shared_bytes: 32,
+    barriers: 1,
+};
+
+/// The CPU stand-in for C-160 point 4's training LayerNorm-forward program (`ln_fwd.sm86.sass`): one block of 256
+/// per row (grid x = rows); cbuf0 x/γ/β/y/μ/rstd at 0x28/0x30/0x38/0x40/0x48/0x50, c at 0x58, 1/c at 0x5c, ε at 0x60
+/// (NAK dump). Each row is `gpu_compute::layer::ln_fwd_gpu256` (the program's order; `MUFU.RSQ` modelled correctly
+/// rounded); y of the row, then μ and rstd of the row.
+pub fn ln_fwd_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [256, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 {
+        return Err(bad("SIM: ln_fwd cere blocuri de 256x1x1, grila = randuri"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let r = |l: &Launch<'_>, o: u64| l.mem.read_u64(l.cbuf0 + o);
+    let (x, gm, bt, y, mu, rs) = (
+        r(l, 0x28)?,
+        r(l, 0x30)?,
+        r(l, 0x38)?,
+        r(l, 0x40)?,
+        r(l, 0x48)?,
+        r(l, 0x50)?,
+    );
+    let c = l.mem.read_u32(l.cbuf0 + 0x58)? as usize;
+    let inv_c = f32::from_bits(l.mem.read_u32(l.cbuf0 + 0x5c)?);
+    let eps = f32::from_bits(l.mem.read_u32(l.cbuf0 + 0x60)?);
+    if c == 0 {
+        return Ok(()); // the program returns at once
+    }
+    let gamma = l.mem.read_f32s(gm, c)?;
+    let beta = l.mem.read_f32s(bt, c)?;
+    for row in 0..l.grid[0] as usize {
+        let off = 4 * (row * c) as u64;
+        let xr = l.mem.read_f32s(x + off, c)?;
+        let (out, m, s) = gpu_compute::layer::ln_fwd_gpu256(&xr, &gamma, &beta, inv_c, eps);
+        l.mem.write_f32s(y + off, &out);
+        l.mem.write_u32(mu + 4 * row as u64, m.to_bits());
+        l.mem.write_u32(rs + 4 * row as u64, s.to_bits());
+    }
+    Ok(())
+}
+
 /// The CPU stand-in for C-160 point 4's column-sum program (`colsum.sm86.sass`): blocks of 256 (one thread per
 /// column, grid x = ⌈c/256⌉); cbuf0 dy/x/μ/rstd/s0/s1 at 0x28/0x30/0x38/0x40/0x48/0x50, rows at 0x58, c at 0x5c, the
 /// mode at 0x60 (0 = bias, else LayerNorm: dγ in s0, dβ in s1) (NAK dump). The columns are

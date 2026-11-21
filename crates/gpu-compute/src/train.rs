@@ -460,6 +460,23 @@ pub fn layernorm_stats(x: &[f32], rows: usize, c: usize) -> GpuResult<(Vec<f32>,
     Ok((mean, rstd))
 }
 
+/// LayerNorm forward over `rows × c` (`g` = γ, `b` = β), exactly the calculation [`loss_and_grad`] does for LN1 / LN2 /
+/// the final LN (f64, the output rounded once to f32): the oracle of the board's `ln_fwd` program (C-160 point 4,
+/// program 3), together with [`layernorm_stats`] for the μ and rstd it keeps.
+pub fn layernorm_rows(
+    x: &[f32],
+    g: &[f32],
+    b: &[f32],
+    rows: usize,
+    c: usize,
+) -> GpuResult<Vec<f32>> {
+    need(
+        rows > 0 && c > 0 && x.len() == rows * c && g.len() == c && b.len() == c,
+        "layernorm: forma",
+    )?;
+    Ok(layernorm(x, rows, c, g, b).0)
+}
+
 /// LayerNorm backward over `rows × c` (`x` the forward input, `dy` the gradient of the output, `g` = γ), exactly the
 /// calculation [`loss_and_grad`] does for LN1 / LN2 / the final LN: returns `(dx, dγ, dβ)`. The oracle of the board's
 /// `ln_back` program (C-160 point 4, program 4) and of the column sums for dγ, dβ.

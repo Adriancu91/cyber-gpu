@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 146 — 22 noiembrie 2026, ~00:10–00:35 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 4, programul 3 (`ln_fwd`)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-335 (doar rapoartele automate ale ciclului) →
+C-160 punctul 4 mai departe. (Dosarul local vechi avea ramura în urmă; am lucrat într-o clonă proaspătă; istoria neatinsă.)
+
+**Ce s-a făcut:** programul 3 al antrenării, LayerNorm înainte pe multe rânduri, orice lățime, care **scrie μ și r** pentru programele
+„înapoi”: `tools/nak/ln_fwd.comp` → Mesa NAK 25.0.7, 3 456 octeți, 19 registre, 32 B partajați, o barieră, un `MUFU.RSQ` pe rând, SHA-256
+`895fc798…e9f2204`. Adăugări (nimic redenumit, OS-ul compilează neschimbat): modulul `nvidia_ga104::ln_fwd` (`LN_FWD`, `LN_FWD_SHA256`,
+`REGISTERS`, `BLOCK`, `SHARED`, `CBUF_BYTES`, `Args::{cbuf, grid, inv_c}`), `gpu_compute::layer::ln_fwd_gpu256`,
+`gpu_compute::train::layernorm_rows`, `gpu_sim::cmdproc::{ln_fwd_on_cpu, LN_FWD_NEEDS}`. Nota: `docs/C-160_P4_LN_FWD.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Compilarea NAK | Mesa reconstruit în cloud; `add64`, `ln_back` identice; `ln_fwd` nou | PASS (compilat, nerulat) |
+| T157 y, μ, r față de oracolul f64 | C = 1…3 072, media 100, varianța ≈ ε, γ/β reale ale modelului mic: ≤ 17 % din marginea scrisă | PASS (SIMULARE) |
+| T157 lanțul `ln_fwd` → `ln_back` | dx față de `layernorm_back_rows`: ≤ 4,1e-7 relativ (toleranța 2⁻¹⁶) | PASS (SIMULARE) |
+| T157 refuzuri, grila scurtă, 5 greșeli plantate | toate prinse | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy `-D warnings` (Rust 1.97), **710 teste**, build no_std | PASS |
+| `ln_fwd` pe RTX 3070 Ti (exactitatea `MUFU.RSQ`, viteza) | nepredat (C-160 p.6: întâi un program „înapoi”) | NOT TESTED |
+
+**Următorul pas:** C-160 punctul 4, programul 5 (GELU înainte / înapoi), apoi atenția înapoi; la primul test nou pe placă: C-157 punctul 2.
+
+---
+
 ## Sesiunea 145 — 21 noiembrie 2026, ~23:10–23:55 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația după os-335 (P8)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. os-335 (P8 pe placa reală) a TRECUT, cu „niciun model de rotunjire potrivit” →

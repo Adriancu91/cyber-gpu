@@ -1,0 +1,73 @@
+// C-160 point 4, training program 3 (docs/C-160_MOTOR_STUDIU.md, table "Programele de placă", #3): LayerNorm forward
+// over rows of C numbers that also KEEPS the row statistics for the backward pass (ln_back.comp, colsum.comp):
+//   for row r (one workgroup per row, grid x = rows):
+//     μ_r    = (Σ_k x[k]) * inv_c                     (inv_c = 1/C, given by the caller as f32; μ rounded to f32 ONCE)
+//     var_r  = (Σ_k (x[k] - μ_r)²) * inv_c            (two passes over the row in memory: any C, not only <= 1024)
+//     rstd_r = inversesqrt(var_r + eps)
+//     y[k]   = (x[k] - μ_r) * rstd_r * γ[k] + β[k]
+//     mean[r] = μ_r, rstd[r] = rstd_r                   (written by thread 0)
+// The same formula as layernorm256.comp (inference, one vector <= 1024 in registers); this one takes many rows and
+// any C, and `precise` keeps μ rounded once, so the μ written for the backward pass is exactly the μ the program
+// subtracted (NAK otherwise folds μ into an fma per element, as in layernorm256).
+// Shape: 256 threads (8 warps), thread t takes k = t, t+256, ... in that order, adds from 0.0; butterfly inside the
+// warp (shuffle xor 16..1: every lane ends with the same bits), lane 0 of each warp writes, barrier, every thread adds
+// the 8 warp sums in order w = 0..7, barrier (parts[] is reused by the second sum).
+// MUFU: one RSQ per row (inversesqrt) — approximate on the board, so the CPU model (gpu_compute::layer::
+// ln_fwd_gpu256) takes 1/√ correctly rounded and both are judged against the f64 training oracle
+// (gpu_compute::train::layernorm_rows / layernorm_stats) within a margin written before the measurement.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args { In x; In gamma; In beta; Out y; Out mean; Out rstd; uint c; float inv_c; float eps; } args;
+shared float parts[8];
+
+float block_sum(float v, uint t) {
+    v = v + subgroupShuffleXor(v, 16u);
+    v = v + subgroupShuffleXor(v, 8u);
+    v = v + subgroupShuffleXor(v, 4u);
+    v = v + subgroupShuffleXor(v, 2u);
+    v = v + subgroupShuffleXor(v, 1u);
+    if ((t & 31u) == 0u) {
+        parts[t >> 5u] = v;
+    }
+    barrier();
+    float r = parts[0];
+    for (uint w = 1u; w < 8u; w++) {
+        r = r + parts[w];
+    }
+    barrier();
+    return r;
+}
+
+void main() {
+    uint t = gl_LocalInvocationID.x;
+    uint row = gl_WorkGroupID.x;
+    uint c = args.c;
+    if (c == 0u) {
+        return; // the same for every thread, before any barrier; the launcher never sends c = 0
+    }
+    uint base = row * c;
+    float s = 0.0;
+    for (uint k = t; k < c; k += 256u) {
+        s = s + args.x.v[base + k];
+    }
+    precise float mu = block_sum(s, t) * args.inv_c;
+    float q = 0.0;
+    for (uint k = t; k < c; k += 256u) {
+        float d = args.x.v[base + k] - mu;
+        q = q + d * d;
+    }
+    float rs = inversesqrt(block_sum(q, t) * args.inv_c + args.eps);
+    if (t == 0u) {
+        args.mean.v[row] = mu;
+        args.rstd.v[row] = rs;
+    }
+    for (uint k = t; k < c; k += 256u) {
+        args.y.v[base + k] = (args.x.v[base + k] - mu) * rs * args.gamma.v[k] + args.beta.v[k];
+    }
+}

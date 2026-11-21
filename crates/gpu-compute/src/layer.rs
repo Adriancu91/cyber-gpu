@@ -401,6 +401,42 @@ pub fn ln_back_gpu256(
         .collect()
 }
 
+/// The row of the board's training LayerNorm-forward program, `ln_fwd.comp` (C-160 point 4, program 3), for one row
+/// of `c = x.len()` numbers with `inv_c` = 1/c as f32 and ε. In the order of the code NAK 25.0.7 made
+/// (`tools/nak/out/ln_fwd.sm86.txt`): thread t over k = t, t+256, … from 0.0: s = `fadd.ftz`(s, x); [`block_sum256`];
+/// μ = `fmul.ftz`(S, inv_c) (`precise`: rounded once, the μ written is the μ subtracted); d = `fadd.ftz`(x, −μ);
+/// q = `ffma.ftz`(d, d, q) from 0.0; [`block_sum256`]; rs = `MUFU.RSQ`(`ffma.ftz`(Q, inv_c, ε)) — modelled as 1/√
+/// correctly rounded (the board's unit is approximate, so board and model are compared with the f64 oracle in a
+/// written margin, not bit for bit); y = `ffma.ftz`(`fmul.ftz`(d, rs), γ, β). Returns `(y, μ, rs)`.
+pub fn ln_fwd_gpu256(
+    x: &[f32],
+    gamma: &[f32],
+    beta: &[f32],
+    inv_c: f32,
+    eps: f32,
+) -> (Vec<f32>, f32, f32) {
+    let c = x.len();
+    let mut p = [0.0f32; 256];
+    for (t, pt) in p.iter_mut().enumerate() {
+        *pt = (t..c)
+            .step_by(256)
+            .fold(0.0f32, |s, k| add_f32_ftz(s, x[k]));
+    }
+    let mu = mul_ftz(block_sum256(&p), inv_c);
+    let dev = |k: usize| add_f32_ftz(x[k], -mu);
+    for (t, pt) in p.iter_mut().enumerate() {
+        *pt = (t..c).step_by(256).fold(0.0f32, |q, k| {
+            let d = dev(k);
+            fma_f32_ftz(d, d, q)
+        });
+    }
+    let rs = ftz(1.0 / math::sqrt(fma_f32_ftz(block_sum256(&p), inv_c, eps)));
+    let y = (0..c)
+        .map(|k| fma_f32_ftz(mul_ftz(dev(k), rs), gamma[k], beta[k]))
+        .collect();
+    (y, mu, rs)
+}
+
 /// The forward statistics the LayerNorm mode of [`colsum_gpu`] recomputes x̂ from: `x` `[rows, c]`, μ and rstd
 /// `[rows]`.
 #[derive(Clone, Copy, Debug)]

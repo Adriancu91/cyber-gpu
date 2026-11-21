@@ -270,3 +270,16 @@ Oracolul: `gpu_compute::train::softmax_xent` (f64), într-o margine scrisă — 
 | Aritmetica | `fadd.ftz`, `fmul.ftz`, `ffma.ftz`, `shfl.bfly`; NAK a lipit `dy·γ − m1` într-un singur `ffma` | `fadd.ftz`, `fmul.ftz`, `ffma.ftz` |
 
 Oracolul: `gpu_compute::train::layernorm_back_rows` (f64), într-o margine scrisă. Testele T154, T155.
+
+## C-160 punctul 4, programul 3: `ln_fwd` (22 nov 2026, sesiunea 146, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh ln_fwd` (Mesa 25.0.7 reconstruit în cloud; `add64` și `ln_back` au ieșit **identice**).
+
+| Ce | `ln_fwd` |
+|---|---|
+| Program | LayerNorm înainte pe multe rânduri (un bloc de 256 de fire pe rând, orice C, două treceri prin rând), scrie y, μ și r = 1/√(var + ε) |
+| Ieșire | **3 456 octeți**, 216 instrucțiuni, 19 registre, 32 de octeți partajați, o barieră |
+| SHA-256 | `895fc7988e387cd8ff279695996f5a78e3f326874fa8013aac5efea31e9f2204` |
+| Bufferul constant 0 | x / γ / β / y / μ / r la 0x28…0x50, C la 0x58, 1/C la 0x5c, ε la 0x60 |
+| Aritmetica | `fadd.ftz`, `fmul.ftz`, `ffma.ftz`, `shfl.bfly`, **un `mufu.rsq` pe rând**; μ rotunjit o dată (`precise`) |
+
+Oracolul: `gpu_compute::train::layernorm_rows` + `layernorm_stats` (f64), într-o margine scrisă. Testul T157. Nota: `docs/C-160_P4_LN_FWD.md`.
