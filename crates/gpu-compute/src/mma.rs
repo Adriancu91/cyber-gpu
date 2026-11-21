@@ -247,6 +247,102 @@ pub fn matching_models(a: &[u16], b: &[u16], c: &[f32], got: &[f32]) -> u32 {
     mask
 }
 
+/// C-157 point 2 (after os-335): a finer, hardware-shaped model of the tensor-core adder, closer to how a
+/// fixed-point block adder works than [`AddModel`]:
+///
+/// - per element the accumulator starts at C; every block of `block` products is added to it in one step;
+/// - in a step, the reference exponent `E` is the largest **nominal** exponent of the non-zero terms: for a
+///   product `a·b` it is `exp(a) + exp(b)` (binary16 exponents, subnormals = −14, so the product significand is in
+///   [0, 4) with two integer bits), for the accumulator its real exponent;
+/// - every term is cut toward zero to a multiple of `2^(E − 23 − extra_bits)` (alignment with truncation), the
+///   cut terms are added exactly, and the sum is rounded toward zero to f32.
+///
+/// [`GA104_OS335`] is the one member of this family that reproduces every figure the real board wrote in os-335
+/// (exact counts and worst ‰ of all 6 sets). That is a match on the **fingerprint**, not yet bit for bit: the
+/// journal rows of [`mma16_hw`] in `nvidia_ga104::mma16_probe::fit_rows` let the next board run confirm it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HwAdder {
+    /// Products added per step (must divide [`K`]).
+    pub block: usize,
+    /// Bits kept below the 24-bit f32 significand when aligning (0 = none).
+    pub extra_bits: i32,
+}
+
+/// The model that fits the real RTX 3070 Ti (GA104) in os-335, 21 Nov 2026 (MEASURED fingerprint, see
+/// [`HwAdder`]): 8 products + the accumulator per step, one extra alignment bit, truncation everywhere.
+pub const GA104_OS335: HwAdder = HwAdder {
+    block: 8,
+    extra_bits: 1,
+};
+
+/// Unbiased exponent of a binary16 for the nominal product exponent (subnormals and zero count as −14).
+fn h_exp(h: u16) -> i32 {
+    let f = ((h >> 10) & 0x1f) as i32;
+    if f == 0 { -14 } else { f - 15 }
+}
+
+/// Unbiased exponent of a finite, non-zero, normal f64.
+fn f64_exp(x: f64) -> i32 {
+    ((x.to_bits() >> 52) & 0x7ff) as i32 - 1023
+}
+
+/// 2^e as f64 (e within the normal f64 range).
+fn pow2(e: i32) -> f64 {
+    f64::from_bits(((e + 1023) as u64) << 52)
+}
+
+/// D under one [`HwAdder`]. `None` for wrong lengths, a block that does not divide [`K`], `extra_bits` outside
+/// 0..=8, or a non-finite input.
+pub fn mma16_hw(a: &[u16], b: &[u16], c: &[f32], model: HwAdder) -> Option<[f32; M * N]> {
+    if !check(a, b, c)
+        || model.block == 0
+        || model.block > K
+        || !K.is_multiple_of(model.block)
+        || !(0..=8).contains(&model.extra_bits)
+        || c.iter().any(|v| !v.is_finite())
+        || a.iter().chain(b).any(|h| (h >> 10) & 0x1f == 0x1f)
+    {
+        return None;
+    }
+    let mut d = [0.0f32; M * N];
+    let mut terms = [0.0f64; K + 1];
+    for i in 0..M {
+        for j in 0..N {
+            let mut acc = c[i * N + j];
+            for blk in (0..K).step_by(model.block) {
+                let n = model.block + 1;
+                terms[0] = acc as f64;
+                let mut e_max: Option<i32> = (acc != 0.0).then(|| f64_exp(acc as f64));
+                for (t, p) in (blk..blk + model.block).enumerate() {
+                    let (x, y) = (a[i * K + p], b[p * N + j]);
+                    let v = f16_to_f32(x) as f64 * f16_to_f32(y) as f64;
+                    terms[t + 1] = v;
+                    if v != 0.0 {
+                        let e = h_exp(x) + h_exp(y);
+                        e_max = Some(e_max.map_or(e, |m| m.max(e)));
+                    }
+                }
+                let Some(e) = e_max else {
+                    acc = 0.0;
+                    continue;
+                };
+                // Every term is below 2^(e+2) (product significand < 4, accumulator ≤ its own exponent), so a
+                // cut term has at most 2 + 23 + 8 = 33 bits above q and a sum of at most 17 terms fits in 38:
+                // the additions below are exact in f64.
+                let q = pow2(e - 23 - model.extra_bits);
+                let mut s = 0.0f64;
+                for t in &terms[..n] {
+                    // Toward zero: `as i64` truncates; |t/q| < 2^34 here.
+                    s += (t / q) as i64 as f64 * q;
+                }
+                acc = to_f32_trunc(s);
+            }
+            d[i * N + j] = acc;
+        }
+    }
+    Some(d)
+}
+
 /// The worst element's distance from the reference, in thousandths of its [`tolerance`] (1000 = exactly at the
 /// limit; above 1000 = outside). `None` for wrong lengths or a non-finite input or result. A zero tolerance with a
 /// non-zero distance counts as `u32::MAX`.
@@ -452,6 +548,34 @@ mod tests {
         assert_eq!(mma16_blocked(&a, &b, &c, bad), None);
         assert_eq!(bad.name(), "alt-model");
         assert_eq!(ADD_MODELS[8].name(), "bloc8-taiere");
+    }
+
+    #[test]
+    fn hw_adder_stays_in_tolerance_and_refuses_bad_shapes() {
+        for seed in 1..=20 {
+            let (a, b, c) = inputs(seed);
+            let d = mma16_hw(&a, &b, &c, GA104_OS335).unwrap();
+            assert!(matches!(
+                judge(&a, &b, &c, &d),
+                MmaVerdict::InToleranta { .. }
+            ));
+        }
+        let (a, b, c) = inputs(1);
+        let bad = |block, extra_bits| mma16_hw(&a, &b, &c, HwAdder { block, extra_bits }).is_none();
+        assert!(bad(0, 1) && bad(3, 1) && bad(32, 1) && bad(8, -1) && bad(8, 9));
+        let mut inf = a.clone();
+        inf[5] = 0x7c00;
+        assert_eq!(mma16_hw(&inf, &b, &c, GA104_OS335), None);
+        // Identity · B + 0 = B for every member of the family.
+        let mut id = [0u16; M * K];
+        for i in 0..M {
+            id[i * K + i] = 0x3c00;
+        }
+        let z = [0.0f32; M * N];
+        let d = mma16_hw(&id, &b, &z, GA104_OS335).unwrap();
+        for (x, y) in d.iter().zip(&b) {
+            assert_eq!(*x, f16_to_f32(*y));
+        }
     }
 
     #[test]

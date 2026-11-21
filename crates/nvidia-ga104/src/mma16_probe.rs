@@ -475,6 +475,88 @@ pub fn parse_mma16(text: &str) -> ParsedMma16 {
     p
 }
 
+/// C-157 point 2 (after os-335): what the real board (RTX 3070 Ti, GA104) wrote in os-335, 21 Nov 2026 22:21,
+/// per set in [`SETS`] order — MEASURED, copied from `gpu-jurnal-034.txt` (`kt mma16 set: exacte` / `promile`).
+pub const OS335_EXACT: [u32; 6] = [256, 80, 63, 71, 89, 83];
+/// See [`OS335_EXACT`]: the worst element per set, in ‰ of its tolerance.
+pub const OS335_PERMILLE: [u32; 6] = [0, 108, 72, 110, 148, 124];
+
+/// FNV-1a (32 bit) of the D bytes a launch wrote (1 KiB): one row per set lets a later reader check any adder
+/// model bit for bit against the board without the 1 KiB itself in the journal.
+pub fn d_fnv(d: &[u8]) -> u32 {
+    let mut h: u32 = 0x811c_9dc5;
+    for &b in d {
+        h ^= b as u32;
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    h
+}
+
+/// D of set `set` under [`gpu_compute::mma::GA104_OS335`], as the 1 KiB the board would write.
+pub fn ga104_fit_bytes(set: usize) -> GpuResult<[u8; D_BYTES]> {
+    let s = SETS.get(set).ok_or(bad("mma16 proba: set necunoscut"))?;
+    let x = s.inputs();
+    let d = mma::mma16_hw(&x.a, &x.b, &x.c, mma::GA104_OS335)
+        .ok_or(bad("mma16 proba: modelul GA104 a refuzat intrarile"))?;
+    let mut out = [0u8; D_BYTES];
+    for (o, v) in out.as_chunks_mut::<4>().0.iter_mut().zip(&d) {
+        *o = v.to_bits().to_le_bytes();
+    }
+    Ok(out)
+}
+
+/// The two extra rows for one set (C-157 point 2, optional for the OS: call it next to [`judge_set`] with the
+/// same D bytes): `kt mma16 set: iesire (fnv)` = [`d_fnv`] of D, and `kt mma16 set: model ga104` = 1 when D is
+/// bit for bit [`ga104_fit_bytes`], 0 when not, 2 for a wrong length.
+pub fn fit_rows(set: usize, d: &[u8]) -> GpuResult<[(&'static str, u32); 2]> {
+    let want = ga104_fit_bytes(set)?;
+    let m = if d.len() != D_BYTES {
+        2
+    } else {
+        u32::from(d == want)
+    };
+    Ok([
+        ("kt mma16 set: iesire (fnv)", d_fnv(d)),
+        ("kt mma16 set: model ga104", m),
+    ])
+}
+
+/// Pushes [`fit_rows`] into the journal.
+pub fn journal_fit(j: &mut Journal, set: usize, d: &[u8]) -> GpuResult<()> {
+    for (what, value) in fit_rows(set, d)? {
+        j.push(Event::Value { what, value });
+    }
+    Ok(())
+}
+
+/// Reads the [`fit_rows`] back from a stick journal, in order: (D fnv, model ga104; `u32::MAX` if its row is
+/// missing). Every pair in the text is returned (the OS may write them before or after [`Probe::journal`]); the
+/// last [`SETS`]`.len()` pairs are the last run.
+pub fn parse_mma16_fit(text: &str) -> Vec<(u32, u32)> {
+    let mut out: Vec<(u32, u32)> = Vec::new();
+    for line in text.lines() {
+        let Some(rest) = line.split("valoare kt mma16 ").nth(1) else {
+            continue;
+        };
+        let Some((name, val)) = rest.rsplit_once(" = 0x") else {
+            continue;
+        };
+        let Ok(v) = u32::from_str_radix(val.trim(), 16) else {
+            continue;
+        };
+        match name {
+            "set: iesire (fnv)" => out.push((v, u32::MAX)),
+            "set: model ga104" => {
+                if let Some(last) = out.last_mut() {
+                    last.1 = v;
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

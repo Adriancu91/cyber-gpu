@@ -1,5 +1,30 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 145 — 21 noiembrie 2026, ~23:10–23:55 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația după os-335 (P8)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. os-335 (P8 pe placa reală) a TRECUT, cu „niciun model de rotunjire potrivit” →
+C-157 punctul 2 are întâietate. (Dosarele locale vechi aveau ramurile în urmă; am lucrat în clone proaspete; istoria neatinsă.)
+
+**Ce s-a făcut:** din cele 12 cifre scrise de placă (exacte + ‰ pe 6 seturi; jurnalul nu are ieșirea însăși) am căutat pe procesor un model
+de sumator „ca în hardware”. Unul singur, din câteva sute încercate, le reproduce pe toate: `gpu_compute::mma::GA104_OS335` — acumulatorul +
+8 produse pe pas, alinierea la cel mai mare exponent nominal (exp(a)+exp(b)), 24 + 1 biți, tăiere spre zero, rezultatul tăiat spre zero la
+f32. Adăugări (nimic redenumit): `mma::{HwAdder, GA104_OS335, mma16_hw}`, `mma16_probe::{OS335_EXACT, OS335_PERMILLE, d_fnv,
+ga104_fit_bytes, fit_rows, journal_fit, parse_mma16_fit}`. Nota pentru OS: `integration/cyber-universe/C-157_P2e_os-335_P8.md` (un rând
+opțional în proba P8 → confirmarea bit cu bit la următoarea rulare; nimic nou pentru placă).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| P8 pe RTX 3070 Ti (os-335, OS) | 6/6 în toleranță, identitate 256/256, max 148 ‰ | PASS (placa reală, rulat de OS) |
+| T156 modelul față de cifrele plăcii | `GA104_OS335` = toate 12 cifrele; cele 10 modele vechi și 19 vecini nu | PASS (procesor; amprentă, nu bit cu bit) |
+| Modelul în toleranță + refuzuri | 20 de intrări aleatoare; bloc / biți / inf refuzate | PASS |
+| `tools/check.sh` | format, clippy `-D warnings` (Rust 1.97), **702 teste**, build no_std | PASS |
+| Modelul bit cu bit pe placă | așteaptă rândul `kt mma16 set: model ga104` în proba P8 | NOT TESTED |
+
+**Următorul pas:** C-160 punctul 4, programul 3 (LayerNorm înainte cu μ și r) sau 5 (GELU); opțional: modelul `GA104_OS335` în `gpu-sim`
+pentru programele cu circuitele speciale (după confirmarea bit cu bit).
+
+---
+
 ## Sesiunea 144 — 21 noiembrie 2026, ~22:10–22:35 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 4 (programele 4 și 2: LayerNorm înapoi + sumele pe coloane)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-332 (os-335 e doar GATA DE TEST) → C-160 punctul 4.

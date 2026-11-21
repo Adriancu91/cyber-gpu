@@ -467,3 +467,4 @@ dγ = Σ dy·x̂, dβ = Σ dy): standard — documentația PyTorch `LayerNorm` (
 două programe (fără `atomic`) e alegerea noastră. Forma reducerii: propriul nostru `layernorm256.comp` / `xent.comp`. Marginile: rotunjirile
 f32 (Higham, cap. 3). Binarele: Mesa NAK 25.0.7 (MIT), compilat pe gazdă (Mesa reconstruit în cloud; `xent` a ieșit identic). Nimic GPL,
 niciun octet de firmware NVIDIA.
+- **C-157 p.2 după os-335 (sesiunea 145):** `gpu_compute::mma::{HwAdder, GA104_OS335, mma16_hw}`, `mma16_probe::{fit_rows, …}` și testul `sim_c157_p2e_mma_fit.rs`: scrise de noi. Forma modelului (blocuri de produse adunate deodată, aliniere cu tăiere) e ideea din măsurătorile publicate pe V100/T4/A100 (Fasi, Higham, Mikaitis, Pranesh, „Numerical behavior of NVIDIA tensor cores”, PeerJ CS 2021) — doar ideea; parametrii (8 produse, exponentul nominal, 1 bit în plus) sunt potriviți de noi pe cifrele plăcii din os-335. Nimic GPL, niciun octet de firmware NVIDIA.
