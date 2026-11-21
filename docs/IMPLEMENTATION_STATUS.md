@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 141 — 21 noiembrie 2026, ~19:11–19:25 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 3 (oracolul pasului de antrenare)**
+## Sesiunea 141 — 21 noiembrie 2026, ~19:11–19:29 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 3 (oracolul pasului de antrenare)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun rezultat nou pe placă (os-332 e doar pornit) → C-160 punctul 3.
 (Dosarele locale vechi aveau ramurile divergente; am redenumit ramurile locale în `vechi-local-*` și am lucrat pe ramura de pe GitHub.)
@@ -16,7 +16,7 @@ gradientul ≤ 3,6e-7, greutățile după 10 pași ≤ 2,4e-7 (tol. 1e-6); AdamW
 | T151b | `adamw_513`: la fel, cu tăierea la 1,0 | PASS (procesor) |
 | T151c | greșeli plantate (gradient +0,2 %, rețeta greșită, ținte mutate) prinse | PASS |
 | Unitare | diferențe finite pe un model minuscul; erf/exp/sqrt F64; forma MIC și #513; intrări greșite = eroare | PASS |
-| `tools/check.sh` | format, clippy `-D warnings`, **674 de teste**, build no_std | PASS |
+| `tools/check.sh` | format, clippy `-D warnings`, **674 de teste**, build no_std; CI verde pe `82008ff` (o reparație pentru clippy 1.100 în testul nou) | PASS |
 | Pe RTX 3070 Ti | nimic nou trimis; oracolul nu rulează pe placă | NOT TESTED |
 
 **Următorul pas:** C-160 punctul 4 — primul program de placă al antrenării (înmulțirea matrice × matrice și cu transpusa, F32) în
