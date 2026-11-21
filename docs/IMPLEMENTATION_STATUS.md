@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 137 — 21 noiembrie 2026, ~15:11–15:50 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 4 (#651 pe placă)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă în `rezultate/` de la os-328 → punctul 4.
+
+**Găsirea:** OS-ul (`run_model`) își face limitele cu `ModelLimits::of`, care numără mereu lista **simplă**: la #651 = 388 de lansări
+→ pasul `0x185` > `STRIDE 0x100` și zona de comenzi 37 312 B > 32 KiB → **#651 ar fi refuzat înainte de urcare chiar și cu lista
+lipită singură**, care încape în tot (172 de lansări, 8 288 B). Am adăugat `ModelLimits::of_lists` / `k651_lists` (limitele listelor
+care rulează de fapt) și `VramBudget::with_programs`; nota pentru OS propune schimbarea de un rând. Bugetul VRAM #651: **270,3 MiB**
+(greutăți 197,2 + cache-uri 72), 25 de bucăți de urcare; RAM-ul nucleului ~470–550 MiB (DEDUS; `HEAP_MAX` 1 GiB). Estimare (DEDUS):
+~5,1–5,6 ms pe simbol (~180–195 simb/s). Detalii: `docs/C-157_P4_K651.md`; nota: `integration/cyber-universe/C-157_P4_k651-limite.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| T148a | formele lui #651 = fișierul: 206 665 728 B de tensori, 98 Q8_0 + 194 F32 = 292, antetul ~232 KB | PASS |
+| T148b | lista simplă refuzată de constantele OS (pas + zonă), listele lipite (± argmax) încap; #513 neschimbat | PASS (SIMULARE) |
+| T148c | bugetul VRAM 270,3 MiB, blob continuu de ~198 MiB, `with_programs` | PASS |
+| T148d | model cu forma lui #651 (greutăți generate), urcat prin arenă în 25 de bucăți, zona 32 KiB, pasul `0x100`, lista lipită, 4 poziții: oracolul trece (3,7e-6) | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy `-D warnings`, **655 de teste**, build no_std | PASS |
+| Pe RTX 3070 Ti | nimic; nimic nou pentru placă | NOT TESTED |
+
+**Următorul pas:** C-157 punctul 5 (C-151 punctul 2: citirea tabloului înainte/după viteza maximă și la N secunde, pragul de
+temperatură) — sau punctul 2, dacă apare un test nou pe placă.
+
+---
 ## Sesiunea 136 — 21 noiembrie 2026, ~14:11–14:25 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 3 (dieta, partea a doua)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă în `rezultate/` de la os-328 (comparat în

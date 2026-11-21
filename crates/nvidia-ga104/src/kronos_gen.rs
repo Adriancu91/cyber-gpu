@@ -525,6 +525,27 @@ impl VramBudget {
         })
     }
 
+    /// C-157 point 4: the same budget with the programs of `progs` that are not already among [`PROGRAMS`] (the
+    /// glued lists' `q8_fused`, `q8_fused32`, `q8_matvec32`, `layernorm256`, `argmax`), each in its own pages and
+    /// with its own page table, as the OS maps them.
+    pub fn with_programs(self, progs: &[kl::Prog]) -> Self {
+        let mut seen: Vec<kl::Prog> = PROGRAMS.to_vec();
+        let mut extra = 0u64;
+        let mut tables = 0u64;
+        for &p in progs {
+            if !seen.contains(&p) {
+                seen.push(p);
+                extra += pages(p.code().len() as u64);
+                tables += PAGE;
+            }
+        }
+        VramBudget {
+            programs: self.programs + extra,
+            tables: self.tables + tables,
+            ..self
+        }
+    }
+
     pub fn of_model(m: &OwnedModel) -> GpuResult<Self> {
         Self::of(&m.shape, m.layers.len(), m.vocab, m.context)
     }

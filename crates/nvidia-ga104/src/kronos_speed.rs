@@ -24,8 +24,9 @@ use gpu_compute::layer::Shape;
 use gpu_core::diag::{Event, Journal};
 use gpu_core::error::{GpuError, GpuResult};
 
-use crate::kronos_diag::{self as kd, SeqMode};
+use crate::kronos_diag::{self as kd, SeqMode, TokenList};
 use crate::kronos_gen::{TokenOutput, VramBudget};
+use crate::kronos_layer::Prog;
 use crate::kronos_model as km;
 use crate::transfer::I11_DEFAULT_BYTES;
 
@@ -156,6 +157,64 @@ impl ModelLimits {
             pieces: vram.blob.div_ceil(piece),
             piece,
         })
+    }
+
+    /// C-157 point 4: the limits of the lists that will **actually** run (`lists`, at least one), each token followed
+    /// by the copy of the logits down and one more launch for each program of `extra` the caller appends (e.g.
+    /// `&[Prog::Argmax]`). [`Self::of`]
+    /// always counts the plain list (`16·layers + 3`), which is what a run that also sends the plain list needs; a run
+    /// with the glued lists alone needs far less (#651: 172 launches instead of 388, so the OS's payload stride of
+    /// `0x100` is enough). The VRAM budget includes every program of every list.
+    pub fn of_lists(
+        s: &Shape,
+        layers: usize,
+        vocab: usize,
+        context: usize,
+        piece: u64,
+        lists: &[TokenList],
+        extra: &[Prog],
+    ) -> GpuResult<Self> {
+        if lists.is_empty() {
+            return Err(bad("limite: nicio lista de lansari"));
+        }
+        let base = Self::of(s, layers, vocab, context, piece)?;
+        let mut launches = 0;
+        let (mut once, mut each, mut layer) = (0, 0, 0);
+        let mut progs: Vec<Prog> = extra.to_vec();
+        for &l in lists {
+            let n = l.launches_per_token(layers) + 1 + extra.len();
+            launches = launches.max(n);
+            once = once.max(kd::push_bytes_of(l, SeqMode::Once, layers, n));
+            each = each.max(kd::push_bytes_of(l, SeqMode::EachLaunch, layers, n));
+            layer = layer.max(kd::push_bytes_of(l, SeqMode::PerLayer, layers, n));
+            progs.extend_from_slice(l.programs());
+        }
+        let worst = once.max(each).max(layer) as u64;
+        Ok(ModelLimits {
+            layers,
+            launches,
+            push_once: once,
+            push_each: each,
+            push_layer: layer,
+            push_area: (2 * worst).next_power_of_two().max(0x1000),
+            stride: launches as u32 + 1,
+            vram: base.vram.with_programs(&progs),
+            pieces: base.pieces,
+            piece,
+        })
+    }
+
+    /// C-157 point 4: #651 with the OS's upload pieces (8 MiB), for the lists that will run.
+    pub fn k651_lists(lists: &[TokenList]) -> GpuResult<Self> {
+        Self::of_lists(
+            &K651_SHAPE,
+            K651_LAYERS,
+            K651_VOCAB,
+            K651_CONTEXT,
+            I11_DEFAULT_BYTES,
+            lists,
+            &[],
+        )
     }
 
     /// #513 with the OS's upload pieces (8 MiB).

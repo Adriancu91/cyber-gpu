@@ -421,3 +421,7 @@ lansările cu `dependent_qmd0_*` și ce câmpuri pune în șablonul QMD); Mesa 2
 `tests/sim_c157_diet2.rs`, `examples/dieta_doi.rs` — scrise de noi. Cheia de ordine din biții unui f32 e tehnica obișnuită (aceeași ca în
 programul nostru `argmax.comp`, sesiunea 134). Cifrele: jurnalul os-328 din hub; codul OS `cyber-universe` doar citit. Nicio sursă externă
 copiată, nimic GPL, niciun octet de firmware NVIDIA.
+
+**C-157 punctul 4 (sesiunea 137, 21 nov 2026) — #651:** `kronos_speed::ModelLimits::{of_lists, k651_lists}`,
+`kronos_gen::VramBudget::with_programs`, `tests/sim_c157_k651.rs` — scrise de noi. Cifrele modelului: hub `integrare/kronos/MODEL_651.md`;
+constantele OS: codul `cyber-universe` doar citit. Nicio sursă externă copiată, nimic GPL, niciun octet de firmware NVIDIA.
