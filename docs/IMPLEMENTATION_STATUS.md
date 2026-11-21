@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 141 — 21 noiembrie 2026, ~19:11–19:25 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 3 (oracolul pasului de antrenare)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun rezultat nou pe placă (os-332 e doar pornit) → C-160 punctul 3.
+(Dosarele locale vechi aveau ramurile divergente; am redenumit ramurile locale în `vechi-local-*` și am lucrat pe ramura de pe GitHub.)
+
+**Ce s-a făcut:** `gpu_compute::train` — pasul întreg de antrenare al lui Kronos pe procesor: înainte, eroarea, înapoi prin toți
+tensorii (cu capul legat), tăierea, SGD și AdamW ca PyTorch 2.14. Comparat cu pasul de aur mic al lui Kronos (date copiate în
+`crates/gpu-compute/tests/date/pas_de_aur_mic/`, SHA-256 verificate 198/198): **ambele rețete în toleranță, cu marjă mare** — SGD:
+gradientul ≤ 3,6e-7, greutățile după 10 pași ≤ 2,4e-7 (tol. 1e-6); AdamW: greutățile ≤ 1,05e-5 (tol. 1e-4). Nota: `docs/C-160_P3_ORACOL.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| T151a | `sgd`: 10 erori, gradientul pasului 1, greutățile după 1 și 10, față de PyTorch | PASS (procesor) |
+| T151b | `adamw_513`: la fel, cu tăierea la 1,0 | PASS (procesor) |
+| T151c | greșeli plantate (gradient +0,2 %, rețeta greșită, ținte mutate) prinse | PASS |
+| Unitare | diferențe finite pe un model minuscul; erf/exp/sqrt F64; forma MIC și #513; intrări greșite = eroare | PASS |
+| `tools/check.sh` | format, clippy `-D warnings`, **674 de teste**, build no_std | PASS |
+| Pe RTX 3070 Ti | nimic nou trimis; oracolul nu rulează pe placă | NOT TESTED |
+
+**Următorul pas:** C-160 punctul 4 — primul program de placă al antrenării (înmulțirea matrice × matrice și cu transpusa, F32) în
+SIMULARE, comparat cu `train::linear` / `linear_back` — sau C-157 p.2 dacă apare un test nou pe placă (os-332 încălzirea, P8).
+
+---
+
 ## Sesiunea 140 — 21 noiembrie 2026, ~18:11–18:25 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (os-331) + C-160 punctul 2**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă: **os-331** (17:26, LayerNorm nou) → C-157 p.2 întâi.

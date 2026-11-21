@@ -431,3 +431,13 @@ constantele OS: codul `cyber-universe` doar citit. Nicio sursă externă copiat�
 `integrare/kronos/PAS_DE_AUR.md`. Formulele înapoi și ideile (activările păstrate, P recalculat, scalarea erorii la f16, AdamW) din
 studiul anterior al surselor deschise / publicate, notate în secțiunea 5 a documentului: PyTorch (BSD-3), llm.c (MIT), tinygrad (MIT),
 articolele arXiv 2205.05198, 2205.14135, 1710.03740, 1711.05101. Nimic copiat, nimic GPL, niciun octet de firmware NVIDIA.
+
+**C-160 punctul 3 (sesiunea 141, 21 nov 2026) — oracolul pasului de antrenare:** `crates/gpu-compute/src/train.rs` (Rust scris de noi:
+înainte, entropia încrucișată, înapoi prin LayerNorm / GELU exact / atenția cauzală / încorporările legate, tăierea gradientului, SGD,
+AdamW). Specificația: hub `integrare/kronos/PAS_DE_AUR.md` și documentația publică PyTorch (BSD-3) pentru formulele `LayerNorm`,
+`GELU`, `MultiheadAttention`, `SGD`, `AdamW` (ordinea „single tensor”: `lerp` pentru m), `clip_grad_norm_`; formulele „înapoi” sunt cele
+standard (și în `docs/C-160_MOTOR_STUDIU.md`). `erf` în f64: seria cu termeni pozitivi (Abramowitz & Stegun 7.1.6), scrisă de noi.
+Datele de test `crates/gpu-compute/tests/date/pas_de_aur_mic/` = copia exactă a dosarului din hub (proiectul Kronos al lui Adrian,
+greutăți din sămânța 1132, fără date personale); SHA-256 al fiecărui fișier verificat față de `reteta.json` la copiere (198/198),
+`reteta.json` = `5e3c5824…e3a8`. Nimic copiat din PyTorch, nimic GPL, niciun octet de firmware NVIDIA.
+

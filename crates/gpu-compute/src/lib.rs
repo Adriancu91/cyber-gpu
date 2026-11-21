@@ -13,6 +13,8 @@
 //! - [`rows`]: row-range versions of softmax (causal), attention and
 //!   cross-entropy, so one operator can be split over several cores;
 //!   bit-identical to the reference, no global state;
+//! - [`train`]: the CPU oracle of a whole training step (C-160 point 3: forward,
+//!   loss, backward, clipping, SGD / AdamW), checked against PyTorch's golden step;
 //! - [`cpu`]: a [`gpu_core::ComputeDevice`] that executes on the **CPU**. It is
 //!   a real backend for the runtime (plan v0.2: CPU first) and a test double
 //!   for the runtime; it is never evidence of GPU execution.
@@ -33,6 +35,7 @@ pub mod q8;
 pub mod reference;
 pub mod rows;
 pub mod tensor;
+pub mod train;
 
 pub use op::OpCode;
 pub use tensor::{DType, TensorDesc};
