@@ -258,8 +258,8 @@ pub fn d_from_bytes(d: &[u8]) -> Option<[f32; 256]> {
         return None;
     }
     let mut out = [0.0f32; 256];
-    for (i, w) in d.chunks_exact(4).enumerate() {
-        out[i] = f32::from_bits(u32::from_le_bytes([w[0], w[1], w[2], w[3]]));
+    for (o, w) in out.iter_mut().zip(d.as_chunks::<4>().0) {
+        *o = f32::from_bits(u32::from_le_bytes(*w));
     }
     Some(out)
 }
