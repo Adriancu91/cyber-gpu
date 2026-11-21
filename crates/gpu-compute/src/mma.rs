@@ -147,6 +147,137 @@ pub fn mma16_block8_trunc(a: &[u16], b: &[u16], c: &[f32]) -> Option<[f32; M * N
     Some(d)
 }
 
+/// C-160 point 1 (P8): how one add step of a candidate model rounds to f32.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rounding {
+    /// Round to nearest, ties to even (what `as f32` does).
+    Nearest,
+    /// Toward zero (the published V100/T4/A100 behaviour).
+    TowardZero,
+}
+
+/// C-160 point 1 (P8): one candidate model of the tensor-core adder: the accumulator starts at C, every block of
+/// `block` exact products is added to it at once, and the sum is rounded to f32 with `rounding`. The board's D is
+/// compared bit for bit with each of [`ADD_MODELS`]: the ones that match on every probe set say how GA104 adds
+/// (MEASURED only once a board has answered; in SIMULARE the model is [`mma16_block8_trunc`] by construction).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AddModel {
+    pub block: usize,
+    pub rounding: Rounding,
+}
+
+impl AddModel {
+    /// Short name for a report line, e.g. `bloc8-taiere`, `bloc16-rotunjire` (= the reference rounded once).
+    pub fn name(self) -> &'static str {
+        match (self.block, self.rounding) {
+            (1, Rounding::Nearest) => "bloc1-rotunjire",
+            (2, Rounding::Nearest) => "bloc2-rotunjire",
+            (4, Rounding::Nearest) => "bloc4-rotunjire",
+            (8, Rounding::Nearest) => "bloc8-rotunjire",
+            (16, Rounding::Nearest) => "bloc16-rotunjire",
+            (1, Rounding::TowardZero) => "bloc1-taiere",
+            (2, Rounding::TowardZero) => "bloc2-taiere",
+            (4, Rounding::TowardZero) => "bloc4-taiere",
+            (8, Rounding::TowardZero) => "bloc8-taiere",
+            (16, Rounding::TowardZero) => "bloc16-taiere",
+            _ => "alt-model",
+        }
+    }
+}
+
+/// The 10 candidate models, in the bit order of [`matching_models`]'s mask (bit i = `ADD_MODELS[i]`).
+pub const ADD_MODELS: [AddModel; 10] = {
+    const fn m(block: usize, rounding: Rounding) -> AddModel {
+        AddModel { block, rounding }
+    }
+    [
+        m(1, Rounding::Nearest),
+        m(2, Rounding::Nearest),
+        m(4, Rounding::Nearest),
+        m(8, Rounding::Nearest),
+        m(16, Rounding::Nearest),
+        m(1, Rounding::TowardZero),
+        m(2, Rounding::TowardZero),
+        m(4, Rounding::TowardZero),
+        m(8, Rounding::TowardZero),
+        m(16, Rounding::TowardZero),
+    ]
+};
+
+/// D under one [`AddModel`]. `None` for wrong lengths or a block that does not divide [`K`].
+/// `mma16_blocked(.., AddModel { block: 8, rounding: TowardZero })` = [`mma16_block8_trunc`].
+pub fn mma16_blocked(a: &[u16], b: &[u16], c: &[f32], model: AddModel) -> Option<[f32; M * N]> {
+    if !check(a, b, c) || model.block == 0 || !K.is_multiple_of(model.block) {
+        return None;
+    }
+    let mut d = [0.0f32; M * N];
+    for i in 0..M {
+        for j in 0..N {
+            let mut acc = c[i * N + j];
+            for blk in (0..K).step_by(model.block) {
+                let mut s = acc as f64;
+                for p in blk..blk + model.block {
+                    s += f16_to_f32(a[i * K + p]) as f64 * f16_to_f32(b[p * N + j]) as f64;
+                }
+                acc = match model.rounding {
+                    Rounding::Nearest => s as f32,
+                    Rounding::TowardZero => to_f32_trunc(s),
+                };
+            }
+            d[i * N + j] = acc;
+        }
+    }
+    Some(d)
+}
+
+/// Bit mask of the [`ADD_MODELS`] whose D equals `got` bit for bit on every element (bit i = `ADD_MODELS[i]`).
+/// 0 = no candidate fits exactly (the board may still be within [`tolerance`]); 0 also for wrong lengths.
+pub fn matching_models(a: &[u16], b: &[u16], c: &[f32], got: &[f32]) -> u32 {
+    if got.len() != M * N {
+        return 0;
+    }
+    let mut mask = 0;
+    for (i, m) in ADD_MODELS.iter().enumerate() {
+        if let Some(d) = mma16_blocked(a, b, c, *m)
+            && d.iter().zip(got).all(|(x, y)| x.to_bits() == y.to_bits())
+        {
+            mask |= 1 << i;
+        }
+    }
+    mask
+}
+
+/// The worst element's distance from the reference, in thousandths of its [`tolerance`] (1000 = exactly at the
+/// limit; above 1000 = outside). `None` for wrong lengths or a non-finite input or result. A zero tolerance with a
+/// non-zero distance counts as `u32::MAX`.
+pub fn worst_permille(a: &[u16], b: &[u16], c: &[f32], got: &[f32]) -> Option<u32> {
+    let r = mma16_exact(a, b, c)?;
+    if got.len() != M * N || r.iter().chain(got).any(|v| !v.is_finite()) {
+        return None;
+    }
+    let mut worst = 0u32;
+    for idx in 0..M * N {
+        let dist = (got[idx] as f64 - r[idx] as f64).abs();
+        let tol = tolerance(a, b, c, idx / N, idx % N);
+        let p = if dist == 0.0 {
+            0
+        } else if tol == 0.0 {
+            u32::MAX
+        } else {
+            // Rounded up by hand (no `f64::ceil` in no_std).
+            let x = dist / tol * 1000.0;
+            if x >= u32::MAX as f64 {
+                u32::MAX
+            } else {
+                let q = x as u32;
+                if (q as f64) < x { q + 1 } else { q }
+            }
+        };
+        worst = worst.max(p);
+    }
+    Some(worst)
+}
+
 /// The allowed distance from the reference for element (i, j): `TOL_TERMS · 2⁻²³ · (|c| + Σ|a·b|)`.
 pub fn tolerance(a: &[u16], b: &[u16], c: &[f32], i: usize, j: usize) -> f64 {
     let mut s = (c[i * N + j] as f64).abs();
@@ -290,6 +421,48 @@ mod tests {
             }
         }
         assert!(differs > 0, "truncation should show in the last bits");
+    }
+
+    #[test]
+    fn blocked_models_match_the_older_functions() {
+        for seed in 1..=5 {
+            let (a, b, c) = inputs(seed);
+            let t8 = AddModel {
+                block: 8,
+                rounding: Rounding::TowardZero,
+            };
+            assert_eq!(
+                mma16_blocked(&a, &b, &c, t8),
+                mma16_block8_trunc(&a, &b, &c)
+            );
+            let r16 = AddModel {
+                block: 16,
+                rounding: Rounding::Nearest,
+            };
+            assert_eq!(mma16_blocked(&a, &b, &c, r16), mma16_exact(&a, &b, &c));
+            let h = mma16_block8_trunc(&a, &b, &c).unwrap();
+            assert_ne!(matching_models(&a, &b, &c, &h) & (1 << 8), 0);
+            assert!(worst_permille(&a, &b, &c, &h).unwrap() <= 1000);
+        }
+        let (a, b, c) = inputs(1);
+        let bad = AddModel {
+            block: 3,
+            rounding: Rounding::Nearest,
+        };
+        assert_eq!(mma16_blocked(&a, &b, &c, bad), None);
+        assert_eq!(bad.name(), "alt-model");
+        assert_eq!(ADD_MODELS[8].name(), "bloc8-taiere");
+    }
+
+    #[test]
+    fn worst_permille_sees_a_planted_error() {
+        let (a, b, c) = inputs(4);
+        let mut r = mma16_exact(&a, &b, &c).unwrap();
+        assert_eq!(worst_permille(&a, &b, &c, &r), Some(0));
+        r[100] *= 1.01;
+        assert!(worst_permille(&a, &b, &c, &r).unwrap() > 1000);
+        assert_eq!(worst_permille(&a, &b, &c, &r[..3]), None);
+        assert_eq!(matching_models(&a, &b, &c, &r), 0);
     }
 
     #[test]
