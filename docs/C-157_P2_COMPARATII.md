@@ -2,6 +2,26 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-331 `test-placa --ln-nou` (LayerNorm nou, 21 nov 2026, 17:26) — sesiunea 140
+- **Estimat** (`C-155_LayerNorm-nou.md`, DEDUS): ~3–5 µs pe lansare în loc de ~21,8 → **~0,45 ms mai puțin pe simbol**; aceleași simboluri.
+- **Ieșit:** **~4 µs pe lansare** (ln1 48 + ln2 46 + ln_final 4 = 98 µs pe simbol); placa 2 423 → **1 978 µs** (−445 µs) în aceeași pornire,
+  același text; aceleași 16 simboluri, ln nou față de vechi max |d| `0x36e80000` = 6,9e-6. Ca estimat (DEDUS → MĂSURAT). Și pe ceasul
+  soneriilor din `gpu-jurnal-030.txt` se vede la fel: 3,39 ms între sonerii în prima rulare, 2,96 ms în a doua (−0,43 ms).
+- **Media 348,47 simb/s e a doua rulare** (lista lipită era deja scrisă de prima, deci umbra plină). Prima rulare (LayerNorm vechi) are încă
+  poziția 0 rece: ~31 ms între „generarea incepe” și prima sonerie (os-329: ~25 ms pregătire + ~7 ms sloturile). Pentru o singură rulare
+  rece cu LayerNorm nou: ~51,7 + ~8 ms = **~300 simb/s**; cu încălzirea (os-332) → **~348 și la prima rulare** (DEDUS). Estimarea mea
+  din os-329 (încălzirea, fără LayerNorm) era ~297; cu LayerNorm adăugat ar fi dat ~342 → ieșit 348, +2 %.
+- **„Logit-urile identice cu os-322? NU” (de văzut de noi):** e de așteptat, nu e o eroare. LayerNorm nou adună media și varianța pe 256 de
+  fire, în copac, nu pe rând → rotunjiri în altă ordine. Abaterea maximă față de procesor: `0x37920000` = 1,74e-5 (os-322: `0x37880000`
+  = 1,62e-5), de ~6 ori sub pragul 1e-4; simbolurile aceleași. Amprenta de referință de acum: `0x46a07914`.
+- **Driverul 819 µs (os-329: 844):** −25 µs, în zgomot; dieta 2 încă nu e în os-331.
+- **De lămurit de OS (mărunt):** rândurile „viteza (placa): 36 simboluri … cu driverul 299,83” și comparația „față de os-322” amestecă cele
+  două rulări (vechi + nou); cifra curată a rulării noi e în rândul `kt` (2 885 µs, 346,6 / 348,5 simb/s). Iar „87 lansări” din rândul
+  `kt lista` nu se potrivește cu tabelul pe fel (12 × 7 + 4 = 88). Nota: `integration/cyber-universe/C-157_P2d_os-331.md`.
+- **Ce tai mai departe:** înmulțirile sunt acum **74 % din placă** (fc 487 + proj 405 + qkv 381 + logit 186 = 1 459 din 1 978 µs) →
+  cursa pe sferturi (C-155 p.4, predată) e următorul test cu cel mai mare câștig pe placă; driverul (819 µs, 28 % din simbol) → dieta 2
+  (predată, ~330–410 µs). Cu încălzirea + dieta 2: ~2,45 ms pe simbol → **~400 simb/s** (DEDUS), înainte de cursă.
+
 ## os-329 `test-placa` (pozițiile lente + lista lipită implicită, 21 nov 2026, 15:56) — sesiunea 138
 - **Estimat** (`C-157_P2b_pozitii-lente.md`, cu P3 după): media ≈ mediana, **~280 simb/s** cu driverul; pozițiile lente → 0.
 - **Ieșit:** **262,04 simb/s** în medie (suma 68 690 µs / 18), mediana 3 338 µs (299,6), placa 413,56 simb/s, 130 de cuvinte, amprenta
