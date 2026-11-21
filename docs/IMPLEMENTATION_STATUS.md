@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 137 — 21 noiembrie 2026, ~15:11–15:50 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 4 (#651 pe placă)**
+## Sesiunea 137 — 21 noiembrie 2026, ~15:11–15:30 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 4 (#651 pe placă)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă în `rezultate/` de la os-328 → punctul 4.
 
@@ -17,7 +17,7 @@ care rulează de fapt) și `VramBudget::with_programs`; nota pentru OS propune s
 | T148b | lista simplă refuzată de constantele OS (pas + zonă), listele lipite (± argmax) încap; #513 neschimbat | PASS (SIMULARE) |
 | T148c | bugetul VRAM 270,3 MiB, blob continuu de ~198 MiB, `with_programs` | PASS |
 | T148d | model cu forma lui #651 (greutăți generate), urcat prin arenă în 25 de bucăți, zona 32 KiB, pasul `0x100`, lista lipită, 4 poziții: oracolul trece (3,7e-6) | PASS (SIMULARE) |
-| `tools/check.sh` | format, clippy `-D warnings`, **655 de teste**, build no_std | PASS |
+| `tools/check.sh` | format, clippy `-D warnings`, **655 de teste**, build no_std; CI GitHub pe `839704f` (rularea 44908515052) verde | PASS |
 | Pe RTX 3070 Ti | nimic; nimic nou pentru placă | NOT TESTED |
 
 **Următorul pas:** C-157 punctul 5 (C-151 punctul 2: citirea tabloului înainte/după viteza maximă și la N secunde, pragul de
