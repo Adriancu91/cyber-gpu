@@ -189,6 +189,35 @@ pub fn argmax(logits: &[f32]) -> Option<usize> {
     )
 }
 
+/// C-157 point 3 (the diet, part two): the order key of a **finite** f32's bits — larger key = larger number, with
+/// −0.0 and +0.0 on the same key (as `>` sees them). Integer only: the OS kernel is built soft-float, so every `>`
+/// of [`argmax`] there is a call into the float emulation (os-328: 85 µs for 16 384 logits).
+pub const fn order_key(bits: u32) -> u32 {
+    let b = if bits == 0x8000_0000 { 0 } else { bits };
+    if b & 0x8000_0000 != 0 {
+        !b
+    } else {
+        b | 0x8000_0000
+    }
+}
+
+/// C-157 point 3: [`argmax`] over the logits' **bits** (as read from the RAM buffer), with integer compares only.
+/// The same answer as `argmax(&bits.map(f32::from_bits))` for every input: the largest, the lowest index on a tie
+/// (−0.0 ties +0.0), `None` if empty or if any value is NaN/infinite (exponent bits all ones). Subnormals compare
+/// exactly, as `>` on the processor does. One pass.
+pub fn argmax_bits(bits: &[u32]) -> Option<usize> {
+    // Three branch-free passes (the compiler vectorizes them; one loop with an early exit it does not).
+    if bits.is_empty()
+        || bits
+            .iter()
+            .fold(false, |bad, &b| bad | (b & 0x7f80_0000 == 0x7f80_0000))
+    {
+        return None;
+    }
+    let best = bits.iter().fold(0u32, |m, &b| m.max(order_key(b)));
+    bits.iter().position(|&b| order_key(b) == best)
+}
+
 /// C-155 point 3: "no token" in the board's argmax result (any logit not finite, or no logit).
 pub const ARGMAX_NONE: u32 = u32::MAX;
 
@@ -232,6 +261,52 @@ pub fn first_logit_outside(got: &[f32], cpu: &[f32]) -> Option<(usize, f32, f32)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn argmax_bits_is_argmax() {
+        let specials: [f32; 12] = [
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            f32::MIN_POSITIVE,
+            -f32::MIN_POSITIVE,
+            f32::from_bits(1),
+            f32::from_bits(0x8000_0001),
+            f32::MAX,
+            f32::MIN,
+            3.5,
+            -3.5,
+        ];
+        let mut seed = 0x1234_5678u32;
+        let mut next = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            seed
+        };
+        for round in 0..4000 {
+            let n = 1 + (next() % 40) as usize;
+            let v: Vec<f32> = (0..n)
+                .map(|_| match next() % 4 {
+                    0 => specials[(next() % 12) as usize],
+                    1 => f32::from_bits(next()),
+                    _ => ((next() % 9) as f32 - 4.0) * 0.5,
+                })
+                .collect();
+            let bits: Vec<u32> = v.iter().map(|x| x.to_bits()).collect();
+            assert_eq!(argmax_bits(&bits), argmax(&v), "round {round}: {v:?}");
+        }
+        assert_eq!(argmax_bits(&[]), None);
+        assert_eq!(
+            argmax_bits(&[(-0.0f32).to_bits(), 0.0f32.to_bits()]),
+            Some(0)
+        );
+        assert_eq!(
+            argmax_bits(&[1.0f32.to_bits(), f32::INFINITY.to_bits()]),
+            None
+        );
+        assert_eq!(argmax_bits(&[f32::NEG_INFINITY.to_bits()]), None);
+        assert_eq!(argmax_bits(&[f32::NAN.to_bits(), 2.0f32.to_bits()]), None);
+    }
 
     #[test]
     fn argmax_and_tolerance() {

@@ -416,3 +416,8 @@ copiat, niciun cod scris): NVIDIA `open-gpu-doc` (MIT) commit `9fdf5c40` — `cl
 (pozițiile câmpurilor QMD V03_00 și codurile acțiunilor); tinygrad (MIT) commit `5e8b5da9` — `tinygrad/runtime/ops_nv.py` (cum leagă
 lansările cu `dependent_qmd0_*` și ce câmpuri pune în șablonul QMD); Mesa 26.3.1 (MIT) — `src/nouveau/compiler/nak/qmd.rs`,
 `hw_tests.rs`, `hw_runner.rs`, `src/nouveau/vulkan/nvk_cmd_dispatch.c`. Nicio sursă GPL, niciun octet de firmware NVIDIA.
+
+**C-157 punctul 3 (sesiunea 136, 21 nov 2026) — dieta 2:** `gpu_compute::model::{order_key, argmax_bits}`, `nvidia_ga104::kronos_diet2`,
+`tests/sim_c157_diet2.rs`, `examples/dieta_doi.rs` — scrise de noi. Cheia de ordine din biții unui f32 e tehnica obișnuită (aceeași ca în
+programul nostru `argmax.comp`, sesiunea 134). Cifrele: jurnalul os-328 din hub; codul OS `cyber-universe` doar citit. Nicio sursă externă
+copiată, nimic GPL, niciun octet de firmware NVIDIA.

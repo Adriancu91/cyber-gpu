@@ -658,3 +658,6 @@ identificator, hardware/configurație, commit, comanda, așteptat, obținut, cod
 
 | T139 viteza maximă (7) + `PerfGain`, C-147 punctul 4 | `boost_start`/`boost_finish` față de modelul de performanță din `gpu-sim`: acceptată (P8 → P0 → ștergere → P8), fără efect, refuzată, planul oprit, fără model, forma publică; octeții pe fir; eroarea de transport; cititorul `parse_ks`; comparația cu `os-313` | PASS (SIMULARE) |
 | Viteza maximă pe RTX 3070 Ti | Release OS separat, modul ciclu (C-148 completarea 1) | NOT TESTED |
+
+| T147 dieta 2 (2 + 4 unitare + 1 în `gpu-compute`), C-157 punctul 3 | un text de 16 poziții, lista lipită + dieta 1: timpul din două înregistrări = suma duratelor = `end − start` = `busy` la fiecare poziție; înregistrare lipsă / ceas înapoi prinse și cu două; `argmax_bits` = `argmax` (pe text și pe 4 000 de vectori cu −0/+0, subnormale, NaN, infinit); `RecordPlan` (1 664 → 416 cuvinte; #513: 356 → 8); `poll_planned` (somn, apoi citiri la 5 µs; timeout și Esc rămân erori); rândurile `kt` și cititorul lor | PASS (SIMULARE) |
+| Dieta 2 pe RTX 3070 Ti | Release OS, opțiune oprită implicit (nota `C-157_P3_dieta-doi.md`) | NOT TESTED |

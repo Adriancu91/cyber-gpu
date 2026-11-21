@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 136 — 21 noiembrie 2026, ~14:11–15:00 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 3 (dieta, partea a doua)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă în `rezultate/` de la os-328 (comparat în
+sesiunea 135) → punctul 3 al cozii.
+
+**Unde se duc cei 759 µs ai driverului (os-328):** ~166 µs citirea celor 89 de înregistrări prin fereastra VRAM (356 de citiri), ~50 µs
+așteptarea cu o citire la 100 µs, ~100–150 µs amprenta FNV-1a a logit-urilor în ceasul simbolului, 85 µs argmax pe numere într-un nucleu
+OS **soft-float**, restul lansările/umbrele/ferestrele (`docs/C-157_P3_DIETA_DOI.md`; MĂSURAT din jurnal + DEDUS din codul OS + SIMULARE
+pe gazdă cu `examples/dieta_doi.rs`).
+
+**Dieta 2 (nimic nou pentru placă):** (A) două înregistrări în loc de 89 pe 7 din 8 poziții (`RecordPlan`, `ends_span`), (B) așteptarea
+planificată (`WaitPlan`, `poll_planned`), (C) amprenta după oprirea ceasului, (D) `argmax_bits` (doar întregi). Estimare (DEDUS): driverul
+759 → **~330–410 µs**, simbolul #513 3 284 → ~2 880 µs (~347 simb/s). Nota pentru OS: `integration/cyber-universe/C-157_P3_dieta-doi.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| T147a | text de 16 poziții (lista lipită, dieta 1): timpul din 2 înregistrări = suma duratelor = `end − start` = `busy`; erorile prinse; `argmax_bits` = `argmax` | PASS (SIMULARE) |
+| T147b | #513: 356 → 8 cuvinte citite pe pozițiile fără profil | PASS |
+| unitare | `argmax_bits` (4 000 de vectori), `RecordPlan`, `ends_span`, `poll_planned` (somn + citiri fine, timeout, Esc), rândurile `kt` | PASS |
+| `tools/check.sh` | format, clippy `-D warnings`, **651 de teste**, build no_std | PASS |
+| Pe RTX 3070 Ti | nimic | NOT TESTED |
+
+**Următorul pas:** C-157 punctul 4 (#651 pe placă: limitele și proba în SIMULARE pentru 24 de straturi / 292 de tensori, bugetul de
+memorie) — sau punctul 2, dacă apare un test nou pe placă.
+
+---
 ## Sesiunea 135 — 21 noiembrie 2026, ~13:13–13:30 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2 (os-328) + C-155 punctul 4 (cursa înmulțirilor, în lista de simbol)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Testul `os-328` (P3 pe placă, 12:56) a apărut în `rezultate/` → întâi
