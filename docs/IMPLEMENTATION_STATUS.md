@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 130 — 21 noiembrie 2026, ~07:25–07:35 (ora României), în cloud, FĂRĂ placă — **OPRIT: necesită analiza lui Adrian**
+
+Pornită de programare. Nicio altă sesiune Cyber-GPU nu lucra (ultimul commit: 21 nov 04:27). De la sesiunea 129: nicio comandă nouă
+pentru noi în `COMENZI.md`, nicio decizie nouă în `DECIZII.md`, niciun jurnal nou de pe placă (ultimul: `os-322`); sesiunea OS e tot
+oprită (regula 5, `os-323`). Sesiunile 128, 129 și 130 n-au terminat niciun pas → **regula 8 se aplică**.
+
+**OPRIT: necesită analiza lui Adrian.** Sesiunile programate nu mai încep lucru nou până la un semn de la Adrian sau de la centrul de
+comandă: o comandă nouă în `COMENZI.md`, o decizie nouă în `DECIZII.md` sau un jurnal nou de pe placă. Ce poate porni lucrul din nou
+(de ales de Adrian): (a) o probă pe workstation a „dietei driverului” (OS, opțiune oprită implicit); (b) „da” pentru una din treburile
+„la cerere” fără placă (LayerNorm nou în SIMULARE, `ModelLimits` din fișa KGR1, treapta 0 a lanțului — doar citire); (c) DA/NU pentru
+primele scrieri pe laptop (`GA106_LAPTOP.md` §7). Până atunci, rularea programată poate fi rărită sau oprită.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Verificări | nicio linie de cod schimbată de la `12fe41a`; CI GitHub pe `9ee9fc1` (rularea 247) | verde (614 teste, SIMULARE) |
+| Pe RTX 3070 Ti | nimic | NOT TESTED |
+
+Interfața publică: neschimbată.
+
+**Următorul pas:** așteaptă decizia lui Adrian (vezi mai sus). **Regula 8:** 128, 129, 130 fără pas → OPRIT.
+
+---
 ## Sesiunea 129 — 21 noiembrie 2026, ~04:20–04:35 (ora României), în cloud, FĂRĂ placă — **oprire scurtă: nimic nou de făcut fără placă**
 
 Pornită de programare. Nicio altă sesiune Cyber-GPU nu lucra (ultimul commit: 21 nov 01:28). De la sesiunea 128: nicio comandă nouă
