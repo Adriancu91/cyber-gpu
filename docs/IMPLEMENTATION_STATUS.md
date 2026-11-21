@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 133 — 21 noiembrie 2026, ~11:15–12:05 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2b (pozițiile lente din os-324)**
+## Sesiunea 133 — 21 noiembrie 2026, ~11:15–11:24 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2b (pozițiile lente din os-324)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Testul `os-324` (dieta, 11:01) a apărut în `rezultate/`, iar centrul de
 comandă a adăugat punctul 2b înaintea punctului 3: de ce media (109 simb/s) e mult sub mediană (245) și de ce 238 de cuvinte pe simbol.
@@ -21,7 +21,7 @@ slow_rows, journal_slow, slow_lines}, ParsedSlow, parse_slow}`. Commit `46078f4`
 | T144 | cuvintele pe simbol cu dieta, forma lui #513, două poziții la rând: pushbuffer 197 + cbuf 38 + QMD 0 + inel 3 (presupus) = **238** = placa | PASS (aritmetică) |
 | `slow_positions_explain_the_mean` | cele 18 poziții os-324 (DEDUS din jurnal): 2 lente (0 și 15), media 109,80 simb/s (placa: 109,11), rânduri + citire înapoi | PASS |
 | `forget_range_keeps_the_rest` | uitare doar în zona scrisă (în afara ei: nimic) | PASS |
-| `tools/check.sh` | format, clippy `-D warnings`, **627 de teste**, build no_std | PASS |
+| `tools/check.sh` | format, clippy `-D warnings`, **627 de teste**, build no_std; CI GitHub pe `847329d` (rularea 44889335266) verde | PASS |
 | Pe RTX 3070 Ti | nimic nou | NOT TESTED |
 
 Estimare (DEDUS): cu cele 3 propuneri, media ≈ mediana → ~245 simb/s „cu driverul” (azi 109,11).
