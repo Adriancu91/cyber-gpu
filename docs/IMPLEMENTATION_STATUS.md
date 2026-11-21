@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 136 — 21 noiembrie 2026, ~14:11–15:00 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 3 (dieta, partea a doua)**
+## Sesiunea 136 — 21 noiembrie 2026, ~14:11–14:25 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 3 (dieta, partea a doua)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă în `rezultate/` de la os-328 (comparat în
 sesiunea 135) → punctul 3 al cozii.
@@ -19,7 +19,7 @@ planificată (`WaitPlan`, `poll_planned`), (C) amprenta după oprirea ceasului, 
 | T147a | text de 16 poziții (lista lipită, dieta 1): timpul din 2 înregistrări = suma duratelor = `end − start` = `busy`; erorile prinse; `argmax_bits` = `argmax` | PASS (SIMULARE) |
 | T147b | #513: 356 → 8 cuvinte citite pe pozițiile fără profil | PASS |
 | unitare | `argmax_bits` (4 000 de vectori), `RecordPlan`, `ends_span`, `poll_planned` (somn + citiri fine, timeout, Esc), rândurile `kt` | PASS |
-| `tools/check.sh` | format, clippy `-D warnings`, **651 de teste**, build no_std | PASS |
+| `tools/check.sh` | format, clippy `-D warnings`, **651 de teste**, build no_std; CI GitHub pe `367edf4` (rularea 44903615539) verde | PASS |
 | Pe RTX 3070 Ti | nimic | NOT TESTED |
 
 **Următorul pas:** C-157 punctul 4 (#651 pe placă: limitele și proba în SIMULARE pentru 24 de straturi / 292 de tensori, bugetul de
