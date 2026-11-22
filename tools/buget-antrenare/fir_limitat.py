@@ -166,5 +166,43 @@ def main():
           f" -> ~{flop/10e12*1e3:.0f} ms la 10 TFLOP/s (F32 bun), ~{flop/15e12*1e3:.0f} ms la 15 (mm_tc)")
 
 
+def tiled_forward():
+    """C-160 p.7, session 163: the attention forward "pe placi" (attn_fwd_tile.comp, plan written BEFORE the code).
+
+    Blocks of 256 threads (16 x 16) own 64 rows (b, h, i0..i0+63); every thread 4 x 4 results. Q tile once, then
+    for every 64-column tile up to the diagonal: K tile in shared, 4 x 4 scores per thread (16 ffma per 8 shared
+    loads). P passes through memory: s written, read back for exp (x written), read back once more for P = x/sum
+    (P written, the tile also kept in shared for att = P.V with V tiles in shared). Above-diagonal tiles: zeros.
+    Two numbers per launch: the arithmetic (FLOP actually computed, diagonal tiles in full) at an effective F32 rate,
+    and the bytes (P traffic + Q, K, V re-read per row tile), at BANDWIDTH. The slower one wins (no overlap assumed
+    beyond that). DEDUCED; factor 2.
+    """
+    tiles_rows = -(-T // 64)
+    tiles_lower = tiles_rows * (tiles_rows + 1) // 2  # (row tile, column tile) pairs on or below the diagonal
+    bh = B * H
+    flop = bh * tiles_lower * (64 * 64 * D * 2) * 2  # scores + P.V, full 64 x 64 on every tile kept
+    lower_bytes = bh * tiles_lower * 64 * 64 * 4
+    full_p = bh * T * T * 4
+    # s write, s read, x write, x read + final P write of the whole row (zeros above too)
+    p_bytes = 4 * lower_bytes + full_p
+    qkv_bytes = bh * tiles_lower * 64 * D * 4 * 2 + ROWS * 3 * C * 4  # K and V tiles per row tile (L2 mostly)
+    out = []
+    for rate in (4e12, 8e12):
+        t_ar = flop / rate
+        t_bw = (p_bytes + qkv_bytes) / BANDWIDTH
+        out.append((rate, t_ar, t_bw, max(t_ar, t_bw) * L))
+    return flop, p_bytes, out
+
+
+def print_tiled():
+    flop, p_bytes, out = tiled_forward()
+    print("\nAtentia inainte \"pe placi\" (attn_fwd_tile, plan sesiunea 163, DEDUS):")
+    print(f"  pe lansare: {flop/1e9:.1f} GFLOP calculate (diagonala intreaga), P mutat {p_bytes/1e6:.0f} MB")
+    for rate, t_ar, t_bw, chunk in out:
+        print(f"  la {rate/1e12:.0f} TFLOP/s F32 efectiv: calcul {t_ar*1e3:.2f} ms, memorie {t_bw*1e3:.2f} ms"
+              f" -> ~{chunk*1e3:.0f} ms pe bucata (12 lansari)")
+
+
 if __name__ == "__main__":
     main()
+    print_tiled()
