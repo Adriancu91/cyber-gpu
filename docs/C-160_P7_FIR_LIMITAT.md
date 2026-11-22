@@ -64,6 +64,26 @@ fire într-un bloc.
 4. Viteza (DEDUS, doar pe placă): `attn_fwd` ~90 → ~37 ms pe bucată, `attn_back` modul 1 ~133 → ~44 ms, modul 0 neschimbat (~34);
    atenția ~257 → ~115 ms. Tot de ~7–10× peste țintă → apoi atenția „pe plăci” (pasul de după, plan separat).
 
+## Rezultatul pasului „blocuri de 128” (SIMULARE, T172, `crates/nvidia-ga104/tests/sim_attn128.rs`; codul după planul `b656c68`)
+- **Binarele** (Mesa NAK **25.0.7**, reconstruit în cloud; `attn_fwd` a ieșit identic, `fe97ab49…`):
+  `attn_fwd128.sm86.sass` SHA-256 **`2fa2e8ffbc96bf2edb03b6422dba4dcca433dbd394e5d40d8b8a1a19ba7fb78b`**,
+  `attn_back128.sm86.sass` SHA-256 **`5c611f12b1d99caaa5910575e68c006a29bd7f13d4473eda5c7386e010cbb45f`**; **25 de registre** fiecare
+  (ca originalele), aceleași locuri în bufferul constant (0x28…0x64).
+- **Predicția 1 (aceiași biți):** în listele NAK, `attn_fwd128` diferă de `attn_fwd` printr-**o singură instrucțiune** (indicele
+  blocului înmulțit cu 128 în loc de 32: `shf.l … 0x7` în loc de `0x5`); la `attn_back128` se schimbă doar calculul capului și al
+  lui e în modul 1 (+ ieșirea pentru capete ≥ H). Șirul operațiilor cu virgulă (`ffma` / `fadd` / `fmul` / `mufu` / …) e **identic**
+  cu al programelor de 32 (verificat de test). În simulare, pe 7 forme (modelul mic, T 1 / 33 / 129 / 200, H 5 și 12, d 1…64),
+  P, att, dS, dqkv **bit cu bit** egale cu programele de 32, niciun element nescris. *Ce nu arată simularea:* că placa dă aceiași
+  biți — e predicție pentru placă (sigură, fiindcă aritmetica fiecărui fir e aceeași).
+- **Predicția 2:** 25 ≤ 32 registre — da (verificat la compilare).
+- **Predicția 3:** greșeli plantate prinse — grila înainte / pe rânduri prea mică, modul 1 cu ⌊H/4⌋ blocuri (capul 4 nescris),
+  blocuri de 32 pentru programele de 128 (refuzat), grilele vechi pentru programele de 128 (refuzate, nemodelate).
+- **Viteza:** nemăsurată (doar pe placă). Estimarea rămâne cea de sus (atenția ~257 → ~115 ms pe bucată, DEDUS).
+- `tools/check.sh`: **811 teste** (+7 ignorate), format, clippy (Rust 1.100), build no_std — PASS.
+
+Nepredat pentru placă (nimic nou de legat acum). Următorul pas al atenției: varianta „pe plăci” (rânduri împărțite între fire,
+sume pe bucăți), cu plan și predicții scrise înainte.
+
 ## Ce NU face
 Nimic pe placă. Nu schimbă programele vechi și nici ordinea pe placă (pasul de aur mic F32 → proba `mm_tc` → `colsum_part`).
 Programele de 128 intră pe placă doar când ajungem la viteza pasului, ca probă separată.

@@ -1249,10 +1249,29 @@ pub fn gelu_tr_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
 /// is `gpu_compute::layer::attn_back_row_gpu`; mode 1, grid [≤ H, ≤ T, ≤ B]: every element is `attn_back_col_gpu`.
 /// A grid past H / T / B (the program does not guard those) or a d ≠ C / H is refused as not modelled.
 pub fn attn_back_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    attn_back_blocks(l, 32)
+}
+
+/// The CPU stand-in for C-160 point 7's `attn_back128.sm86.sass` (`docs/C-160_P7_FIR_LIMITAT.md`): the program of
+/// [`attn_back_on_cpu`] with blocks of 128 — the same code per thread, so every element is the same
+/// `attn_back_row_gpu` / `attn_back_col_gpu`. Mode 0, grid [⌈T/128⌉, ≤ H, ≤ B]: rows i < min(T, 128·x). Mode 1,
+/// grid [≤ ⌈H/4⌉, ≤ T, ≤ B]: warp w of block x takes head 4x + w; heads ≥ H leave (the program guards them), so the
+/// heads written are h < min(H, 4·x).
+pub fn attn_back128_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    attn_back_blocks(l, 128)
+}
+
+fn attn_back_blocks(l: &mut Launch<'_>, block: u32) -> GpuResult<()> {
     use gpu_compute::layer::{AttnShape, attn_back_col_gpu, attn_back_row_gpu};
-    if l.block != [32, 1, 1] {
-        return Err(bad("SIM: attn_back cere blocuri de 32x1x1"));
+    if l.block != [block, 1, 1] {
+        return Err(bad(if block == 32 {
+            "SIM: attn_back cere blocuri de 32x1x1"
+        } else {
+            "SIM: attn_back128 cere blocuri de 128x1x1"
+        }));
     }
+    let warps = (block / 32) as usize;
+    let rows_per_block = block as usize;
     if l.mem.read_u64(l.cbuf0)? != 0 || l.mem.read_u32(l.cbuf0 + 0x8)? != 0 {
         return Err(bad(
             "SIM: baza grupurilor (cbuf0 0x0..0x8) diferita de 0, nemodelata",
@@ -1279,8 +1298,17 @@ pub fn attn_back_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     if heads == 0 || d == 0 || d * heads != c || t == 0 {
         return Err(bad("SIM: attn_back: d != C/H sau forma goala, nemodelat"));
     }
-    let (h_n, b_n) = if cols { (gx, gz) } else { (gy, gz) };
-    if h_n > heads || (cols && gy > t) || (!cols && gx > t.div_ceil(32)) {
+    let (h_n, b_n) = if cols {
+        (heads.min(warps * gx), gz)
+    } else {
+        (gy, gz)
+    };
+    let h_grid_bad = if cols {
+        gx > heads.div_ceil(warps)
+    } else {
+        gy > heads
+    };
+    if h_grid_bad || (cols && gy > t) || (!cols && gx > t.div_ceil(rows_per_block)) {
         return Err(bad("SIM: attn_back: grila trece de H / T, nemodelata"));
     }
     if b_n == 0 || h_n == 0 {
@@ -1299,7 +1327,7 @@ pub fn attn_back_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     let p_v = l.mem.read_f32s(p, np)?;
     let dout_v = l.mem.read_f32s(dout, no)?;
     if !cols {
-        let rows = t.min(32 * gx);
+        let rows = t.min(rows_per_block * gx);
         for b in 0..b_n {
             for h in 0..h_n {
                 for i in 0..rows {
@@ -1337,10 +1365,26 @@ pub fn attn_back_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
 /// is `gpu_compute::layer::attn_fwd_row_gpu` (row i of P, all T values, and the d values of att). A grid past H / B or
 /// past ⌈T/32⌉ (the program does not guard those) or a d ≠ C / H is refused as not modelled.
 pub fn attn_fwd_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    attn_fwd_blocks(l, 32)
+}
+
+/// The CPU stand-in for C-160 point 7's `attn_fwd128.sm86.sass` (`docs/C-160_P7_FIR_LIMITAT.md`): the program of
+/// [`attn_fwd_on_cpu`] with blocks of 128 — the same code per thread, so every row is the same `attn_fwd_row_gpu`.
+/// Grid [⌈T/128⌉, ≤ H, ≤ B]: rows i < min(T, 128·x).
+pub fn attn_fwd128_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    attn_fwd_blocks(l, 128)
+}
+
+fn attn_fwd_blocks(l: &mut Launch<'_>, block: u32) -> GpuResult<()> {
     use gpu_compute::layer::{AttnShape, attn_fwd_row_gpu};
-    if l.block != [32, 1, 1] {
-        return Err(bad("SIM: attn_fwd cere blocuri de 32x1x1"));
+    if l.block != [block, 1, 1] {
+        return Err(bad(if block == 32 {
+            "SIM: attn_fwd cere blocuri de 32x1x1"
+        } else {
+            "SIM: attn_fwd128 cere blocuri de 128x1x1"
+        }));
     }
+    let rows_per_block = block as usize;
     if l.mem.read_u64(l.cbuf0)? != 0 || l.mem.read_u32(l.cbuf0 + 0x8)? != 0 {
         return Err(bad(
             "SIM: baza grupurilor (cbuf0 0x0..0x8) diferita de 0, nemodelata",
@@ -1360,7 +1404,7 @@ pub fn attn_fwd_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     if heads == 0 || d == 0 || d * heads != c || t == 0 {
         return Err(bad("SIM: attn_fwd: d != C/H sau forma goala, nemodelat"));
     }
-    if gy > heads || gx > t.div_ceil(32) {
+    if gy > heads || gx > t.div_ceil(rows_per_block) {
         return Err(bad("SIM: attn_fwd: grila trece de H / T, nemodelata"));
     }
     if gz == 0 || gy == 0 || gx == 0 {
@@ -1376,7 +1420,7 @@ pub fn attn_fwd_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
         .sizes()
         .ok_or_else(|| bad("SIM: attn_fwd: forma prea mare"))?;
     let qkv_v = l.mem.read_f32s(qkv, nq)?;
-    let rows = t.min(32 * gx);
+    let rows = t.min(rows_per_block * gx);
     for b in 0..gz {
         for h in 0..gy {
             for i in 0..rows {
