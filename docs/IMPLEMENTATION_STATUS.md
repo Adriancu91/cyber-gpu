@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 161 — 22 noiembrie 2026, ~15:13–15:35 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: ciclul automat 15:06 (argmax fără copie)**
+## Sesiunea 161 — 22 noiembrie 2026, ~15:11–15:20 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: ciclul automat 15:06 (argmax fără copie)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă: ciclul automat 15:06, `test-placa --i9 c135
 --argmax-fara-copie` (`ciclu-auto-20261122-1506.txt`, `gpu-jurnal-048.txt`) → întâi C-157 p.2. Clona veche avea ramura locală
