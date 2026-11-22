@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 158 — 22 noiembrie 2026, ~12:10–12:55 (ora României), în cloud, FĂRĂ placă — **C-160 p.7, partea a treia: pasul de aur mic „mixt”**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă (os-349 cu `colsum` e GATA DE TEST, nerulat) →
+C-160 p.7 partea a treia. Toleranța a fost scrisă și urcată **înainte** de cod (commit `2f2321f`). Clona veche de pe disc avea istoria
+desincronizată; am lucrat într-o clonă proaspătă, nimic pierdut.
+
+**Ce s-a făcut:** pasul de aur mic cu **toate cele 27 de înmulțiri pe `mm_tc`** (circuitele speciale, intrări f16) și scalarea erorii
+S = 1 024 (c/S printr-un `mm_train` 1×1×1, exact), 74 / 76 de lansări pe pas, o trimitere pe pas. Doar adăugări în
+`nvidia_ga104::train_step` (`Plan::step_mixed`, `mixed_uploads`, `pack_mixed`, `judge_mixed`, `MixedLaunch`, `LOSS_SCALE`, `MIX_TOL_*`);
+lista F32 neschimbată. Nota: `docs/C-160_P7_PAS_MIXT.md`. Commit-ul codului: `352e953`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| T169 `sgd`, 10 pași mixt față de PyTorch F32 | eroarea 2,95·10⁻⁵ (tol. 1·10⁻³), gradient 7,5·10⁻⁴ (5·10⁻³), greutăți 2,1·10⁻⁴ (1·10⁻³) | PASS (SIMULARE) |
+| T169 `adamw_513`, la fel | eroarea 2,0·10⁻⁵, normele 1,4·10⁻⁵, gradient 7,5·10⁻⁴ — în toleranță; **greutățile 2,4·10⁻² (criteriul scris 1·10⁻³)**, toată abaterea în `in_proj_bias` (gradient k = 0 exact, AdamW amplifică zgomotul); fără ea 8,5·10⁻⁴ | PASS parțial / **FAIL la criteriul scris pentru greutăți** (SIMULARE) |
+| T169 predicția „fără scalare e mai rău” | raport 1,00 — **predicție greșită** (modelul mic pornește de la eroarea 44, d(logits) nu atinge marginea f16) | măsurat (SIMULARE) |
+| T169 greșeli plantate | `sgd` fără împărțirea la S → oprit la pasul 5 (intrare peste f16); AdamW cu norma nescalată → greutăți 80× peste; AdamW fără împărțire → vizibil doar la `in_proj_bias` | prinse (SIMULARE) |
+| `tools/check.sh` (Rust 1.100) | format, clippy `-D warnings`, **791 de teste** (+7 ignorate), build no_std | PASS |
+| Pasul mixt / `mm_tc` pe RTX 3070 Ti | nepredat | NOT TESTED |
+
+**Următorul pas:** la primul test nou pe placă: C-157 p.2 (`colsum` 3 778/3 778 bit cu bit, #651 pe sferturi ~293 simb/s, pasul de aur).
+Până atunci: C-160 p.7 partea a patra — proba `mm_tc` pentru placă (seturi fixe + timpul la forma qkv a lui #513), ca notă pentru OS
+de legat după pasul de aur F32.
+
+---
+
 ## Sesiunea 157 — 22 noiembrie 2026, ~11:10–12:05 (ora României), în cloud, FĂRĂ placă — **C-160 p.7, partea a doua: `mm_tc` (înmulțirea antrenării pe circuitele speciale)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după ciclul de la 10:06 (comparat în sesiunea 156;
