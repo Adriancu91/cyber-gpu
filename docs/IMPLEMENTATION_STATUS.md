@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 171 — 23 noiembrie 2026, ~01:10–01:55 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: comparația os-358 (atenția de antrenare pe plăci, pe placa reală)**
+## Sesiunea 171 — 23 noiembrie 2026, ~01:10–01:30 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: comparația os-358 (atenția de antrenare pe plăci, pe placa reală)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă (os-358, 00:36) → C-157 p.2 are întâietate; centrul de
 comandă a cerut (01:12) lămurirea timpilor de 4–9 ori peste estimare. Clona locală veche (17 nov) păstrată ca ramura locală
