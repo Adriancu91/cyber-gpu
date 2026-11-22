@@ -55,5 +55,15 @@ Nu schimbă niciun program existent, nici listele de azi, nici `Generation::run`
 `SM_GLOBAL_CACHING_ENABLE`. Nimic nou trimis la placă; predarea către OS vine după, într-o notă separată, ca un singur lucru nou
 pe test (programul `embed_dev` + o trimitere cu mai multe poziții).
 
-## Rezultatul (după cod)
-_(se completează după teste)_
+## Rezultatul (după cod, sesiunea 170)
+| Predicția | Ieșit | |
+|---|---|---|
+| 1. ≤ 25 registre, fără partajată / barieră, aceleași operații ca `embed` | **19 registre**, 68 de instrucțiuni (`embed`: 55), 1 088 de octeți, SHA-256 `5eb883c6…5cddfce0`; nicio memorie partajată / locală, nicio barieră; valoarea: `i2f` + `fmul.ftz` (rândul poziției) + `ffma.ftz` (rândul simbolului), exact ca în `embed` (Mesa NAK 25.0.7 reconstruit în cloud; `embed` a ieșit identic, `b7c4252a…`) | DA |
+| 2. Tot textul într-o trimitere = o poziție pe trimitere | aceleași 15 simboluri, aceleași 4 cuvinte argmax la toate 14 pozițiile, cache-urile K/V bit cu bit (T180a); la fel cu loturi de 4 și de 1 (T180b) | DA (SIMULARE) |
+| 3. O singură sonerie | 1 trimitere față de 14; 11 lansări `embed_dev` (toate pozițiile de după text) | DA (SIMULARE) |
+| 4. Cu modelul de citire veche + `EachLaunch` | la fel, 0 octeți vechi serviți (T180b). **În plus (neprezis):** cu `Once` (o invalidare pe trimitere) lotul dă **alte simboluri fără eroare** (88 593 de octeți vechi) → `EachLaunch` e obligatoriu (T180f, scris în nota pentru OS) | DA |
+| 5. Greșeli plantate | locul greșit → NaN → oprire `LogitiNefiniti` la prima poziție generată (T180d); indice 259 la pozițiile 2 / 6 → oprire `Eroare` acolo, toate pozițiile de după: „niciun simbol”, 256/256 logit-uri nefinite; „niciun simbol” → `LogitiNefiniti` (T180e) | DA |
+| 6. Viteza | nemăsurată (DEDUS, în nota pentru OS) | NOT TESTED |
+
+`tools/check.sh`: format, clippy `-D warnings`, **864 de teste**, build no_std — PASS. Nota pentru OS:
+`integration/cyber-universe/C-157_P7_simbol-pe-placa.md` (commit de legat `40a82b0`).

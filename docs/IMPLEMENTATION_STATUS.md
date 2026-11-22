@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 170 — 23 noiembrie 2026, ~00:10–00:35 (ora României), în cloud, FĂRĂ placă — **C-157 p.7: simbolul ales rămâne pe placă (primul pas al generării fără drum la procesor)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-355; OS-ul n-a adăugat încă
+`T::AttnP` (C-160 p.7 așteaptă) → C-157 p.7. Planul și predicțiile urcate **înainte** de cod (`3e5e85a`). Lanțul P7 nu e necesar:
+singurul lucru dintr-o poziție care depinde de simbolul de dinainte e rândul de încorporare. Mesa NAK 25.0.7 reconstruit în cloud
+(`embed` a ieșit identic). Lucrat din clone noi (`origin/g0-g2-fundatie`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Program nou `embed_dev` | `embed` cu simbolul citit din cuvântul 0 al rezultatului argmax al poziției de dinainte; indice ≥ vocabular → NaN, nimic citit din tabelă; 19 registre, 68 instrucțiuni, SHA-256 `5eb883c6…5cddfce0`; aceleași operații de calcul ca `embed` | PASS (compilat, comparat) |
+| `kronos_batch` + `Generation::next_batch` / `accept_batch` + `Prog::EmbedDev` (doar adăugări) | lista unui lot de poziții = listele de azi (`lipita-ln-32`) cu `embed_dev` unde simbolul vine de pe placă + argmax în locul fiecărei poziții (`rezultate + 16·poziție`) | PASS |
+| T180 (6 teste) + 3 în modul | tot textul pe o sonerie = o poziție pe sonerie (simboluri, cuvinte argmax, cache-uri bit cu bit); loturi de 4 / 1; citire veche + `EachLaunch`; `Once` + citire veche dă alte simboluri (→ `EachLaunch` obligatoriu); 3 greșeli plantate prinse | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy `-D warnings`, **864 de teste**, build no_std | PASS |
+| Pe placă: proba „aceleași 16 simboluri” cu loturi de 4, apoi tot textul | nota pentru OS: `integration/cyber-universe/C-157_P7_simbol-pe-placa.md`, commit de legat `40a82b0` | NOT TESTED |
+
+Viteza DEDUS: ~710–800 simb/s cu lotul scris tot înainte, ~870–910 cu scrierea lotului următor cât placa lucrează (azi 635,90).
+**Ce e nou pentru placă:** programul `embed_dev` + o trimitere cu mai multe poziții (un singur lucru nou pe test).
+
+**Următorul pas:** la primul test nou pe placă: C-157 p.2. Când OS-ul adaugă `T::AttnP`: C-160 p.7 legarea lui `attn_p`. Altfel
+C-157 p.7 partea a doua (scrierea lotului următor cât placa lucrează: două zone de lansări — plan în SIMULARE) sau p.8 (fișa de model).
+
+---
+
 ## Sesiunea 169 — 22 noiembrie 2026, ~23:11–23:30 (ora României), în cloud, FĂRĂ placă — **C-157 p.5: ceasul termic (tabloul la N secunde, pragul de temperatură, înainte/după viteza maximă)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-355. **C-160 p.7 (legarea lui `attn_p`)
