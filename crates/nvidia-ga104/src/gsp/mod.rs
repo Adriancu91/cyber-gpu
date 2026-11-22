@@ -64,6 +64,7 @@ pub mod registry;
 pub mod rmapi;
 pub mod rpc;
 pub mod rusd;
+pub mod rusd_watch;
 pub mod sequencer;
 #[cfg(test)]
 pub(crate) mod sim_peer;

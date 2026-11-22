@@ -51,5 +51,25 @@ avertizare). Firmware-ul NVIDIA nu a fost deschis sau analizat.
 Răspuns la întrebarea din os-323 („motivul 0x1, de tălmăcit”): bitul 0 = `GPU_IDLE` în antetele NVIDIA — placa era în repaus. Nu e
 încetinire.
 
-## 4. Rezultate
-(se completează după cod)
+## 4. Rezultate — toate cele 7 predicții s-au potrivit la prima rulare
+Codul: `crates/nvidia-ga104/src/gsp/rusd_watch.rs` (doar adăugări). Testele: T179, `crates/nvidia-ga104/tests/sim_c157_p5_ceas_termic.rs`
+(7) + 2 în modul. Paginile vin din modelul `SimRusd` (SIMULARE).
+
+| Test | Predicția | Rezultat |
+|---|---|---|
+| T179a | P1 + P7: 20 de citiri la 45 °C → `Continua`; **un singur** rând de verdict; rezumatul citit înapoi de `parse_kw` | PASS (SIMULARE) |
+| T179b | P2: 70, 79, 80, 84, 85, 60, 40 → C, C, A, A, Oprire(85), Oprire(85), Oprire(85); 3 rânduri de verdict | PASS (SIMULARE) |
+| T179c | P3: 0x20 / 0x08 / 0x40 / 0x80 la 50 °C → oprire din prima; 0x1 (repaus) și 0x4 (limită de putere software) → nimic | PASS (SIMULARE) |
+| T179d | P4: aceeași marcă 10 000 ms → continuă, 10 001 ms → `Opreste(Mut)`; pagina nescrisă → `Opreste(FaraTemperatura)` după 10 s; o marcă nouă la fiecare citire → niciodată | PASS (SIMULARE) |
+| T179e | P5: P8/210 → P0/1 770 = `Urcata`; P0 → P0 = `DejaSus`; P8 → P8 = `FaraEfect`; în P5 nucleul +20 % = `Urcata`, +19,9 % = `FaraEfect`; secțiuni lipsă = `Necunoscut` | PASS (SIMULARE) |
+| T179f | P6: 71 °C nu pornește, 70,99 °C pornește; motiv termic sau fără temperatură → nu pornește | PASS (SIMULARE) |
+| T179g | o lucrare de 8 ore la 5 s = 5 760 de citiri la 60–79 °C: niciun stop, **sub 12 rânduri** în jurnal | PASS (SIMULARE) |
+| unități | limitele fără sens refuzate (oprire > 90, avertizare ≥ oprire, pornire ≥ avertizare, interval 0,5 s / 20 s); biții de oprire = antetele | PASS |
+| greșeli plantate | 6 (oprirea la `>` în loc de `≥`, fără bitul 0x08, tabloul mut +5 s, pragul de 20 % mutat, oprirea care nu se ține, pornirea la 71 °C) — toate prinse | PASS |
+
+`tools/check.sh`: format, clippy `-D warnings`, **855 de teste** (+7 ignorate), build no_std.
+
+**NETESTAT pe placă:** cum urcă temperatura plăcii sub lucru (nicio citire sub sarcină încă: os-323 a citit-o în repaus); dacă marca
+secțiunii de temperatură se schimbă la fiecare 500 ms (o presupunem — dacă GSP-RM o scrie doar la o schimbare de valoare, regula
+„tablou mut” ar trebui să citească orice secțiune, nu doar temperatura: primul test cu ceasul pornit o arată); cât de repede reacționează
+ceasurile în pagină după cererea de viteză maximă (de aceea 1 s de așteptare).
