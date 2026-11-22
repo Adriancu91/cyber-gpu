@@ -63,6 +63,7 @@ pub mod boot;
 pub mod chain;
 pub mod chain_log;
 pub mod colsum;
+pub mod colsum_probe;
 pub mod driver_split;
 pub mod emb_back;
 pub mod emb_fwd;

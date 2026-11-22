@@ -502,6 +502,58 @@ pub fn layernorm_back_rows(
     Ok((dx, dg, db))
 }
 
+/// The written margin of the board's column sums (`colsum.comp`, C-160 point 4; T155 wrote it first, C-160 point 6
+/// reuses it unchanged for the real board): per column `(dγ margin, dβ margin)` around [`layernorm_back_rows`] (γ = 1).
+/// R = `rows` terms added in order from 0.0, u = 2⁻²⁴, μ and rs = 1/√(var + eps) exact in f64:
+/// - dβ = Σ dy: R·u·Σ|dy| + u·|dβ| + (R + 1)·2⁻¹²⁶ (flush to zero);
+/// - dγ = Σ dy·x̂ with x̂ recomputed on the board: Σ|dy|·(rs·u·|μ| + 5u·|x̂|) + R·u·Σ|dy·x̂| + u·|dγ| + (R + 1)·2⁻¹²⁶.
+///
+/// The bias mode (`Σ dy` alone) is judged with the dβ margin.
+pub fn colsum_margin(
+    x: &[f32],
+    dy: &[f32],
+    rows: usize,
+    c: usize,
+) -> GpuResult<(Vec<f64>, Vec<f64>)> {
+    need(
+        rows > 0 && c > 0 && x.len() == rows * c && dy.len() == rows * c,
+        "colsum: forma",
+    )?;
+    const U: f64 = 1.0 / 16_777_216.0;
+    const FTZ: f64 = 1.175_494_350_822_287_5e-38;
+    let cf = c as f64;
+    let stats: Vec<(f64, f64)> = (0..rows)
+        .map(|r| {
+            let row = &x[r * c..(r + 1) * c];
+            let mu = row.iter().map(|&v| v as f64).sum::<f64>() / cf;
+            let var = row
+                .iter()
+                .map(|&v| (v as f64 - mu) * (v as f64 - mu))
+                .sum::<f64>()
+                / cf;
+            (mu, 1.0 / sqrt64(var + LN_EPS))
+        })
+        .collect();
+    let rf = rows as f64;
+    let mut bg = vec![0.0; c];
+    let mut bb = vec![0.0; c];
+    for j in 0..c {
+        let (mut a_d, mut a_dh, mut e, mut sg, mut sb) = (0.0, 0.0, 0.0, 0.0, 0.0);
+        for (r, &(mu, rs)) in stats.iter().enumerate() {
+            let d = dy[r * c + j] as f64;
+            let h = (x[r * c + j] as f64 - mu) * rs;
+            a_d += d.abs();
+            a_dh += (d * h).abs();
+            e += d.abs() * (rs * U * mu.abs() + 5.0 * U * h.abs());
+            sg += d * h;
+            sb += d;
+        }
+        bb[j] = rf * U * a_d + U * sb.abs() + (rf + 1.0) * FTZ;
+        bg[j] = e + rf * U * a_dh + U * sg.abs() + (rf + 1.0) * FTZ;
+    }
+    Ok((bg, bb))
+}
+
 /// GELU forward element by element, exactly the calculation [`loss_and_grad`] does for the MLP activation (exact erf
 /// in f64, rounded once to f32): the oracle of mode 0 of the board's `gelu_tr` program (C-160 point 4, program 5).
 pub fn gelu_rows(u: &[f32]) -> Vec<f32> {
