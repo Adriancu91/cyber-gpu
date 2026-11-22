@@ -47,7 +47,12 @@ const WAY: Way = Way {
     embed: EmbedBy::Program,
 };
 
-const GLUED: [TokenList; 3] = [TokenList::Fused, TokenList::FusedLn, TokenList::Fused32];
+const GLUED: [TokenList; 4] = [
+    TokenList::Fused,
+    TokenList::FusedLn,
+    TokenList::Fused32,
+    TokenList::FusedLn32,
+];
 
 /// The bytes of the tensors of the KGR1 file of a model with these shapes (Q8_0 matrices, F32 vectors).
 fn tensor_bytes(layers: usize, e: usize, vocab: usize, context: usize) -> (u64, usize, usize) {
@@ -172,6 +177,7 @@ fn t148c_the_vram_budget() {
             TokenList::Fused,
             TokenList::FusedLn,
             TokenList::Fused32,
+            TokenList::FusedLn32,
         ],
         &[Prog::Argmax],
     )

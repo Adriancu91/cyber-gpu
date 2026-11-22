@@ -112,6 +112,22 @@ pub const PROGRAMS_FUSED32: [Prog; 10] = [
     Prog::Q8Matvec32,
 ];
 
+/// C-157 point 2: [`PROGRAMS_FUSED32`] + [`Prog::LayerNorm256`] — what `TokenList::FusedLn32` launches (the new
+/// LayerNorm and the quarter-block products together; the old programs stay loaded for unaligned launches).
+pub const PROGRAMS_FUSED_LN32: [Prog; 11] = [
+    Prog::Copy,
+    Prog::Q8Matvec,
+    Prog::Vadd,
+    Prog::LayerNorm,
+    Prog::Attention,
+    Prog::Gelu,
+    Prog::Embed,
+    Prog::Q8Fused,
+    Prog::Q8Fused32,
+    Prog::Q8Matvec32,
+    Prog::LayerNorm256,
+];
+
 pub const PROGRAMS_FUSED: [Prog; 8] = [
     Prog::Copy,
     Prog::Q8Matvec,

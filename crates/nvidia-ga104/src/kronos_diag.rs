@@ -200,6 +200,10 @@ pub enum TokenList {
     /// C-155 point 4: `Fused` with the glued products on `q8_fused32` (the race of the products, in the token list);
     /// the same 7 launches per layer, the same cbufs.
     Fused32 = 3,
+    /// C-157 point 2 (after the race on the board, 22 nov 05:06): `FusedLn` and `Fused32` together — the new LayerNorm
+    /// (`layernorm256`) and the glued products on `q8_fused32` / the logits on `q8_matvec32`; the same 7 launches per
+    /// layer, the same cbufs. The list Cyber-GPU picks after the race (5 kinds passed on quarters, the rest unchanged).
+    FusedLn32 = 4,
 }
 
 impl TokenList {
@@ -207,7 +211,7 @@ impl TokenList {
     pub const fn per_layer(self) -> usize {
         match self {
             TokenList::Plain => LAUNCHES_PER_TOKEN,
-            TokenList::Fused | TokenList::FusedLn | TokenList::Fused32 => {
+            TokenList::Fused | TokenList::FusedLn | TokenList::Fused32 | TokenList::FusedLn32 => {
                 kl::LAUNCHES_PER_TOKEN_FUSED
             }
         }
@@ -217,7 +221,7 @@ impl TokenList {
     pub fn launches_per_token(self, layers: usize) -> usize {
         match self {
             TokenList::Plain => km::launches_per_token(layers),
-            TokenList::Fused | TokenList::FusedLn | TokenList::Fused32 => {
+            TokenList::Fused | TokenList::FusedLn | TokenList::Fused32 | TokenList::FusedLn32 => {
                 km::launches_per_token_fused(layers)
             }
         }
@@ -230,6 +234,7 @@ impl TokenList {
             TokenList::Fused => &kl::PROGRAMS_FUSED,
             TokenList::FusedLn => &kl::PROGRAMS_FUSED_LN,
             TokenList::Fused32 => &kl::PROGRAMS_FUSED32,
+            TokenList::FusedLn32 => &kl::PROGRAMS_FUSED_LN32,
         }
     }
 
@@ -252,6 +257,9 @@ impl TokenList {
             TokenList::Fused32 => {
                 km::token_launches_fused32(&w.shape, w.vocab, w.context, vas, token, pos)
             }
+            TokenList::FusedLn32 => {
+                km::token_launches_fused_ln32(&w.shape, w.vocab, w.context, vas, token, pos)
+            }
         }
     }
 
@@ -262,6 +270,7 @@ impl TokenList {
             TokenList::Fused => "lipita",
             TokenList::FusedLn => "lipita-ln",
             TokenList::Fused32 => "lipita-32",
+            TokenList::FusedLn32 => "lipita-ln-32",
         }
     }
 }

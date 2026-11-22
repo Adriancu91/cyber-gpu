@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 151 — 22 noiembrie 2026, ~05:11–05:50 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (cursa pe sferturi pe placă) + lista `lipita-ln-32`**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. **Test nou pe placă:** ciclul automat de la 05:06 a rulat cursa
+înmulțirilor pe sferturi (`test-placa --i9 c135 --sferturi`) → are întâietate (C-157 p.2) față de C-160 p.4. (Dosarele locale vechi
+aveau ramurile în urmă; am lucrat pe ramuri noi luate din `origin`; istoria de pe GitHub neatinsă.)
+
+**Ce s-a făcut:** (1) comparația în `docs/C-157_P2_COMPARATII.md`: cursa trece pe placă — 5 feluri pe sferturi (fc +538 ‰, proj +648,
+qkv +539, logit +527, out +510), 16/16 simboluri identice, placa 2 419 → 1 516 µs pe simbol (MĂSURAT); diferit de estimare: proj a câștigat
+cel mai mult → frâna rămasă = rândurile scurte de 768 (DEDUS). (2) Lista aleasă: **`TokenList::FusedLn32` (`lipita-ln-32`)** = LayerNorm
+nou + toate înmulțirile pe sferturi; adăugări: `kronos_diag::TokenList::FusedLn32`, `kronos_layer::PROGRAMS_FUSED_LN32`,
+`kronos_model::token_launches_fused_ln32` (nimic redenumit; OS-ul compilează neschimbat — potrivirile lui pe `TokenList` au ramura `_`).
+Estimare: placa ~1 070 µs, **~510 simb/s** cu driverul de azi, ~550 cu argmax fără copie (DEDUS). (3) Nota pentru OS:
+`integration/cyber-universe/C-157_P2g_sferturi.md` (nimic nou pentru placă).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Comparația cursei pe sferturi (ciclul 05:06) | estimat față de ieșit, ce tai mai departe | gata (MĂSURAT + DEDUS) |
+| T162 `lipita-ln-32` | oracolul trece pe 16 poziții (2 moduri), simbolurile = `lipita-ln` și `lipita-32`, abateri < 1e-4, lista = ambele schimbări și nimic altceva, lățimea 768 | PASS (SIMULARE) |
+| T148 cu lista nouă | constantele OS-ului (#513, #651) ajung și pentru `lipita-ln-32` | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy `-D warnings`, **741 de teste**, build no_std | PASS |
+| `lipita-ln-32` pe RTX 3070 Ti | predată (proba în notă), nerulată | NOT TESTED |
+
+**Următorul pas:** C-160 punctul 4: norma + tăierea gradientului, apoi AdamW; la primul test nou pe placă: C-157 punctul 2.
+
+---
+
 ## Sesiunea 150 — 22 noiembrie 2026, ~04:11–04:30 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 4, programul 8 (încorporările: `emb_fwd` + `emb_back`)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-340 (comparat în sesiunea 149) →

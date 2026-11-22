@@ -2,6 +2,28 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## Ciclul automat 05:06 `test-placa --i9 c135 --sferturi` (cursa înmulțirilor pe sferturi, 22 nov 2026) — sesiunea 151
+Sursa: `Cyber-hub/rezultate/os-automat/2026-11-22/ciclu-auto-20261122-0506.txt` + `gpu-jurnal-040.txt` (nucleul cu `cyber-gpu b157c7f`).
+- **Estimat** (`C-155_cursa-pe-sferturi.md`, DEDUS): câștig mare pe fc / qkv / out / logit (acolo lucrau 24 din 32 de fire), **cel mai mic
+  pe proj**; aceleași simboluri, abaterea față de lista lipită sub 1e-4.
+- **Ieșit (MĂSURAT):** corect — 16/16 simboluri identice cu procesorul, față de lista lipită max |d| 1,14e-5 (`0x37400000`), față de
+  procesor 1,62e-5; amprenta nouă `0x9d0d3c66`. **Toate cele 5 feluri de înmulțiri trec regula de 50 ‰:** fc +538, qkv +539, logit +527,
+  out +510 și — **diferit de estimare — proj +648 ‰, cel mai mare câștig**. Placa 2 419 → **1 516 µs** pe simbol (−903 µs, +373 ‰);
+  simbolul cu driverul 2 397 µs = **~417 simb/s** pe rularea pe sferturi (media celor două rulări 351,90 nu e cifra listei noi).
+- **De ce proj a câștigat cel mai mult** (DEDUS din octeții citiți): pe sferturi, proj (3 072 de intrări, 12 sferturi pe fir) merge cu
+  ~223 GB/s, fc / qkv / logit cu ~136–161 GB/s, out cu ~109 GB/s. Deci frâna rămasă nu mai e „24 din 32 de fire”, ci **rândurile scurte**:
+  la 768 de intrări un fir face doar 3 sferturi → prea puține citiri în zbor pe grup de 32. A doua ipoteză din notă e cea care rămâne.
+- **Lista aleasă de Cyber-GPU** (cerută de rândul `kt sferturi`): **toată pe sferturi**, iar cu LayerNorm-ul nou (implicit din os-336)
+  împreună → lista nouă **`lipita-ln-32`** (`TokenList::FusedLn32`, T162 în SIMULARE). „Mixtă” ar fi aceeași listă: felurile care n-au
+  trecut (ln, atenție, embed, copiere) au oricum același program în ambele.
+- **Estimare pentru `lipita-ln-32`** (DEDUS): placa 1 516 − 544 (LayerNorm vechi) + 98 (LayerNorm nou, os-331) ≈ **1 070 µs**; cu driverul
+  830 + jurnalul 62 → ~1 960 µs = **~510 simb/s**; cu argmax fără copie (os-343) driverul ~680 → **~550 simb/s** (Windows/PyTorch 129 → ×4,3).
+- **Ce tai mai departe:** după `lipita-ln-32`, pe placă rămân înmulțirile ~700 µs (65 %) și **atenția 251 µs (23 %; ~21 µs pe lansare la
+  doar ~20 de poziții)** → (1) înmulțiri cu mai multe citiri în zbor pe rândurile de 768 (2–4 rânduri pe grup sau citirile celor 3 sferturi
+  puse înainte de calcul), (2) atenția; driverul (830 µs) rămâne cel mai mare bloc → dieta 2 (predată, ~330–410 µs).
+- **Mărunt, rămas de lămurit de OS:** rândul `kt lista` spune tot „87 lansări”, tabelul pe fel = 88 (12 × 7 + 4).
+- Nota pentru OS: `integration/cyber-universe/C-157_P2g_sferturi.md`. Nimic nou pentru placă (programele au rulat deja toate trei).
+
 ## os-340 `test-placa --argmax-placa` (argmax pe placă, proba, 22 nov 2026, 02:51) — sesiunea 149
 - **Estimat** (`C-155_argmax-pe-placa.md`, DEDUS): cele 4 cuvinte ale programului = `argmax_result` al logit-urilor copiate la fiecare
   poziție (prag 0); lansarea argmax ~5–15 µs; în proba cu copie, o lansare în plus pe simbol (placa +~10 µs).

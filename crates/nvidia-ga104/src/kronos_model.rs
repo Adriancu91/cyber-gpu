@@ -131,6 +131,23 @@ pub fn token_launches_fused32(
     )?))
 }
 
+/// C-157 point 2: [`token_launches_fused_ln`] and [`token_launches_fused32`] together — every LayerNorm on
+/// `layernorm256` ([`crate::layernorm256::widen`]) and every 16-aligned glued product / the logits on their quarter-block
+/// program ([`crate::q8_fused32::narrow`]); the two swaps touch disjoint launches, the cbuf bytes stay. The same 88
+/// launches at #513. Needs [`kl::PROGRAMS_FUSED_LN32`] uploaded.
+pub fn token_launches_fused_ln32(
+    s: &Shape,
+    vocab: usize,
+    context: usize,
+    v: &ModelVas,
+    token: usize,
+    pos: usize,
+) -> GpuResult<Vec<Launch>> {
+    Ok(crate::q8_fused32::narrow(token_launches_fused_ln(
+        s, vocab, context, v, token, pos,
+    )?))
+}
+
 type LayerFn = fn(&Shape, &kl::LayerVas, usize) -> GpuResult<Vec<Launch>>;
 
 fn launches_with(
