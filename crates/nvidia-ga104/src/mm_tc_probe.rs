@@ -321,7 +321,7 @@ impl ProbeSet {
         let mut b = alloc::vec![0u8; l.bytes];
         self.write_inputs(|at, bytes| b[at..at + bytes.len()].copy_from_slice(bytes));
         for (at, len) in self.fill_ranges() {
-            for w in b[at..at + len].chunks_exact_mut(4) {
+            for w in b[at..at + len].as_chunks_mut::<4>().0 {
                 w.copy_from_slice(&FILL.to_le_bytes());
             }
         }
