@@ -1,0 +1,137 @@
+// C-160 point 7, part two: the training matmul on the tensor cores ("circuitele speciale").
+//   C[M,N] = op(A)[M,K] * op(B)[K,N] (+ bias[N])
+// Same interface as mm_train.comp (A, B, C, bias in f32; flags TA / TB / BIAS), so it can replace it in the
+// training step list. The difference: every element of op(A) and op(B) is rounded to a 16-bit float (binary16,
+// float16_t(x)) when it is copied into shared memory, and the products are added in f32 by the tensor cores
+// (coopMatMulAdd, f16 x f16 -> f32; NAK lowers it to HMMA.16816.F32 on SM 8.6).
+// Layout (ideas from the public CUTLASS / "How to optimize a CUDA matmul" write-ups, our own code):
+//   128 threads = 4 subgroups of 32; a workgroup computes a 64x64 block of C; subgroup w computes the 32x32
+//   quarter (w / 2, w % 2) as 2 x 2 accumulators of 16x16. K advances in slices of 32: the workgroup copies the
+//   64x32 slice of op(A) and the 32x64 slice of op(B) into shared memory as f16 (zeros outside the matrices),
+//   barrier, two steps of 16 (4 coopMatMulAdd each per subgroup), barrier, next slice.
+//   At the end every subgroup stores its accumulators into a 64x64 f32 tile in shared memory, barrier, and the
+//   128 threads write the elements inside C, adding bias[col] once (one f32 add) when BIAS is set.
+// Zero padding is accumulated (products 0 x anything = 0): it does not change a tensor-core sum (DEDUS from the
+// adder model, gpu-compute mma::mma16_hw), but the order of the K-slices is fixed: 16 at a time, in order.
+// Copies to shared memory: consecutive threads read consecutive addresses for every storage order (TA / TB).
+// Correctness is judged in gpu-compute (mm_tc module): reference in f64 on the f16-rounded inputs, written margin.
+// Compiled with the SECOND NAK tool (tools/nak/build2.sh, Mesa 26.3.1). Nothing here has run on a board.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_cooperative_matrix : require
+
+#define BM 64u
+#define BN 64u
+#define BK 32u
+#define THREADS 128u
+#define TA 1u
+#define TB 2u
+#define BIAS 4u
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+
+layout(push_constant) uniform Args {
+    In a;
+    In b;
+    Out c;
+    In bias;
+    uint m;
+    uint n;
+    uint k;
+    uint flags;
+} args;
+
+shared float16_t as_[BM * BK];  // op(A) slice, row-major [r][p], stride BK
+shared float16_t bs_[BK * BN];  // op(B) slice, row-major [p][col], stride BN
+shared float cs_[BM * BN];      // the finished 64x64 block, row-major, stride BN
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint w = tid / 32u;
+    uint wr = (w / 2u) * 32u;
+    uint wc = (w % 2u) * 32u;
+    uint row0 = gl_WorkGroupID.y * BM;
+    uint col0 = gl_WorkGroupID.x * BN;
+    bool ta = (args.flags & TA) != 0u;
+    bool tb = (args.flags & TB) != 0u;
+
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> acc[2][2];
+    for (uint i = 0u; i < 2u; i++) {
+        for (uint j = 0u; j < 2u; j++) {
+            acc[i][j] = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+        }
+    }
+
+    for (uint t = 0u; t < args.k; t += BK) {
+        for (uint s = 0u; s < (BM * BK) / THREADS; s++) {
+            uint e = tid + s * THREADS;
+            // A stored [M,K]: consecutive threads -> consecutive p; stored [K,M] (TA): -> consecutive r.
+            uint r = ta ? e % BM : e / BK;
+            uint p = ta ? e / BM : e % BK;
+            uint gr = row0 + r;
+            uint gp = t + p;
+            float x = 0.0;
+            if (gr < args.m && gp < args.k) {
+                x = ta ? args.a.v[gp * args.m + gr] : args.a.v[gr * args.k + gp];
+            }
+            as_[r * BK + p] = float16_t(x);
+        }
+        for (uint s = 0u; s < (BK * BN) / THREADS; s++) {
+            uint e = tid + s * THREADS;
+            // B stored [K,N]: consecutive threads -> consecutive col; stored [N,K] (TB): -> consecutive p.
+            uint p = tb ? e % BK : e / BN;
+            uint cl = tb ? e / BK : e % BN;
+            uint gp = t + p;
+            uint gc = col0 + cl;
+            float x = 0.0;
+            if (gp < args.k && gc < args.n) {
+                x = tb ? args.b.v[gc * args.k + gp] : args.b.v[gp * args.n + gc];
+            }
+            bs_[p * BN + cl] = float16_t(x);
+        }
+        barrier();
+        for (uint kk = 0u; kk < BK; kk += 16u) {
+            coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> fa[2];
+            coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> fb[2];
+            for (uint i = 0u; i < 2u; i++) {
+                coopMatLoad(fa[i], as_, (wr + 16u * i) * BK + kk, BK, gl_CooperativeMatrixLayoutRowMajor);
+            }
+            for (uint j = 0u; j < 2u; j++) {
+                coopMatLoad(fb[j], bs_, kk * BN + wc + 16u * j, BN, gl_CooperativeMatrixLayoutRowMajor);
+            }
+            for (uint i = 0u; i < 2u; i++) {
+                for (uint j = 0u; j < 2u; j++) {
+                    acc[i][j] = coopMatMulAdd(fa[i], fb[j], acc[i][j]);
+                }
+            }
+        }
+        barrier();
+    }
+
+    for (uint i = 0u; i < 2u; i++) {
+        for (uint j = 0u; j < 2u; j++) {
+            coopMatStore(acc[i][j], cs_, (wr + 16u * i) * BN + wc + 16u * j, BN, gl_CooperativeMatrixLayoutRowMajor);
+        }
+    }
+    barrier();
+    for (uint s = 0u; s < (BM * BN) / THREADS; s++) {
+        uint e = tid + s * THREADS;
+        uint r = e / BN;
+        uint cl = e % BN;
+        uint gr = row0 + r;
+        uint gc = col0 + cl;
+        if (gr < args.m && gc < args.n) {
+            float v = cs_[e];
+            if ((args.flags & BIAS) != 0u) {
+                v += args.bias.v[gc];
+            }
+            args.c.v[gr * args.n + gc] = v;
+        }
+    }
+}

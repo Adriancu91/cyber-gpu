@@ -2100,6 +2100,66 @@ pub fn mma16_f16_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// C-160 point 7: what `tools/nak/out2/mm_tc.sm86.sass` needs — the f16 slices of op(A) (64×32) and op(B)
+/// (32×64) plus the 64×64 f32 block for the end: 4 + 4 + 16 KiB of shared memory, one barrier.
+pub const MM_TC_NEEDS: Needs = Needs {
+    shared_bytes: (64 * 32 + 32 * 64) * 2 + 64 * 64 * 4,
+    barriers: 1,
+};
+
+/// C-160 point 7: the CPU stand-in for `tools/nak/out2/mm_tc.sm86.sass` (second NAK tool, Mesa 26.3.1): the
+/// training matmul on the tensor cores, `C = op(A)·op(B) (+ bias)` with op(A), op(B) rounded to f16. cbuf0 (NVK
+/// 26.3.1 puts the push constants at 0x700): a/b/c/bias at 0x700/0x708/0x710/0x718, m/n/k/flags at
+/// 0x720/0x724/0x728/0x72c. Blocks of 128×1×1, grid (⌈n/64⌉, ⌈m/64⌉, 1). The arithmetic is
+/// `gpu_compute::mm_tc::model` — the tensor-core adder fitted on os-335, a HYPOTHESIS, not a fact. Unknown flags,
+/// a bias flag without a bias, or inputs outside the f16 range are refused (no write).
+pub fn mm_tc_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    use gpu_compute::mm_tc;
+    if l.block != [128, 1, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: mm_tc cere blocuri de 128x1x1"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let base = l.cbuf0 + MMA16_PUSH_BASE;
+    let a = l.mem.read_u64(base)?;
+    let b = l.mem.read_u64(base + 0x08)?;
+    let c = l.mem.read_u64(base + 0x10)?;
+    let bias_va = l.mem.read_u64(base + 0x18)?;
+    let m = l.mem.read_u32(base + 0x20)? as usize;
+    let n = l.mem.read_u32(base + 0x24)? as usize;
+    let k = l.mem.read_u32(base + 0x28)? as usize;
+    let flags = l.mem.read_u32(base + 0x2c)?;
+    if flags & !(mm_tc::TA | mm_tc::TB | mm_tc::BIAS) != 0 {
+        return Err(bad("SIM: mm_tc: biti de optiuni necunoscuti"));
+    }
+    if (l.grid[0] as usize) < n.div_ceil(64) || (l.grid[1] as usize) < m.div_ceil(64) {
+        return Err(bad("SIM: mm_tc: grila nu acopera C (nemodelat)"));
+    }
+    let x = l.mem.read_f32s(a, m * k)?;
+    let y = l.mem.read_f32s(b, k * n)?;
+    let bias = if flags & mm_tc::BIAS != 0 {
+        Some(l.mem.read_f32s(bias_va, n)?)
+    } else {
+        None
+    };
+    let p = mm_tc::Product {
+        a: &x,
+        b: &y,
+        bias: bias.as_deref(),
+        m,
+        n,
+        k,
+        flags,
+    };
+    let out =
+        mm_tc::model(&p).ok_or_else(|| bad("SIM: mm_tc: intrari invalide (f16 sau dimensiuni)"))?;
+    l.mem.write_f32s(c, &out);
+    Ok(())
+}
+
 /// C-83 I13: `vadd.comp` — cbuf0 a 0x28, b 0x30, c 0x38, n 0x40; blocks of 256.
 pub fn vadd_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     if l.block != [256, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 || l.mem.read_u64(l.cbuf0)? != 0 {

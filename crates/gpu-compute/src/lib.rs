@@ -28,6 +28,7 @@ pub mod cpu;
 pub mod kernels;
 pub mod layer;
 pub mod math;
+pub mod mm_tc;
 pub mod mma;
 pub mod model;
 pub mod op;

@@ -9,6 +9,7 @@
 #   sh tools/nak/build2.sh mesa         # once: download + build Mesa 26.3.1 into $NAK2_HOME (~20 min, 2 cores)
 #   sh tools/nak/build2.sh mma16_f16    # 16x16x16 f16 -> f32 coopMatMulAdd -> tools/nak/out2/mma16_f16.sm86.{sass,txt}
 #   sh tools/nak/build2.sh mma16_s8     # 16x16x32 s8 -> s32 (IMMA probe; compiled, not modelled)
+#   sh tools/nak/build2.sh mm_tc        # C-160 point 7: training matmul on the tensor cores, f32 in/out, f16 products (session 157)
 #   sh tools/nak/build2.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): the apt packages listed in build.sh, plus
@@ -44,6 +45,9 @@ mma16_f16)
 mma16_s8)
     exec sh "$0" kernel mma16_s8 32
     ;;
+mm_tc)
+    exec sh "$0" kernel mm_tc 48
+    ;;
 kernel)
     NAME=${2:?nume}; PUSH=${3:?octeti push constants}
     OUT=$HERE/out2; TMP=$(mktemp -d); mkdir -p "$OUT"
@@ -67,6 +71,6 @@ kernel)
     rm -rf "$TMP"
     ;;
 *)
-    echo "usage: $0 mesa|mma16_f16|mma16_s8|kernel <nume> <octeti>" >&2; exit 2
+    echo "usage: $0 mesa|mma16_f16|mma16_s8|mm_tc|kernel <nume> <octeti>" >&2; exit 2
     ;;
 esac
