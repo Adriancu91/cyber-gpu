@@ -2,6 +2,30 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-343 `test-placa --i9 c135 --k651` (Kronos #651 pe placă, primul test al modelului mare, 22 nov 2026, 07:36) — sesiunea 154
+Sursa: `Cyber-hub/rezultate/2026-11-22-workstation-os343-k651/REZULTAT.md` + `rezultate/os-automat/2026-11-22/ciclu-auto-20261122-0736.txt`
+(nucleul cu `cyber-gpu cf9e911`; lista lipită cu LayerNorm nou, **fără sferturi**).
+- **Estimat** (`integration/cyber-universe/C-157_P4_k651-limite.md`, DEDUS): simbolul median **~5,1–5,6 ms** (~180–195 simb/s); „peste ~6 ms
+  = ceva nu scalează cu straturile”; VRAM ~270 MiB, urcarea în 25 de bucăți, 172 de lansări pe simbol; simbolurile = ale procesorului.
+- **Ieșit (MĂSURAT):** **5 161 µs** median (placa 3 747, driverul 1 317, jurnalul 62) = **194,34 simb/s**, la marginea bună a estimării;
+  16/16 simboluri identice cu procesorul, 0 poziții lente, 25 de bucăți (206 817 280 octeți, 33,6 ms pe placă), 172 de lansări, amprenta
+  de referință nouă `0x38b4270f`, abaterea maximă a logit-urilor 3,92e-5 (la #513: 1,74e-5; dublul straturilor, DEDUS normal). Procesorul
+  (același test): 38,1 simb/s → placa ×5,1.
+- **Placa scalează exact cu straturile (MĂSURAT, pe lansare):** fc 40,61 µs (la #513 în os-331: 487/12 = 40,58), proj 33,86 (33,75),
+  qkv 31,74 (31,75), out 12,42 (12,33), atenția 20,70 (20,8), ln1/ln2 4,0/3,8 (LayerNorm nou), logit 186 (identic: același vocabular).
+  Deci 24 de straturi = de două ori aceleași lansări; nimic nou nu frânează la modelul mare.
+- **Driverul 1 317 µs (la #513 ~818–830):** crește cu numărul de lansări: din două puncte (88 → 172 de lansări) ies **~5,9 µs pe lansare +
+  ~300 µs fix** (DEDUS). La #651 driverul e **26 %** din simbol azi și ar fi **~39 %** după sferturi → dieta 2 (predată, `C-157_P3_dieta-doi.md`)
+  câștigă **mai mult la #651**: citirea înregistrărilor crește cu lansările (~173 în loc de 89, ~1,9 µs fiecare → ~−320 µs, nu ~−166).
+- **Estimare pentru `#651` + `lipita-ln-32` (sferturi + LayerNorm nou, testul următor din REZULTAT):** pe lansare, din ciclul automat 05:06 (#513 pe sferturi,
+  aceleași lățimi 768): 24 × (fc 18,72 + qkv 14,62 + proj 11,90 + out 6,08 + atenția 20,7 + ln 7,84) + logit 87,9 + rest 21 ≈ **2 030 µs**
+  placa (−1 717); driverul tot ~1 317 (aceleași 172 de lansări) + jurnalul 62 → **~3,41 ms = ~293 simb/s** (DEDUS); cu dieta 2 (~−450 sau mai mult la
+  #651) **~340**; cu argmax fără copie încă ~−150 → **~360 simb/s**. Peste ~3,8 ms ar însemna că sferturile nu scalează ca la #513.
+- **Mărunt, de lămurit de OS (nu de noi):** citirea modelului de pe stick **29 s** pentru 197 MiB (~6,8 MB/s) și copierea pe procesor 774 ms
+  (267 MB/s) — în afara ceasului; rândul „comparatie: placa ? simboluri/s (fara randul de viteza al nucleului)” la sfârșit nu ia cifra din `kt`.
+- **Ce tai mai departe:** nimic nou pentru placă; ordinea de câștig la #651: (1) sferturile (`--ln-32`, gata în os-346), (2) dieta 2,
+  (3) înmulțirile pe rândurile scurte + atenția (C-157_P2g). Nota pentru OS: `integration/cyber-universe/C-157_P2h_os-343_k651.md`.
+
 ## Ciclul automat 05:06 `test-placa --i9 c135 --sferturi` (cursa înmulțirilor pe sferturi, 22 nov 2026) — sesiunea 151
 Sursa: `Cyber-hub/rezultate/os-automat/2026-11-22/ciclu-auto-20261122-0506.txt` + `gpu-jurnal-040.txt` (nucleul cu `cyber-gpu b157c7f`).
 - **Estimat** (`C-155_cursa-pe-sferturi.md`, DEDUS): câștig mare pe fc / qkv / out / logit (acolo lucrau 24 din 32 de fire), **cel mai mic
