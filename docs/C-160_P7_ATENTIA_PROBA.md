@@ -78,3 +78,10 @@ pasului de aur, T151).
 - `tools/check.sh`: format, clippy (Rust 1.97), **835 de teste** (+7 ignorate), build no_std — PASS.
 - Predicțiile 1–4 (pe placă) și viteza: **NOT TESTED** până la rularea pe placă. Nota pentru OS:
   `integration/cyber-universe/C-160_P7e_atentia-pe-placi-proba.md`.
+
+## Rezultatul pe placa reală (os-358, 23 nov 2026, 00:36; comparat în sesiunea 171)
+- Predicțiile 1–3 (corectitudinea): **DA** — 6/6 seturi, gărzile neatinse; „înapoi” 100 % exacte; `attn_fwd_tile` 38,8 % exacte, cel mai
+  rău 89 ‰.
+- Predicția 4 (viteza): **RATATĂ de 4–9 ori** — 2,49 / 1,81 / 3,99 ms față de ~0,53 / ~0,49 / ~0,42–0,68; pe bucata #513 ~297 ms.
+  Cauzele (DEDUS din listările NAK, `tools/buget-antrenare/nak_bucle.py`) și ce tai mai departe: `docs/C-157_P2_COMPARATII.md`, secțiunea
+  os-358. Greșeala estimării: a socotit doar FLOP și octeți, nu instrucțiunile și așteptările din codul compilat.

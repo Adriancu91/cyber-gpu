@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 171 — 23 noiembrie 2026, ~01:10–01:55 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: comparația os-358 (atenția de antrenare pe plăci, pe placa reală)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă (os-358, 00:36) → C-157 p.2 are întâietate; centrul de
+comandă a cerut (01:12) lămurirea timpilor de 4–9 ori peste estimare. Clona locală veche (17 nov) păstrată ca ramura locală
+`vechi-local-2026-11-17`, lucrat pe `origin/g0-g2-fundatie`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Corectitudinea os-358 față de predicții | 6/6 seturi; „înapoi” 100 % exacte; `attn_fwd_tile` 38,8 % exacte (prezis 20–80 %), 89 ‰ (≤ 300) | PASS (pe placă, MĂSURAT de OS) |
+| Timpul os-358 față de predicții | 2,49 / 1,81 / 3,99 ms față de ~0,53 / ~0,49 / ~0,42–0,68 → 0,50–0,73 TFLOP/s; ~297 ms pe bucata #513 | FAIL (estimarea) |
+| `tools/buget-antrenare/nak_bucle.py` (nou) | buclele listărilor NAK numărate (instrucțiuni, întârzieri, `ffma`, citiri partajate / globale, zone `bssy`) + modelul os-358 (emisie / lanțul blocului / bănci partajate) | 0,88–1,83 / 0,35–0,76 / 0,96–2,00 ms modelat; `fwd` explicat, „înapoi” factor ~2 NECUNOSCUT |
+| Cauzele (DEDUS) | bucle cu 38–120 instrucțiuni pentru 16 `ffma`, garda pe fiecare rând la fiecare pas; conflicte 16 la 1 pe placa K (`fwd`); plăcile urcate câte o valoare; 16–24 warp-uri pe SM | — |
+| Comparația + notele | `docs/C-157_P2_COMPARATII.md` (secțiunea os-358), `docs/C-160_P7_ATENTIA_PROBA.md` (rezultatul pe placă), nota `integration/cyber-universe/C-157_P2l_os-358_atentie.md` | gata |
+| `tools/check.sh` | format, clippy, **864 de teste** (+7 ignorate), build no_std (cod Rust neschimbat) | PASS |
+
+**Ce e nou pentru placă:** nimic. Pasul de aur mic pe placă (os-351) nu e blocat (programele vechi, forme mici).
+
+**Următorul pas:** C-157 p.2, partea a doua pentru os-358: plan + predicții (scrise înainte) pentru `attn_*_tile2` — aceiași biți: rânduri
+de 65 în memoria partajată, plăcile de sub diagonală fără gardă, citirile unei plăci emise deodată, bucla desfăcută câte 4 — apoi
+SIMULARE și proba „vechi lângă nou” în aceeași rulare. Apoi C-160 p.7 (`attn_p`, când OS-ul adaugă `T::AttnP`) și C-157 p.7 partea a doua.
+
+---
+
 ## Sesiunea 170 — 23 noiembrie 2026, ~00:10–00:27 (ora României), în cloud, FĂRĂ placă — **C-157 p.7: simbolul ales rămâne pe placă (primul pas al generării fără drum la procesor)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-355; OS-ul n-a adăugat încă

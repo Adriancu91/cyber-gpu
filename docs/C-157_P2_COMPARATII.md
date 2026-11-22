@@ -2,6 +2,42 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-358 `test-placa --atentie-placi` (atenția de antrenare „pe plăci”, 23 nov 2026, 00:36) — sesiunea 171
+Surse: `Cyber-hub/rezultate/os-automat/2026-11-23/ciclu-auto-20261123-0036.txt`, `-0038.txt`, `gpu-jurnal-055.txt` (nucleul cu
+`cyber-gpu 44a4d16`). Predicțiile scrise înainte: `docs/C-160_P7_ATENTIA_PROBA.md` (`608f377`).
+- **Corectitudinea = predicțiile:** 6/6 seturi în margine la toate trei programele, gărzile neatinse; `attn_back_tile0` 106 226/106 226 și
+  `attn_back_tile` 206 592/206 592 **exacte bit cu bit** (predicția 2); `attn_fwd_tile` 69 097/178 162 = **38,8 %** exacte (predicția
+  20–80 %), cel mai rău **89 ‰** (predicția ≤ 300 ‰). Bufferul de 151 MB în VRAM, 25 MB urcați și recitiți identic.
+- **Timpul pe setul mare (4 × 512, 12 capete × 64, mediana a 5 lansări) — ratat de 4–9 ori:** `attn_fwd_tile` **2,49 ms** (estimat ~0,53),
+  `attn_back_tile0` **1,81 ms** (~0,49), `attn_back_tile` **3,99 ms** (~0,42–0,68). Adică **0,50–0,73 TFLOP/s** = 2–3 % din F32-ul plăcii
+  (~21,7, DEDUS); pe bucata #513 ~89 + 65 + 143 = **~297 ms** (estimat 52–61; programele vechi de 32 de fire ~257, nemăsurate; toată
+  bucata PyTorch 156). E **prima măsurătoare pe placă a unui program limitat de calcul**: toate estimările de viteză a antrenării se
+  sprijineau pe „4–8 TFLOP/s efectiv”, nemăsurat până acum.
+- **De ce (DEDUS, `tools/buget-antrenare/nak_bucle.py`, din listările NAK):** estimarea a socotit doar FLOP la 4–8 TFLOP/s și octeții la
+  450 GB/s; n-a privit **codul scris de NAK**. Patru cauze, socotite pe bucle (ceasul presupus 1,77 GHz):
+  1. **Bucle care emit mult pentru puțin calcul:** 16 `ffma` din 38 (fwd A), 53 (back0), 68 (fwd C), 76 (back1 dQ), 120 (back1 dK/dV)
+     de instrucțiuni pe iterație; în `fwd` C și în `back1` garda `j <= i` e pusă **pe fiecare din cele 4 rânduri, la fiecare iterație**
+     = 4 zone `bssy/bsync` (+ adresele refăcute) — și pe plăcile de sub diagonală, unde garda e mereu adevărată. Buclele nedesfăcute
+     așteaptă 107–460 de cicluri pe iterație (suma întârzierilor scrise de NAK).
+  2. **`attn_fwd_tile`, faza A: conflicte de bancă 16 la 1** — placa K e ținută `[j][e]` cu rânduri de 64 de float-uri, iar cele 16 fire
+     `tx` citesc 16 rânduri diferite la același `e` → aceeași bancă. Singur ~0,88 ms din 2,49.
+  3. **Plăcile urcate în memoria partajată câte o valoare pe iterație** (`dont_unroll`: citire → scriere → următoarea) = 16 așteptări
+     ale memoriei pe placă în loc de una.
+  4. **Ocupare mică:** 37 / 32 / 32 KiB partajați + 55 / 50 / 73 registre → 16 / 24 / 24 warp-uri pe SM din 48.
+  Modelul pe bucle dă **0,88–1,83 / 0,35–0,76 / 0,96–2,00 ms** față de 2,49 / 1,81 / 3,99 măsurat: `fwd` aproape explicat, la cele două
+  „înapoi” rămâne un **factor ~2 NECUNOSCUT** (candidați: ceasul real sub sarcină — necitit, „P0” nu spune frecvența; latența memoriei
+  sub sarcină peste 500 de cicluri; `membar.sc.gpu` după fiecare barieră).
+- **Al doilea test (după FLR, `--argmax-fara-copie --dieta2`):** placa 1 079 µs, driverul 404, **635,72 simb/s** pe mediană (621,16 media
+  pe poziții) = os-353 (635,90). Generarea neatinsă de probă (505,56 cu proba după, ca os-346).
+- **Ce NU blochează:** pasul de aur mic pe placă (os-351) folosește `attn_fwd` / `attn_back` (programele vechi, forme mici) — corectitudinea
+  nu e atinsă de cifrele de aici. Blocate sunt doar **estimările de viteză** ale antrenării pe placă (`C-160_P7_VITEZA_ESTIMARE.md`), care
+  trebuie înmulțite cu un factor de măsurat, nu presupus.
+- **Ce tai mai departe (plan, cu aceiași biți — ordinea fiecărei sume neschimbată):** (F1) K în memoria partajată cu rânduri de 65 →
+  fără conflicte; (F2) plăcile de sub diagonală fără gardă, doar placa diagonalei cu gardă; (F3) cele 16 citiri ale unei plăci emise
+  toate, apoi scrise; (F4) bucla interioară desfăcută câte 4. Programe noi lângă cele vechi (`attn_*_tile2`), cronometrate **în aceeași
+  rulare** cu cele vechi — diferența arată cât face fiecare cauză și dacă factorul ~2 e ceasul (ar rămâne la toate). Estimat (DEDUS,
+  factor 2): ~0,6–1,0 / ~0,5–0,8 / ~1,0–1,6 ms → ~75–120 ms pe bucata #513. Nota pentru OS: `integration/cyber-universe/C-157_P2l_os-358_atentie.md`.
+
 ## os-355, ciclul 20:06 / 20:08 (două teste într-o pornire: #513 dieta 2 + #651 pe `lipita-ln-32`, 22 nov 2026) — sesiunea 167
 Surse: `Cyber-hub/rezultate/os-automat/2026-11-22/ciclu-auto-20261122-2006.txt` și `-2008.txt` (nucleul cu `cyber-gpu 54563a5`).
 - **Testul 1 (#513, `--argmax-fara-copie --dieta2`, a doua oară după os-353):** placa 1 074 µs, driverul **379 µs** (os-353: 390), jurnal 61,
