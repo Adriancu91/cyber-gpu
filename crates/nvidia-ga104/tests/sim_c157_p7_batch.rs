@@ -369,8 +369,9 @@ fn t180e_bad_index_poisons_and_stops_no_guessed_token() {
         );
         // The board ran on: every later position saw NaN (embed_dev read nothing from the table) → "no token",
         // all logits not finite.
-        for p in at + 1..PROMPT.len() + N - 1 {
-            let r = ArgmaxResult::from_words(got.words[p]);
+        assert_eq!(got.words.len(), PROMPT.len() + N - 1);
+        for (p, &w) in got.words.iter().enumerate().skip(at + 1) {
+            let r = ArgmaxResult::from_words(w);
             assert_eq!(r.words[0], ARGMAX_NONE, "pozitia {p}");
             assert_eq!(r.nonfinite(), m.vocab as u32, "pozitia {p}");
             assert_eq!(r.token(m.vocab).unwrap(), None);
