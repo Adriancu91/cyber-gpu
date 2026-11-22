@@ -1,0 +1,31 @@
+// C-157 point 7 (etapa 5, first step): embed.comp with the TOKEN READ FROM MEMORY. The token is word 0 of the argmax
+// result of the position before (`argmax.comp`, 16 bytes), so the chosen token stays on the board and several positions
+// can ride on one doorbell. x[i] = scale_t(i/32) * q_t[i] + scale_p(i/32) * q_p[i], the very expression of embed.comp
+// (the same rounding), with the token row at tok + idx * stride. The position row comes from the driver as before.
+// If idx is not below vocab (argmax found no token: 0xffffffff, or anything else wrong) NOTHING is read from the table
+// and x is filled with NaN: everything after it becomes NaN and the next argmax says "no token" — never a made-up token.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Words { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args { uint64_t tok; Words res; Words pos; Out x; uint n; uint vocab; uint stride; } args;
+float value(Words row, uint i) {
+    uint b = i / 32u, j = i % 32u;
+    float s = uintBitsToFloat(row.v[b * 9u]);
+    int q4 = int(row.v[b * 9u + 1u + j / 4u]);
+    return s * float(bitfieldExtract(q4, int(8u * (j % 4u)), 8));
+}
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i < args.n) {
+        uint idx = args.res.v[0];
+        if (idx < args.vocab) {
+            Words t = Words(args.tok + uint64_t(idx) * uint64_t(args.stride));
+            args.x.v[i] = value(t, i) + value(args.pos, i);
+        } else {
+            args.x.v[i] = uintBitsToFloat(0x7fc00000u);
+        }
+    }
+}

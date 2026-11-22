@@ -55,6 +55,9 @@ pub enum Prog {
     /// [`crate::q8_matvec32`]): the same cbuf as [`Prog::Q8Matvec`], x aligned to 16. In the token list only for the
     /// logits of [`crate::kronos_model::token_launches_fused32`].
     Q8Matvec32,
+    /// C-157 point 7: the embedding with the token read on the board from the argmax result of the position before
+    /// (`embed_dev.comp`, [`crate::kronos_batch`]). Used only by [`crate::kronos_batch::batch_launches`].
+    EmbedDev,
 }
 
 pub const PROGRAMS: [Prog; 7] = [
@@ -160,6 +163,7 @@ impl Prog {
             Prog::Argmax => crate::argmax::ARGMAX,
             Prog::Q8Fused32 => crate::q8_fused32::Q8_FUSED32,
             Prog::Q8Matvec32 => crate::q8_matvec32::Q8_MATVEC32,
+            Prog::EmbedDev => crate::kronos_batch::EMBED_DEV,
         }
     }
 
@@ -171,6 +175,7 @@ impl Prog {
             Prog::Argmax => crate::argmax::REGISTERS,
             Prog::Q8Fused32 => crate::q8_fused32::REGISTERS,
             Prog::Q8Matvec32 => crate::q8_matvec32::Q8_MATVEC32_REGISTERS,
+            Prog::EmbedDev => crate::kronos_batch::REGISTERS,
             _ => 19,
         }
     }
@@ -183,7 +188,8 @@ impl Prog {
             | Prog::Gelu
             | Prog::Embed
             | Prog::LayerNorm256
-            | Prog::Argmax => 256,
+            | Prog::Argmax
+            | Prog::EmbedDev => 256,
             Prog::Q8Matvec
             | Prog::LayerNorm
             | Prog::Attention

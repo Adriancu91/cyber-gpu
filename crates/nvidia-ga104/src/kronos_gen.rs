@@ -363,6 +363,48 @@ impl Generation {
         self.advance(top, out.start_ns, out.end_ns, out.busy_ns)
     }
 
+    /// C-157 point 7: the next batch of at most `max` positions for one doorbell ([`crate::kronos_batch`]): the first
+    /// position and, for each position, where its token comes from — the driver (a token already known: the prompt,
+    /// or one read back from an earlier batch) or the board (the argmax of the position before, in the same batch).
+    /// Never past the positions the plan runs; `None` once stopped or with `max == 0`.
+    pub fn next_batch(&self, max: usize) -> Option<(usize, Vec<crate::kronos_batch::Input>)> {
+        use crate::kronos_batch::Input;
+        let (_, pos) = self.next()?;
+        let end = (pos + max).min(self.plan.positions());
+        if end <= pos {
+            return None;
+        }
+        Some((
+            pos,
+            (pos..end)
+                .map(|q| match self.seq.get(q) {
+                    Some(&t) => Input::Cpu(t),
+                    None => Input::Board,
+                })
+                .collect(),
+        ))
+    }
+
+    /// C-157 point 7: the results of one batch, position by position from [`Self::next`], each through
+    /// [`Self::accept_top`] (the same clock checks, the same stops); after a stop the rest of the batch is dropped
+    /// (the board ran it, nothing of it is kept). An error for the whole batch stops at its first position.
+    pub fn accept_batch(&mut self, outs: GpuResult<Vec<TopOutput>>) -> Option<&Stop> {
+        match outs {
+            Err(err) => {
+                self.accept_top(Err(err));
+            }
+            Ok(v) => {
+                for o in v {
+                    if self.stop.is_some() {
+                        break;
+                    }
+                    self.accept_top(Ok(o));
+                }
+            }
+        }
+        self.stop.as_ref()
+    }
+
     /// C-155 point 3: [`Self::run`] with the token picked on the board, no check; stops at the first error.
     pub fn run_top<R: TopRunner + ?Sized>(&mut self, r: &mut R) -> &Stop {
         while let Some((tok, pos)) = self.next() {

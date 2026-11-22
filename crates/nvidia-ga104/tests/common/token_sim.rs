@@ -11,9 +11,9 @@ use gpu_core::error::{GpuError, GpuResult};
 use gpu_sim::cmdproc::{
     ARGMAX_NEEDS, ATTENTION_NEEDS, LAYERNORM_NEEDS, LAYERNORM256_NEEDS, Needs, ProgramFn,
     Q8_FUSED_NEEDS, Q8_FUSED32_NEEDS, Q8_MATVEC_NEEDS, Q8_MATVEC32_NEEDS, argmax_on_cpu,
-    attention_on_cpu, copy_b128_on_cpu, embed_on_cpu, gelu_on_cpu, layernorm_on_cpu,
-    layernorm256_on_cpu, q8_fused_on_cpu, q8_fused32_on_cpu, q8_matvec_on_cpu, q8_matvec32_on_cpu,
-    vadd_on_cpu,
+    attention_on_cpu, copy_b128_on_cpu, embed_dev_on_cpu, embed_on_cpu, gelu_on_cpu,
+    layernorm_on_cpu, layernorm256_on_cpu, q8_fused_on_cpu, q8_fused32_on_cpu, q8_matvec_on_cpu,
+    q8_matvec32_on_cpu, vadd_on_cpu,
 };
 use nvidia_ga104::gsp::golden::{GoldenMemory, Mapping};
 use nvidia_ga104::kronos_diag::{self as kd, SeqMode, TokenIo, Way};
@@ -37,7 +37,7 @@ pub const NONE: Needs = Needs {
 
 /// The nine programs with their models (what `gpu-sim` runs for each; C-147: + the glued `q8_fused`; C-155: + the
 /// new `layernorm256`; C-155 point 3: + `argmax`; C-155 point 4: + `q8_fused32`, `q8_matvec32`).
-pub const MODELS: [(Prog, ProgramFn, Needs); 12] = [
+pub const MODELS: [(Prog, ProgramFn, Needs); 13] = [
     (Prog::Copy, copy_b128_on_cpu, NONE),
     (Prog::Q8Matvec, q8_matvec_on_cpu, Q8_MATVEC_NEEDS),
     (Prog::Vadd, vadd_on_cpu, NONE),
@@ -50,6 +50,8 @@ pub const MODELS: [(Prog, ProgramFn, Needs); 12] = [
     (Prog::Argmax, argmax_on_cpu, ARGMAX_NEEDS),
     (Prog::Q8Fused32, q8_fused32_on_cpu, Q8_FUSED32_NEEDS),
     (Prog::Q8Matvec32, q8_matvec32_on_cpu, Q8_MATVEC32_NEEDS),
+    // C-157 point 7: the embedding with the token read from the argmax slot (uploaded only by `with_batch`).
+    (Prog::EmbedDev, embed_dev_on_cpu, NONE),
 ];
 
 fn f32s(v: &[f32]) -> Vec<u8> {
@@ -96,6 +98,10 @@ pub struct TokenSim<'a> {
     /// C-147 point 7: for every doorbell, (pushbuffer + ring words written, words left out by the shadow, record
     /// bytes zeroed).
     pub driver_words: Vec<(u64, u64, u64)>,
+    /// C-157 point 7: the argmax results buffer, one 16-byte slot per position (host RAM), only with `with_batch`.
+    pub results: Option<SysMapping>,
+    /// C-157 point 7: the timestamps of the last doorbell's n + 1 records (record 0, then one after each launch).
+    pub last_stamps: Vec<u64>,
 }
 
 impl<'a> TokenSim<'a> {
@@ -114,14 +120,41 @@ impl<'a> TokenSim<'a> {
         push: u64,
         upload: Option<u64>,
     ) -> GpuResult<Self> {
+        Self::with_opts(m, stale_line, push, upload, None)
+    }
+
+    /// C-157 point 7: the rig of [`Self::with`] for batches of positions on one doorbell: room for `slots` launches,
+    /// `embed_dev` uploaded after the other programs, and a results buffer of 16 bytes per position of the context in
+    /// host RAM (filled with 0xEE).
+    pub fn with_batch(
+        m: &'a OwnedModel,
+        stale_line: u64,
+        push: u64,
+        slots: usize,
+    ) -> GpuResult<Self> {
+        Self::with_opts(m, stale_line, push, None, Some(slots))
+    }
+
+    fn with_opts(
+        m: &'a OwnedModel,
+        stale_line: u64,
+        push: u64,
+        upload: Option<u64>,
+        slots: Option<usize>,
+    ) -> GpuResult<Self> {
         let e = m.shape.e;
         // + the copy of the logits down and the argmax (C-155 point 3).
-        let n = km::launches_per_token(m.layers.len()) + 2;
+        let n = slots.unwrap_or(km::launches_per_token(m.layers.len()) + 2);
         let mut r = rig_with_push(push);
         r.stale_line = stale_line;
+        let extra: &[Prog] = if slots.is_some() {
+            &[Prog::Q8Fused32, Prog::Q8Matvec32, Prog::EmbedDev]
+        } else {
+            &[Prog::Q8Fused32, Prog::Q8Matvec32]
+        };
         let progs: Vec<(Prog, Mapping)> = PROGRAMS_ARGMAX
             .iter()
-            .chain(&[Prog::Q8Fused32, Prog::Q8Matvec32])
+            .chain(extra)
             .map(|&p| {
                 let mm = r.mem.alloc_mapped(p.code().len() as u64, 0x1000).unwrap();
                 put_bytes(r.mem.writer_mut(), mm.pa, p.code());
@@ -203,6 +236,17 @@ impl<'a> TokenSim<'a> {
             .mem
             .alloc_sys_mapped(&dma_pages(3, (logit_bytes + 16).div_ceil(0x1000) as usize))
             .unwrap();
+        let results = match slots {
+            None => None,
+            Some(_) => {
+                let bytes = 16 * m.context as u64;
+                let rm = r
+                    .mem
+                    .alloc_sys_mapped(&dma_pages(5, bytes.div_ceil(0x1000) as usize))?;
+                sys_write(&mut r.sys, &rm, &vec![0xee; bytes as usize]);
+                Some(rm)
+            }
+        };
         let vas = ModelVas {
             emb_tok: at(emb_tok),
             emb_pos: at(emb_pos),
@@ -234,6 +278,8 @@ impl<'a> TokenSim<'a> {
             push_shadow: None,
             zero_records: true,
             driver_words: Vec::new(),
+            results,
+            last_stamps: Vec::new(),
         })
     }
 
@@ -452,6 +498,10 @@ impl TokenIo for TokenSim<'_> {
             span(&self.records),
             (self.host.va, self.host.size),
         ];
+        if let Some(rm) = &self.results {
+            loads.push((rm.va, rm.size));
+            stores.push((rm.va, rm.size));
+        }
         stores.extend(self.caches.iter().flat_map(|(k, c)| [span(k), span(c)]));
         gpu_runs(&mut self.r, &programs, &loads, &stores)?;
         let rec = get_bytes(
@@ -464,6 +514,7 @@ impl TokenIo for TokenSim<'_> {
         self.durations.push(each);
         let ts = |k: usize| u64::from_le_bytes(rec[16 * k + 8..16 * k + 16].try_into().unwrap());
         self.times.push((ts(0), ts(n), busy));
+        self.last_stamps = (0..=n).map(ts).collect();
         self.r.wq.retire(fence, done)?;
         self.submissions.push(n);
         Ok(())

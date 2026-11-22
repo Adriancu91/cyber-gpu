@@ -63,6 +63,8 @@ pub fn op_number(p: Prog) -> u32 {
         // C-155 point 4: nor this one.
         Prog::Q8Fused32 => 10,
         Prog::Q8Matvec32 => 11,
+        // C-157 point 7: nor this one.
+        Prog::EmbedDev => 12,
     }
 }
 
@@ -79,7 +81,7 @@ pub fn work_list(launches: &[Launch]) -> GpuResult<Vec<u8>> {
         }
         if matches!(
             l.prog,
-            Prog::LayerNorm256 | Prog::Argmax | Prog::Q8Fused32 | Prog::Q8Matvec32
+            Prog::LayerNorm256 | Prog::Argmax | Prog::Q8Fused32 | Prog::Q8Matvec32 | Prog::EmbedDev
         ) {
             return Err(bad(
                 "lista de lucru: token.comp nu are programele layernorm256, argmax, q8_fused32, q8_matvec32",

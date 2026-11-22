@@ -34,6 +34,7 @@
 #   sh tools/nak/build.sh attn_back_tile # C-160 point 7: attention backward mode 1 on 64-position tiles (session 164)
 #   sh tools/nak/build.sh attn_back_tile0 # C-160 point 7: attention backward mode 0 on 64-row tiles (session 165)
 #   sh tools/nak/build.sh attn_p         # C-160 point 7: attn_fwd without P·V, only P (session 168)
+#   sh tools/nak/build.sh embed_dev      # C-157 point 7: embed with the token read from the argmax result (session 170)
 #   sh tools/nak/build.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): apt install glslang-tools spirv-tools libvulkan-dev libdrm-dev
@@ -133,6 +134,9 @@ attn_fwd_tile)
     ;;
 attn_p)
     exec sh "$0" kernel attn_p 44
+    ;;
+embed_dev)
+    exec sh "$0" kernel embed_dev 44
     ;;
 attn_back_tile)
     exec sh "$0" kernel attn_back_tile 64

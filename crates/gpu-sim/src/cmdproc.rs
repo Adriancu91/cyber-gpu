@@ -2769,6 +2769,40 @@ pub fn embed_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// C-157 point 7: `embed_dev.comp` — token table 0x28, argmax result 0x30 (its word 0 = the token), position row 0x38,
+/// x 0x40, n 0x48, vocab 0x4c, row stride in bytes 0x50; blocks of 256. The token row is `table + idx * stride`, read
+/// only when `idx < vocab`; otherwise x[0..n] = NaN (0x7fc00000) and the table is not touched. The value is the same
+/// `embed_gpu` as [`embed_on_cpu`] (the program keeps embed.comp's expression).
+pub fn embed_dev_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [256, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 || l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: embed_dev cere blocuri de 256x1x1, grila 1D, baza 0",
+        ));
+    }
+    let (t, r, p, x) = (
+        l.mem.read_u64(l.cbuf0 + 0x28)?,
+        l.mem.read_u64(l.cbuf0 + 0x30)?,
+        l.mem.read_u64(l.cbuf0 + 0x38)?,
+        l.mem.read_u64(l.cbuf0 + 0x40)?,
+    );
+    let n = (l.mem.read_u32(l.cbuf0 + 0x48)? as u64).min(l.grid[0] as u64 * 256) as usize;
+    let vocab = l.mem.read_u32(l.cbuf0 + 0x4c)?;
+    let stride = l.mem.read_u32(l.cbuf0 + 0x50)? as u64;
+    let idx = l.mem.read_u32(r)?;
+    if idx >= vocab {
+        l.mem
+            .write_f32s(x, &alloc::vec![f32::from_bits(0x7fc0_0000); n]);
+        return Ok(());
+    }
+    let bytes = n.div_ceil(gpu_compute::q8::BLOCK) * gpu_compute::q8::BLOCK_BYTES;
+    let (mut tr, mut pr) = (alloc::vec![0u8; bytes], alloc::vec![0u8; bytes]);
+    l.mem.read(t + idx as u64 * stride, &mut tr)?;
+    l.mem.read(p, &mut pr)?;
+    l.mem
+        .write_f32s(x, &gpu_compute::model::embed_gpu(&tr, &pr, n));
+    Ok(())
+}
+
 /// C-87 step 2: what `token.comp` (one program per token) needs: the attention's 2 176 B of shared memory.
 pub const TOKEN_NEEDS: Needs = Needs {
     shared_bytes: 4 * (512 + 32),
