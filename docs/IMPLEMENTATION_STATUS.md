@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 159 — 22 noiembrie 2026, ~13:14–13:50 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (`colsum` pe placă, os-349) + C-160 p.7: `colsum` împărțit pe rânduri**
+## Sesiunea 159 — 22 noiembrie 2026, ~13:14–13:35 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (`colsum` pe placă, os-349) + C-160 p.7: `colsum` împărțit pe rânduri**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă: ciclul automat 12:36, `test-placa --colsum` (os-349) →
 întâi C-157 p.2. Clonele vechi de pe disc aveau ramuri desincronizate; le-am adus la `origin`, nimic nepublicat pierdut.
