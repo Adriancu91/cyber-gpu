@@ -2,6 +2,30 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-349 `test-placa --i9 c135 --colsum` (primul program „înapoi” al antrenării pe placă, ciclul automat 22 nov 2026, 12:36) — sesiunea 159
+Sursa: `Cyber-hub/rezultate/2026-11-22-workstation-os349-colsum/REZULTAT.md` + `rezultate/os-automat/2026-11-22/ciclu-auto-20261122-1236.txt`
+și `gpu-jurnal-046.txt` (nucleul cu `cyber-gpu 3b4ca77`; generarea pe `lipita-ln`, implicitul de atunci).
+- **Estimat** (nota `integration/cyber-universe/C-160_P6_primul-program-inapoi.md`, SIMULARE T166): 5/5 seturi, **3 778 / 3 778 elemente
+  bit cu bit modelul**, abaterea 24 / 19 / 447 / 197 / 319 ‰ din margine, gărzile neatinse.
+- **Ieșit (MĂSURAT):** exact asta. 5/5 în margine, 3 778 / 3 778 exacte, **aceleași ‰ pe fiecare set** (24 / 19 / 447 / 197 / 319) și
+  **toate cele 5 amprente ale ieșirii = ale modelului** (`0x24bebf23`, `0x8a91cbf7`, `0xce87801f`, `0x080b8c3e`, `0xfcf8f634`); amprentele
+  intrărilor = cele din notă, gărzile neatinse. Deci placa adună în ordinea și cu rotunjirea pe care le credem (fără FTZ ascuns, fma
+  unde l-a pus NAK): **modelul pe procesor al lui `colsum` e placa, bit cu bit** — primul program „înapoi” dovedit pe placa reală.
+- **Timpul (MĂSURAT, o lansare pe set):** 46,5 / 55,0 / 6,8 / 15,7 / 15,9 µs. **Atenție, nu e timpul de la antrenare:** OS-ul ține
+  bufferul în RAM-ul procesorului (`alloc_sys_mapped`), deci fiecare citire trece prin PCIe. Programul are un fir pe coloană și adună
+  rândurile unul după altul → un drum dus-întors la memorie pe rând: **~0,6–0,7 µs pe rând** (potrivirea 8 → 64 rânduri; aproximativă,
+  setul de 3 rânduri nu se așază pe dreaptă).
+- **Ce înseamnă pentru motor (DEDUS, `python3 tools/buget-antrenare/colsum_timp.py`):** la #513 un pas are **73 de `colsum`** pe bucata de
+  6 144 de rânduri. Așa cum e programul, ~2–4 ms pe lansare → **~165–275 ms pe bucată**, adică **106–176 % din tot timpul în care PyTorch
+  face bucata întreagă** (156 ms). Podeaua (fiecare număr citit o dată, ~450 GB/s) e ~6,6 ms (4 %). Deci `colsum` e corect, dar trebuie
+  **împărțit pe rânduri** (blocuri pe bucăți de rânduri + o a doua trecere peste sumele parțiale) înainte de orice măsurătoare de viteză a
+  pasului. Previziunea „restul pasului ~15 %” din `C-160_P7_VITEZA_ESTIMARE.md` era valabilă doar cu un `colsum` împărțit; am scris asta acolo.
+- **Generarea din același ciclu (MĂSURAT):** 16/16 simboluri identice cu procesorul, amprenta `0x46a07914` = referința `lipita-ln`,
+  placa 1 976 µs (fc 487, proj 406, qkv 381 — ca în os-331), driverul 811, 351 simb/s cu driverul. Rândul „logit-urile identice cu os-322? NU”
+  e cel deja lămurit (`0x37920000`, altă ordine a sumelor, de ~6 ori sub prag). Nimic de tăiat aici; `lipita-ln-32` implicită vine în os-350.
+- **Ce tai mai departe:** nimic nou pentru placă. Următorul pe placă: **pasul de aur mic** (deja predat, `C-160_P6b_pasul-de-aur-pe-placa.md`).
+  La noi intră în coadă **`colsum` împărțit pe rânduri** (SIMULARE întâi; ordinea sumelor se schimbă → model și margine noi, scrise înainte).
+
 ## os-346 `test-placa --i9 c135 --ln-32` (lista `lipita-ln-32` pe placă, ciclul automat 22 nov 2026, 10:06) — sesiunea 156
 Sursa: `Cyber-hub/rezultate/os-automat/2026-11-22/ciclu-auto-20261122-1006.txt` + `gpu-jurnal-044.txt` (nucleul cu `cyber-gpu feb0819`;
 #513 de două ori pe același text: întâi `lipita-ln` = implicitul, apoi `lipita-ln-32` = LayerNorm nou + toate înmulțirile pe sferturi).

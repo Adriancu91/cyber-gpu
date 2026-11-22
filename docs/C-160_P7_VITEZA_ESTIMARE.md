@@ -49,6 +49,14 @@ partajată, nu calculul (DEDUS din codul NAK, `docs/C-160_P4_MATMUL.md`). E core
   listarea SASS înainte de placă.
 - Comparația e cu bf16 la PyTorch; noi am avea f16 (alt domeniu, aceeași viteză pe circuite) — de aici scalarea erorii.
 
+## 6. Adăugat după os-349 (sesiunea 159, 22 nov 2026): prima măsurătoare a unui program „înapoi” schimbă o presupunere
+- `colsum` a trecut pe placă bit cu bit (`docs/C-157_P2_COMPARATII.md`, os-349). Timpul lui (MĂSURAT, buffer în RAM-ul procesorului):
+  ~0,6–0,7 µs pe rând, pentru că un fir adună singur toate rândurile coloanei lui.
+- Socoteala (DEDUS, `python3 tools/buget-antrenare/colsum_timp.py`): cele 73 de `colsum` ale unei bucăți #513 ar lua **~165–275 ms**, mai
+  mult decât tot pasul PyTorch (156 ms). Cu „restul ~15 %” de la §3 nu se poate ajunge până nu împărțim `colsum` pe rânduri (podeaua
+  ~6,6 ms = 4 %). **Presupunerea „15 %” rămâne, dar doar pentru un `colsum` împărțit**; la fel trebuie privite `ln_back`, `attn_back`
+  și AdamW înainte de măsurătoarea pasului întreg (punctul 3 de la §4).
+
 ## Surse
 - Formula 6·P și atenția: studiul `docs/C-160_MOTOR_STUDIU.md` §1 (Kaplan et al. 2020, „Scaling Laws”, numărarea operațiilor; llm.c MIT).
 - Plafoanele: specificațiile publice NVIDIA pentru RTX 3070 Ti (48 SM, ceasul de boost) și raportul „NVIDIA Ampere GA102 GPU
