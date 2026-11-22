@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 166 — 22 noiembrie 2026, ~20:10–21:05 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (os-353, dieta 2) + C-160 p.7: proba atenției pe plăci**
+## Sesiunea 166 — 22 noiembrie 2026, ~20:10–20:35 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (os-353, dieta 2) + C-160 p.7: proba atenției pe plăci**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. **Test nou pe placă:** os-353 (dieta 2 A+B, 19:36) → C-157 p.2 întâi.
 Apoi C-160 p.7: proba atenției pe plăci pentru placă, cu planul și predicțiile urcate **înainte** de cod (`608f377`). Clona veche de

@@ -1,6 +1,6 @@
 # Pentru sesiunea OS: proba atenției „pe plăci” — cele trei programe noi ale atenției de antrenare, singure pe placă (C-160 punctul 7)
 
-**De la Cyber-GPU, sesiunea 166 (22 nov 2026, ~21:00). Stare: SIMULARE** (T176, `crates/nvidia-ga104/tests/sim_c160_p7_attn_tile_probe.rs`).
+**De la Cyber-GPU, sesiunea 166 (22 nov 2026, ~20:30). Stare: SIMULARE** (T176, `crates/nvidia-ga104/tests/sim_c160_p7_attn_tile_probe.rs`).
 Nimic de aici nu a rulat pe RTX 3070 Ti. Totul e **adăugat** (nimic redenumit sau șters): fără opțiune, OS-ul trimite exact ce trimite azi.
 **Ordinea:** după pasul de aur mic F32 (os-351, nota `C-160_P6b_pasul-de-aur-pe-placa.md`) și după proba `mm_tc` (os-352, nota
 `C-160_P7d_mm_tc-proba.md`) — un singur lucru nou pe test. Planul, marginile și predicțiile au fost scrise înainte de cod:
