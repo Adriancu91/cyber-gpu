@@ -203,6 +203,43 @@ def print_tiled():
               f" -> ~{chunk*1e3:.0f} ms pe bucata (12 lansari)")
 
 
+def tiled_back_cols():
+    """C-160 p.7, session 164: attn_back mode 1 (columns) "pe placi" (attn_back_tile.comp, plan written BEFORE the code).
+
+    Blocks of 256 threads (16 x 16) own 64 positions (b, h, t0..t0+63) and all d <= 64 columns; every thread 4 x 4
+    results. Three passes, each a small matmul over 64 x 64 tiles in shared memory (32 KiB: two tiles):
+      dQ = dS[t, j <= t] . K   (row tiles of dS up to the diagonal),
+      dK = dS[i >= t, t]^T . Q (column tiles of dS from the diagonal down),
+      dV = P[i >= t, t]^T . dO.
+    Arithmetic: 3 matmuls on every (row tile, column tile) pair on or below the diagonal, diagonal tiles in full.
+    Bytes: dS read twice and P once on those pairs, + Q / K / dO tiles per pair (mostly L2), + dqkv written once.
+    DEDUCED; factor 2.
+    """
+    tiles_rows = -(-T // 64)
+    tiles_lower = tiles_rows * (tiles_rows + 1) // 2
+    bh = B * H
+    flop = bh * tiles_lower * (64 * 64 * D * 2) * 3
+    tile_bytes = bh * tiles_lower * 64 * 64 * 4
+    ds_p_bytes = 3 * tile_bytes
+    other_bytes = bh * tiles_lower * 64 * D * 4 * 3 + ROWS * 3 * C * 4
+    out = []
+    for rate in (4e12, 8e12):
+        t_ar = flop / rate
+        t_bw = (ds_p_bytes + other_bytes) / BANDWIDTH
+        out.append((rate, t_ar, t_bw, max(t_ar, t_bw) * L))
+    return flop, ds_p_bytes, out
+
+
+def print_tiled_back():
+    flop, nbytes, out = tiled_back_cols()
+    print("\nAtentia inapoi, modul 1 (coloanele) \"pe placi\" (attn_back_tile, plan sesiunea 164, DEDUS):")
+    print(f"  pe lansare: {flop/1e9:.1f} GFLOP calculate (diagonala intreaga), dS + P citite {nbytes/1e6:.0f} MB")
+    for rate, t_ar, t_bw, chunk in out:
+        print(f"  la {rate/1e12:.0f} TFLOP/s F32 efectiv: calcul {t_ar*1e3:.2f} ms, memorie {t_bw*1e3:.2f} ms"
+              f" -> ~{chunk*1e3:.0f} ms pe bucata (12 lansari)")
+
+
 if __name__ == "__main__":
     main()
     print_tiled()
+    print_tiled_back()
