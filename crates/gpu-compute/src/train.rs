@@ -1138,6 +1138,26 @@ impl AdamW {
         }
     }
 
+    /// The f32 scalars of step `t` (1, 2, …), rounded as [`AdamW::step`] uses them — what the board's optimizer program
+    /// (`opt_step.comp`, C-160 point 4, program 10) receives from the driver.
+    pub fn scalars(&self, t: u32) -> AdamScalars {
+        let mut pow1 = 1.0f64;
+        let mut pow2 = 1.0f64;
+        for _ in 0..t {
+            pow1 *= self.beta1;
+            pow2 *= self.beta2;
+        }
+        AdamScalars {
+            decay: (1.0 - self.lr * self.weight_decay) as f32,
+            w1: (1.0 - self.beta1) as f32,
+            b2: self.beta2 as f32,
+            one_minus_b2: (1.0 - self.beta2) as f32,
+            bc2_sqrt: sqrt64(1.0 - pow2) as f32,
+            step_size: (self.lr / (1.0 - pow1)) as f32,
+            eps: self.eps as f32,
+        }
+    }
+
     /// One step, per element, in PyTorch's order and f32 rounding:
     /// `w ·= 1 − lr·wd`; `m = lerp(m, g, 1 − β1)`; `v = v·β2 + (1 − β2)·g²`;
     /// `w −= (lr / (1 − β1ᵗ)) · m / (√v / √(1 − β2ᵗ) + eps)`.
@@ -1147,21 +1167,15 @@ impl AdamW {
             "adamw: numarul tensorilor",
         )?;
         self.t += 1;
-        let t = self.t as i32;
-        let decay = (1.0 - self.lr * self.weight_decay) as f32;
-        let w1 = (1.0 - self.beta1) as f32;
-        let b2 = self.beta2 as f32;
-        let one_minus_b2 = (1.0 - self.beta2) as f32;
-        let mut pow1 = 1.0f64;
-        let mut pow2 = 1.0f64;
-        for _ in 0..t {
-            pow1 *= self.beta1;
-            pow2 *= self.beta2;
-        }
-        let bc1 = 1.0 - pow1;
-        let bc2_sqrt = sqrt64(1.0 - pow2) as f32;
-        let step_size = (self.lr / bc1) as f32;
-        let eps = self.eps as f32;
+        let AdamScalars {
+            decay,
+            w1,
+            b2,
+            one_minus_b2,
+            bc2_sqrt,
+            step_size,
+            eps,
+        } = self.scalars(self.t);
         for (k, (p, g)) in params.iter_mut().zip(grads).enumerate() {
             need(
                 p.len() == g.len() && p.len() == self.m[k].len(),
@@ -1180,6 +1194,22 @@ impl AdamW {
         }
         Ok(())
     }
+}
+
+/// The f32 scalars of one AdamW step ([`AdamW::scalars`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AdamScalars {
+    /// `1 − lr·wd`.
+    pub decay: f32,
+    /// `1 − β1` (the lerp weight).
+    pub w1: f32,
+    pub b2: f32,
+    pub one_minus_b2: f32,
+    /// `√(1 − β2ᵗ)`.
+    pub bc2_sqrt: f32,
+    /// `lr / (1 − β1ᵗ)`.
+    pub step_size: f32,
+    pub eps: f32,
 }
 
 /// Which recipe of the golden step.

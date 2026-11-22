@@ -1,0 +1,45 @@
+// C-160 point 4, training program 10 (docs/C-160_MOTOR_STUDIU.md, "Programele de placă", #10): the optimizer step,
+// element by element over ALL parameters (the driver keeps w, g, m, v as one buffer each, tensors one after the other).
+// The gradient is first multiplied by the clipping factor c = coef[0] (written by gnorm.comp; the driver writes 1.0
+// when the recipe does not clip — g·1 is exact).
+//   mode 0 (SGD, the `sgd` recipe):      w ← w + (−lr)·g
+//   mode 1 (AdamW, PyTorch 2.14 single-tensor order, amsgrad off):
+//       w ← w·(1 − lr·wd);  m ← m + (1−β1)·(g − m);  v ← v·β2 + ((1−β2)·g)·g;
+//       w ← w + (−lr/(1−β1ᵗ))·(m / (√v / √(1−β2ᵗ) + eps))
+// The step's scalars (1 − lr·wd, 1−β1, β2, 1−β2, √(1−β2ᵗ), −lr/(1−β1ᵗ), eps) are rounded to f32 by the driver as the
+// CPU oracle does. `precise` everywhere: NAK may not fuse a multiply into an add, so every operation is rounded where
+// PyTorch rounds it. MUFU: the √ and the two divisions of AdamW (approximate on the board) — the CPU model rounds
+// them correctly and is judged in a written margin; SGD and the m, v updates are plain f32 operations (bit for bit,
+// with FTZ). 256 threads per block, i < n; no shared memory, no barrier. m and v are not touched in mode 0.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Rw { float v[]; };
+layout(push_constant) uniform Args {
+    In g; In coef; Rw w; Rw m; Rw v;
+    uint n; uint mode;
+    float neg_lr; float decay; float w1; float b2; float omb2; float bc2_sqrt; float neg_step; float eps;
+} args;
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= args.n) {
+        return;
+    }
+    precise float gi = args.g.v[i] * args.coef.v[0];
+    if (args.mode == 0u) {
+        precise float d = args.neg_lr * gi;
+        args.w.v[i] = args.w.v[i] + d;
+    } else {
+        precise float wi = args.w.v[i] * args.decay;
+        float m0 = args.m.v[i];
+        precise float mi = m0 + args.w1 * (gi - m0);
+        precise float vi = args.v.v[i] * args.b2 + (args.omb2 * gi) * gi;
+        precise float den = sqrt(vi) / args.bc2_sqrt + args.eps;
+        precise float wn = wi + args.neg_step * (mi / den);
+        args.m.v[i] = mi;
+        args.v.v[i] = vi;
+        args.w.v[i] = wn;
+    }
+}

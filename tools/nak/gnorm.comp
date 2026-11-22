@@ -1,0 +1,67 @@
+// C-160 point 4, training program 9 (docs/C-160_MOTOR_STUDIU.md, "Programele de placă", #9): the total gradient norm
+// of the clipping step, N = √(Σ g²) over ALL gradient tensors (the driver keeps them one after the other in one
+// buffer x[0..n)), and PyTorch's clip_grad_norm_ factor c = min(1, max_norm / (N + 1e-6)).
+// No atomics: block b sums x[b·chunk .. min((b+1)·chunk, n)) (thread t takes b·chunk + t, + 256, ... in that order,
+// from 0.0), then the block sum of ln_fwd.comp (butterfly in the warp, the 8 warp sums in order). Same bits every run.
+//   mode bit 0 (SQUARE): add x² (one explicit fma per element) instead of x;
+//   mode bit 1 (FINISH): thread 0 writes res[0] = N = √S and res[1] = c (NaN stays NaN, as torch.clamp);
+//                        without it thread 0 writes part[b] = S_b.
+// Two launches for a big model: mode 1 (squares → part[0..P)), then mode 2 on part with one block (sum → N, c).
+// One launch for a small one: mode 3 with one block. MUFU: the √ and the division of the FINISH branch (one row
+// per step) — approximate on the board, so the CPU model rounds them correctly and is judged in a written margin.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args { In x; Out part; Out res; uint n; uint chunk; uint mode; float max_norm; } args;
+shared float parts[8];
+
+float block_sum(float v, uint t) {
+    v = v + subgroupShuffleXor(v, 16u);
+    v = v + subgroupShuffleXor(v, 8u);
+    v = v + subgroupShuffleXor(v, 4u);
+    v = v + subgroupShuffleXor(v, 2u);
+    v = v + subgroupShuffleXor(v, 1u);
+    if ((t & 31u) == 0u) {
+        parts[t >> 5u] = v;
+    }
+    barrier();
+    float r = parts[0];
+    for (uint w = 1u; w < 8u; w++) {
+        r = r + parts[w];
+    }
+    return r;
+}
+
+void main() {
+    uint t = gl_LocalInvocationID.x;
+    uint b = gl_WorkGroupID.x;
+    uint lo = b * args.chunk;
+    uint hi = min(lo + args.chunk, args.n);
+    float s = 0.0;
+    if ((args.mode & 1u) != 0u) {
+        for (uint i = lo + t; i < hi; i += 256u) {
+            float v = args.x.v[i];
+            s = fma(v, v, s);
+        }
+    } else {
+        for (uint i = lo + t; i < hi; i += 256u) {
+            s = s + args.x.v[i];
+        }
+    }
+    float tot = block_sum(s, t);
+    if (t == 0u) {
+        if ((args.mode & 2u) != 0u) {
+            precise float nrm = sqrt(tot);
+            precise float coef = args.max_norm / (nrm + 1e-6);
+            args.res.v[0] = nrm;
+            args.res.v[1] = coef >= 1.0 ? 1.0 : coef;
+        } else {
+            args.part.v[b] = tot;
+        }
+    }
+}

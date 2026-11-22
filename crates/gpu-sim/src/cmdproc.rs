@@ -1481,6 +1481,123 @@ pub fn emb_back_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// C-160 point 4, program 9: what `tools/nak/out/gnorm.sm86.sass` needs — 32 bytes of shared memory (the 8 warp sums)
+/// and one barrier.
+pub const GNORM_NEEDS: Needs = Needs {
+    shared_bytes: 32,
+    barriers: 1,
+};
+
+/// The CPU stand-in for C-160 point 4's gradient-norm program (`gnorm.sm86.sass`, program 9): blocks of 256, grid
+/// [blocks, 1, 1]; cbuf0 x/part/res at 0x28/0x30/0x38, n 0x40, chunk 0x44, the mode 0x48 (bit 0 squares, bit 1
+/// finish), max_norm 0x4c (NAK dump). Block b covers `x[b·chunk .. min((b+1)·chunk, n))` (`gpu_compute::layer::
+/// gnorm_block_gpu`); with bit 1, thread 0 of EVERY block writes `res[0..2]` (`gnorm_finish_gpu`; the driver
+/// launches one block, a grid > 1 is refused as not modelled: on the board the blocks would race on res), else
+/// `part[b]`. A chunk · grid past 32 bits is refused (the program's `b·chunk` wraps).
+pub fn gnorm_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    use gpu_compute::layer::{gnorm_block_gpu, gnorm_finish_gpu};
+    if l.block != [256, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 {
+        return Err(bad("SIM: gnorm cere blocuri de 256x1x1, grila 1D"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let r = |l: &Launch<'_>, o: u64| l.mem.read_u64(l.cbuf0 + o);
+    let (x, part, res) = (r(l, 0x28)?, r(l, 0x30)?, r(l, 0x38)?);
+    let n = l.mem.read_u32(l.cbuf0 + 0x40)? as usize;
+    let chunk = l.mem.read_u32(l.cbuf0 + 0x44)? as u64;
+    let mode = l.mem.read_u32(l.cbuf0 + 0x48)?;
+    let max_norm = f32::from_bits(l.mem.read_u32(l.cbuf0 + 0x4c)?);
+    let finish = mode & 2 != 0;
+    if finish && l.grid[0] != 1 {
+        return Err(bad("SIM: gnorm cu terminare cere un singur bloc"));
+    }
+    if chunk * l.grid[0] as u64 > u32::MAX as u64 {
+        return Err(bad("SIM: gnorm: b*chunk trece de 32 de biti, nemodelat"));
+    }
+    for b in 0..l.grid[0] as usize {
+        let lo = (b as u64 * chunk) as usize;
+        let hi = (lo + chunk as usize).min(n);
+        let xs = if hi > lo {
+            l.mem.read_f32s(x + 4 * lo as u64, hi - lo)?
+        } else {
+            alloc::vec::Vec::new()
+        };
+        let s = gnorm_block_gpu(&xs, 0, xs.len(), mode & 1 != 0);
+        if finish {
+            let (nrm, c) = gnorm_finish_gpu(s, max_norm);
+            l.mem.write_u32(res, nrm.to_bits());
+            l.mem.write_u32(res + 4, c.to_bits());
+        } else {
+            l.mem.write_u32(part + 4 * b as u64, s.to_bits());
+        }
+    }
+    Ok(())
+}
+
+/// The CPU stand-in for C-160 point 4's optimizer program (`opt_step.sm86.sass`, program 10): blocks of 256, one
+/// element per thread (grid x = ⌈n/256⌉); cbuf0 g/coef/w/m/v at 0x28/0x30/0x38/0x40/0x48, n 0x50, the mode 0x54
+/// (0 = SGD, anything else = AdamW, as the program's `isetp`), the 8 scalars from 0x58 (NAK dump). Each element is
+/// `gpu_compute::layer::opt_step_gpu` (the √ and the divisions modelled correctly rounded); threads with i ≥ n do
+/// nothing; m and v are neither read nor written in SGD.
+pub fn opt_step_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    use gpu_compute::layer::{OptScalars, opt_step_gpu};
+    if l.block != [256, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 {
+        return Err(bad("SIM: opt_step cere blocuri de 256x1x1, grila 1D"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let r = |l: &Launch<'_>, o: u64| l.mem.read_u64(l.cbuf0 + o);
+    let (g, coef, w, m, v) = (
+        r(l, 0x28)?,
+        r(l, 0x30)?,
+        r(l, 0x38)?,
+        r(l, 0x40)?,
+        r(l, 0x48)?,
+    );
+    let n = (l.mem.read_u32(l.cbuf0 + 0x50)? as u64).min(l.grid[0] as u64 * 256) as usize;
+    let adam = l.mem.read_u32(l.cbuf0 + 0x54)? != 0;
+    let f = |l: &Launch<'_>, i: u64| -> GpuResult<f32> {
+        Ok(f32::from_bits(l.mem.read_u32(l.cbuf0 + 0x58 + 4 * i)?))
+    };
+    let s = OptScalars {
+        neg_lr: f(l, 0)?,
+        decay: f(l, 1)?,
+        w1: f(l, 2)?,
+        b2: f(l, 3)?,
+        omb2: f(l, 4)?,
+        bc2_sqrt: f(l, 5)?,
+        neg_step: f(l, 6)?,
+        eps: f(l, 7)?,
+    };
+    if n == 0 {
+        return Ok(());
+    }
+    let c = f32::from_bits(l.mem.read_u32(coef)?);
+    let gs = l.mem.read_f32s(g, n)?;
+    let mut ws = l.mem.read_f32s(w, n)?;
+    if adam {
+        let mut ms = l.mem.read_f32s(m, n)?;
+        let mut vs = l.mem.read_f32s(v, n)?;
+        for i in 0..n {
+            (ws[i], ms[i], vs[i]) = opt_step_gpu(true, &s, c, gs[i], ws[i], ms[i], vs[i]);
+        }
+        l.mem.write_f32s(m, &ms);
+        l.mem.write_f32s(v, &vs);
+    } else {
+        for i in 0..n {
+            ws[i] = opt_step_gpu(false, &s, c, gs[i], ws[i], 0.0, 0.0).0;
+        }
+    }
+    l.mem.write_f32s(w, &ws);
+    Ok(())
+}
+
 /// The CPU stand-in for C-160 point 4's column-sum program (`colsum.sm86.sass`): blocks of 256 (one thread per
 /// column, grid x = ⌈c/256⌉); cbuf0 dy/x/μ/rstd/s0/s1 at 0x28/0x30/0x38/0x40/0x48/0x50, rows at 0x58, c at 0x5c, the
 /// mode at 0x60 (0 = bias, else LayerNorm: dγ in s0, dβ in s1) (NAK dump). The columns are

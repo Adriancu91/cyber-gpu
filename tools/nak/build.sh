@@ -25,6 +25,8 @@
 #   sh tools/nak/build.sh attn_fwd       # C-160 point 4, program 6 (forward): causal attention over T positions, writes P (session 149)
 #   sh tools/nak/build.sh emb_fwd        # C-160 point 4, program 8 (forward): x = emb[tok] + pos (session 150)
 #   sh tools/nak/build.sh emb_back       # C-160 point 4, program 8 (backward): embedding gradients by segments, no atomics (session 150)
+#   sh tools/nak/build.sh gnorm          # C-160 point 4, program 9: total gradient norm + clipping factor, no atomics (session 152)
+#   sh tools/nak/build.sh opt_step       # C-160 point 4, program 10: SGD / AdamW step over all parameters (session 152)
 #   sh tools/nak/build.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): apt install glslang-tools spirv-tools libvulkan-dev libdrm-dev
@@ -118,6 +120,12 @@ emb_fwd)
     ;;
 emb_back)
     exec sh "$0" kernel emb_back 48
+    ;;
+gnorm)
+    exec sh "$0" kernel gnorm 40
+    ;;
+opt_step)
+    exec sh "$0" kernel opt_step 80
     ;;
 kernel)
     NAME=${2:?nume}; PUSH=${3:?octeti push constants}

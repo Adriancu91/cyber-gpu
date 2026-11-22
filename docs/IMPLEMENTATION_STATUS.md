@@ -1,5 +1,38 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 152 — 22 noiembrie 2026, ~06:11–06:35 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 4, programele 9 și 10 (`gnorm` + `opt_step`)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după ciclul de la 05:06 (comparat în sesiunea
+151) → C-160 punctul 4 mai departe. (Dosarele locale vechi aveau ramurile în urmă; am lucrat în clone proaspete; istoria de pe GitHub
+neatinsă.)
+
+**Ce s-a făcut:** ultimele două programe ale pasului de antrenare — acum **toate cele 10** există în SIMULARE. (1) `gnorm` (programul 9):
+norma totală a gradientului pe toți tensorii + factorul de tăiere `clip_grad_norm_`, fără `atomic` (sume parțiale pe blocuri, apoi un
+bloc), 135 de instrucțiuni, SHA-256 `253c8e00…7322a594`. (2) `opt_step` (programul 10): pasul SGD / AdamW pe toți parametrii, cu
+factorul de tăiere citit din memoria plăcii, totul `precise` (NAK nu contopește nimic), 61 de instrucțiuni, SHA-256 `8e15a8b6…40b3b12`.
+NAK împarte prin înmulțire cu inversul (`mufu.rcp`) — modelat așa. Mesa NAK 25.0.7 reconstruit în cloud (`emb_back` identic).
+Adăugări (nimic redenumit, OS-ul compilează neschimbat): `nvidia_ga104::{gnorm, opt_step}`, `gpu_compute::layer::{gnorm_block_gpu,
+gnorm_finish_gpu, grad_norm_gpu, OptScalars, opt_step_gpu, GNORM_SQUARE, GNORM_FINISH}`, `gpu_compute::train::{AdamW::scalars,
+AdamScalars}`, `gpu_sim::cmdproc::{GNORM_NEEDS, gnorm_on_cpu, opt_step_on_cpu}`. Nota: `docs/C-160_P4_OPT.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Compilarea NAK | Mesa reconstruit în cloud; `emb_back` identic; `gnorm`, `opt_step` noi | PASS (compilat, nerulat) |
+| T163 `gnorm` față de oracolul f64 | 10 forme: ≤ 7,4 % din marginea scrisă; pe gradientul PyTorch al pasului 1: N = norma PyTorch (abatere 0) | PASS (SIMULARE) |
+| T163 valori speciale, biți, refuzuri, 8 greșeli plantate | toate | PASS (SIMULARE) |
+| T164 `opt_step` | SGD bit cu bit; AdamW: m, v bit cu bit, w ≤ 71,2 % din margine (±2 ulp: ≤ 65,2 %); 8 greșeli plantate | PASS (SIMULARE) |
+| T164 pasul de aur mic cu norma + tăierea + optimizatorul pe placa simulată, 10 pași față de PyTorch | `sgd` 2,4e-7 (tol. 1e-6), `adamw_513` 1,1e-5 (tol. 1e-4) | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy `-D warnings`, **756 de teste**, build no_std | PASS |
+| `gnorm` / `opt_step` pe RTX 3070 Ti | nepredate (C-160 p.6) | NOT TESTED |
+
+Corectat pe drum: două praguri în plus puse din ochi (nu din socoteală) în testul pasului de aur au picat — chiar oracolul e la 1,05e-5
+de PyTorch după 10 pași; criteriul rămas = toleranța din hub; detalii în notă. Marginile scrise ale T163/T164 nu s-au schimbat.
+
+**Următorul pas:** C-160 punctul 5: pasul de aur mic cap-coadă pe placa simulată (toate cele 10 programe legate); la primul test nou pe
+placă: C-157 punctul 2.
+
+---
+
 ## Sesiunea 151 — 22 noiembrie 2026, ~05:11–05:50 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (cursa pe sferturi pe placă) + lista `lipita-ln-32`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. **Test nou pe placă:** ciclul automat de la 05:06 a rulat cursa

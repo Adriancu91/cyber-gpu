@@ -1141,6 +1141,143 @@ pub fn first_outside(got: &[f32], cpu: &[f32]) -> Option<(usize, f32, f32)> {
     })
 }
 
+/// `gnorm.comp` mode bit 0: add x² (one `ffma.ftz` per element) instead of x.
+pub const GNORM_SQUARE: u32 = 1;
+/// `gnorm.comp` mode bit 1: thread 0 writes N = √S and the clipping factor instead of the block's partial sum.
+pub const GNORM_FINISH: u32 = 2;
+
+/// One block of the board's gradient-norm program, `gnorm.comp` (C-160 point 4, program 9): the elements
+/// `x[lo..hi)`, thread t taking lo + t, + 256, … from 0.0 (`ffma.ftz`(v, v, s) with `square`, `fadd.ftz` without), then
+/// [`block_sum256`]. A plain f32 chain per thread and a fixed tree: the program's bits exactly.
+pub fn gnorm_block_gpu(x: &[f32], lo: usize, hi: usize, square: bool) -> f32 {
+    let mut p = [0.0f32; 256];
+    for (t, pt) in p.iter_mut().enumerate() {
+        let mut s = 0.0f32;
+        let mut i = lo + t;
+        while i < hi {
+            let v = x[i];
+            s = if square {
+                fma_f32_ftz(v, v, s)
+            } else {
+                add_f32_ftz(s, v)
+            };
+            i += 256;
+        }
+        *pt = s;
+    }
+    block_sum256(&p)
+}
+
+/// The FINISH branch of `gnorm.comp`, in the order of the code NAK 25.0.7 made (`tools/nak/out/gnorm.sm86.txt`):
+/// N = `MUFU.SQRT`(S); c = `fmul.ftz`(`MUFU.RCP`(`fadd.ftz`(N, 1e-6)), max_norm) — NAK divides by a reciprocal
+/// (two roundings); then `fsetp.ge` + `sel`: c ≥ 1 → 1, else c (a NaN stays NaN, as torch.clamp). The two MUFU units
+/// are modelled correctly rounded (the board's are approximate; judged in a written margin). Returns (N, c).
+pub fn gnorm_finish_gpu(s: f32, max_norm: f32) -> (f32, f32) {
+    let n = ftz(math::sqrt(ftz(s)));
+    let c = mul_ftz(ftz(1.0 / add_f32_ftz(n, 1e-6)), max_norm);
+    (n, if c >= 1.0 { 1.0 } else { c })
+}
+
+/// The whole norm as the driver launches it: `chunk` elements per block (a multiple of 256, at least 256); one
+/// launch (mode 3, one block) when everything fits in one chunk, else mode 1 over ⌈n/chunk⌉ blocks, then mode 2 with
+/// one block over all the partial sums. Returns (N, c, the partial sums — empty for one launch);
+/// `None` for an empty x, a bad chunk or too many blocks.
+pub fn grad_norm_gpu(x: &[f32], chunk: usize, max_norm: f32) -> Option<(f32, f32, Vec<f32>)> {
+    if x.is_empty() || chunk < 256 || !chunk.is_multiple_of(256) {
+        return None;
+    }
+    let blocks = x.len().div_ceil(chunk);
+    if blocks == 1 {
+        let (n, c) = gnorm_finish_gpu(gnorm_block_gpu(x, 0, x.len(), true), max_norm);
+        return Some((n, c, Vec::new()));
+    }
+    if x.len() > u32::MAX as usize {
+        return None;
+    }
+    let parts: Vec<f32> = (0..blocks)
+        .map(|b| gnorm_block_gpu(x, b * chunk, ((b + 1) * chunk).min(x.len()), true))
+        .collect();
+    let (n, c) = gnorm_finish_gpu(gnorm_block_gpu(&parts, 0, blocks, false), max_norm);
+    Some((n, c, parts))
+}
+
+/// The f32 scalars `opt_step.comp` (C-160 point 4, program 10) takes, as the driver writes them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OptScalars {
+    /// SGD: −lr.
+    pub neg_lr: f32,
+    pub decay: f32,
+    pub w1: f32,
+    pub b2: f32,
+    pub omb2: f32,
+    pub bc2_sqrt: f32,
+    /// −lr / (1 − β1ᵗ).
+    pub neg_step: f32,
+    pub eps: f32,
+}
+
+impl OptScalars {
+    /// The `sgd` recipe (only `neg_lr` is read).
+    pub fn sgd(lr: f32) -> Self {
+        Self {
+            neg_lr: -lr,
+            decay: 1.0,
+            w1: 0.0,
+            b2: 0.0,
+            omb2: 0.0,
+            bc2_sqrt: 1.0,
+            neg_step: 0.0,
+            eps: 0.0,
+        }
+    }
+
+    /// AdamW step `t` (1, 2, …) with the oracle's rounding ([`crate::train::AdamW::scalars`]).
+    pub fn adamw(a: &crate::train::AdamScalars) -> Self {
+        Self {
+            neg_lr: 0.0,
+            decay: a.decay,
+            w1: a.w1,
+            b2: a.b2,
+            omb2: a.one_minus_b2,
+            bc2_sqrt: a.bc2_sqrt,
+            neg_step: -a.step_size,
+            eps: a.eps,
+        }
+    }
+}
+
+/// One element of the board's optimizer program, `opt_step.comp` (C-160 point 4, program 10), in the order of the
+/// code NAK 25.0.7 made (`tools/nak/out/opt_step.sm86.txt`; every operation `precise`, so nothing is fused):
+/// g = `fmul.ftz`(g, c); SGD (`adam = false`): w = `fadd.ftz`(w, `fmul.ftz`(g, −lr)); AdamW: w′ = w·decay,
+/// m = m + (g − m)·w1, v = v·β2 + (g·omb2)·g, den = `MUFU.SQRT`(v)·`MUFU.RCP`(bc2) + eps,
+/// w = w′ + (m·`MUFU.RCP`(den))·neg_step — NAK divides by multiplying with a reciprocal (two roundings, not PyTorch's
+/// one). The MUFU units are modelled correctly rounded (the board's are approximate): the weights are judged against
+/// the oracle (`train::AdamW::step`) in a written margin; m, v and SGD are plain f32 operations (bit for bit, with
+/// FTZ). Returns the new (w, m, v) (m, v unchanged for SGD).
+pub fn opt_step_gpu(
+    adam: bool,
+    s: &OptScalars,
+    c: f32,
+    g: f32,
+    w: f32,
+    m: f32,
+    v: f32,
+) -> (f32, f32, f32) {
+    let gi = mul_ftz(g, c);
+    if !adam {
+        return (add_f32_ftz(w, mul_ftz(gi, s.neg_lr)), m, v);
+    }
+    let wi = mul_ftz(w, s.decay);
+    let mi = add_f32_ftz(m, mul_ftz(add_f32_ftz(gi, -m), s.w1));
+    let vi = add_f32_ftz(mul_ftz(v, s.b2), mul_ftz(mul_ftz(gi, s.omb2), gi));
+    let den = add_f32_ftz(
+        mul_ftz(ftz(math::sqrt(ftz(vi))), ftz(1.0 / ftz(s.bc2_sqrt))),
+        s.eps,
+    );
+    let wn = add_f32_ftz(wi, mul_ftz(mul_ftz(mi, ftz(1.0 / den)), s.neg_step));
+    (wn, mi, vi)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
