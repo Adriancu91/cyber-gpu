@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 158 — 22 noiembrie 2026, ~12:10–12:55 (ora României), în cloud, FĂRĂ placă — **C-160 p.7, partea a treia: pasul de aur mic „mixt”**
+## Sesiunea 158 — 22 noiembrie 2026, ~12:10–12:35 (ora României), în cloud, FĂRĂ placă — **C-160 p.7, partea a treia: pasul de aur mic „mixt”**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă (os-349 cu `colsum` e GATA DE TEST, nerulat) →
 C-160 p.7 partea a treia. Toleranța a fost scrisă și urcată **înainte** de cod (commit `2f2321f`). Clona veche de pe disc avea istoria
