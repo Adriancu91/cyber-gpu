@@ -69,6 +69,9 @@ doar costul lansărilor la modelul mic — DEDUS din P8).
 Ordinea propusă rămâne: **întâi un singur program „înapoi”** (cel mai simplu: `colsum` în modul deplasare, sau `mm_train` în
 modul dW), apoi pasul întreg al modelului mic = această listă de 75 de lansări, comparată pe placă cu oracolul și cu PyTorch.
 
+**Predat (sesiunea 155):** lista e acum în bibliotecă (`nvidia_ga104::train_step`, un pas = o trimitere); nota pentru OS:
+`integration/cyber-universe/C-160_P6b_pasul-de-aur-pe-placa.md`.
+
 ## Surse
 Ordinea operațiilor: `gpu_compute::train::loss_and_grad` (scris de noi după `integrare/kronos/PAS_DE_AUR.md` și PyTorch 2.14 —
 licență BSD — ca specificație). Niciun cod străin.

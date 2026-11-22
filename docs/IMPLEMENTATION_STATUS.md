@@ -1,5 +1,34 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 155 — 22 noiembrie 2026, ~09:10–10:05 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 6, partea a doua (pasul de aur mic întreg ca listă pentru OS)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-343 (deja comparat în sesiunea 154) →
+C-160 punctul 6, partea a doua.
+
+**Ce s-a făcut:** lista pasului de aur mic (75 de lansări la `adamw_513`, 73 la `sgd`), care stătea până acum doar în testul T165, e acum
+în bibliotecă — modulul **`nvidia_ga104::train_step`** (doar adăugare): cele 13 programe cu SHA-256 (`check_programs`), `Plan` (arena plăcii,
+~2,8 MiB, și ce scrie procesorul o singură dată), `Plan::step` (lansările unui pas, fiecare cu o etichetă: ce calculează), `pack` (zona de
+control: cbuf + QMD pe lansare → **o singură trimitere pe pas** cu `encode_sequence_fresh`), `judge` → `Verdict` față de PyTorch în
+toleranțele hub-ului, rândurile `kt pas-aur …` + `parse_rows`. **T165 rulează acum exact lista bibliotecii**, un pas = o trimitere (înainte:
+o lansare pe trimitere) — aceleași cifre. Nota pentru OS: `integration/cyber-universe/C-160_P6b_pasul-de-aur-pe-placa.md` (de legat după ce
+`colsum` trece pe placă). Commit-ul codului: `29c1076`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| T165 `sgd`, lista bibliotecii, 10 trimiteri | eroarea ≤ 1,1e-7 rel.; greutățile 6,0e-8 / 2,4e-7 (tol. 1e-6); verdictul bibliotecii: cel mai rău 239 ‰ | PASS (SIMULARE) |
+| T165 `adamw_513`, la fel | greutățile 2,4e-6 / 1,28e-5 (tol. 1e-4), normele ≤ 8,9e-8 rel.; cel mai rău 128 ‰ | PASS (SIMULARE) |
+| T165 greșeli plantate în listă (reziduul uitat, scara erorii, tăierea uitată, dW-ul capului peste simboluri) | prinse toate, și de verdictul bibliotecii | PASS (SIMULARE) |
+| T165 lățimile lui #513 (1 strat, greutăți inventate) | 44 de lansări, 320 MiB; față de oracol ca înainte | PASS (SIMULARE) |
+| T167 lista, zona de control, încărcarea, refuzurile, verdictul + rândurile citite înapoi | 5 teste | PASS |
+| `tools/check.sh` | format, clippy `-D warnings`, **773 de teste** (+7 ignorate), build no_std | PASS |
+| Pasul de aur pe RTX 3070 Ti | predat (nota), după `colsum` | NOT TESTED |
+
+**Următorul pas:** la primul test nou pe placă: C-157 p.2 (întâi #651 pe sferturi, estimat ~293 simb/s; apoi `colsum`, predicția
+3 778 / 3 778 bit cu bit). Până atunci: C-160 p.7 pregătirea (estimarea înmulțirilor antrenării pe circuitele speciale) sau, dacă OS-ul o
+cere, probe pe rând pentru celelalte programe „înapoi”.
+
+---
+
 ## Sesiunea 154 — 22 noiembrie 2026, ~08:10–09:05 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (os-343, #651 pe placă) + C-160 punctul 6 (primul program „înapoi” predat OS-ului)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă: **os-343** (Kronos #651, 07:36) → întâi C-157 p.2.
