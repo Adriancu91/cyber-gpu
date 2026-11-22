@@ -21,6 +21,7 @@ o lansare pe trimitere) — aceleași cifre. Nota pentru OS: `integration/cyber-
 | T165 lățimile lui #513 (1 strat, greutăți inventate) | 44 de lansări, 320 MiB; față de oracol ca înainte | PASS (SIMULARE) |
 | T167 lista, zona de control, încărcarea, refuzurile, verdictul + rândurile citite înapoi | 5 teste | PASS |
 | `tools/check.sh` | format, clippy `-D warnings`, **773 de teste** (+7 ignorate), build no_std | PASS |
+| CI GitHub | roșu pe `29c1076`/`0dc24a6` (clippy 1.100: `chunks_exact` → `as_chunks`), reparat în `dd67483`: **verde** | PASS |
 | Pasul de aur pe RTX 3070 Ti | predat (nota), după `colsum` | NOT TESTED |
 
 **Următorul pas:** la primul test nou pe placă: C-157 p.2 (întâi #651 pe sferturi, estimat ~293 simb/s; apoi `colsum`, predicția
