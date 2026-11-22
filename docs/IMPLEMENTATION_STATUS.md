@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 168 — 22 noiembrie 2026, ~22:10–22:45 (ora României), în cloud, FĂRĂ placă — **C-160 p.7: `attn_p`, doar P fără P·V**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-355 → C-160 p.7, cu planul și
+predicțiile urcate **înainte** de cod (`3491d3f`). Clona veche de pe disc avea ramura locală desincronizată: păstrată ca
+`backup-local-veche-2` (doar local), lucrat din `origin/g0-g2-fundatie`. Mesa NAK 25.0.7 reconstruit în cloud (`attn_fwd` ieșit identic).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `attn_p` (Mesa NAK 25.0.7, program nou, doar adăugări) | `attn_fwd` fără bucla P·V: același cbuf (`att` nefolosit), aceleași blocuri de 32 și grilă; SHA-256 `786ae995…148d386e`, **22 de registre**, 173 de instrucțiuni (`attn_fwd`: 25 / 221) | PASS (compilat) |
+| Codul compilat | aceleași operații cu virgulă mobilă pentru P ca `attn_fwd` (acesta are în plus doar `ffma`-ul P·V); `att` nu apare în cod | PASS |
+| T178 (6 teste) | P **bit cu bit** = `attn_fwd` pe 7 forme, `att` neatins, P suprascris refăcut exact; 3 greșeli plantate prinse | PASS (SIMULARE) |
+| Costul | ≈ **0,51** din `attn_fwd` (ciclurile scrise de NAK pe pereche: 98 față de 191) | DEDUS, nemăsurat |
+| `tools/check.sh` | format, clippy `-D warnings`, **846 de teste** (+7 ignorate), build no_std | PASS |
+| Legarea în `train_step::Plan` | cere o variantă nouă în `train_step::Prog`, pe care OS-ul o potrivește exhaustiv → anunțată în hub întâi | NOT TESTED (nefăcut) |
+
+Note: `docs/C-160_P7_ATTN_P.md`. Nimic nou pentru placă.
+
+**Următorul pas:** la primul test nou pe placă: C-157 p.2 (os-351, os-352, proba atenției). Până atunci C-160 p.7: legarea lui `attn_p`
+în pas (`Plan::new_p_recalc` cu `Prog::AttnP`, după ce OS-ul adaugă rândul din „Ce oferă”), apoi programele „pe plăci” în pas.
+
+---
+
 ## Sesiunea 167 — 22 noiembrie 2026, ~21:11–21:30 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (os-355) + C-160 p.7: atenția înapoi fără P păstrat**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. **Test nou pe placă:** os-355 (două teste într-o pornire, 20:06 / 20:08) →

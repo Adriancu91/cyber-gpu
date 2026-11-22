@@ -1525,6 +1525,14 @@ pub fn attn_fwd_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     attn_fwd_blocks(l, 32)
 }
 
+/// The CPU stand-in for C-160 point 7's `attn_p.sm86.sass` (`docs/C-160_P7_ATTN_P.md`): `attn_fwd` without P·V —
+/// the same cbuf0 (att at 0x38 is read by nobody, nothing is written there), blocks of 32, grid [⌈T/32⌉, ≤ H, ≤ B];
+/// every row (b, h, i < min(T, 32·x)) of P is `gpu_compute::layer::attn_p_row_gpu` (the P part of
+/// `attn_fwd_row_gpu`, operation for operation).
+pub fn attn_p_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    attn_fwd_blocks_with(l, 32, false)
+}
+
 /// The CPU stand-in for C-160 point 7's `attn_fwd128.sm86.sass` (`docs/C-160_P7_FIR_LIMITAT.md`): the program of
 /// [`attn_fwd_on_cpu`] with blocks of 128 — the same code per thread, so every row is the same `attn_fwd_row_gpu`.
 /// Grid [⌈T/128⌉, ≤ H, ≤ B]: rows i < min(T, 128·x).
@@ -1600,9 +1608,15 @@ pub fn attn_fwd_tile_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
 }
 
 fn attn_fwd_blocks(l: &mut Launch<'_>, block: u32) -> GpuResult<()> {
-    use gpu_compute::layer::{AttnShape, attn_fwd_row_gpu};
+    attn_fwd_blocks_with(l, block, true)
+}
+
+fn attn_fwd_blocks_with(l: &mut Launch<'_>, block: u32, with_att: bool) -> GpuResult<()> {
+    use gpu_compute::layer::{AttnShape, attn_fwd_row_gpu, attn_p_row_gpu};
     if l.block != [block, 1, 1] {
-        return Err(bad(if block == 32 {
+        return Err(bad(if !with_att {
+            "SIM: attn_p cere blocuri de 32x1x1"
+        } else if block == 32 {
             "SIM: attn_fwd cere blocuri de 32x1x1"
         } else {
             "SIM: attn_fwd128 cere blocuri de 128x1x1"
@@ -1648,8 +1662,13 @@ fn attn_fwd_blocks(l: &mut Launch<'_>, block: u32) -> GpuResult<()> {
     for b in 0..gz {
         for h in 0..gy {
             for i in 0..rows {
-                let (row, a) = attn_fwd_row_gpu(&s, &qkv_v, scale, b, h, i);
                 let at = (((b * heads + h) * t + i) * t) as u64;
+                if !with_att {
+                    l.mem
+                        .write_f32s(p + 4 * at, &attn_p_row_gpu(&s, &qkv_v, scale, b, h, i));
+                    continue;
+                }
+                let (row, a) = attn_fwd_row_gpu(&s, &qkv_v, scale, b, h, i);
                 l.mem.write_f32s(p + 4 * at, &row);
                 let o = ((b * t + i) * c + h * d) as u64;
                 l.mem.write_f32s(att + 4 * o, &a);

@@ -823,22 +823,16 @@ pub fn attn_back_gpu(
 /// log2(e) as f32, the constant NAK 25.0.7 encoded for `exp()` in `attn_fwd.comp` (`tools/nak/out/attn_fwd.sm86.txt`).
 pub const ATTN_FWD_LOG2E: u32 = 0x3fb8_aa3b;
 
-/// One row (b, h, i) of the board's training attention forward, `attn_fwd.comp` (C-160 point 4, program 6, forward
-/// half), in the order of the code NAK 25.0.7 made (`tools/nak/out/attn_fwd.sm86.txt`): s_j = `fmul.ftz`(`ffma.ftz`
-/// chain over e ascending of Q_ie·K_je from 0, scale) for j ≤ i; m = max from −f32::MAX; x_j = `MUFU.EX2`(`fmul.ftz`(
-/// `fadd.ftz`(s_j, −m), log2 e)); sum = `fadd.ftz` chain from 0, j ascending; inv = `MUFU.RCP`(sum); P_ij =
-/// `fmul.ftz`(x_j, inv) for j ≤ i and +0 for j > i (the causal mask); att_ie = `ffma.ftz` chain over j ascending of
-/// P_ij·V_je from 0. Returns (row i of P [T values], att row [d values]). `MUFU.EX2` / `MUFU.RCP` are modelled correctly
-/// rounded (the board's are approximate): board and model are judged against the f64 training oracle
-/// (`train::attention_rows`) in a written margin, not bit for bit.
-pub fn attn_fwd_row_gpu(
+/// Row i of P (all T values, +0 above the diagonal) as `attn_p.sm86.sass` computes it (C-160 point 7,
+/// `docs/C-160_P7_ATTN_P.md`): exactly the P part of [`attn_fwd_row_gpu`], operation for operation.
+pub fn attn_p_row_gpu(
     s: &AttnShape,
     qkv: &[f32],
     scale: f32,
     b: usize,
     h: usize,
     i: usize,
-) -> (Vec<f32>, Vec<f32>) {
+) -> Vec<f32> {
     let (t, c, d) = (s.t, s.c, s.d());
     let qrow = (b * t + i) * 3 * c + h * d;
     let mut row = alloc::vec![0.0f32; t];
@@ -864,6 +858,27 @@ pub fn attn_fwd_row_gpu(
     for rj in row.iter_mut().take(i + 1) {
         *rj = mul_ftz(*rj, inv);
     }
+    row
+}
+
+/// One row (b, h, i) of the board's training attention forward, `attn_fwd.comp` (C-160 point 4, program 6, forward
+/// half), in the order of the code NAK 25.0.7 made (`tools/nak/out/attn_fwd.sm86.txt`): s_j = `fmul.ftz`(`ffma.ftz`
+/// chain over e ascending of Q_ie·K_je from 0, scale) for j ≤ i; m = max from −f32::MAX; x_j = `MUFU.EX2`(`fmul.ftz`(
+/// `fadd.ftz`(s_j, −m), log2 e)); sum = `fadd.ftz` chain from 0, j ascending; inv = `MUFU.RCP`(sum); P_ij =
+/// `fmul.ftz`(x_j, inv) for j ≤ i and +0 for j > i (the causal mask); att_ie = `ffma.ftz` chain over j ascending of
+/// P_ij·V_je from 0. Returns (row i of P [T values], att row [d values]). `MUFU.EX2` / `MUFU.RCP` are modelled correctly
+/// rounded (the board's are approximate): board and model are judged against the f64 training oracle
+/// (`train::attention_rows`) in a written margin, not bit for bit.
+pub fn attn_fwd_row_gpu(
+    s: &AttnShape,
+    qkv: &[f32],
+    scale: f32,
+    b: usize,
+    h: usize,
+    i: usize,
+) -> (Vec<f32>, Vec<f32>) {
+    let (t, c, d) = (s.t, s.c, s.d());
+    let row = attn_p_row_gpu(s, qkv, scale, b, h, i);
     let att = (0..d)
         .map(|e| {
             let mut acc = 0.0f32;

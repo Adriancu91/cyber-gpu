@@ -33,3 +33,29 @@ variantă nouă acolo ar strica construirea OS-ului — legarea în pas se face 
 ## Ce NU face
 Nu schimbă niciun program existent, nici `Plan::new` / `Plan::new_p_recalc`, nici `train_step::PROGRAMS`. Nimic nou predat pe placă.
 Varianta „doar P” a programului pe plăci (`attn_fwd_tile`) rămâne pasul următor, odată cu legarea programelor pe plăci în pas.
+
+## Rezultatul (după cod, sesiunea 168)
+| Predicția | Ieșit | |
+|---|---|---|
+| 1. ≤ 25 registre, mai puține instrucțiuni, fără partajată / barieră | **22 de registre**, **173** de instrucțiuni (`attn_fwd`: 221), 2 768 de octeți; nicio memorie partajată / locală, nicio barieră; SHA-256 `786ae995…148d386e` (Mesa NAK 25.0.7 reconstruit în cloud; `attn_fwd` a ieșit identic, `fe97ab49…`) | PASS |
+| 2. aceleași operații cu virgulă mobilă pentru P | `attn_p`: 1 `ffma.ftz`, 3 `fmul.ftz`, 3 `fadd.ftz`, 1 `fmnmx.ftz`, `mufu.exp2`, `mufu.rcp`; `attn_fwd` = exact acestea + un singur `ffma.ftz` (lanțul P·V); `att` (0x38) nu apare deloc în codul lui `attn_p` | PASS |
+| 3. P bit cu bit = `attn_fwd`, `att` neatins | 7 forme (pasul mic 4×32 C32 H4, T 45, H1 d40, d 1, d 64, softmax ascuțit, 3 texte T 96): **bit cu bit**; `att` rămâne NaN; nimic scris după P; refacerea unui P suprascris dă exact P-ul și `att`-ul lăsate de `attn_fwd` | PASS (SIMULARE) |
+| 4. greșeli plantate | scale greșit, grila fără ultimul bloc de rânduri, `qkv`-ul altui strat: toate prinse | PASS (SIMULARE) |
+| 5. costul ≈ 0,40–0,55 din `attn_fwd` | din codul compilat, ciclurile scrise de NAK pe o pereche (j, e): `attn_fwd` 81 (Q·K) + 110 (P·V) = 191, `attn_p` 98 → **≈ 0,51** (DEDUS) | PASS (DEDUS), nemăsurat |
+
+Testele: T178 în `crates/nvidia-ga104/tests/sim_attn_p.rs` (6 teste). Modelul: `gpu_sim::cmdproc::attn_p_on_cpu` →
+`gpu_compute::layer::attn_p_row_gpu` (partea P a lui `attn_fwd_row_gpu`, acum folosită și de acesta — aceeași funcție).
+
+**Două observații din codul compilat (DEDUS):**
+- bucla Q·K din `attn_p` are 4 `mov` în plus față de cea din `attn_fwd` (alt fel de alocare a registrelor: 98 față de 81 de cicluri
+  scrise pe pereche) — nu schimbă biții (aceeași `ffma.ftz` pe aceleași numere), doar ~20 % din bucla Q·K;
+- în `attn_fwd`, bucla P·V citește P din memorie cu `ld.global…strong.sys` la fiecare pereche (bufferul P nu e „doar citire”):
+  e partea cea mai scumpă (110 cicluri scrise, plus așteptarea memoriei). `attn_fwd_tile` are și el 112 citiri `strong.sys` în cod —
+  de văzut, la varianta „doar P” pe plăci, dacă marcarea bufferelor de intrare „doar citire” le schimbă (idee, nefăcut).
+
+**Ce nu e dovedit:** pe placă, „aceiași biți” se sprijină pe aceleași instrucțiuni pe aceleași numere (verificat static mai sus) —
+de măsurat o dată pe placă, odată cu proba atenției. Timpul (≈ 0,51) e nemăsurat.
+
+**Legarea în pas (următorul pas, nefăcut):** `train_step::Prog` primește o variantă nouă (`AttnP`), iar OS-ul o potrivește exhaustiv
+(`kernel/src/drivers/gpu_i10.rs`, `match prog`) → OS-ul ar avea nevoie de **un rând** în plus (`T::AttnP => cp.register_program(code,
+c::attn_p_on_cpu)`). Anunțat în hub, în `stare/cyber-gpu.md` („Ce oferă”), înainte de legare.

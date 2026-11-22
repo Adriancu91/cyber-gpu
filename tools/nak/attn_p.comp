@@ -1,0 +1,54 @@
+// C-160 point 7 (docs/C-160_P7_ATTN_P.md): attn_fwd.comp without its last loop (P·V) — only the softmax probabilities P
+// [B, H, T, T] of the causal attention, to rebuild a layer's P in the backward pass when the step does not keep it
+// (Plan::new_p_recalc). Same push constants as attn_fwd (qkv/p/att; att is not used, nothing is written there), same
+// blocks of 32, same grid [⌈T/32⌉, H, B], and every operation that leads to P is attn_fwd's, in the same order:
+//   s_j = (Σ_e Q_ie·K_je)·scale, m = max_j s_j, x_j = exp(s_j − m), P_ij = x_j·(1/Σ x) for j ≤ i, 0 for j > i.
+// No atomics, no shared memory, no barrier (the same bits at every run).
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Buf { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args {
+    In qkv; Buf p; Out att;
+    uint t; uint c; uint heads; uint d; float scale;
+} args;
+void main() {
+    uint T = args.t;
+    uint C = args.c;
+    uint d = args.d;
+    uint b = gl_WorkGroupID.z;
+    uint h = gl_WorkGroupID.y;
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= T) {
+        return;
+    }
+    uint prow = ((b * args.heads + h) * T + i) * T;
+    uint qrow = (b * T + i) * 3u * C + h * d;
+    float m = -3.402823466e38;
+    for (uint j = 0u; j <= i; j++) {
+        uint krow = (b * T + j) * 3u * C + C + h * d;
+        float acc = 0.0;
+        for (uint e = 0u; e < d; e++) {
+            acc = fma(args.qkv.v[qrow + e], args.qkv.v[krow + e], acc);
+        }
+        float s = acc * args.scale;
+        args.p.v[prow + j] = s;
+        m = max(m, s);
+    }
+    float sum = 0.0;
+    for (uint j = 0u; j <= i; j++) {
+        float x = exp(args.p.v[prow + j] - m);
+        args.p.v[prow + j] = x;
+        sum = sum + x;
+    }
+    float inv = 1.0 / sum;
+    for (uint j = 0u; j <= i; j++) {
+        args.p.v[prow + j] = args.p.v[prow + j] * inv;
+    }
+    for (uint j = i + 1u; j < T; j++) {
+        args.p.v[prow + j] = 0.0;
+    }
+}
