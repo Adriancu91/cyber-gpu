@@ -2,6 +2,25 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-353 `test-placa --argmax-fara-copie --dieta2` (dieta 2, bucățile A+B, fără copie; ciclul automat 22 nov 2026, 19:36) — sesiunea 166
+Sursa: `Cyber-hub/rezultate/os-automat/2026-11-22/ciclu-auto-20261122-1936.txt` (nucleul cu `cyber-gpu 54563a5`; #513, `lipita-ln-32`).
+- **Estimat** (`integration/cyber-universe/C-157_P2j_argmax-fara-copie.md` §3, DEDUS): placa neschimbată ~1 076 µs, 8 cuvinte de
+  înregistrări pe simbol, driverul 608 → **~410–460 µs**, simbolul ~1 550–1 600 µs = **~625–645 simb/s**; peste ~520 µs = așteptarea nu prinde.
+- **Ieșit (MĂSURAT):** corect 18/18, 16 simboluri identice, 0 poziții lente; placa **1 075 µs**, cuvinte de înregistrări **8**, două
+  înregistrări pe 14 din 18 poziții (complete: 0, 1, 8, 16, ca în plan); **driverul 390 µs** (−218), jurnal 63, simbolul **1 551 µs**;
+  **635,90 simb/s** în medie (644,74 pe mediană). În interval la viteză; driverul cu ~20 µs **mai bun** decât capătul de jos.
+- **Diferit / de ce:** A+B au dat 218 µs, eu pusesem 150–200: citirea celor 89 de înregistrări costa ~166 µs (os-328), acum 8 cuvinte
+  (~4 µs) → ~160 doar din A; restul ~55 µs din B (așteptarea la 100 µs pierdea ~50 în medie). **Așteptarea prinde:** 21 de citiri pe
+  simbol = 1 imediată + ~20 la 5 µs în marja de 100 µs (DEDUS din `WaitPlan`: somn = cel mai scurt timp recent − 100 µs).
+- **Ținta dietei (C-157 p.3, „driver sub 0,5 ms pe simbol”) e atinsă pe placă: 390 µs.** Windows/PyTorch 129,12 → ×4,9.
+- **Ce rămâne în cei 390 µs (DEDUS, neîmpărțit încă pe placă):** 130 de cuvinte VRAM scrise prin umbră (~0,66 µs scriere + recitire →
+  ~86 µs), soneria, construirea celor 88 de QMD-uri/pushbuffer-ului în umbră și ceasul; restul (~300 µs) **NECUNOSCUT** pe bucăți.
+- **Ce tai mai departe:** (1) placa e acum 69 % din simbol; cel mai mare fel e **atenția de generare** (242 µs, 12 × ~20 µs: un singur
+  rând de interogare; de verificat dacă e limitată de fir, ca atenția antrenării în C-160 p.7 — NECUNOSCUT) → candidatul următor pe placă, înaintea înmulțirilor (fc 224, qkv 175);
+  (2) marja așteptării se poate coborî de la 100 la ~40 µs (diferența cel-mai-lent / median e ~85 µs, dar somnul ia minimul a 4 timpi):
+  câștig ~0 la viteză, doar mai puține citiri — nu merită un test; (3) pentru driver, un rând `kt` pe bucăți (umbră / QMD / sonerie)
+  ar arăta unde sunt cei ~300 µs — propunere mică pentru OS, nimic nou pe placă.
+
 ## Ciclul automat 15:06 `test-placa --i9 c135 --argmax-fara-copie` (argmax fără copie pe `lipita-ln-32`, 22 nov 2026) — sesiunea 161
 Sursa: `Cyber-hub/rezultate/os-automat/2026-11-22/ciclu-auto-20261122-1506.txt` + `gpu-jurnal-048.txt` (nucleul cu `cyber-gpu 3b4ca77`;
 #513, `lipita-ln-32` implicită, dieta 1 pornită, **dieta 2 oprită**: OS-ul o oprește când argmax e fără copie, `gpu_i14.rs` rândul 767).
