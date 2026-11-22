@@ -1,5 +1,32 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 154 — 22 noiembrie 2026, ~08:10–09:05 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (os-343, #651 pe placă) + C-160 punctul 6 (primul program „înapoi” predat OS-ului)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă: **os-343** (Kronos #651, 07:36) → întâi C-157 p.2.
+
+**Ce s-a făcut:** (1) **Comparația după os-343** (`docs/C-157_P2_COMPARATII.md`, nota `integration/cyber-universe/C-157_P2h_os-343_k651.md`,
+commit `89593ac`): 5 161 µs median față de 5,1–5,6 ms estimat (194,34 simb/s); fiecare fel de lansare durează la #651 cât la #513
+(placa scalează exact cu straturile); driverul ~5,9 µs pe lansare + ~300 fix (DEDUS) → dieta 2 câștigă mai mult la #651; estimare pentru
+#651 pe sferturi: ~2 030 µs placa, **~293 simb/s** (DEDUS). Nimic nou pe placă. (2) **C-160 punctul 6, prima parte:** proba **`colsum`**
+pentru placa reală — modulul `nvidia_ga104::colsum_probe` (5 seturi fixe, buffer de 64 KiB cu gărzi NaN, `launch_bytes`, `judge_set`
+în marginea scrisă în T155 față de oracolul f64 + câte elemente sunt bit cu bit modelul, rândurile `kt colsum …`, `parse_colsum`) și
+`gpu_compute::train::colsum_margin` (marginea din T155 mutată în bibliotecă). Doar adăugări. Nota: `integration/cyber-universe/C-160_P6_primul-program-inapoi.md`, commit `3b4ca77`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| C-157 p.2, os-343 | estimat 5,1–5,6 ms → ieșit 5 161 µs; pe lansare identic cu #513 | MĂSURAT (de OS) / comparat |
+| T166a proba `colsum` prin pushbuffer + QMD | 5/5 seturi în margine, **3 778 / 3 778 bit cu bit** față de model, cel mai rău 447 ‰ | PASS (SIMULARE) |
+| T166b greșeli plantate | fără lansare, grilă scurtă, rând lipsă, alt mod, μ/rstd ale altui rând — prinse pe toate seturile | PASS (SIMULARE) |
+| T166c/d | gardă atinsă, element mutat, 1 ulp (trece marginea, nu bit cu bit), NaN; rândurile citite înapoi | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy `-D warnings`, **768 de teste**, build no_std | PASS |
+| `colsum` pe RTX 3070 Ti | predat (nota de mai sus), așteaptă Release OS + testul centrului de comandă | NOT TESTED |
+
+**Următorul pas:** la primul test nou pe placă: C-157 p.2 (întâi #651 pe sferturi, estimat ~293 simb/s; apoi `colsum`, predicția
+3 778 / 3 778 bit cu bit). Până atunci: C-160 p.6 partea a doua (pasul de aur mic întreg ca listă pentru OS: ce e nou pentru placă,
+fișierele, verdictul) sau C-160 p.7 pregătirea (estimarea înmulțirilor antrenării pe circuitele speciale).
+
+---
+
 ## Sesiunea 153 — 22 noiembrie 2026, ~07:10–07:40 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 5 (pasul de aur mic cap-coadă pe placa simulată)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după ciclul de la 05:06 (comparat în sesiunea
