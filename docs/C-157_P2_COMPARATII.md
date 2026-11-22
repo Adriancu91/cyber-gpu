@@ -2,6 +2,24 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-355, ciclul 20:06 / 20:08 (două teste într-o pornire: #513 dieta 2 + #651 pe `lipita-ln-32`, 22 nov 2026) — sesiunea 167
+Surse: `Cyber-hub/rezultate/os-automat/2026-11-22/ciclu-auto-20261122-2006.txt` și `-2008.txt` (nucleul cu `cyber-gpu 54563a5`).
+- **Testul 1 (#513, `--argmax-fara-copie --dieta2`, a doua oară după os-353):** placa 1 074 µs, driverul **379 µs** (os-353: 390), jurnal 61,
+  simbolul 1 549 µs, **647,24 simb/s** (os-353: 635,90); 18/18, 8 cuvinte de înregistrări, 0 poziții lente. Repetabil: ±11 µs la driver.
+- **Testul 2 (#651, `--k651`, implicit `lipita-ln-32`, fără dieta 2 și cu copie; după resetul din interior):** **estimat** (os-343 mai jos,
+  DEDUS): placa ~2 030 µs, driverul ~1 317, ~3,41 ms = **~293 simb/s**, peste ~3,8 ms = sferturile nu scalează. **Ieșit (MĂSURAT):** placa
+  **2 045 µs** (+0,7 %), driverul **1 385** (+5 %), jurnal 64, simbolul **3 507 µs = 285,75 simb/s** (−2,5 %); 16/16 identice cu procesorul,
+  0 poziții lente, abaterea logit-urilor 3,65e-5. Sferturile scalează la #651 ca la #513 (fc 18,75 / qkv 14,69 / proj 11,94 / out 6,08 µs
+  pe lansare = #513 la 0,3 %). Amprenta de referință nouă pentru #651 + `lipita-ln-32`: **`0x79eec72f`**.
+- **Diferit:** driverul +68 µs față de os-343 (1 317) la același număr de lansări — în zgomotul de ±5 % văzut între rulări; atenția pe
+  lansare 21,09 µs (la #513 în același ciclu 20,03; NECUNOSCUT de ce +5 %, poate textul / pozițiile — nu contează la viteză acum).
+- **Estimare pentru `--k651 --argmax-fara-copie --dieta2` (DEDUS, din #513):** fără copie −~217 µs (citirea 49 + argmax 85 + FNV ~83,
+  nu depind de straturi); A+B: citirea a ~173 de înregistrări în loc de 2 (~1,9 µs fiecare) **~−320** + așteptarea ~−55 → driverul
+  **~720–850 µs**; placa ~2 049 (argmax 16 în loc de copie 12) → simbolul ~2,85–2,95 ms = **~340–350 simb/s** (×1,2). Peste ~3,1 ms =
+  dieta nu câștigă la #651 cât la #513.
+- **Ce tai mai departe:** la #651 placa e 58 % din simbol; după dietă ~70 %, iar acolo atenția de generare (509 µs, 24 × 21 µs) e cel mai
+  mare fel — același candidat ca la #513. Nota pentru OS: `integration/cyber-universe/C-157_P2k_os-355_k651.md`.
+
 ## os-353 `test-placa --argmax-fara-copie --dieta2` (dieta 2, bucățile A+B, fără copie; ciclul automat 22 nov 2026, 19:36) — sesiunea 166
 Sursa: `Cyber-hub/rezultate/os-automat/2026-11-22/ciclu-auto-20261122-1936.txt` (nucleul cu `cyber-gpu 54563a5`; #513, `lipita-ln-32`).
 - **Estimat** (`integration/cyber-universe/C-157_P2j_argmax-fara-copie.md` §3, DEDUS): placa neschimbată ~1 076 µs, 8 cuvinte de
