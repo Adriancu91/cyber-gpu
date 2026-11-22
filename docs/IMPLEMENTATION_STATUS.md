@@ -1,5 +1,36 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 153 — 22 noiembrie 2026, ~07:10–07:40 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 5 (pasul de aur mic cap-coadă pe placa simulată)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după ciclul de la 05:06 (comparat în sesiunea
+151) → C-160 punctul 5.
+
+**Ce s-a făcut:** pasul întreg de antrenare al modelului mic rulează acum **doar ca listă de lansări** pe placa simulată — toate cele
+10 programe de antrenare + `vadd` (reziduul, a rulat deja pe placă în generare), prin pushbuffer + QMD, tensoarele intermediare în
+memoria plăcii: **75 de lansări pe pas** la `adamw_513` (73 la `sgd`) = 31 pe strat + 13. Procesorul doar încarcă lotul și
+greutățile o dată, zeroizează o dată gradienții, face listele de segmente ale lui `emb_back` și citește ce comparăm. Test nou:
+`crates/nvidia-ga104/tests/sim_c160_p5_golden.rs` (T165; doar teste, nimic schimbat în crate-uri, OS-ul compilează neschimbat).
+Nota: `docs/C-160_P5_PAS_DE_AUR.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| T165 `sgd`, 10 pași față de PyTorch | eroarea ≤ 1,1e-7 rel.; gradientul pasului 1 1,5e-7 abs.; greutățile 6,0e-8 / 2,4e-7 (tol. 1e-6) | PASS (SIMULARE) |
+| T165 `adamw_513`, 10 pași față de PyTorch | eroarea ≤ 8,8e-8 rel.; gradientul 1,5e-7; greutățile 2,4e-6 / 1,28e-5 (tol. 1e-4); normele ≤ 8,9e-8 | PASS (SIMULARE) |
+| T165 greșeli plantate în lista driverului | reziduul uitat, scara erorii, dW-ul capului peste simboluri — prinse după 1 pas; tăierea uitată — prinsă doar după 10 pași | PASS (SIMULARE) |
+| T165 lățimile lui #513, greutăți inventate, 1 strat | 44 de lansări, ~320 MiB; un pas `adamw_513` față de oracol: gradient 5,2e-7, greutăți 6,1e-6 | PASS (SIMULARE) |
+| T165 lățimile lui #513, toate 12 straturile (`#[ignore]`, de mână, ~3 min) | 385 de lansări, ~1 545 MiB; gradient 5,1e-7, greutăți 6,9e-6 | PASS (SIMULARE) |
+| Pasul de aur 513 adevărat (greutățile reale) | greutățile #513 nu sunt în cloud (hub-ul are doar rețeta) | BLOCKED (în cloud) |
+| `tools/check.sh` | format, clippy `-D warnings`, **760 de teste** (+7 ignorate), build no_std | PASS |
+| Pasul pe RTX 3070 Ti | nepredat (C-160 p.6) | NOT TESTED |
+
+Corectat pe drum: prima rulare la lățimile lui #513 a citit memorie nescrisă — rândurile gradientului `emb_pozitie` după lungimea
+textului; acum driverul zeroizează o dată tot bufferul de gradienți (PyTorch are 0 acolo).
+
+**Următorul pas:** C-160 punctul 6: predarea primului program „înapoi” pe placă (nota pentru OS); la primul test nou pe placă:
+C-157 punctul 2.
+
+---
+
 ## Sesiunea 152 — 22 noiembrie 2026, ~06:11–06:35 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 4, programele 9 și 10 (`gnorm` + `opt_step`)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după ciclul de la 05:06 (comparat în sesiunea
