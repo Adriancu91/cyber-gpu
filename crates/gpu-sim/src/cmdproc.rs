@@ -1359,6 +1359,90 @@ fn attn_back_blocks(l: &mut Launch<'_>, block: u32) -> GpuResult<()> {
     Ok(())
 }
 
+/// The CPU stand-in for C-160 point 7's `attn_back_tile.sm86.sass` (`docs/C-160_P7_ATENTIA_INAPOI_PE_PLACI.md`): mode 1
+/// (columns) of the attention backward on 64-position tiles, blocks of 256; the cbuf0 of `attn_back` (qkv/p/dout/ds/dqkv
+/// at 0x28/0x30/0x38/0x40/0x48, T 0x50, C 0x54, H 0x58, d 0x5c, mode 0x60). A mode other than 1 makes the program exit
+/// at once: nothing is written. Grid [⌈T/64⌉, ≤ H, ≤ B]: every element (b, h, position tp < min(T, 64·x), e) of dQ |
+/// dK | dV is `gpu_compute::layer::attn_back_col_gpu` (the program sums the very same chains). d > 64 (the shared
+/// tiles), a grid past H or past ⌈T/64⌉, or d ≠ C / H are refused as not modelled.
+pub fn attn_back_tile_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    use gpu_compute::layer::{ATTN_TILE_MAX_D, AttnShape, attn_back_col_gpu};
+    if l.block != [256, 1, 1] {
+        return Err(bad("SIM: attn_back_tile cere blocuri de 256x1x1"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 || l.mem.read_u32(l.cbuf0 + 0x8)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0..0x8) diferita de 0, nemodelata",
+        ));
+    }
+    let r64 = |l: &Launch<'_>, o: u64| l.mem.read_u64(l.cbuf0 + o);
+    let r32 = |l: &Launch<'_>, o: u64| l.mem.read_u32(l.cbuf0 + o);
+    if r32(l, 0x60)? != 1 {
+        return Ok(());
+    }
+    let (qkv, p, dout, ds, dqkv) = (
+        r64(l, 0x28)?,
+        r64(l, 0x30)?,
+        r64(l, 0x38)?,
+        r64(l, 0x40)?,
+        r64(l, 0x48)?,
+    );
+    let (t, c, heads, d) = (
+        r32(l, 0x50)? as usize,
+        r32(l, 0x54)? as usize,
+        r32(l, 0x58)? as usize,
+        r32(l, 0x5c)? as usize,
+    );
+    let [gx, gy, gz] = l.grid.map(|g| g as usize);
+    if heads == 0 || d == 0 || d * heads != c || t == 0 {
+        return Err(bad(
+            "SIM: attn_back_tile: d != C/H sau forma goala, nemodelat",
+        ));
+    }
+    if d > ATTN_TILE_MAX_D {
+        return Err(bad(
+            "SIM: attn_back_tile: d > 64 (placile partajate), nemodelat",
+        ));
+    }
+    if gy > heads || gx > t.div_ceil(64) {
+        return Err(bad("SIM: attn_back_tile: grila trece de H / T, nemodelata"));
+    }
+    if gz == 0 || gy == 0 || gx == 0 {
+        return Ok(());
+    }
+    let s = AttnShape {
+        batch: gz,
+        t,
+        c,
+        heads,
+    };
+    let (nq, no, np) = s
+        .sizes()
+        .ok_or_else(|| bad("SIM: attn_back_tile: forma prea mare"))?;
+    let qkv_v = l.mem.read_f32s(qkv, nq)?;
+    let p_v = l.mem.read_f32s(p, np)?;
+    let dout_v = l.mem.read_f32s(dout, no)?;
+    let ds_v = l.mem.read_f32s(ds, np)?;
+    let positions = t.min(64 * gx);
+    for b in 0..gz {
+        for h in 0..gy {
+            for tp in 0..positions {
+                let r = b * t + tp;
+                for e in 0..d {
+                    let (q, k, v) =
+                        attn_back_col_gpu(&s, &qkv_v, &p_v, &dout_v, &ds_v, b, h, tp, e);
+                    let col = h * d + e;
+                    for (part, x) in [q, k, v].into_iter().enumerate() {
+                        let at = (r * 3 * c + part * c + col) as u64;
+                        l.mem.write_f32s(dqkv + 4 * at, &[x]);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The CPU stand-in for C-160 point 4's attention forward (`attn_fwd.sm86.sass`, program 6, forward half): blocks of
 /// 32; cbuf0 qkv/p/att at 0x28/0x30/0x38, T at 0x40, C at 0x44, H at 0x48, d at 0x4c, the scale at 0x50 (NAK dump).
 /// The batch is the grid's z (the program never reads it). Grid [⌈T/32⌉, ≤ H, ≤ B]: every row (b, h, i < min(T, 32·x))

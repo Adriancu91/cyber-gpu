@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 164 — 22 noiembrie 2026, ~18:11–19:20 (ora României), în cloud, FĂRĂ placă — **C-160 p.7: atenția înapoi pe plăci, modul 1**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la ciclul 15:06 → C-160 p.7. Planul și
+predicțiile au fost urcate **înainte** de cod (`3021024`). Mesa NAK 25.0.7 reconstruit în cloud (`attn_back`, `attn_fwd_tile` identice).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `attn_back_tile` (Mesa NAK 25.0.7) | modul 1 (dQ / dK / dV) pe plăci de 64 de poziții, 4 × 4 rezultate pe fir, 32 KiB partajați; același cbuf ca `attn_back`, modul ≠ 1 → nimic scris; SHA-256 `1da80d3f…29a8d7e20`, 73 de registre, 32 `ffma` | PASS (SIMULARE) |
+| T174 | emularea literală a GLSL + lansarea = `attn_back` modul 1 **bit cu bit** pe 10 forme; lanțul față de oracolul f64 ≤ 2⁻¹⁶; NaN deasupra diagonalei fără efect; greșeli plantate prinse | PASS (SIMULARE) |
+| Predicția registrelor (≤ 64) | 73 — ratată; fără efect asupra ocupării (3 blocuri pe SM oricum, din memoria partajată; DEDUS) | FAIL (notat) |
+| `tools/check.sh` | format, clippy `-D warnings` (Rust 1.97), **820 de teste** (+7 ignorate), build no_std | PASS |
+| Viteza pe RTX 3070 Ti (estimat ~15–24 ms pe bucată, față de ~44 / ~133) | nepredat | NOT TESTED |
+
+Note: `docs/C-160_P7_ATENTIA_INAPOI_PE_PLACI.md`. Nimic nou pentru placă (doar adăugări: `nvidia_ga104::attn_back_tile`,
+`gpu_sim::cmdproc::attn_back_tile_on_cpu`).
+
+**Următorul pas:** la primul test nou pe placă: C-157 p.2 (pasul de aur mic F32, os-351; proba `mm_tc`, os-352). Până atunci: C-160
+p.7 — atenția înapoi pe plăci, modul 0 (rândurile lui dS), cu plan și predicții scrise înainte.
+
+---
+
 ## Sesiunea 163 — 22 noiembrie 2026, ~17:11–17:40 (ora României), în cloud, FĂRĂ placă — **C-160 p.7: atenția înainte pe plăci**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la ciclul 15:06 → C-160 p.7. Planul și
