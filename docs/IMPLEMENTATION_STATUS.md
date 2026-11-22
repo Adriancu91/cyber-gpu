@@ -1,5 +1,25 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 161 — 22 noiembrie 2026, ~15:13–15:35 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: ciclul automat 15:06 (argmax fără copie)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă: ciclul automat 15:06, `test-placa --i9 c135
+--argmax-fara-copie` (`ciclu-auto-20261122-1506.txt`, `gpu-jurnal-048.txt`) → întâi C-157 p.2. Clona veche avea ramura locală
+desincronizată; am lucrat pe o ramură locală nouă din `origin/g0-g2-fundatie`, nimic șters.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Argmax fără copie pe RTX 3070 Ti (#513, `lipita-ln-32`) | 18/18 poziții simbolul plăcii = procesorului; placa 1 076 µs, driverul 608, simbolul median 1 778 µs; **568,28 simb/s** media (estimat ~550, +3 %) | **PASS pe placă (MĂSURAT de OS)**, comparat de noi |
+| De ce driverul a scăzut cu 217 µs, nu cu ~145 | 49 citirea logit-urilor + 85 argmax pe procesor + ~83 amprenta FNV (nu se mai face fără copie) | DEDUS (`kt` os-346 + codul OS `run_top`) |
+| Dieta 2 oprită de OS în modul fără copie | A+B (două înregistrări, așteptarea planificată) nu depind de logit-uri → propunere în 4 schimbări mici; estimat driver ~410–460 µs, **~625–645 simb/s** | DEDUS, NOT TESTED |
+| `tools/check.sh` (Rust 1.97) | format, clippy `-D warnings`, **807 teste**, build no_std | PASS |
+
+Note: `docs/C-157_P2_COMPARATII.md` (prima secțiune), `integration/cyber-universe/C-157_P2j_argmax-fara-copie.md`. Nimic nou pentru placă.
+
+**Următorul pas:** la primul test nou pe placă: C-157 p.2 (pasul de aur mic F32, os-351; apoi proba `mm_tc`). Până atunci:
+C-160 p.7 — aceeași privire ca la `colsum` pentru `ln_back`, `attn_back` și AdamW (programe în care un fir face prea mult).
+
+---
+
 ## Sesiunea 160 — 22 noiembrie 2026, ~14:10–14:35 (ora României), în cloud, FĂRĂ placă — **C-160 p.7, partea a patra: proba `mm_tc` pentru placă**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă în `rezultate/` de la os-349 → C-160 p.7 partea a

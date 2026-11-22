@@ -2,6 +2,26 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## Ciclul automat 15:06 `test-placa --i9 c135 --argmax-fara-copie` (argmax fără copie pe `lipita-ln-32`, 22 nov 2026) — sesiunea 161
+Sursa: `Cyber-hub/rezultate/os-automat/2026-11-22/ciclu-auto-20261122-1506.txt` + `gpu-jurnal-048.txt` (nucleul cu `cyber-gpu 3b4ca77`;
+#513, `lipita-ln-32` implicită, dieta 1 pornită, **dieta 2 oprită**: OS-ul o oprește când argmax e fără copie, `gpu_i14.rs` rândul 767).
+- **Estimat** (sesiunea 151, mai sus, DEDUS): placa ~1 070 µs, driverul ~680 µs (fără citirea logit-urilor și argmax-ul pe procesor) →
+  **~550 simb/s**; simbolurile = ale procesorului; lansarea argmax ~15 µs (os-340).
+- **Ieșit (MĂSURAT):** **18/18 poziții, simbolul plăcii = al procesorului**, 16 simboluri identice, 0 poziții lente. Placa **1 076 µs**
+  (+5: argmax 16,2 µs în locul copierii de 11,9), driverul **608 µs**, jurnalul 64 → simbolul median **1 778 µs = 562 simb/s**, media
+  rulării **568,28 simb/s** (estimat ~550: **+3 %**). Windows/PyTorch 129,12 → **×4,4**; doar lansările 932,6 simb/s.
+- **Ce a ieșit altfel:** driverul a scăzut mai mult decât am socotit: 825 (os-346) → 608 = **−217 µs**, nu −145. Citirea logit-urilor (49 µs)
+  și argmax-ul pe procesor (85 µs) dau −134; restul de **~83 µs e amprenta FNV** pe cele 64 KiB de logit-uri, care fără copie nu se mai
+  face deloc (la estimare o lăsasem în ceas). Socoteala închide la o microsecundă (DEDUS din `kt` os-346 + codul OS `run_top`).
+- **Mărunt:** `kt median argmax placa` 16,19 µs (os-340: 15,04, +1,1 µs, în zgomot); `kt median citirea rezultatului` 0 µs (16 octeți).
+  Rândul text `kt lista … cu copierea logit-urilor` e vechi pentru modul fără copie (lansarea a 88-a e argmax), iar legenda
+  `kt lista (0 … 4)` nu spune ce e valoarea 7 — de corectat în OS când trece pe acolo.
+- **Ce tai mai departe:** din cei 608 µs de driver, **~150–200 µs** sunt încă citirea celor 89 de înregistrări + așteptarea la 100 µs —
+  exact bucățile A și B ale dietei 2, care **nu depind de logit-uri** (C și D, amprenta și argmax-ul pe biți, nu mai au obiect fără copie).
+  Le-am oprit degeaba împreună: propun ca OS-ul să lase A+B pornite și cu argmax fără copie (4 schimbări mici, nota de mai jos) →
+  driverul ~410–460 µs, simbolul ~1 550–1 600 µs = **~625–645 simb/s** (DEDUS; Windows ×4,9). Apoi pe placă rămân înmulțirile (~700 µs).
+- Nota pentru OS: `integration/cyber-universe/C-157_P2j_argmax-fara-copie.md`. Nimic nou pentru placă.
+
 ## os-349 `test-placa --i9 c135 --colsum` (primul program „înapoi” al antrenării pe placă, ciclul automat 22 nov 2026, 12:36) — sesiunea 159
 Sursa: `Cyber-hub/rezultate/2026-11-22-workstation-os349-colsum/REZULTAT.md` + `rezultate/os-automat/2026-11-22/ciclu-auto-20261122-1236.txt`
 și `gpu-jurnal-046.txt` (nucleul cu `cyber-gpu 3b4ca77`; generarea pe `lipita-ln`, implicitul de atunci).
