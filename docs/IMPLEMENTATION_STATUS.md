@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 167 — 22 noiembrie 2026, ~21:11–21:50 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (os-355) + C-160 p.7: atenția înapoi fără P păstrat**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. **Test nou pe placă:** os-355 (două teste într-o pornire, 20:06 / 20:08) →
+C-157 p.2 întâi. Apoi C-160 p.7 cu planul și predicțiile urcate **înainte** de cod (`3046b22`). Clona veche de pe disc avea ramura locală
+desincronizată: păstrată ca `backup-local-veche` (doar local), lucrat din `origin/g0-g2-fundatie`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| C-157 p.2, os-355 | #651 pe `lipita-ln-32`: placa **2 045 µs** (estimat ~2 030), driverul 1 385 (~1 317), **285,75 simb/s** (~293); amprenta de referință #651 `0x79eec72f`; #513 dieta 2 repetat (647,24 simb/s, driverul 379); estimare pentru `--k651 --argmax-fara-copie --dieta2`: ~340–350 simb/s; nota `integration/cyber-universe/C-157_P2k_os-355_k651.md` (`92da7af`) | PASS (MĂSURAT pe placă de OS) |
+| `Plan::new_p_recalc` (doar adăugări) | un singur buffer P pentru toate straturile; la întoarcere, stratul l relansează `attn_fwd` pe `qkv`-ul lui (eticheta `inapoi:atentia-P`) dacă un strat de după l-a suprascris → L − 1 lansări în plus; `Plan::p_rebuilt`, `Plan::p_relaunches`; `Plan::new` neschimbat | PASS |
+| T177 | pasul mic `sgd` / `adamw_513`, 10 pași: **bit cu bit** egal cu P păstrat, verdictul față de PyTorch trece; 4 straturi: bit cu bit; fără relansări → prins | PASS (SIMULARE) |
+| Memoria arenei | #513 lot 12 × 512: **7,70 → 6,15 GiB** (acum încape sub 7 GiB); #651 6 × 512: 8,38 → 6,76 GiB; toate 5 predicțiile în ±3 % | PASS (DEDUS) |
+| `tools/check.sh` | format, clippy `-D warnings`, **840 de teste** (+7 ignorate), build no_std | PASS |
+| Pe placă: că a doua lansare dă aceiași biți (fără `atomic`, ordine fixă); costul ~17 ms pe bucată #513 | nepredat | NOT TESTED |
+
+Note: `docs/C-160_P7_P_RECALCULAT.md`. Nimic nou pentru placă (relansarea folosește `attn_fwd`, deja în pasul de aur mic).
+
+**Următorul pas:** la primul test nou pe placă: C-157 p.2 (os-351, os-352, proba atenției). Până atunci C-160 p.7: un program care face
+doar P (fără P·V) pentru relansare, apoi programele „pe plăci” în pas; plan și predicții înainte.
+
+---
+
 ## Sesiunea 166 — 22 noiembrie 2026, ~20:10–20:35 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (os-353, dieta 2) + C-160 p.7: proba atenției pe plăci**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. **Test nou pe placă:** os-353 (dieta 2 A+B, 19:36) → C-157 p.2 întâi.
