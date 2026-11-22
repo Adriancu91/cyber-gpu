@@ -1,0 +1,231 @@
+// C-160 point 7 (docs/C-160_P7_ATENTIA_PE_PLACI.md, plan written before this code, commit abd3307): the causal attention
+// forward of the training step "on tiles". Same arguments as attn_fwd.comp (qkv / P / att, T, C, H, d, scale), same
+// outputs: P [B, H, T, T] (0 above the diagonal) and att [B·T, C].
+// Blocks of 256 threads (16 x 16) own 64 rows (b, h, i0 .. i0+63); grid [ceil(T/64), H, B]; needs d <= 64.
+// Thread (tx, ty) owns rows r = ty + 16a and columns tx + 16k (a, k = 0..3): 4 x 4 results, so a value loaded once into
+// shared memory enters 4 products (the reuse a thread-per-row program cannot have).
+//   phase A: Q tile once in shared; per 64-column tile up to the diagonal: K tile in shared, 16 ffma per e;
+//            s_ij = (sum_e Q_ie*K_je, ffma chain, e ascending, from 0) * scale  -> P (j <= i); row max over 16 threads.
+//   phase B: every thread re-reads its own s (it wrote them: no barrier needed), x = exp(s - m) -> P; partial sum of
+//            thread tx = fadd chain from 0 over j = tx (mod 16), j ascending, j <= i; the row sum = fadd chain from 0
+//            of the 16 partials, tx = 0..15 (a fixed order: the same bits at every run); inv = 1/sum.
+//   phase C: per tile up to the diagonal: P = x*inv (0 for j > i) -> P and the shared tile; V tile in shared;
+//            att_ie = ffma chain from 0 over j ascending, only j <= i (the order of attn_fwd.comp). Tiles above the
+//            diagonal: P = 0.
+// s, m, x and the order of att are those of attn_fwd.comp; only the row sum differs (16 partials), so rows i <= 15 give
+// attn_fwd's bits. CPU model: gpu_compute::layer::attn_fwd_tile_gpu. No atomics. Formulas: PyTorch / llm.c (BSD / MIT,
+// idea only); tiling idea: our matmul_2d steps (siboehm SGEMM_CUDA, MIT, idea only) and FlashAttention (paper, idea only).
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Buf { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args {
+    In qkv; Buf p; Out att;
+    uint t; uint c; uint heads; uint d; float scale;
+} args;
+
+shared float qs[64 * 64];   // phase A: Q tile [row][e]; phase C: P tile [row][j]
+shared float ks[64 * 64];   // phase A: K tile [j][e];   phase C: V tile [j][e]
+shared float red[64 * 16];  // per row: one value per tx (maxima, then partial sums)
+shared float rm[64];
+shared float rinv[64];
+
+void main() {
+    uint T = args.t;
+    uint C = args.c;
+    uint d = args.d;
+    uint b = gl_WorkGroupID.z;
+    uint h = gl_WorkGroupID.y;
+    uint bx = gl_WorkGroupID.x;
+    uint i0 = bx * 64u;
+    uint lid = gl_LocalInvocationID.x;
+    uint tx = lid & 15u;
+    uint ty = lid >> 4u;
+    uint ntiles = (T + 63u) / 64u;
+    uint row3 = 3u * C;
+
+    // phase A
+    [[dont_unroll]] for (uint n = 0u; n < 16u; n++) {
+        uint idx = lid + 256u * n;
+        uint r = idx >> 6u;
+        uint e = idx & 63u;
+        uint i = i0 + r;
+        float q = 0.0;
+        if (i < T && e < d) {
+            q = args.qkv.v[(b * T + i) * row3 + h * d + e];
+        }
+        qs[idx] = q;
+    }
+    float mx[4];
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        mx[a] = -3.402823466e38;
+    }
+    for (uint jt = 0u; jt <= bx; jt++) {
+        barrier();
+        [[dont_unroll]] for (uint n = 0u; n < 16u; n++) {
+            uint idx = lid + 256u * n;
+            uint r = idx >> 6u;
+            uint e = idx & 63u;
+            uint j = jt * 64u + r;
+            float kv = 0.0;
+            if (j < T && e < d) {
+                kv = args.qkv.v[(b * T + j) * row3 + C + h * d + e];
+            }
+            ks[idx] = kv;
+        }
+        barrier();
+        float acc[16];
+        [[unroll]] for (uint n = 0u; n < 16u; n++) {
+            acc[n] = 0.0;
+        }
+        for (uint e = 0u; e < d; e++) {
+            float qa[4];
+            float kb[4];
+            [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                qa[a] = qs[(ty + 16u * a) * 64u + e];
+                kb[a] = ks[(tx + 16u * a) * 64u + e];
+            }
+            [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                    acc[a * 4u + k] = fma(qa[a], kb[k], acc[a * 4u + k]);
+                }
+            }
+        }
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint i = i0 + ty + 16u * a;
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                uint j = jt * 64u + tx + 16u * k;
+                if (i < T && j <= i) {
+                    float s = acc[a * 4u + k] * args.scale;
+                    args.p.v[((b * args.heads + h) * T + i) * T + j] = s;
+                    mx[a] = max(mx[a], s);
+                }
+            }
+        }
+    }
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        red[(ty + 16u * a) * 16u + tx] = mx[a];
+    }
+    barrier();
+    if (lid < 64u) {
+        float m = -3.402823466e38;
+        for (uint u = 0u; u < 16u; u++) {
+            m = max(m, red[lid * 16u + u]);
+        }
+        rm[lid] = m;
+    }
+    barrier();
+
+    // phase B
+    float ps[4];
+    float rowm[4];
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        ps[a] = 0.0;
+        rowm[a] = rm[ty + 16u * a];
+    }
+    for (uint jt = 0u; jt <= bx; jt++) {
+        [[unroll]] for (uint k = 0u; k < 4u; k++) {
+            uint j = jt * 64u + tx + 16u * k;
+            [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                uint i = i0 + ty + 16u * a;
+                if (i < T && j <= i) {
+                    uint at = ((b * args.heads + h) * T + i) * T + j;
+                    float x = exp(args.p.v[at] - rowm[a]);
+                    args.p.v[at] = x;
+                    ps[a] = ps[a] + x;
+                }
+            }
+        }
+    }
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        red[(ty + 16u * a) * 16u + tx] = ps[a];
+    }
+    barrier();
+    if (lid < 64u) {
+        float sum = 0.0;
+        for (uint u = 0u; u < 16u; u++) {
+            sum = sum + red[lid * 16u + u];
+        }
+        rinv[lid] = 1.0 / sum;
+    }
+
+    // phase C
+    float acc2[16];
+    [[unroll]] for (uint n = 0u; n < 16u; n++) {
+        acc2[n] = 0.0;
+    }
+    for (uint jt = 0u; jt < ntiles; jt++) {
+        if (jt <= bx) {
+            barrier();
+            [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                uint r = ty + 16u * a;
+                uint i = i0 + r;
+                float inv = rinv[r];
+                [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                    uint cl = tx + 16u * k;
+                    uint j = jt * 64u + cl;
+                    float pv = 0.0;
+                    if (i < T && j < T) {
+                        uint at = ((b * args.heads + h) * T + i) * T + j;
+                        if (j <= i) {
+                            pv = args.p.v[at] * inv;
+                        }
+                        args.p.v[at] = pv;
+                    }
+                    qs[r * 64u + cl] = pv;
+                }
+            }
+            [[dont_unroll]] for (uint n = 0u; n < 16u; n++) {
+                uint idx = lid + 256u * n;
+                uint r = idx >> 6u;
+                uint e = idx & 63u;
+                uint j = jt * 64u + r;
+                float vv = 0.0;
+                if (j < T && e < d) {
+                    vv = args.qkv.v[(b * T + j) * row3 + 2u * C + h * d + e];
+                }
+                ks[idx] = vv;
+            }
+            barrier();
+            for (uint jj = 0u; jj < 64u; jj++) {
+                uint j = jt * 64u + jj;
+                float vb[4];
+                [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                    vb[k] = ks[jj * 64u + tx + 16u * k];
+                }
+                [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                    uint r = ty + 16u * a;
+                    if (j <= i0 + r) {
+                        float pa = qs[r * 64u + jj];
+                        [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                            acc2[a * 4u + k] = fma(pa, vb[k], acc2[a * 4u + k]);
+                        }
+                    }
+                }
+            }
+        } else {
+            [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                uint i = i0 + ty + 16u * a;
+                [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                    uint j = jt * 64u + tx + 16u * k;
+                    if (i < T && j < T) {
+                        args.p.v[((b * args.heads + h) * T + i) * T + j] = 0.0;
+                    }
+                }
+            }
+        }
+    }
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        uint i = i0 + ty + 16u * a;
+        [[unroll]] for (uint k = 0u; k < 4u; k++) {
+            uint e = tx + 16u * k;
+            if (i < T && e < d) {
+                args.att.v[(b * T + i) * C + h * d + e] = acc2[a * 4u + k];
+            }
+        }
+    }
+}

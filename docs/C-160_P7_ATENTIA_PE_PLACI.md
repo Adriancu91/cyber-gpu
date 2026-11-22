@@ -44,6 +44,30 @@ Program nou `tools/nak/attn_fwd_tile.comp` (Mesa NAK 25.0.7, ca celelalte progra
    și ~0,5 GB de P mutat → limitat de memorie: **~19 ms pe bucată** (interval 12–40), față de ~37 (blocuri de 128) și ~90 (de 32).
    P trece de 5 ori prin memorie; varianta fără P păstrat (recalculat în „înapoi”) ar fi pasul următor.
 
+## Rezultatul (SIMULARE, T173, `crates/nvidia-ga104/tests/sim_attn_tile.rs`; codul după planul `abd3307`)
+- **Binarul** (Mesa NAK **25.0.7**, reconstruit în cloud; `attn_fwd` a ieșit identic, `fe97ab49…`): `attn_fwd_tile.sm86.sass`
+  SHA-256 **`4ef8dca31f2cdd9c4e672ae126aafc013e47f0443b8cf0f9ae584cb07eebe632`**, 2 353 de instrucțiuni, **55 de registre**,
+  37 376 de octeți partajați (în QMD), 16 `mufu.exp2` + 1 `mufu.rcp`, nicio `atomic`, nicio memorie locală.
+  *Pe drum:* prima compilare (toate buclele desfăcute) dădea **98 de registre** (peste predicția 4); cu buclele de copiere a plăcilor
+  lăsate nedesfăcute (`[[dont_unroll]]`, aritmetica neschimbată) → 55. Cu 55 de registre și 37 KiB partajați: 2 blocuri pe SM
+  (16 warp-uri), limitate de memoria partajată.
+- **Predicția 1 (rândurile i ≤ 15 = `attn_fwd` bit cu bit): DA** pe toate cele 10 forme (testul o cere la fiecare rând).
+  În plus, multe rânduri mai lungi ies și ele identice (de ex. 778 / 2 400 la forma #513 cu T 200).
+- **Predicția 2: DA.** Față de `attn_fwd`: cel mai rău P 86 % din 2⁻²⁰ relativ (forma #513, T 200), att ≤ 36 %; față de oracolul
+  f64, în marginea T160: P ≤ 14,1 %, att ≤ 6,5 % (prag scris: 20 %).
+- **Predicția 3: DA**, pe cazurile lanțului din T160 plus cele lungi (dQ, dK, dV ≤ 2⁻¹⁴ din cea mai mare valoare). Cazul „foarte
+  ascuțit (FTZ)” e lăsat afară ca în T160 (acolo P în f32 e adus la 0 unde P-ul f64 nu e — la fel și la `attn_fwd`, ale cărui
+  rânduri sunt aici identice).
+- **Predicția 4: DA după reparație** (55 ≤ 64; prima variantă 98 — vezi mai sus).
+- **Predicția 5: DA** — grila cu un bloc lipsă lasă exact rândurile 128 și 129 nescrise (1 040 + 256 de gărzi), blocuri 128 / 16×16,
+  grila peste ⌈T/64⌉ sau peste H, d = 65 refuzate; modelul cu suma veche diferă de cel nou la forma lungă; un P stricat cu 2⁻¹²
+  iese din margine.
+- **Viteza: nemăsurată** (doar pe placă). Estimarea rămâne ~19 ms pe bucată (interval 12–40, DEDUS), față de ~37 / ~90.
+- `tools/check.sh`: **815 teste** (+7 ignorate), format, clippy (Rust 1.97), build no_std — PASS.
+
+Nepredat pentru placă (intră la viteza pasului, ca probă separată, după pasul de aur mic și `mm_tc`). Următorul pas al atenției:
+jumătatea „înapoi” pe plăci (`attn_back` modul 1 e cel mai lent: ~133 → ~44 ms cu blocuri de 128), plan separat.
+
 ## Ce NU face
 Nimic pe placă. Nu schimbă `attn_fwd` / `attn_fwd128` / `attn_back`. Jumătatea „înapoi” pe plăci = pasul următor, plan separat.
 

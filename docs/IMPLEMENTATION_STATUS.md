@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 163 — 22 noiembrie 2026, ~17:11–17:40 (ora României), în cloud, FĂRĂ placă — **C-160 p.7: atenția înainte pe plăci**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la ciclul 15:06 → C-160 p.7. Planul și
+predicțiile au fost urcate **înainte** de cod (`abd3307`). Clona avea ramura locală veche; am lucrat din `origin/g0-g2-fundatie`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| De ce nu „un warp pe rând” | aceleași iterații de warp ca programul vechi (fără refolosire); „două `mm_train`” ~45 ms | DEDUS |
+| `attn_fwd_tile` (Mesa NAK 25.0.7, reconstruit; `attn_fwd` ieșit identic) | blocuri de 256 = 64 de rânduri, 4 × 4 rezultate pe fir din plăci Q/K/P/V partajate; SHA-256 `4ef8dca3…eebe632`, 55 de registre (prima variantă 98), 37 376 B partajați | PASS (SIMULARE) |
+| T173 | rândurile i ≤ 15 bit cu bit `attn_fwd`; restul ≤ 86 % din 2⁻²⁰; oracolul f64 ≤ 14,1 % din marginea T160; lanțul → `attn_back` ≤ 2⁻¹⁴; greșeli plantate prinse | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy `-D warnings` (Rust 1.97), **815 teste** (+7 ignorate), build no_std | PASS |
+| Viteza pe RTX 3070 Ti (estimat ~19 ms pe bucată, față de ~37 / ~90) | nepredat | NOT TESTED |
+
+Note: `docs/C-160_P7_ATENTIA_PE_PLACI.md`. Nimic nou pentru placă (doar adăugări: `nvidia_ga104::attn_fwd_tile`,
+`gpu_compute::layer::{attn_fwd_tile_row_gpu, attn_fwd_tile_gpu, ATTN_TILE_MAX_D}`, `gpu_sim::cmdproc::attn_fwd_tile_on_cpu`).
+
+**Următorul pas:** la primul test nou pe placă: C-157 p.2 (pasul de aur mic F32, os-351; proba `mm_tc`, os-352). Până atunci: C-160
+p.7 — atenția înapoi pe plăci (întâi modul 1, coloanele), cu plan și predicții scrise înainte.
+
+---
+
 ## Sesiunea 162 — 22 noiembrie 2026, ~16:12–16:35 (ora României), în cloud, FĂRĂ placă — **C-160 p.7: cine e limitat de un fir; atenția cu blocuri de 128**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la ciclul 15:06 (comparat în sesiunea 161) →
