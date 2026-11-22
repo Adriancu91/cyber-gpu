@@ -570,8 +570,8 @@ impl Plan {
             return Err(bad("pas-aur: pasii incep de la 1"));
         }
         let mut out = Vec::with_capacity(32 * self.arch.layers + 16);
-        self.forward_backward(&mut out)?;
-        self.optimize(&mut out, recipe, opt, step)?;
+        self.forward_backward(&mut out, 1.0)?;
+        self.optimize(&mut out, recipe, opt, step, None)?;
         Ok(out)
     }
 
@@ -764,7 +764,8 @@ impl Plan {
     }
 
     /// Forward + loss + backward: every gradient ends up in `g` (the same order as T165).
-    fn forward_backward(&self, out: &mut Vec<Launch>) -> GpuResult<()> {
+    /// `loss_scale` multiplies d(logits) (1 = plain F32 step; S at the mixed step, see [`Plan::step_mixed`]).
+    fn forward_backward(&self, out: &mut Vec<Launch>, loss_scale: f32) -> GpuResult<()> {
         let ar = self.arch;
         let (bsz, tl) = (self.batch, self.len);
         let (cc, v, h) = (ar.n_emb, ar.vocab, ar.heads);
@@ -889,7 +890,7 @@ impl Plan {
             loss: self.loss_rows,
             rows: n as u32,
             v: v as u32,
-            scale: 1.0 / n as f32,
+            scale: loss_scale / n as f32,
         };
         out.push(launch(
             Prog::Xent,
@@ -1115,8 +1116,12 @@ impl Plan {
         recipe: Recipe,
         opt: &AdamW,
         step: u32,
+        loss_scale: Option<f32>,
     ) -> GpuResult<()> {
         let n = self.n_params as u32;
+        // At the mixed step the gradients are S times too big: the norm is compared with S·MAX_NORM (the same factor
+        // c, up to the 1e-6 in the denominator) and c is divided by S (one exact 1×1×1 F32 product) before the step.
+        let max_norm = MAX_NORM * loss_scale.unwrap_or(1.0);
         let (sc, mode) = match recipe {
             Recipe::Sgd => (OptScalars::sgd(SGD_LR), os::Mode::Sgd),
             Recipe::AdamW513 => {
@@ -1128,7 +1133,7 @@ impl Plan {
                     n,
                     chunk: GNORM_CHUNK,
                     mode: gn::Mode::Partial,
-                    max_norm: MAX_NORM,
+                    max_norm,
                 };
                 out.push(launch(
                     Prog::Gnorm,
@@ -1144,7 +1149,7 @@ impl Plan {
                     n: blocks,
                     chunk: blocks.div_ceil(256) * 256,
                     mode: gn::Mode::Finish,
-                    max_norm: MAX_NORM,
+                    max_norm,
                 };
                 out.push(launch(
                     Prog::Gnorm,
@@ -1156,9 +1161,28 @@ impl Plan {
                 (OptScalars::adamw(&opt.scalars(step)), os::Mode::AdamW)
             }
         };
+        let coef = match loss_scale {
+            None => self.res + 4,
+            Some(_) => {
+                Self::mm(
+                    out,
+                    (
+                        self.res + 4,
+                        self.res + RES_INV_SCALE,
+                        self.res + RES_COEF_MIXED,
+                        0,
+                    ),
+                    (1, 1, 1),
+                    0,
+                    TAG_UNSCALE,
+                    None,
+                )?;
+                self.res + RES_COEF_MIXED
+            }
+        };
         let a = os::Args {
             g: self.g,
-            coef: self.res + 4,
+            coef,
             w: self.w,
             m: self.m,
             v: self.v,
@@ -1557,4 +1581,325 @@ pub fn parse_rows(text: &str) -> Vec<Vec<(String, u32)>> {
         }
     }
     runs
+}
+
+// ------------------------------------------------------------------ C-160 point 7, third part: the mixed step
+
+/// The loss scale of the mixed step (`docs/C-160_P7_PAS_MIXT.md` §0): d(logits) ≈ 6·10⁻⁵ sits on f16's smallest
+/// normal number; × 2¹⁰ moves it to ~6·10⁻², far from both ends of f16.
+pub const LOSS_SCALE: f32 = 1024.0;
+/// `res + 16` = 1/S (written once by the CPU, [`Plan::mixed_uploads`]).
+pub const RES_INV_SCALE: u64 = 16;
+/// `res + 20` = c / S, what `opt_step` reads at the mixed step (inside the existing 64-byte `res`; nothing moves).
+pub const RES_COEF_MIXED: u64 = 20;
+/// The tag of the 1×1×1 F32 product c · (1/S).
+pub const TAG_UNSCALE: &str = "opt:descalare";
+
+/// The mixed step's tolerances against PyTorch F32, written before the first run (`docs/C-160_P7_PAS_MIXT.md` §0).
+pub const MIX_TOL_LOSS_REL: f64 = 1e-3;
+/// (loss₁ − loss_last) against PyTorch's, relative.
+pub const MIX_TOL_DROP_REL: f64 = 2e-2;
+/// Step-1 gradient (divided by S), ‖Δ‖/‖g‖ per tensor.
+pub const MIX_TOL_GRAD_REL_NORM: f64 = 5e-3;
+/// Norms (divided by S), relative (`adamw_513`).
+pub const MIX_TOL_NORM_REL: f64 = 2e-3;
+/// Weights after the last step, ‖Δ‖/‖w‖ per tensor.
+pub const MIX_TOL_W_REL_NORM: f64 = 1e-3;
+
+/// One launch of the mixed step: either a launch of the F32 list unchanged, or a matmul on `mm_tc` (its arguments
+/// sit at 0x700, so its cbuf is 0x800 bytes — it does not fit [`Launch`]).
+// ~76 launches per step: the 256-byte cbuf of `Std` inline costs nothing worth a Box.
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MixedLaunch {
+    Std(Launch),
+    Tc {
+        args: crate::mm_tc::Args,
+        tag: &'static str,
+        layer: Option<u16>,
+    },
+}
+
+/// Bytes of one `mm_tc` launch in the control zone: the cbuf (0x800) then the QMD (0x100).
+pub const SLOT_TC: u64 = crate::mm_tc::CBUF_BYTES as u64 + 0x100;
+
+impl MixedLaunch {
+    pub fn name(&self) -> &'static str {
+        match self {
+            MixedLaunch::Std(l) => l.prog.name(),
+            MixedLaunch::Tc { .. } => "mm_tc",
+        }
+    }
+
+    pub fn tag(&self) -> &'static str {
+        match self {
+            MixedLaunch::Std(l) => l.tag,
+            MixedLaunch::Tc { tag, .. } => tag,
+        }
+    }
+
+    /// Bytes this launch takes in the control zone.
+    pub fn slot(&self) -> u64 {
+        match self {
+            MixedLaunch::Std(_) => SLOT,
+            MixedLaunch::Tc { .. } => SLOT_TC,
+        }
+    }
+}
+
+fn mm_args_of(l: &Launch) -> mm::Args {
+    let u64_at = |o: usize| u64::from_le_bytes(l.cbuf[o..o + 8].try_into().unwrap_or([0; 8]));
+    let u32_at = |o: usize| u32::from_le_bytes(l.cbuf[o..o + 4].try_into().unwrap_or([0; 4]));
+    mm::Args {
+        a: u64_at(0x28),
+        b: u64_at(0x30),
+        c: u64_at(0x38),
+        bias: u64_at(0x40),
+        m: u32_at(0x48),
+        n: u32_at(0x4c),
+        k: u32_at(0x50),
+        flags: u32_at(0x54),
+    }
+}
+
+/// S must be a power of two in [1, 2²⁴] (so that dividing by it is exact).
+fn check_scale(s: f32) -> GpuResult<()> {
+    let b = s.to_bits();
+    if !(1.0..=16_777_216.0).contains(&s) || b & 0x007f_ffff != 0 {
+        return Err(bad(
+            "pas-mixt: scara erorii trebuie sa fie putere a lui 2, 1..2^24",
+        ));
+    }
+    Ok(())
+}
+
+impl Plan {
+    /// What the CPU writes once more for the mixed step (after [`Plan::uploads`]): 1/S at `res + 16`.
+    pub fn mixed_uploads(&self, loss_scale: f32) -> GpuResult<Vec<(u64, Vec<u8>)>> {
+        check_scale(loss_scale)?;
+        Ok(alloc::vec![(
+            self.res + RES_INV_SCALE,
+            (1.0 / loss_scale).to_le_bytes().to_vec()
+        )])
+    }
+
+    /// The **mixed** step (C-160 point 7, third part; SIMULARE only): the same list as [`Plan::step`], but every
+    /// matmul of the model (forward and backward) on `mm_tc` (inputs rounded to f16, f32 sums on the tensor cores),
+    /// d(logits) multiplied by `loss_scale`, the norm compared with `loss_scale`·[`MAX_NORM`] and, before
+    /// `opt_step`, one exact F32 product (`mm_train`, 1×1×1) c·(1/S) at `res + 20`, which `opt_step` reads.
+    /// Weights, gradient sums, m and v stay F32. `res[0]` is then S times the norm.
+    pub fn step_mixed(
+        &self,
+        recipe: Recipe,
+        opt: &AdamW,
+        step: u32,
+        loss_scale: f32,
+    ) -> GpuResult<Vec<MixedLaunch>> {
+        check_scale(loss_scale)?;
+        if step == 0 {
+            return Err(bad("pas-aur: pasii incep de la 1"));
+        }
+        let mut list = Vec::with_capacity(32 * self.arch.layers + 16);
+        self.forward_backward(&mut list, loss_scale)?;
+        self.optimize(&mut list, recipe, opt, step, Some(loss_scale))?;
+        list.into_iter()
+            .map(|l| {
+                if l.prog != Prog::MmTrain || l.tag == TAG_UNSCALE {
+                    return Ok(MixedLaunch::Std(l));
+                }
+                let x = mm_args_of(&l);
+                let args = crate::mm_tc::Args {
+                    a: x.a,
+                    b: x.b,
+                    c: x.c,
+                    bias: x.bias,
+                    m: x.m,
+                    n: x.n,
+                    k: x.k,
+                    flags: x.flags,
+                };
+                args.cbuf()
+                    .ok_or(bad("pas-mixt: argumentele mm_tc refuzate"))?;
+                Ok(MixedLaunch::Tc {
+                    args,
+                    tag: l.tag,
+                    layer: l.layer,
+                })
+            })
+            .collect()
+    }
+
+    /// Launches per mixed step: one more than [`Plan::launches_per_step`] (the 1×1×1 c/S).
+    pub fn launches_per_step_mixed(&self, recipe: Recipe) -> usize {
+        self.launches_per_step(recipe) + 1
+    }
+}
+
+/// The control zone of one mixed step: launches one after the other (`SLOT` bytes for an F32-list launch,
+/// [`SLOT_TC`] for an `mm_tc` one), each cbuf then its QMD. `prog_va(p)` = where program `p` is loaded,
+/// `tc_va` = where `mm_tc` is. Returns the zone and the QMD addresses for `transfer::encode_sequence_fresh`.
+pub fn pack_mixed(
+    launches: &[MixedLaunch],
+    prog_va: impl Fn(Prog) -> u64,
+    tc_va: u64,
+    zone_va: u64,
+) -> GpuResult<(Vec<u8>, Vec<u64>)> {
+    use crate::mm_tc as tc;
+    if !zone_va.is_multiple_of(256) || !tc_va.is_multiple_of(256) || launches.is_empty() {
+        return Err(bad("pas-mixt: zona de control"));
+    }
+    let total: u64 = launches.iter().map(MixedLaunch::slot).sum();
+    let mut bytes = alloc::vec![0u8; total as usize];
+    let mut qmds = Vec::with_capacity(launches.len());
+    let mut at = 0usize;
+    for l in launches {
+        let cb_va = zone_va + at as u64;
+        match l {
+            MixedLaunch::Std(x) => {
+                let pv = prog_va(x.prog);
+                if !pv.is_multiple_of(256) {
+                    return Err(bad("pas-aur: programul nealiniat"));
+                }
+                let q = x.qmd(pv, cb_va)?;
+                bytes[at..at + 0x100].copy_from_slice(&x.cbuf);
+                bytes[at + 0x100..at + 0x100 + q.len()].copy_from_slice(&q);
+                qmds.push(cb_va + 0x100);
+            }
+            MixedLaunch::Tc { args, .. } => {
+                let cb = args
+                    .cbuf()
+                    .ok_or(bad("pas-mixt: argumentele mm_tc refuzate"))?;
+                let q = ComputeQmd {
+                    program_va: tc_va,
+                    registers: tc::REGISTERS,
+                    cbuf0_va: cb_va,
+                    cbuf0_size: tc::CBUF_BYTES as u32,
+                    grid: args.grid(),
+                    block: tc::BLOCK,
+                    release: None,
+                }
+                .to_bytes_with_shared(&tc::SHARED)?;
+                let c = tc::CBUF_BYTES;
+                bytes[at..at + c].copy_from_slice(&cb);
+                bytes[at + c..at + c + q.len()].copy_from_slice(&q);
+                qmds.push(cb_va + c as u64);
+            }
+        }
+        at += l.slot() as usize;
+    }
+    Ok((bytes, qmds))
+}
+
+/// One figure of the mixed verdict: its name, the deviation, the tolerance written before the run.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MixedFigure {
+    pub name: &'static str,
+    pub dev: f64,
+    pub tol: f64,
+}
+
+impl MixedFigure {
+    pub fn passes(&self) -> bool {
+        self.dev.is_finite() && self.dev <= self.tol
+    }
+
+    pub fn permille(&self) -> u32 {
+        permille(self.dev, self.tol, true)
+    }
+}
+
+/// Judges a mixed run against PyTorch F32 in the tolerances of `docs/C-160_P7_PAS_MIXT.md` §0. `out.norms` are
+/// the board's `res[0]` (S times the norm) and `out.grad1` the board's gradient (S times it): both are divided by
+/// `loss_scale` here. Returns every figure (pass = all within).
+pub fn judge_mixed(
+    recipe: Recipe,
+    out: &Outcome,
+    refs: &Refs,
+    loss_scale: f32,
+) -> Vec<MixedFigure> {
+    let steps = out.losses.len();
+    let mut lrel = if steps == 0 || refs.losses.len() < steps {
+        f64::NAN
+    } else {
+        0.0
+    };
+    for (&o, &w) in out.losses.iter().zip(&refs.losses) {
+        let e = if o.is_finite() && w != 0.0 {
+            (o as f64 - w).abs() / w.abs()
+        } else {
+            f64::NAN
+        };
+        lrel = if e.is_nan() || lrel.is_nan() {
+            f64::NAN
+        } else {
+            lrel.max(e)
+        };
+    }
+    let drop = match (out.losses.first(), out.losses.last()) {
+        (Some(&a), Some(&b)) if steps >= 2 && refs.losses.len() >= steps => {
+            let theirs = refs.losses[0] - refs.losses[steps - 1];
+            let ours = a as f64 - b as f64;
+            if theirs != 0.0 {
+                (ours - theirs).abs() / theirs.abs()
+            } else {
+                f64::NAN
+            }
+        }
+        _ => f64::NAN,
+    };
+    let inv = 1.0 / loss_scale;
+    let g: Vec<Vec<f32>> = out
+        .grad1
+        .iter()
+        .map(|t| t.iter().map(|&x| x * inv).collect())
+        .collect();
+    let grad = deviation(&g, &refs.grad1);
+    let wl = deviation(&out.after_last, &refs.after_last);
+    let mut f = alloc::vec![
+        MixedFigure {
+            name: "eroarea",
+            dev: lrel,
+            tol: MIX_TOL_LOSS_REL
+        },
+        MixedFigure {
+            name: "scaderea",
+            dev: drop,
+            tol: MIX_TOL_DROP_REL
+        },
+        MixedFigure {
+            name: "gradient",
+            dev: if grad.finite { grad.rel_norm } else { f64::NAN },
+            tol: MIX_TOL_GRAD_REL_NORM
+        },
+        MixedFigure {
+            name: "greutati",
+            dev: if wl.finite { wl.rel_norm } else { f64::NAN },
+            tol: MIX_TOL_W_REL_NORM
+        },
+    ];
+    if recipe == Recipe::AdamW513 {
+        let mut r = if out.norms.len() == steps && refs.norms.len() >= steps {
+            0.0
+        } else {
+            f64::NAN
+        };
+        for (&a, &b) in out.norms.iter().zip(&refs.norms) {
+            let e = if a.is_finite() && b != 0.0 {
+                ((a * inv) as f64 - b).abs() / b
+            } else {
+                f64::NAN
+            };
+            r = if e.is_nan() || r.is_nan() {
+                f64::NAN
+            } else {
+                r.max(e)
+            };
+        }
+        f.push(MixedFigure {
+            name: "norme",
+            dev: r,
+            tol: MIX_TOL_NORM_REL,
+        });
+    }
+    f
 }
