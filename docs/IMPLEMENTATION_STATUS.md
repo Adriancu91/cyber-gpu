@@ -1,5 +1,34 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 157 — 22 noiembrie 2026, ~11:10–12:05 (ora României), în cloud, FĂRĂ placă — **C-160 p.7, partea a doua: `mm_tc` (înmulțirea antrenării pe circuitele speciale)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după ciclul de la 10:06 (comparat în sesiunea 156;
+os-349 cu `colsum` e GATA DE TEST, încă nerulat) → C-160 p.7 partea a doua. A doua unealtă NAK (Mesa 26.3.1) reconstruită în cloud:
+`mma16_f16` a ieșit identic (`f8c0db68…`). Clonele vechi de pe disc nu se mai puteau actualiza; am lucrat în clone proaspete, nimic pierdut.
+
+**Ce s-a făcut:** programul nou `mm_tc` (`tools/nak/mm_tc.comp`, SHA-256 `f60cd944…1ee3`, 2 632 instrucțiuni, 64 registre, bloc 128,
+24 KiB partajați, argumentele la 0x700): aceeași interfață ca `mm_train` (f32, `TA`/`TB`/`BIAS`), dar intrările rotunjite la f16 și
+produsele adunate de circuitele speciale (16 `hmma.m16n8k16.f32` pe felia de 32). Doar adăugări: `nvidia_ga104::mm_tc`,
+`gpu_compute::mm_tc` (referința, marginea scrisă înainte, prețul f16, verdictul, modelul), `gpu_sim::cmdproc::{mm_tc_on_cpu, MM_TC_NEEDS}`.
+Nota: `docs/C-160_P7_MM_TC.md`. Commit-ul codului: `951bae5`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| T168 5 forme × 8 combinații de opțiuni (blocuri parțiale) | în marginea (K + 3)·2⁻²³·Σ, cel mai rău 46 ‰ | PASS (SIMULARE) |
+| T168 pe greutățile reale `in_proj` (Y, dX, dW) | ≤ 30 ‰ din margine; față de F32 ≤ 206 ‰ din margine + prețul f16, abaterea relativă ~3·10⁻⁴ | PASS (SIMULARE) |
+| T168 refuzuri + greșeli plantate (rezultat F32 fără rotunjire, modelul `mm_train`, element mutat 1 %) | prinse, nicio scriere | PASS (SIMULARE) |
+| T168 limita f16 | gradient 1e-8 → 0; înmulțit cu 2¹⁶ → păstrat | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy `-D warnings`, **786 de teste** (+7 ignorate), build no_std | PASS |
+| `mm_tc` pe RTX 3070 Ti | nepredat (întâi `colsum`, apoi pasul de aur) | NOT TESTED |
+
+Estimare revăzută după listare (DEDUS): `mm_tc` așa cum e ~8–17 TFLOP/s (frâna: intrările f32 + plăci 64×64 → memoria plăcii).
+
+**Următorul pas:** la primul test nou pe placă: C-157 p.2 (`colsum` 3 778/3 778 bit cu bit, #651 pe sferturi ~293 simb/s, pasul de aur).
+Până atunci: C-160 p.7 partea a treia — scalarea erorii în lista pasului cu `mm_tc` + proba „aceeași eroare pe 10 pași” (SIMULARE), apoi
+proba `mm_tc` pentru placă (seturi fixe + timpul la forma qkv a lui #513).
+
+---
+
 ## Sesiunea 156 — 22 noiembrie 2026, ~10:11–10:50 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (lista `lipita-ln-32` pe placă) + C-160 p.7, partea întâi (estimarea vitezei de antrenare)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă: ciclul automat 10:06, `test-placa --ln-32` → întâi C-157 p.2.
