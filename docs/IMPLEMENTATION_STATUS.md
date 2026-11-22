@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 159 — 22 noiembrie 2026, ~13:14–13:50 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (`colsum` pe placă, os-349) + C-160 p.7: `colsum` împărțit pe rânduri**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă: ciclul automat 12:36, `test-placa --colsum` (os-349) →
+întâi C-157 p.2. Clonele vechi de pe disc aveau ramuri desincronizate; le-am adus la `origin`, nimic nepublicat pierdut.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| C-157 p.2, os-349 `colsum` pe RTX 3070 Ti | predicția: 3 778 / 3 778 bit cu bit; ieșit: **3 778 / 3 778**, aceleași ‰ pe fiecare set (24/19/447/197/319), toate cele 5 amprente ale ieșirii = modelul | **PASS pe placă (MĂSURAT de OS)**, comparat de noi |
+| Timpul `colsum` pe placă | ~0,6–0,7 µs pe rând (buffer în RAM-ul procesorului, un fir pe coloană) → la #513: 73 de `colsum` ≈ 165–275 ms pe bucată > tot pasul PyTorch (156 ms) | DEDUS din MĂSURAT (`tools/buget-antrenare/colsum_timp.py`) |
+| C-160 p.7: `colsum_part` (planul și marginea scrise înainte, `5d582a5`) | binar NAK 25.0.7 nou (`740f5d43…`, 121 instr., 20 registre); T170: cel mai rău 48 % din margine, bit cu bit modelul, o bucată = `colsum`, 6 144×768: abaterea de 10× mai mică; greșeli plantate prinse | PASS (SIMULARE) |
+| `tools/check.sh` (Rust 1.97) | format, clippy `-D warnings`, **796 de teste** (+7 ignorate), build no_std | PASS |
+| `colsum_part` pe RTX 3070 Ti | nepredat | NOT TESTED |
+
+Note: `docs/C-157_P2_COMPARATII.md` (os-349), `docs/C-160_P7_VITEZA_ESTIMARE.md` §6, `docs/C-160_P7_COLSUM_IMPARTIT.md`.
+
+**Următorul pas:** la primul test nou pe placă: C-157 p.2 (pasul de aur mic F32 — sesiunea OS îl leagă acum; `lipita-ln-32` implicit în
+os-350; #651 pe sferturi ~293 simb/s). Până atunci: C-160 p.7 partea a patra (proba `mm_tc` pentru placă: seturi fixe + timpul la forma qkv
+a lui #513); apoi aceeași privire ca la `colsum` pentru `ln_back`, `attn_back` și AdamW (cine e limitat de un fir care face prea mult).
+
+---
+
 ## Sesiunea 158 — 22 noiembrie 2026, ~12:10–12:35 (ora României), în cloud, FĂRĂ placă — **C-160 p.7, partea a treia: pasul de aur mic „mixt”**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă (os-349 cu `colsum` e GATA DE TEST, nerulat) →

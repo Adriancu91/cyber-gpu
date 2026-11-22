@@ -554,6 +554,25 @@ pub fn colsum_margin(
     Ok((bg, bb))
 }
 
+/// The margin of the split column sum (`colsum_part` + `colsum`, `docs/C-160_P7_COLSUM_IMPARTIT.md`, written before
+/// the code): [`colsum_margin`] plus one flush-to-zero unit 2⁻¹²⁶ per chunk (R + G additions instead of R); the u terms
+/// stay, since (chunk − 1) + (G − 1) ≤ R − 1.
+pub fn colsum_split_margin(
+    x: &[f32],
+    dy: &[f32],
+    rows: usize,
+    c: usize,
+    chunk: usize,
+) -> GpuResult<(Vec<f64>, Vec<f64>)> {
+    need(chunk > 0, "colsum: bucata 0")?;
+    const FTZ: f64 = 1.175_494_350_822_287_5e-38;
+    let extra = rows.div_ceil(chunk) as f64 * FTZ;
+    let (mut bg, mut bb) = colsum_margin(x, dy, rows, c)?;
+    bg.iter_mut().for_each(|v| *v += extra);
+    bb.iter_mut().for_each(|v| *v += extra);
+    Ok((bg, bb))
+}
+
 /// GELU forward element by element, exactly the calculation [`loss_and_grad`] does for the MLP activation (exact erf
 /// in f64, rounded once to f32): the oracle of mode 0 of the board's `gelu_tr` program (C-160 point 4, program 5).
 pub fn gelu_rows(u: &[f32]) -> Vec<f32> {

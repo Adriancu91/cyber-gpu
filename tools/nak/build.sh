@@ -19,6 +19,7 @@
 #   sh tools/nak/build.sh xent           # C-160 point 4, program 7: softmax + cross-entropy and its gradient (session 143)
 #   sh tools/nak/build.sh ln_back        # C-160 point 4, program 4: LayerNorm backward, dx (session 144)
 #   sh tools/nak/build.sh colsum         # C-160 point 4, program 2 (+ dγ, dβ of program 4): column sums (session 144)
+#   sh tools/nak/build.sh colsum_part    # C-160 point 7: colsum's first pass split over rows (session 159)
 #   sh tools/nak/build.sh ln_fwd         # C-160 point 4, program 3: LayerNorm forward over rows, keeps μ and rstd (session 146)
 #   sh tools/nak/build.sh gelu_tr        # C-160 point 4, program 5: GELU forward (mode 0) / backward (mode 1) (session 147)
 #   sh tools/nak/build.sh attn_back      # C-160 point 4, program 6 (backward): causal attention backward, rows / columns (session 148)
@@ -102,6 +103,9 @@ ln_back)
     ;;
 colsum)
     exec sh "$0" kernel colsum 60
+    ;;
+colsum_part)
+    exec sh "$0" kernel colsum_part 64
     ;;
 ln_fwd)
     exec sh "$0" kernel ln_fwd 60

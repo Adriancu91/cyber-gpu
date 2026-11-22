@@ -1,0 +1,44 @@
+// C-160 point 7, after os-349 (docs/C-160_P7_COLSUM_IMPARTIT.md): the first pass of a column sum split over rows.
+// The same sums as colsum.comp, but block (x, g) adds only rows g*chunk .. min((g+1)*chunk, rows) - 1 and writes its
+// partial sum to p0[g*c + k] (and p1[g*c + k] for LayerNorm). The second pass is colsum.comp itself, in bias mode,
+// over the G = ceil(rows/chunk) rows of partials. Rows inside a chunk are added in order from 0.0; no atomics, no
+// shared memory, no MUFU: the same bits at every run, and the CPU model follows the code NAK made.
+//   hat = 0 (a bias):       p0[g, k] = Σ_{r in chunk g} dy[r, k]
+//   hat = 1 (LayerNorm):    p0[g, k] = Σ dy[r, k] * x̂[r, k]   (dγ part),  p1[g, k] = Σ dy[r, k]   (dβ part)
+// Grid: x = ceil(c/256) blocks of 256 threads (one column each), y = G.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args { In dy; In x; In mean; In rstd; Out p0; Out p1; uint rows; uint c; uint hat; uint chunk; } args;
+
+void main() {
+    uint k = gl_GlobalInvocationID.x;
+    uint c = args.c;
+    if (k >= c) {
+        return;
+    }
+    uint g = gl_WorkGroupID.y;
+    uint r0 = g * args.chunk;
+    uint r1 = min(r0 + args.chunk, args.rows);
+    if (args.hat == 0u) {
+        float s = 0.0;
+        for (uint r = r0; r < r1; r++) {
+            s = s + args.dy.v[r * c + k];
+        }
+        args.p0.v[g * c + k] = s;
+    } else {
+        float sg = 0.0;
+        float sb = 0.0;
+        for (uint r = r0; r < r1; r++) {
+            float d = args.dy.v[r * c + k];
+            float h = (args.x.v[r * c + k] - args.mean.v[r]) * args.rstd.v[r];
+            sg = sg + d * h;
+            sb = sb + d;
+        }
+        args.p0.v[g * c + k] = sg;
+        args.p1.v[g * c + k] = sb;
+    }
+}

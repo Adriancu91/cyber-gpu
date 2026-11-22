@@ -1649,6 +1649,76 @@ pub fn colsum_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// The CPU stand-in for the first pass of the split column sum (`colsum_part.sm86.sass`, C-160 point 7): blocks of 256
+/// (one thread per column), grid ⌈c/256⌉ × G; cbuf0 as `colsum` (dy/x/μ/rstd/p0/p1 at 0x28…0x50, rows 0x58, c 0x5c,
+/// mode 0x60) plus the rows per chunk at 0x64. Block row g writes `p0[g·c + k]` (and `p1`) for the columns its
+/// threads reach (`gpu_compute::layer::colsum_part_gpu`); block rows past ⌈rows/chunk⌉ add nothing and write 0.0, as
+/// the program (its loop is empty, the store still happens).
+pub fn colsum_part_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [256, 1, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: colsum_part cere blocuri de 256x1x1, grila 2D"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let r = |l: &Launch<'_>, o: u64| l.mem.read_u64(l.cbuf0 + o);
+    let (dy, x, mu, rs, p0, p1) = (
+        r(l, 0x28)?,
+        r(l, 0x30)?,
+        r(l, 0x38)?,
+        r(l, 0x40)?,
+        r(l, 0x48)?,
+        r(l, 0x50)?,
+    );
+    let rows = l.mem.read_u32(l.cbuf0 + 0x58)? as usize;
+    let c = l.mem.read_u32(l.cbuf0 + 0x5c)? as usize;
+    let hat = l.mem.read_u32(l.cbuf0 + 0x60)? != 0;
+    let chunk = l.mem.read_u32(l.cbuf0 + 0x64)? as usize;
+    let cols = c.min(256 * l.grid[0] as usize);
+    let groups = l.grid[1] as usize;
+    if cols == 0 || groups == 0 {
+        return Ok(());
+    }
+    if chunk == 0 {
+        return Err(bad(
+            "SIM: colsum_part cu bucata 0 (programul ar scrie 0 peste tot), nemodelat",
+        ));
+    }
+    let real = rows.div_ceil(chunk).min(groups);
+    let dyv = l.mem.read_f32s(dy, rows * c)?;
+    let (a, b) = if hat {
+        let xv = l.mem.read_f32s(x, rows * c)?;
+        let mv = l.mem.read_f32s(mu, rows)?;
+        let rv = l.mem.read_f32s(rs, rows)?;
+        let st = gpu_compute::layer::LnStats {
+            x: &xv,
+            mean: &mv,
+            rstd: &rv,
+        };
+        gpu_compute::layer::colsum_part_gpu(&dyv, rows, c, Some(st), chunk)
+    } else {
+        gpu_compute::layer::colsum_part_gpu(&dyv, rows, c, None, chunk)
+    };
+    for g in 0..groups {
+        let off = (g * c * 4) as u64;
+        if g < real {
+            l.mem.write_f32s(p0 + off, &a[g * c..g * c + cols]);
+            if hat {
+                l.mem.write_f32s(p1 + off, &b[g * c..g * c + cols]);
+            }
+        } else {
+            let zeros = alloc::vec![0.0f32; cols];
+            l.mem.write_f32s(p0 + off, &zeros);
+            if hat {
+                l.mem.write_f32s(p1 + off, &zeros);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// What `tools/nak/out/matmul_1d.sm86.sass` (step 4) needs: the 64×8 tile of
 /// A at 0 and the 8×64 tile of B at 0x800 (4 KiB) and one barrier.
 pub const MATMUL_1D_NEEDS: Needs = Needs {

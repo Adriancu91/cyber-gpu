@@ -336,3 +336,14 @@ Nota: `docs/C-160_P4_ATTN_FWD.md`.
 | Aritmetica | un `fadd.ftz`, nimic altceva (fără împărțire: prima variantă cu r mod T folosea `mufu.rcp` și a fost scoasă) | lanțul `fadd.ftz` de la 0 + un `fadd.ftz` în modul „adună”; fără MUFU |
 
 Oracolul: `gpu_compute::train::{embed_rows, embed_back_rows}`. Testul T161. Nota: `docs/C-160_P4_EMB.md`.
+
+## C-160 punctul 7: `colsum_part` — prima trecere a sumei pe coloane împărțite pe rânduri (22 nov 2026, sesiunea 159, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh colsum_part` (Mesa 25.0.7 reconstruit în cloud; `colsum` a ieșit **identic**, `7a0fa2bd…`).
+
+| Ce | Valoare |
+|---|---|
+| Program | `colsum_part.comp`: ca `colsum`, dar blocul (x, g) adună doar rândurile bucății g; scrie sume parțiale `[G, c]`; a doua trecere = `colsum` |
+| Ieșire | 121 de instrucțiuni, 20 de registre, fără MUFU / memorie partajată / barieră / `atom` |
+| SHA-256 `colsum_part.sm86.sass` | `740f5d439b357d37c06685384cdfd4fb7ba5cbda84c3023f49a77565d59725ac` |
+| Argumente în bufferul constant 0 | ca la `colsum` (0x28…0x60) + **chunk la 0x64**; blocul y din `sr[0x26]` + **baza la 0x4** (lăsată 0) |
+| Nota | `docs/C-160_P7_COLSUM_IMPARTIT.md` (T170, SIMULARE) |

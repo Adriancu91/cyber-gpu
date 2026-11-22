@@ -483,6 +483,62 @@ pub fn colsum_gpu(
     }
 }
 
+/// The first pass of the split column sum, `colsum_part.comp` (C-160 point 7, `docs/C-160_P7_COLSUM_IMPARTIT.md`):
+/// chunk `g` = rows `g·chunk … min((g+1)·chunk, rows) − 1`, each added in order from 0.0 with exactly the operations of
+/// [`colsum_gpu`]. Returns the partials `[G, c]` (p0, and p1 with `ln`; p1 empty without), G = ⌈rows / chunk⌉.
+/// `chunk` = 0 gives no chunks (empty partials).
+pub fn colsum_part_gpu(
+    dy: &[f32],
+    rows: usize,
+    c: usize,
+    ln: Option<LnStats<'_>>,
+    chunk: usize,
+) -> (Vec<f32>, Vec<f32>) {
+    if chunk == 0 {
+        return (Vec::new(), Vec::new());
+    }
+    let groups = rows.div_ceil(chunk);
+    let mut p0 = Vec::with_capacity(groups * c);
+    let mut p1 = Vec::new();
+    for g in 0..groups {
+        let (r0, r1) = (g * chunk, ((g + 1) * chunk).min(rows));
+        let st = ln.as_ref().map(|s| LnStats {
+            x: &s.x[r0 * c..r1 * c],
+            mean: &s.mean[r0..r1],
+            rstd: &s.rstd[r0..r1],
+        });
+        let (a, b) = colsum_gpu(&dy[r0 * c..r1 * c], r1 - r0, c, st);
+        p0.extend_from_slice(&a);
+        p1.extend_from_slice(&b);
+    }
+    (p0, p1)
+}
+
+/// The whole split column sum as the board does it: [`colsum_part_gpu`], then [`colsum_gpu`] in bias mode over the
+/// G rows of partials (`p0 → s0`, and with `ln` `p1 → s1`). With one chunk (`chunk ≥ rows`) it is [`colsum_gpu`]
+/// bit for bit (the second pass adds one number to 0.0).
+pub fn colsum_split_gpu(
+    dy: &[f32],
+    rows: usize,
+    c: usize,
+    ln: Option<LnStats<'_>>,
+    chunk: usize,
+) -> (Vec<f32>, Vec<f32>) {
+    let hat = ln.is_some();
+    let (p0, p1) = colsum_part_gpu(dy, rows, c, ln, chunk);
+    if p0.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let groups = p0.len() / c;
+    let s0 = colsum_gpu(&p0, groups, c, None).0;
+    let s1 = if hat {
+        colsum_gpu(&p1, groups, c, None).0
+    } else {
+        Vec::new()
+    };
+    (s0, s1)
+}
+
 /// The scalar arguments of `attention.comp` (cbuf0 0x48..0x58).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AttnArgs {
