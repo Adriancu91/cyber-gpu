@@ -2,6 +2,24 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-340 `test-placa --argmax-placa` (argmax pe placă, proba, 22 nov 2026, 02:51) — sesiunea 149
+- **Estimat** (`C-155_argmax-pe-placa.md`, DEDUS): cele 4 cuvinte ale programului = `argmax_result` al logit-urilor copiate la fiecare
+  poziție (prag 0); lansarea argmax ~5–15 µs; în proba cu copie, o lansare în plus pe simbol (placa +~10 µs).
+- **Ieșit:** **18/18 poziții identice**, simbolul plăcii = al procesorului; lansarea argmax **15,04 µs** median (marginea de sus a
+  estimării: un singur grup de 256 de fire citește 64 KiB ≈ 4,4 GB/s); placa 1 977 → **1 989 µs** (+12, cât lansarea minus suprapunerea);
+  16 simboluri identice, amprenta `0x46a07914` = aceeași, 0 poziții lente; **media cu driverul 338,91 simb/s** (os-336: 347,17).
+- **De ce media a scăzut cu ~8 simb/s — doar proba, nu programul:** driverul 814 → 865 µs (+51), iar rândul „argmax” 85 → **158 µs**
+  (+73). În OS (`gpu_i14.rs`, P6-123) ceasul „argmax” cuprinde acum și (a) **o a doua citire a întregii arene** (64 KiB + 16 octeți, ca
+  să ia cei 16 octeți de la capăt; citirea logit-urilor singură = 49 µs) și (b) **verificarea** `agrees()` = încă o trecere de
+  `argmax_result` pe 16 384 de logit-uri (~25 µs). 49 + 25 ≈ 73 µs: exact diferența (DEDUS din cod + cifre).
+- **os-336** (LayerNorm nou implicit, 00:06), pe scurt: 347,17 simb/s față de ~348 estimat; placa 1 977, driver 814 — ca os-332.
+- **Ce tai mai departe — argmax fără copie** (punctul 4 al notei): dispar copia (11,9 µs pe placă), citirea logit-urilor (49 µs) și
+  argmax-ul pe procesor (85 µs); rămân lansarea argmax (15 µs) și citirea a **doar 16 octeți** (~1–2 µs). Estimare (DEDUS): placa
+  ~1 980 µs, driverul ~680 µs, simbolul ~2 770 µs → **~360 simb/s** (os-336: 347). Proba: simbolurile = ale procesorului (oracolul
+  după placă, ca acum), amprenta nu mai există pe placă (logit-urile nu se mai citesc) → oracolul pe procesor face amprenta.
+- **Mai târziu, mărunt:** argmax pe mai multe grupuri (o a doua lansare mică) ar coborî 15 → ~6 µs; câștig ~9 µs, nu merită acum.
+- Nota pentru OS: `integration/cyber-universe/C-157_P2f_os-340_argmax.md`. Nimic nou pentru placă.
+
 ## os-332 `test-placa --ln-nou` + încălzirea poziției 0 (21 nov 2026, ~19:16) — sesiunea 142
 - **Estimat** (`C-157_P2c_pozitia-0.md` + os-331, DEDUS): 0 poziții lente; ~348 simb/s și la prima rulare cu LayerNorm nou; încălzirea
   scrie ~11 264 + 1 064 = 12 328 de cuvinte pe prima listă; nimic schimbat în amprentă.
