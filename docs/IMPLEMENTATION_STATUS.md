@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 169 — 22 noiembrie 2026, ~23:11–23:30 (ora României), în cloud, FĂRĂ placă — **C-157 p.5: ceasul termic (tabloul la N secunde, pragul de temperatură, înainte/după viteza maximă)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-355. **C-160 p.7 (legarea lui `attn_p`)
+așteaptă rândul OS-ului** (`T::AttnP` în `gpu_i10.rs`; OS-ul e pe `44a4d16`, sesiunea lui ocupată) → după regula cozii, C-157 p.5
+(tabloul merge pe placă din os-323). Planul și predicțiile urcate **înainte** de cod (`54ff52d`). Clonele vechi de pe disc aveau
+ramurile locale desincronizate: păstrate ca `backup-vechi-2026-11-18` (doar local), lucrat din `origin`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Pragul (propunere) | avertizare 80 °C, oprire 85 °C, pornire din nou ≤ 70 °C, tablou mut > 10 s; oprire imediată la motivele 0x08/0x20/0x40/0x80; sursa: NVIDIA, maximum 93 °C la RTX 3070 Ti | DEDUS |
+| `gsp::rusd_watch` (doar adăugări) | `ThermalLimits`, `Watch::{new, due, observe, summary, stopped}`, `may_start`, `compare_boost` → `BoostSeen`, `after_wait_ms`, `temp_stamp`, `parse_kw`, rânduri `kw` | PASS |
+| T179 (7 teste) + 2 în modul | toate 7 predicțiile la prima rulare; 6 greșeli plantate prinse | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy `-D warnings`, **855 de teste** (+7 ignorate), build no_std | PASS |
+| Pe placă: temperatura sub lucru, marca la fiecare 500 ms, ceasurile după cerere | nota pentru OS scrisă (`integration/cyber-universe/C-157_P5_ceas-termic.md`) | NOT TESTED |
+
+Note: `docs/C-157_P5_CEAS_TERMIC.md`. Răspuns la os-323: motivul 0x1 = `GPU_IDLE`. **Ce e nou pentru placă:** nicio comandă; doar
+momentul (tabloul pornit înainte de viteza maximă / pe durata lucrării).
+
+**Următorul pas:** la primul test nou pe placă: C-157 p.2 (os-351, os-352, proba atenției). Când OS-ul adaugă `T::AttnP`: C-160 p.7
+legarea lui `attn_p` în pas. Altfel C-157 p.7 (generarea fără drum la procesor) sau p.8 (fișa de model).
+
+---
+
 ## Sesiunea 168 — 22 noiembrie 2026, ~22:10–22:25 (ora României), în cloud, FĂRĂ placă — **C-160 p.7: `attn_p`, doar P fără P·V**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-355 → C-160 p.7, cu planul și
