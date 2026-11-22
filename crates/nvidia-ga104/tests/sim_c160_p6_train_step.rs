@@ -92,8 +92,10 @@ fn t167_the_list_of_one_step() {
     // below the arena by chance, e.g. two counts side by side).
     for x in a.iter() {
         let vas: Vec<u64> = x.cbuf[0x28..0x78]
-            .chunks_exact(8)
-            .map(|w| u64::from_le_bytes(w.try_into().unwrap()))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|w| u64::from_le_bytes(*w))
             .filter(|&va| va >= plan.base && va < VA_BASE + (1 << 32))
             .collect();
         assert!(!vas.is_empty(), "{}", x.tag);
