@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 168 — 22 noiembrie 2026, ~22:10–22:45 (ora României), în cloud, FĂRĂ placă — **C-160 p.7: `attn_p`, doar P fără P·V**
+## Sesiunea 168 — 22 noiembrie 2026, ~22:10–22:25 (ora României), în cloud, FĂRĂ placă — **C-160 p.7: `attn_p`, doar P fără P·V**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-355 → C-160 p.7, cu planul și
 predicțiile urcate **înainte** de cod (`3491d3f`). Clona veche de pe disc avea ramura locală desincronizată: păstrată ca
