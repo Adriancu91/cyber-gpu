@@ -59,3 +59,15 @@ pe test.
 
 ## Surse
 Aceleași ca `docs/C-160_P7_MM_TC.md`. Forma probei (buffer cu gărzi NaN, rânduri `kt …`, amprente FNV) = `colsum_probe` (os-349).
+
+## Rezultatul în SIMULARE (scris după cod, sesiunea 160)
+Cod: `crates/nvidia-ga104/src/mm_tc_probe.rs`, testul T171 `crates/nvidia-ga104/tests/sim_c160_p7_mm_tc_probe.rs` (6 teste + 5 în modul).
+- Seturile 0–4 prin procesorul de comenzi simulat (QMD-ul cu 24 KiB + bariera din `launch_bytes`): **5 / 5 în margine**, 22 188 / 22 188
+  bit cu bit modelul (normal: „placa” simulată *este* modelul), cel mai rău **69 ‰** (setul cu limitele f16; celelalte 10–40 ‰) — în
+  predicția 3 (≤ 100 ‰).
+- `qkv-513` judecat pe cele 3 benzi din ieșirea modelului: în margine, 5 ‰; modelul pe benzi ~0,6 s pe procesor. Că benzile judecă exact ce
+  a scris lansarea întreagă: T171d (un produs 160 × 130 × 40 rulat întreg, citit pe benzi = modelul pe benzi, octet cu octet).
+- Greșeli plantate prinse (18+): fără lansare, TB pierdut, K − 1, M − 16, două rânduri din A schimbate. Un QMD fără memoria partajată e
+  refuzat de modelul procesorului de comenzi (T171c), nu ghicit.
+- Amprentele de comparat pe placă: tabelul din `integration/cyber-universe/C-160_P7d_mm_tc-proba.md`.
+- `tools/check.sh`: **807 PASS**. Predicțiile 1, 2, 4 și 5 rămân **NETESTATE** până la placă.
