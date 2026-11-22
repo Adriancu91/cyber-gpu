@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 170 — 23 noiembrie 2026, ~00:10–00:35 (ora României), în cloud, FĂRĂ placă — **C-157 p.7: simbolul ales rămâne pe placă (primul pas al generării fără drum la procesor)**
+## Sesiunea 170 — 23 noiembrie 2026, ~00:10–00:27 (ora României), în cloud, FĂRĂ placă — **C-157 p.7: simbolul ales rămâne pe placă (primul pas al generării fără drum la procesor)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-355; OS-ul n-a adăugat încă
 `T::AttnP` (C-160 p.7 așteaptă) → C-157 p.7. Planul și predicțiile urcate **înainte** de cod (`3e5e85a`). Lanțul P7 nu e necesar:
@@ -587,7 +587,7 @@ C-160 punctul 4 mai departe. (Dosarul local vechi avea ramura în urmă; am lucr
 
 ---
 
-## Sesiunea 146 — 22 noiembrie 2026, ~00:10–00:35 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 4, programul 3 (`ln_fwd`)**
+## Sesiunea 146 — 22 noiembrie 2026, ~00:10–00:27 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 4, programul 3 (`ln_fwd`)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-335 (doar rapoartele automate ale ciclului) →
 C-160 punctul 4 mai departe. (Dosarul local vechi avea ramura în urmă; am lucrat într-o clonă proaspătă; istoria neatinsă.)
