@@ -13,7 +13,7 @@ aveau ramuri desincronizate; am lucrat în clone proaspete, nimic șters.
 | `tools/check.sh` (Rust 1.100, ca CI) | format, clippy `-D warnings`, **807 teste**, build no_std; CI roșu pe `8efe392` (o regulă clippy nouă în 1.100, `as_chunks_mut`), reparat în commit-ul următor | PASS |
 | `mm_tc` pe RTX 3070 Ti (corectitudine + 8–17 TFLOP/s prezis la qkv) | predat OS-ului, de rulat după pasul de aur mic F32 | NOT TESTED |
 
-Note: `docs/C-160_P7_MM_TC_PROBA.md`, `integration/cyber-universe/C-160_P7d_mm_tc-proba.md` (commit de legat: cel cu reparația clippy, după `8efe392` — vezi hub).
+Note: `docs/C-160_P7_MM_TC_PROBA.md`, `integration/cyber-universe/C-160_P7d_mm_tc-proba.md` (commit de legat `54563a5`).
 
 **Următorul pas:** la primul test nou pe placă: C-157 p.2 (pasul de aur mic F32, apoi proba `mm_tc`; #651 pe `lipita-ln-32`). Până atunci:
 C-160 p.7 — aceeași privire ca la `colsum` pentru `ln_back`, `attn_back` și AdamW (programe în care un fir face prea mult).
