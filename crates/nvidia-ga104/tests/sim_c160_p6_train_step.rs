@@ -233,3 +233,45 @@ fn t167_verdict_rows_and_parse() {
     assert!(!judge(Recipe::Sgd, 73, &out, &refs).passes());
     assert!(!judge(Recipe::Sgd, 73, &Outcome::default(), &refs).passes());
 }
+
+/// C-160 point 7 (T177, `docs/C-160_P7_P_RECALCULAT.md`): the list with one shared P. Same launches as `Plan::new`
+/// plus, in layer 0's backward pass, one `attn_fwd` re-launch with exactly the forward launch's arguments, right
+/// before the two `attn_back` launches; the mixed list gets it too.
+#[test]
+fn t177_the_list_with_p_rebuilt() {
+    let (inp, _) = batch();
+    let base = VA_BASE + 0x100_0000;
+    let kept = Plan::new(train::MIC, MIC_B, MIC_T, &inp, base).unwrap();
+    let rec = Plan::new_p_recalc(train::MIC, MIC_B, MIC_T, &inp, base).unwrap();
+    assert_eq!(kept.p_relaunches(), 0);
+    assert_eq!(rec.p_relaunches(), 1);
+    assert!(rec.p_rebuilt(0) && !rec.p_rebuilt(1) && !rec.p_rebuilt(2));
+    assert_eq!(rec.layers[0].p, rec.layers[1].p);
+    assert_ne!(kept.layers[0].p, kept.layers[1].p);
+    assert!(rec.bytes() < kept.bytes());
+    let opt = AdamW::recipe_513(&params());
+    for (recipe, n) in [(Recipe::AdamW513, 76), (Recipe::Sgd, 74)] {
+        let l = rec.step(recipe, &opt, 1).unwrap();
+        assert_eq!(l.len(), n);
+        assert_eq!(rec.launches_per_step(recipe), n);
+        assert_eq!(rec.launches_per_step_mixed(recipe), n + 1);
+        assert_eq!(
+            rec.step_mixed(recipe, &opt, 1, 1024.0).unwrap().len(),
+            n + 1
+        );
+        let at = l.iter().position(|x| x.tag == "inapoi:atentia-P").unwrap();
+        assert_eq!(l[at].layer, Some(0));
+        assert_eq!(l[at].prog, Prog::AttnFwd);
+        assert_eq!(l[at + 1].tag, "inapoi:atentia-dS");
+        assert_eq!(l[at + 1].layer, Some(0));
+        let fwd = l
+            .iter()
+            .find(|x| x.tag == "inainte:atentia" && x.layer == Some(0))
+            .unwrap();
+        assert_eq!(fwd.cbuf, l[at].cbuf);
+        assert_eq!(fwd.grid, l[at].grid);
+        // The kept-P list has exactly one launch less.
+        let k = kept.step(recipe, &opt, 1).unwrap();
+        assert_eq!(k.len() + 1, l.len());
+    }
+}

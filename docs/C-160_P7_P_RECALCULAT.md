@@ -45,3 +45,24 @@ Concret, doar adăugări:
 ## Ce NU face
 Nu schimbă niciun program GPU și nici `Plan::new`. Nu leagă programele „pe plăci” de pas (rămâne pasul următor). Nimic nou pentru
 placă: relansarea folosește programul `attn_fwd` care e deja în lista pasului de aur mic (os-351).
+
+## Rezultatul (după cod, sesiunea 167)
+| Predicția | Ieșit | |
+|---|---|---|
+| 1. pasul mic, 10 pași, P recalculat = P păstrat bit cu bit | `sgd` și `adamw_513`: **DA**, verdictul față de PyTorch TRECE | PASS (SIMULARE) |
+| 2. 76 / 74 de lansări, −33 024 B | 76 / 74, −33 024 B | PASS |
+| 3. 4 straturi, 3 pași AdamW, +3 lansări, bit cu bit | 140 de lansări (+3), **DA** | PASS (SIMULARE) |
+| 4. fără relansări → prins | 4 straturi: biți diferiți; pasul mic `sgd`: grad_abs 6,3e-2 în `straturi.0.atentie.in_proj_weight` (toleranța 1e-4 ×600), verdictul NU TRECE | PASS (SIMULARE) |
+| 5. memoria arenei (±3 %) | #513 12 × 512: **7,70 → 6,15 GiB** (est. 7,7 / 6,2); #651 4 × 512: 6,49 → 5,42 (6,5 / 5,4); #651 6 × 512: **8,38 → 6,76** (8,4 / 6,8) | PASS (DEDUS) |
+| 6. costul (~17 ms pe bucată #513 cu `attn_fwd_tile`) | nemăsurat | NOT TESTED |
+
+Ce înseamnă: **lotul adevărat al lui #513 (12 × 512) încape acum sub 7 GiB** (cu P păstrat nu încăpea), iar #651 urcă de la lotul
+4 la 6. Codul: `Plan::new_p_recalc`, `Plan::p_rebuilt`, `Plan::p_relaunches` (doar adăugări; `Plan::new` dă aceleași adrese și
+aceleași 73 / 75 de lansări). Testele: T177 în `crates/nvidia-ga104/tests/sim_c160_p5_golden.rs` și `sim_c160_p6_train_step.rs`.
+
+**Ce nu e dovedit:** în SIMULARE „aceiași biți la a doua lansare” e adevărat prin construcție (modelul e o funcție). Pe placa reală
+se sprijină pe faptul că programul n-are `atomic` și are ordinea sumelor fixă — de verificat o dată pe placă: proba atenției pe
+plăci (predată) poate lansa `attn_fwd_tile` de două ori pe același set și compara amprentele P (propunere pentru un test viitor,
+nimic nou de legat acum).
+
+**Pasul următor:** un program care face doar P (fără P·V) pentru relansare (cost ~½), apoi programele „pe plăci” în pas.

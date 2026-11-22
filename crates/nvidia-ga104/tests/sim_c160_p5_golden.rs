@@ -146,6 +146,9 @@ enum Fault {
     NoClip,
     /// The head's dW written again after the token scatter (the scatter lost).
     HeadOverwrites,
+    /// C-160 point 7 (T177): the shared-P plan without its `attn_fwd` re-launches (every layer but the last then
+    /// uses the last layer's P).
+    NoPRebuild,
 }
 
 fn plant(plan: &Plan, list: &mut Vec<Launch>, f: Fault) {
@@ -182,6 +185,7 @@ fn plant(plan: &Plan, list: &mut Vec<Launch>, f: Fault) {
             let at = list.iter().position(|l| l.tag.starts_with("opt:")).unwrap();
             list.insert(at, head);
         }
+        Fault::NoPRebuild => list.retain(|l| l.tag != "inapoi:atentia-P"),
     }
 }
 
@@ -198,6 +202,22 @@ struct Run {
 
 fn run_with(
     ar: Arch,
+    shape: (usize, usize),
+    params: &[Vec<f32>],
+    data: (&[u32], &[u32]),
+    recipe: Recipe,
+    steps: u32,
+    fault: Fault,
+) -> Run {
+    run_plan(false, ar, shape, params, data, recipe, steps, fault)
+}
+
+/// `recalc`: [`Plan::new_p_recalc`] (one P shared by all layers, rebuilt in the backward pass) instead of
+/// [`Plan::new`].
+#[allow(clippy::too_many_arguments)]
+fn run_plan(
+    recalc: bool,
+    ar: Arch,
     (bsz, tl): (usize, usize),
     params: &[Vec<f32>],
     (inputs, targets): (&[u32], &[u32]),
@@ -205,7 +225,11 @@ fn run_with(
     steps: u32,
     fault: Fault,
 ) -> Run {
-    let plan = Plan::new(ar, bsz, tl, inputs, HEAP).unwrap();
+    let plan = if recalc {
+        Plan::new_p_recalc(ar, bsz, tl, inputs, HEAP).unwrap()
+    } else {
+        Plan::new(ar, bsz, tl, inputs, HEAP).unwrap()
+    };
     let mut b = Board::new();
     for (va, bytes) in plan.uploads(params, inputs, targets).unwrap() {
         b.cp.mem.write(va, &bytes);
@@ -219,6 +243,10 @@ fn run_with(
     for step in 1..=steps {
         let mut list = plan.step(recipe, &opt, step).unwrap();
         assert_eq!(list.len(), plan.launches_per_step(recipe));
+        assert_eq!(
+            list.iter().filter(|l| l.tag == "inapoi:atentia-P").count(),
+            plan.p_relaunches()
+        );
         plant(&plan, &mut list, fault);
         b.submit(&list);
         let rows = b.read(plan.loss_rows, bsz * tl);
@@ -261,9 +289,14 @@ fn run_with(
 }
 
 fn run_mic(recipe: Recipe, steps: u32, fault: Fault) -> Run {
+    run_mic_plan(false, recipe, steps, fault)
+}
+
+fn run_mic_plan(recalc: bool, recipe: Recipe, steps: u32, fault: Fault) -> Run {
     let inputs = read_i32(&dir().join("intrari.i32"));
     let targets = read_i32(&dir().join("tinte.i32"));
-    run_with(
+    run_plan(
+        recalc,
         MIC,
         (B, T),
         &tensors("initiale"),
@@ -637,4 +670,162 @@ fn t165_one_layer_at_513_widths_matches_the_oracle() {
 #[ignore]
 fn t165_all_12_layers_at_513_widths_matches_the_oracle() {
     shapes_513(12);
+}
+
+// ------------------------------------------------------------------ T177: P rebuilt instead of kept (C-160 point 7)
+
+/// Bit-for-bit equality of everything two runs read back.
+fn same_bits(a: &Outcome, b: &Outcome) -> bool {
+    let flat = |v: &[Vec<f32>]| {
+        v.iter()
+            .flatten()
+            .map(|x| x.to_bits())
+            .collect::<Vec<u32>>()
+    };
+    let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<u32>>();
+    bits(&a.losses) == bits(&b.losses)
+        && bits(&a.norms) == bits(&b.norms)
+        && flat(&a.grad1) == flat(&b.grad1)
+        && flat(&a.after1) == flat(&b.after1)
+        && flat(&a.after_last) == flat(&b.after_last)
+}
+
+/// Predictions 1 and 2 (`docs/C-160_P7_P_RECALCULAT.md`): the small golden step with one shared P, rebuilt in the
+/// backward pass, gives the kept-P numbers bit for bit (SIMULARE), one launch more, one P buffer less.
+#[test]
+fn t177_p_rebuilt_small_golden_step_is_bit_for_bit_the_kept_p_step() {
+    for (recipe, name, n) in [
+        (Recipe::Sgd, "sgd", 73usize),
+        (Recipe::AdamW513, "adamw_513", 75),
+    ] {
+        let kept = run_mic_plan(false, recipe, 10, Fault::None);
+        let rec = run_mic_plan(true, recipe, 10, Fault::None);
+        assert_eq!(kept.total_per_step, n);
+        assert_eq!(rec.total_per_step, n + 1);
+        let p_bytes = (4 * (B * MIC.heads * T * T) as u64).div_ceil(256) * 256 + 256;
+        assert_eq!(kept.board_bytes - rec.board_bytes, p_bytes);
+        let same = same_bits(&kept.out, &rec.out);
+        let v = ts::judge(recipe, rec.total_per_step, &rec.out, &refs(name));
+        println!(
+            "kt c177 {name}: P recalculat {} lansari (P pastrat {}), memoria {} B mai putin; 10 pasi bit cu bit = {}; verdictul fata de PyTorch: {}",
+            rec.total_per_step,
+            kept.total_per_step,
+            kept.board_bytes - rec.board_bytes,
+            if same { "DA" } else { "NU" },
+            if v.passes() { "TRECE" } else { "NU TRECE" }
+        );
+        assert!(same, "{name}: P recalculat nu da aceiasi biti");
+        assert!(v.passes());
+    }
+}
+
+/// Prediction 3: four layers (made-up weights), three AdamW steps — still bit for bit, three re-launches.
+#[test]
+fn t177_p_rebuilt_four_layers_bit_for_bit() {
+    let ar = Arch { layers: 4, ..MIC };
+    let mut r = rng(177);
+    let params: Vec<Vec<f32>> = ar
+        .tensors()
+        .iter()
+        .map(|s| {
+            let n = s.elements();
+            if s.name.ends_with("ln1.weight")
+                || s.name.ends_with("ln2.weight")
+                || s.name == "ln.weight"
+            {
+                (0..n).map(|_| 1.0 + 0.1 * r()).collect()
+            } else {
+                (0..n).map(|_| 0.3 * r()).collect()
+            }
+        })
+        .collect();
+    let inputs = read_i32(&dir().join("intrari.i32"));
+    let targets = read_i32(&dir().join("tinte.i32"));
+    let run = |recalc: bool, fault: Fault| {
+        run_plan(
+            recalc,
+            ar,
+            (B, T),
+            &params,
+            (&inputs, &targets),
+            Recipe::AdamW513,
+            3,
+            fault,
+        )
+    };
+    let kept = run(false, Fault::None);
+    let rec = run(true, Fault::None);
+    assert_eq!(rec.total_per_step, kept.total_per_step + 3);
+    assert!(same_bits(&kept.out, &rec.out), "4 straturi: alti biti");
+    // Prediction 4, here: without the re-launches layers 0..2 use layer 3's P.
+    let bad = run(true, Fault::NoPRebuild);
+    assert_eq!(bad.total_per_step, kept.total_per_step);
+    assert!(
+        !same_bits(&kept.out, &bad.out),
+        "fara relansari: aceiasi biti?"
+    );
+    println!(
+        "kt c177 4 straturi: {} lansari (+3), 3 pasi AdamW bit cu bit = DA; fara relansari: biti diferiti (PRINSA)",
+        rec.total_per_step
+    );
+}
+
+/// Prediction 4: the shared-P plan without its re-launches is caught against PyTorch at step 1.
+#[test]
+fn t177_missing_p_rebuild_is_caught() {
+    let rf = refs("sgd");
+    let r = run_mic_plan(true, Recipe::Sgd, 1, Fault::NoPRebuild);
+    let g = worst(&r.out.grad1, &rf.grad1);
+    let w1 = worst(&r.out.after1, &rf.after1);
+    let caught = g.abs > train::TOL_GRAD_ABS
+        || g.rel_norm > train::TOL_GRAD_REL_NORM
+        || w1.abs > train::TOL_SGD_W_ABS;
+    let v = ts::judge(Recipe::Sgd, r.total_per_step, &r.out, &rf);
+    println!(
+        "kt c177 greseala fara relansari (pasul mic, sgd, 1 pas): grad_abs {:.2e} ({}), w1_abs {:.2e} ({}) -> {}; verdictul: {}",
+        g.abs,
+        g.where_,
+        w1.abs,
+        w1.where_,
+        if caught { "PRINSA" } else { "SCAPATA" },
+        if v.passes() {
+            "TRECE (gresit)"
+        } else {
+            "NU TRECE"
+        }
+    );
+    assert!(caught);
+    assert!(!v.passes());
+}
+
+/// Prediction 5 (DEDUS, addresses only — nothing runs): the arena of #513 / #651 at real batches, P kept or rebuilt.
+#[test]
+fn t177_arena_memory_at_513_and_651() {
+    let gib = |b: u64| b as f64 / (1u64 << 30) as f64;
+    let m651 = Arch {
+        layers: 24,
+        ..train::M513
+    };
+    for (name, ar, bsz, want_kept, want_rec) in [
+        ("#513 12 x 512", train::M513, 12usize, 7.7f64, 6.2f64),
+        ("#651 4 x 512", m651, 4, 6.5, 5.4),
+        ("#651 6 x 512", m651, 6, 8.4, 6.8),
+    ] {
+        let tl = 512;
+        let inputs: Vec<u32> = (0..(bsz * tl) as u32)
+            .map(|i| (i * 7919) % 16_384)
+            .collect();
+        let kept = Plan::new(ar, bsz, tl, &inputs, HEAP).unwrap();
+        let rec = Plan::new_p_recalc(ar, bsz, tl, &inputs, HEAP).unwrap();
+        assert_eq!(kept.p_relaunches(), 0);
+        assert_eq!(rec.p_relaunches(), ar.layers - 1);
+        let (k, r) = (gib(kept.bytes()), gib(rec.bytes()));
+        println!(
+            "kt c177 memoria arenei {name}: P pastrat {k:.2} GiB (estimat {want_kept}), P recalculat {r:.2} GiB (estimat {want_rec}); sub 7 GiB: {} / {}",
+            if k < 7.0 { "DA" } else { "NU" },
+            if r < 7.0 { "DA" } else { "NU" }
+        );
+        assert!((k / want_kept - 1.0).abs() <= 0.03, "{name}: {k}");
+        assert!((r / want_rec - 1.0).abs() <= 0.03, "{name}: {r}");
+    }
 }

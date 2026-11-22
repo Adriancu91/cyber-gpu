@@ -389,6 +389,46 @@ impl Plan {
     /// The arena for `arch` with a batch of `batch` texts of `len` tokens (`inputs` = the batch's tokens, for the
     /// `emb_back` segment lists), from `base` (256-byte aligned) on.
     pub fn new(arch: Arch, batch: usize, len: usize, inputs: &[u32], base: u64) -> GpuResult<Self> {
+        Self::build(arch, batch, len, inputs, base, false)
+    }
+
+    /// The same arena as [`Plan::new`] but with **one** attention-probability buffer P shared by all layers (C-160
+    /// point 7, `docs/C-160_P7_P_RECALCULAT.md`): the backward pass of layer l re-launches `attn_fwd` on the layer's
+    /// kept `qkv` to rebuild its P (same program, same inputs, fixed summation order, no atomics → the same bits) when
+    /// a later layer overwrote it. Saves (L − 1)·B·H·T² f32; costs [`Plan::p_relaunches`] launches per step.
+    pub fn new_p_recalc(
+        arch: Arch,
+        batch: usize,
+        len: usize,
+        inputs: &[u32],
+        base: u64,
+    ) -> GpuResult<Self> {
+        Self::build(arch, batch, len, inputs, base, true)
+    }
+
+    /// True when the P buffer of layer `l` is overwritten by a later layer's forward pass (then the backward pass
+    /// rebuilds it first). Depends only on the addresses: always false for [`Plan::new`].
+    pub fn p_rebuilt(&self, l: usize) -> bool {
+        self.layers
+            .get(l)
+            .is_some_and(|wl| self.layers[l + 1..].iter().any(|x| x.p == wl.p))
+    }
+
+    /// How many `attn_fwd` re-launches one step has (0 for [`Plan::new`], L − 1 for [`Plan::new_p_recalc`]).
+    pub fn p_relaunches(&self) -> usize {
+        (0..self.layers.len())
+            .filter(|&l| self.p_rebuilt(l))
+            .count()
+    }
+
+    fn build(
+        arch: Arch,
+        batch: usize,
+        len: usize,
+        inputs: &[u32],
+        base: u64,
+        shared_p: bool,
+    ) -> GpuResult<Self> {
         let (cc, v, h) = (arch.n_emb, arch.vocab, arch.heads);
         let n = batch * len;
         if !base.is_multiple_of(256)
@@ -426,7 +466,7 @@ impl Plan {
         let seg_tok = seg(&mut b, &st);
         let seg_pos = seg(&mut b, &sp);
         let mut xs = alloc::vec![b.alloc(n * cc)];
-        let mut layers = Vec::new();
+        let mut layers: Vec<LayerBufs> = Vec::new();
         for _ in 0..arch.layers {
             let xin = *xs.last().unwrap_or(&0);
             let ln1 = LnSaved {
@@ -444,7 +484,10 @@ impl Plan {
                 ln1,
                 h1: b.alloc(n * cc),
                 qkv: b.alloc(n * 3 * cc),
-                p: b.alloc(batch * h * len * len),
+                p: match layers.first() {
+                    Some(first) if shared_p => first.p,
+                    _ => b.alloc(batch * h * len * len),
+                },
                 att: b.alloc(n * cc),
                 ln2,
                 h2: b.alloc(n * cc),
@@ -577,7 +620,9 @@ impl Plan {
 
     /// Launches per step: 31 per layer + 13 at `adamw_513` (11 at `sgd`).
     pub fn launches_per_step(&self, recipe: Recipe) -> usize {
-        31 * self.arch.layers + if recipe == Recipe::AdamW513 { 13 } else { 11 }
+        31 * self.arch.layers
+            + self.p_relaunches()
+            + if recipe == Recipe::AdamW513 { 13 } else { 11 }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1019,6 +1064,27 @@ impl Plan {
                 ly,
             )?;
             Self::bias_grad(out, (dx2, gt_(5)), n, cc, "inapoi:out-db", ly)?;
+            if self.p_rebuilt(l) {
+                // A later layer's forward pass overwrote this layer's P: rebuild it, bit for bit (same program, same
+                // qkv; att is rewritten with its own bits).
+                let a = af::Args {
+                    qkv: wl.qkv,
+                    p: wl.p,
+                    att: wl.att,
+                    batch: bsz as u32,
+                    t: tl as u32,
+                    c: cc as u32,
+                    heads: h as u32,
+                    scale,
+                };
+                out.push(launch(
+                    Prog::AttnFwd,
+                    a.cbuf().as_ref().map(|b| &b[..]),
+                    a.grid(),
+                    "inapoi:atentia-P",
+                    ly,
+                )?);
+            }
             for (mode, tag) in [
                 (ab::Mode::Rows, "inapoi:atentia-dS"),
                 (ab::Mode::Columns, "inapoi:atentia-dqkv"),
