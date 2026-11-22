@@ -22,6 +22,7 @@
 #   sh tools/nak/build.sh ln_fwd         # C-160 point 4, program 3: LayerNorm forward over rows, keeps μ and rstd (session 146)
 #   sh tools/nak/build.sh gelu_tr        # C-160 point 4, program 5: GELU forward (mode 0) / backward (mode 1) (session 147)
 #   sh tools/nak/build.sh attn_back      # C-160 point 4, program 6 (backward): causal attention backward, rows / columns (session 148)
+#   sh tools/nak/build.sh attn_fwd       # C-160 point 4, program 6 (forward): causal attention over T positions, writes P (session 149)
 #   sh tools/nak/build.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): apt install glslang-tools spirv-tools libvulkan-dev libdrm-dev
@@ -106,6 +107,9 @@ gelu_tr)
     ;;
 attn_back)
     exec sh "$0" kernel attn_back 64
+    ;;
+attn_fwd)
+    exec sh "$0" kernel attn_fwd 44
     ;;
 kernel)
     NAME=${2:?nume}; PUSH=${3:?octeti push constants}

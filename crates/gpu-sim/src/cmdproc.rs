@@ -1331,6 +1331,66 @@ pub fn attn_back_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// The CPU stand-in for C-160 point 4's attention forward (`attn_fwd.sm86.sass`, program 6, forward half): blocks of
+/// 32; cbuf0 qkv/p/att at 0x28/0x30/0x38, T at 0x40, C at 0x44, H at 0x48, d at 0x4c, the scale at 0x50 (NAK dump).
+/// The batch is the grid's z (the program never reads it). Grid [⌈T/32⌉, ≤ H, ≤ B]: every row (b, h, i < min(T, 32·x))
+/// is `gpu_compute::layer::attn_fwd_row_gpu` (row i of P, all T values, and the d values of att). A grid past H / B or
+/// past ⌈T/32⌉ (the program does not guard those) or a d ≠ C / H is refused as not modelled.
+pub fn attn_fwd_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    use gpu_compute::layer::{AttnShape, attn_fwd_row_gpu};
+    if l.block != [32, 1, 1] {
+        return Err(bad("SIM: attn_fwd cere blocuri de 32x1x1"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 || l.mem.read_u32(l.cbuf0 + 0x8)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0..0x8) diferita de 0, nemodelata",
+        ));
+    }
+    let r64 = |l: &Launch<'_>, o: u64| l.mem.read_u64(l.cbuf0 + o);
+    let r32 = |l: &Launch<'_>, o: u64| l.mem.read_u32(l.cbuf0 + o);
+    let (qkv, p, att) = (r64(l, 0x28)?, r64(l, 0x30)?, r64(l, 0x38)?);
+    let (t, c, heads, d) = (
+        r32(l, 0x40)? as usize,
+        r32(l, 0x44)? as usize,
+        r32(l, 0x48)? as usize,
+        r32(l, 0x4c)? as usize,
+    );
+    let scale = f32::from_bits(r32(l, 0x50)?);
+    let [gx, gy, gz] = l.grid.map(|g| g as usize);
+    if heads == 0 || d == 0 || d * heads != c || t == 0 {
+        return Err(bad("SIM: attn_fwd: d != C/H sau forma goala, nemodelat"));
+    }
+    if gy > heads || gx > t.div_ceil(32) {
+        return Err(bad("SIM: attn_fwd: grila trece de H / T, nemodelata"));
+    }
+    if gz == 0 || gy == 0 || gx == 0 {
+        return Ok(());
+    }
+    let s = AttnShape {
+        batch: gz,
+        t,
+        c,
+        heads,
+    };
+    let (nq, _, _) = s
+        .sizes()
+        .ok_or_else(|| bad("SIM: attn_fwd: forma prea mare"))?;
+    let qkv_v = l.mem.read_f32s(qkv, nq)?;
+    let rows = t.min(32 * gx);
+    for b in 0..gz {
+        for h in 0..gy {
+            for i in 0..rows {
+                let (row, a) = attn_fwd_row_gpu(&s, &qkv_v, scale, b, h, i);
+                let at = (((b * heads + h) * t + i) * t) as u64;
+                l.mem.write_f32s(p + 4 * at, &row);
+                let o = ((b * t + i) * c + h * d) as u64;
+                l.mem.write_f32s(att + 4 * o, &a);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The CPU stand-in for C-160 point 4's column-sum program (`colsum.sm86.sass`): blocks of 256 (one thread per
 /// column, grid x = ⌈c/256⌉); cbuf0 dy/x/μ/rstd/s0/s1 at 0x28/0x30/0x38/0x40/0x48/0x50, rows at 0x58, c at 0x5c, the
 /// mode at 0x60 (0 = bias, else LayerNorm: dγ in s0, dβ in s1) (NAK dump). The columns are

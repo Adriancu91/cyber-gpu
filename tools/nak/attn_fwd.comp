@@ -1,0 +1,70 @@
+// C-160 point 4, program 6 (forward half): causal multi-head attention forward of the training step, over all T
+// positions of B texts at once, keeping the softmax probabilities P for the backward program (attn_back.comp).
+// Input: qkv [B·T, 3C] (Q | K | V, head h = columns h·d … h·d+d−1). Outputs: P [B, H, T, T] and att [B·T, C].
+// Grid [⌈T/32⌉, H, B], blocks of 32 threads, one thread per (b, h, i):
+//   s_j   = (Σ_e Q_ie·K_je)·scale        (ffma chain, e ascending, from 0; then one fmul)   for j ≤ i, kept in P
+//   m     = max_j s_j                     (from −FLT_MAX, j ascending)
+//   x_j   = exp(s_j − m), sum = Σ_j x_j   (exp = MUFU.EX2 of (s_j − m)·log2 e; fadd chain, j ascending, from 0)
+//   P_ij  = x_j·(1/sum)                   for j ≤ i;  P_ij = 0 for j > i (the causal mask = the loop bounds)
+//   att_ie = Σ_j P_ij·V_je                (ffma chain, j ascending, from 0)
+// The formulas are the usual ones (PyTorch scaled_dot_product_attention / llm.c attention_forward, BSD / MIT: idea only).
+// No atomics, no shared memory, no barrier: every sum is one thread's chain in a fixed order (the same bits at every
+// run). exp() and 1/sum are the GPU's approximate MUFU units: the CPU model (gpu_compute::layer::attn_fwd_gpu) follows
+// the order of every operation, and both are judged against the f64 training oracle (gpu_compute::train::attention_rows)
+// within a margin written before the measurement.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Buf { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args {
+    In qkv; Buf p; Out att;
+    uint t; uint c; uint heads; uint d; float scale;
+} args;
+void main() {
+    uint T = args.t;
+    uint C = args.c;
+    uint d = args.d;
+    uint b = gl_WorkGroupID.z;
+    uint h = gl_WorkGroupID.y;
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= T) {
+        return;
+    }
+    uint prow = ((b * args.heads + h) * T + i) * T;
+    uint qrow = (b * T + i) * 3u * C + h * d;
+    float m = -3.402823466e38;
+    for (uint j = 0u; j <= i; j++) {
+        uint krow = (b * T + j) * 3u * C + C + h * d;
+        float acc = 0.0;
+        for (uint e = 0u; e < d; e++) {
+            acc = fma(args.qkv.v[qrow + e], args.qkv.v[krow + e], acc);
+        }
+        float s = acc * args.scale;
+        args.p.v[prow + j] = s;
+        m = max(m, s);
+    }
+    float sum = 0.0;
+    for (uint j = 0u; j <= i; j++) {
+        float x = exp(args.p.v[prow + j] - m);
+        args.p.v[prow + j] = x;
+        sum = sum + x;
+    }
+    float inv = 1.0 / sum;
+    for (uint j = 0u; j <= i; j++) {
+        args.p.v[prow + j] = args.p.v[prow + j] * inv;
+    }
+    for (uint j = i + 1u; j < T; j++) {
+        args.p.v[prow + j] = 0.0;
+    }
+    uint orow = (b * T + i) * C + h * d;
+    for (uint e = 0u; e < d; e++) {
+        float acc = 0.0;
+        for (uint j = 0u; j <= i; j++) {
+            acc = fma(args.p.v[prow + j], args.qkv.v[(b * T + j) * 3u * C + 2u * C + h * d + e], acc);
+        }
+        args.att.v[orow + e] = acc;
+    }
+}

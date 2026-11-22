@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 149 — 22 noiembrie 2026, ~03:10–03:45 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (os-340) + C-160 punctul 4, programul 6, jumătatea „înainte” (`attn_fwd`)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă: **os-340** (argmax pe placă, 18/18) → întâi comparația
+(C-157 p.2), apoi C-160 punctul 4. (Dosarul local vechi avea ramura în urmă; am lucrat într-o clonă proaspătă; istoria de pe GitHub neatinsă.)
+
+**Ce s-a făcut:** (1) comparația os-340 în `docs/C-157_P2_COMPARATII.md` + nota pentru OS `integration/cyber-universe/C-157_P2f_os-340_argmax.md`
+(commit `dc4edf0`): lansarea argmax 15,04 µs (marginea de sus a estimării 5–15); media 347 → 339 simb/s vine din **măsurarea probei** (a doua
+citire a arenei de 64 KiB + verificarea, +73 µs în rândul „argmax”), nu din program; argmax fără copie: estimat ~360 simb/s. Nimic nou pentru placă.
+(2) atenția cauzală înainte pe toate cele T poziții, care **scrie P** pentru `attn_back`: `tools/nak/attn_fwd.comp` → Mesa NAK 25.0.7, 3 536
+octeți, 221 de instrucțiuni, 25 de registre, un `mufu.exp2` + un `mufu.rcp`, SHA-256 `fe97ab49…dbaa5596`. Adăugări (nimic redenumit, OS-ul
+compilează neschimbat): modulul `nvidia_ga104::attn_fwd` (`ATTN_FWD`, `ATTN_FWD_SHA256`, `REGISTERS`, `BLOCK`, `CBUF_BYTES`, `Args::{cbuf, grid}`),
+`gpu_compute::layer::{ATTN_FWD_LOG2E, attn_fwd_row_gpu, attn_fwd_gpu}`, `gpu_sim::cmdproc::attn_fwd_on_cpu`. Nota: `docs/C-160_P4_ATTN_FWD.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Comparația os-340 | estimat față de ieșit, cauza celor +73 µs (din codul OS, doar citit) | PASS (DEDUS) |
+| Compilarea NAK | Mesa reconstruit în cloud; `attn_back` identic; `attn_fwd` nou | PASS (compilat, nerulat) |
+| T160 față de oracolul f64 | 8 forme: P ≤ 13,6 %, att ≤ 6,5 % din marginea scrisă (2⁻²² loc pentru fiecare MUFU) | PASS (SIMULARE) |
+| T160 lanțul înainte → `attn_back`, două programe pe un procesor, masca, grila scurtă, refuzuri, 8 greșeli plantate | toate | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy `-D warnings`, **731 de teste**, build no_std | PASS |
+| `attn_fwd` pe RTX 3070 Ti | nepredat (C-160 p.6) | NOT TESTED |
+
+**Următorul pas:** C-160 punctul 4: încorporările (înainte / adunarea înapoi), norma + tăierea, AdamW; la primul test nou pe placă: C-157 punctul 2.
+
+---
+
 ## Sesiunea 148 — 22 noiembrie 2026, ~02:10–02:45 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 4, programul 6, jumătatea „înapoi” (`attn_back`)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de rezolvat de noi (os-336 a trecut, e treaba OS-ului) →

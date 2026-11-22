@@ -309,3 +309,17 @@ Oracolul: `gpu_compute::train::gelu_rows` / `gelu_back_rows` (f64), într-o marg
 | Aritmetica | 5 lanțuri `ffma.ftz` (dP, dot, dQ, dK, dV), 2 `fadd.ftz`, 2 `fmul.ftz` |
 
 Oracolul: `gpu_compute::train::attention_back_rows` (f64), într-o margine scrisă. Testul T159. Nota: `docs/C-160_P4_ATTN_BACK.md`.
+
+## C-160 punctul 4, programul 6 (înainte): `attn_fwd` (22 nov 2026, sesiunea 149, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh attn_fwd` (Mesa 25.0.7 reconstruit în cloud; `attn_back` a ieșit **identic**).
+
+| Ce | `attn_fwd` |
+|---|---|
+| Program | atenția cauzală înainte pe toate cele T poziții ale lotului, o lansare, grila [⌈T/32⌉, H, B], blocuri de 32; scrie P [B, H, T, T] (+0 deasupra diagonalei) și att [B·T, C] |
+| Ieșire | **3 536 octeți**, 221 de instrucțiuni, 25 de registre, fără memorie partajată, fără barieră |
+| SHA-256 | `fe97ab49c5b04303d0e2a2e2a9d7bc9c22d8bfbaaf2e8cbfa3e41104dbaa5596` |
+| Bufferul constant 0 | qkv / P / att la 0x28 / 0x30 / 0x38, T 0x40, C 0x44, H 0x48, d 0x4c, scala 0x50; baza grupurilor 0x0 / 0x4 / 0x8 = 0 |
+| Aritmetica | 2 lanțuri `ffma.ftz` (Q·K, P·V), `fmul.ftz` cu scala, `fmnmx.ftz` (maximul), `fadd.ftz`(s, −m), `fmul.ftz` cu log₂e (`0x3fb8aa3b`), **`mufu.exp2`**, lanțul `fadd.ftz` al sumei, **`mufu.rcp`** (fără pas Newton), `fmul.ftz`(x, 1/Σ) |
+
+Oracolul: `gpu_compute::train::attention_rows` (f64), într-o margine scrisă (cu loc 2⁻²² pentru fiecare MUFU). Testul T160.
+Nota: `docs/C-160_P4_ATTN_FWD.md`.

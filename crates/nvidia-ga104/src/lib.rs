@@ -56,6 +56,7 @@ extern crate alloc;
 
 pub mod argmax;
 pub mod attn_back;
+pub mod attn_fwd;
 pub mod backend;
 pub mod board_compare;
 pub mod boot;
