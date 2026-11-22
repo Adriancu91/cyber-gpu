@@ -1,0 +1,80 @@
+// C-160 point 4, program 6 (backward half): causal multi-head attention backward of the training step, in two modes.
+// Inputs (kept from the forward pass): qkv [B·T, 3C] (Q | K | V, head h = columns h·d … h·d+d−1), P [B, H, T, T]
+// (softmax probabilities, row i, column j; only j ≤ i is ever read: the causal mask is the loop bounds), dO = datt
+// [B·T, C] (gradient of the attention output, heads side by side).
+//   mode 0 (rows), grid [⌈T/32⌉, H, B], one thread per (b, h, i):
+//       dP_ij = Σ_e dO_ie·V_je (ffma chain, e ascending)          for j ≤ i, kept in dS[b,h,i,j]
+//       dot   = Σ_j P_ij·dP_ij (ffma chain, j ascending)
+//       dS_ij = (P_ij·(dP_ij − dot))·scale                         for j ≤ i;  dS_ij = 0 for j > i
+//   mode 1 (columns), grid [H, T, B], 32 threads looping over e (e = lane, lane+32, …): for position t of text b,
+//       dQ_te = Σ_{j ≤ t} dS_tj·K_je;  dK_te = Σ_{i ≥ t} dS_it·Q_ie;  dV_te = Σ_{i ≥ t} P_it·dO_ie   (ffma chains, ascending)
+//   written into dqkv [B·T, 3C] (dQ | dK | dV), the layout of qkv, for the backward matmul of in_proj.
+// No atomics, no shared memory, no barrier: every output is summed by one thread in a fixed order (the same bits at
+// every run). Mode 1 reads the dS that mode 0 wrote (two launches, in order).
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Buf { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args {
+    In qkv; In p; In dout; Buf ds; Out dqkv;
+    uint t; uint c; uint heads; uint d; uint mode; float scale;
+} args;
+void main() {
+    uint T = args.t;
+    uint C = args.c;
+    uint d = args.d;
+    uint b = gl_WorkGroupID.z;
+    if (args.mode == 0u) {
+        uint h = gl_WorkGroupID.y;
+        uint i = gl_GlobalInvocationID.x;
+        if (i >= T) {
+            return;
+        }
+        uint prow = ((b * args.heads + h) * T + i) * T;
+        uint orow = (b * T + i) * C + h * d;
+        for (uint j = 0u; j <= i; j++) {
+            uint vrow = (b * T + j) * 3u * C + 2u * C + h * d;
+            float acc = 0.0;
+            for (uint e = 0u; e < d; e++) {
+                acc = fma(args.dout.v[orow + e], args.qkv.v[vrow + e], acc);
+            }
+            args.ds.v[prow + j] = acc;
+        }
+        float dot = 0.0;
+        for (uint j = 0u; j <= i; j++) {
+            dot = fma(args.p.v[prow + j], args.ds.v[prow + j], dot);
+        }
+        for (uint j = 0u; j <= i; j++) {
+            float x = args.ds.v[prow + j] - dot;
+            float y = args.p.v[prow + j] * x;
+            args.ds.v[prow + j] = y * args.scale;
+        }
+        for (uint j = i + 1u; j < T; j++) {
+            args.ds.v[prow + j] = 0.0;
+        }
+    } else {
+        uint h = gl_WorkGroupID.x;
+        uint tp = gl_WorkGroupID.y;
+        uint base = (b * args.heads + h) * T * T;
+        uint r = b * T + tp;
+        for (uint e = gl_LocalInvocationID.x; e < d; e += 32u) {
+            uint col = h * d + e;
+            float dq = 0.0;
+            for (uint j = 0u; j <= tp; j++) {
+                dq = fma(args.ds.v[base + tp * T + j], args.qkv.v[(b * T + j) * 3u * C + C + col], dq);
+            }
+            float dk = 0.0;
+            float dv = 0.0;
+            for (uint i = tp; i < T; i++) {
+                dk = fma(args.ds.v[base + i * T + tp], args.qkv.v[(b * T + i) * 3u * C + col], dk);
+                dv = fma(args.p.v[base + i * T + tp], args.dout.v[(b * T + i) * C + col], dv);
+            }
+            args.dqkv.v[r * 3u * C + col] = dq;
+            args.dqkv.v[r * 3u * C + C + col] = dk;
+            args.dqkv.v[r * 3u * C + 2u * C + col] = dv;
+        }
+    }
+}

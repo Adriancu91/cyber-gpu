@@ -296,3 +296,16 @@ Oracolul: `gpu_compute::train::layernorm_rows` + `layernorm_stats` (f64), într-
 | Aritmetica | `fmul.ftz`, `fadd.ftz`, `ffma.ftz`, **un `mufu.rcp` și un `mufu.exp2` pe element** (aceeași exponențială pentru Φ și φ) |
 
 Oracolul: `gpu_compute::train::gelu_rows` / `gelu_back_rows` (f64), într-o margine scrisă. Testul T158. Nota: `docs/C-160_P4_GELU.md`.
+
+## C-160 punctul 4, programul 6 (înapoi): `attn_back` (22 nov 2026, sesiunea 148, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh attn_back` (Mesa 25.0.7 reconstruit în cloud; `gelu_tr` a ieșit **identic**).
+
+| Ce | `attn_back` |
+|---|---|
+| Program | atenția cauzală înapoi, două lansări: modul 0 = rândurile lui dS (grila [⌈T/32⌉, H, B]), modul 1 = dQ \| dK \| dV (grila [H, T, B]); blocuri de 32 |
+| Ieșire | **5 104 octeți**, 319 instrucțiuni, 25 de registre, fără memorie partajată, fără barieră, fără MUFU |
+| SHA-256 | `7092074774576fbe9d213b0d3adb4f02d6fa013771cde8315526879fb0079f54` |
+| Bufferul constant 0 | qkv / P / dO / dS / dqkv la 0x28 / 0x30 / 0x38 / 0x40 / 0x48, T 0x50, C 0x54, H 0x58, d 0x5c, modul 0x60, scala 0x64; baza grupurilor 0x0 / 0x4 / 0x8 = 0 |
+| Aritmetica | 5 lanțuri `ffma.ftz` (dP, dot, dQ, dK, dV), 2 `fadd.ftz`, 2 `fmul.ftz` |
+
+Oracolul: `gpu_compute::train::attention_back_rows` (f64), într-o margine scrisă. Testul T159. Nota: `docs/C-160_P4_ATTN_BACK.md`.

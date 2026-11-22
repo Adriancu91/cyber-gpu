@@ -1,5 +1,32 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 148 — 22 noiembrie 2026, ~02:10–02:45 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 4, programul 6, jumătatea „înapoi” (`attn_back`)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de rezolvat de noi (os-336 a trecut, e treaba OS-ului) →
+C-160 punctul 4 mai departe. (Dosarul local vechi avea ramura în urmă; am trecut-o pe `origin/g0-g2-fundatie`; istoria de pe GitHub neatinsă.)
+
+**Ce s-a făcut:** atenția cauzală înapoi, pe toate capetele și textele lotului, în două lansări ale aceluiași binar: modul 0 scrie rândurile lui
+dS (dP, „dot”-ul rândului, P·(dP − dot)·1/√d, 0 deasupra diagonalei), modul 1 scrie dQ | dK | dV în dqkv (așezarea lui qkv). Masca = marginile
+buclelor (P deasupra diagonalei nu se citește). Fără `atomic`, memorie partajată, barieră sau MUFU → modelul e codul, bit cu bit.
+`tools/nak/attn_back.comp` → Mesa NAK 25.0.7, 5 104 octeți, 319 instrucțiuni, 25 de registre, SHA-256 `70920747…0079f54`. Adăugări (nimic
+redenumit, OS-ul compilează neschimbat): modulul `nvidia_ga104::attn_back` (`ATTN_BACK`, `ATTN_BACK_SHA256`, `REGISTERS`, `BLOCK`, `CBUF_BYTES`,
+`Mode`, `Args::{cbuf, grid, scale_for}`), `gpu_compute::layer::{AttnShape, attn_back_row_gpu, attn_back_col_gpu, attn_back_gpu}`,
+`gpu_compute::train::{attention_rows, attention_back_rows}`, `gpu_sim::cmdproc::attn_back_on_cpu`. Nota: `docs/C-160_P4_ATTN_BACK.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Compilarea NAK | Mesa reconstruit în cloud; `gelu_tr` identic; `attn_back` nou | PASS (compilat, nerulat) |
+| T159 față de oracolul f64 (aceleași intrări) | 7 forme (modelul mic, T 70, d 40, d 1, H 1, softmax ascuțit, gradienți 1e-4): dS ≤ 19,4 %, dqkv ≤ 65,8 % din marginea scrisă; max \|Δ\| 6,0e-7 pe forma modelului mic | PASS (SIMULARE) |
+| T159 față de P-ul în f64 al pasului (exact `loss_and_grad`) | ≤ 2⁻¹⁶ relativ pe dQ, dK, dV | PASS (SIMULARE) |
+| T159 masca (NaN deasupra diagonalei), biți, lansare = model, grilă scurtă, refuzuri, 10 greșeli plantate | toate | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy `-D warnings`, **725 de teste**, build no_std | PASS |
+| `attn_back` pe RTX 3070 Ti | nepredat (C-160 p.6) | NOT TESTED |
+
+**Următorul pas:** C-160 punctul 4, atenția înainte pe T poziții (scrie P), apoi încorporările, norma + tăierea, AdamW; la primul test nou pe placă:
+C-157 punctul 2.
+
+---
+
 ## Sesiunea 147 — 22 noiembrie 2026, ~01:10–02:00 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 4, programul 5 (`gelu_tr`)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-335 (os-336 / os-339 sunt doar GATA DE TEST) →

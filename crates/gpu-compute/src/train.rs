@@ -520,6 +520,54 @@ pub fn gelu_back_rows(g: &[f32], u: &[f32]) -> GpuResult<Vec<f32>> {
         .collect())
 }
 
+/// Causal multi-head attention forward on `qkv` [B·T, 3C] (Q | K | V, head h = columns h·d … h·d+d−1), exactly the
+/// calculation [`loss_and_grad`] does: returns the output [B·T, C] and the probabilities P [B, H, T, T] in f64 (0 above
+/// the diagonal). Feeds the oracle of the board's attention backward (C-160 point 4, program 6).
+pub fn attention_rows(
+    c: usize,
+    heads: usize,
+    qkv: &[f32],
+    bsz: usize,
+    t: usize,
+) -> GpuResult<(Vec<f32>, Vec<f64>)> {
+    need(
+        heads > 0
+            && c > 0
+            && c.is_multiple_of(heads)
+            && bsz > 0
+            && t > 0
+            && qkv.len() == bsz * t * 3 * c,
+        "atentie: forma",
+    )?;
+    Ok(attention_core(c, heads, qkv, bsz, t))
+}
+
+/// Causal attention backward, exactly [`loss_and_grad`]'s lines: from d(att) [B·T, C], `qkv` and P [B, H, T, T]
+/// (f64; only j ≤ i is read — the mask) to d(qkv) [B·T, 3C] (dQ | dK | dV), each summed in f64 and rounded once.
+/// The oracle of the board's `attn_back` program (C-160 point 4, program 6).
+pub fn attention_back_rows(
+    c: usize,
+    heads: usize,
+    datt: &[f32],
+    qkv: &[f32],
+    p: &[f64],
+    bsz: usize,
+    t: usize,
+) -> GpuResult<Vec<f32>> {
+    need(
+        heads > 0
+            && c > 0
+            && c.is_multiple_of(heads)
+            && bsz > 0
+            && t > 0
+            && qkv.len() == bsz * t * 3 * c
+            && datt.len() == bsz * t * c
+            && p.len() == bsz * heads * t * t,
+        "atentie inapoi: forma",
+    )?;
+    Ok(attention_back_core(c, heads, datt, qkv, p, bsz, t))
+}
+
 /// What one layer keeps for the backward pass.
 struct LayerCache {
     ln1: LnCache,
@@ -536,7 +584,11 @@ struct LayerCache {
 
 /// Causal multi-head attention core on `qkv` [B·T, 3C] (rows Q | K | V, head h = columns h·d … (h+1)·d − 1).
 fn attention(a: &Arch, qkv: &[f32], bsz: usize, t: usize) -> (Vec<f32>, Vec<f64>) {
-    let (c, nh, d) = (a.n_emb, a.heads, a.head_dim());
+    attention_core(a.n_emb, a.heads, qkv, bsz, t)
+}
+
+fn attention_core(c: usize, nh: usize, qkv: &[f32], bsz: usize, t: usize) -> (Vec<f32>, Vec<f64>) {
+    let d = c / nh;
     let scale = 1.0 / sqrt64(d as f64);
     let mut att = vec![0.0f32; bsz * t * c];
     let mut p = vec![0.0f64; bsz * nh * t * t];
@@ -589,7 +641,19 @@ fn attention_back(
     bsz: usize,
     t: usize,
 ) -> Vec<f32> {
-    let (c, nh, d) = (a.n_emb, a.heads, a.head_dim());
+    attention_back_core(a.n_emb, a.heads, datt, qkv, p, bsz, t)
+}
+
+fn attention_back_core(
+    c: usize,
+    nh: usize,
+    datt: &[f32],
+    qkv: &[f32],
+    p: &[f64],
+    bsz: usize,
+    t: usize,
+) -> Vec<f32> {
+    let d = c / nh;
     let scale = 1.0 / sqrt64(d as f64);
     let mut dq = vec![0.0f64; bsz * t * c];
     let mut dk = vec![0.0f64; bsz * t * c];

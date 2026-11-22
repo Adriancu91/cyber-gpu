@@ -613,6 +613,157 @@ pub fn gelu_tr_gpu(u: f32, g: Option<f32>) -> f32 {
     }
 }
 
+/// The shape of one attention backward (C-160 point 4, program 6, `attn_back.comp`): B texts of T positions, C = H·d.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AttnShape {
+    pub batch: usize,
+    pub t: usize,
+    pub c: usize,
+    pub heads: usize,
+}
+
+impl AttnShape {
+    /// Head width d = C / H.
+    pub fn d(&self) -> usize {
+        self.c / self.heads
+    }
+
+    /// Elements of qkv / dqkv ([B·T, 3C]), of dO ([B·T, C]) and of P / dS ([B, H, T, T]); `None` for a bad shape.
+    pub fn sizes(&self) -> Option<(usize, usize, usize)> {
+        if self.batch == 0
+            || self.t == 0
+            || self.heads == 0
+            || self.c == 0
+            || !self.c.is_multiple_of(self.heads)
+        {
+            return None;
+        }
+        let rows = self.batch.checked_mul(self.t)?;
+        let qkv = rows.checked_mul(self.c)?.checked_mul(3)?;
+        let p = self
+            .batch
+            .checked_mul(self.heads)?
+            .checked_mul(self.t)?
+            .checked_mul(self.t)?;
+        Some((qkv, rows * self.c, p))
+    }
+}
+
+/// Mode 0 of the board's attention backward (`attn_back.comp`), one thread = one row (b, h, i), in the order of the
+/// code NAK 25.0.7 made (`tools/nak/out/attn_back.sm86.txt`): dP_ij = `ffma.ftz` chain over e ascending of
+/// dO_ie·V_je (from 0); dot = `ffma.ftz` chain over j ≤ i ascending of P_ij·dP_ij (from 0); dS_ij =
+/// `fmul.ftz`(`fmul.ftz`(P_ij, `fadd.ftz`(dP_ij, −dot)), scale) for j ≤ i and 0 for j > i (the causal mask: P above
+/// the diagonal is never read). Returns the T values of the row of dS. No MUFU: the model is the program, bit for bit.
+#[allow(clippy::too_many_arguments)]
+pub fn attn_back_row_gpu(
+    s: &AttnShape,
+    qkv: &[f32],
+    p: &[f32],
+    dout: &[f32],
+    scale: f32,
+    b: usize,
+    h: usize,
+    i: usize,
+) -> Vec<f32> {
+    let (t, c, d) = (s.t, s.c, s.d());
+    let prow = ((b * s.heads + h) * t + i) * t;
+    let orow = (b * t + i) * c + h * d;
+    let mut row = alloc::vec![0.0f32; t];
+    for (j, rj) in row.iter_mut().enumerate().take(i + 1) {
+        let vrow = (b * t + j) * 3 * c + 2 * c + h * d;
+        let mut acc = 0.0f32;
+        for e in 0..d {
+            acc = fma_f32_ftz(dout[orow + e], qkv[vrow + e], acc);
+        }
+        *rj = acc;
+    }
+    let mut dot = 0.0f32;
+    for j in 0..=i {
+        dot = fma_f32_ftz(p[prow + j], row[j], dot);
+    }
+    for j in 0..=i {
+        let x = add_f32_ftz(row[j], -dot);
+        row[j] = mul_ftz(mul_ftz(p[prow + j], x), scale);
+    }
+    row
+}
+
+/// Mode 1 of `attn_back.comp`, one (b, h, position tp, e), in the program's order: dQ = `ffma.ftz` chain over
+/// j = 0 … tp of dS_tp,j·K_je; dK = chain over i = tp … T−1 of dS_i,tp·Q_ie; dV = chain over the same i of
+/// P_i,tp·dO_ie (all from 0). Returns (dQ, dK, dV) for column h·d + e of row b·T + tp.
+#[allow(clippy::too_many_arguments)]
+pub fn attn_back_col_gpu(
+    s: &AttnShape,
+    qkv: &[f32],
+    p: &[f32],
+    dout: &[f32],
+    ds: &[f32],
+    b: usize,
+    h: usize,
+    tp: usize,
+    e: usize,
+) -> (f32, f32, f32) {
+    let (t, c, d) = (s.t, s.c, s.d());
+    let base = (b * s.heads + h) * t * t;
+    let col = h * d + e;
+    let mut dq = 0.0f32;
+    for j in 0..=tp {
+        dq = fma_f32_ftz(
+            ds[base + tp * t + j],
+            qkv[(b * t + j) * 3 * c + c + col],
+            dq,
+        );
+    }
+    let (mut dk, mut dv) = (0.0f32, 0.0f32);
+    for i in tp..t {
+        dk = fma_f32_ftz(ds[base + i * t + tp], qkv[(b * t + i) * 3 * c + col], dk);
+        dv = fma_f32_ftz(p[base + i * t + tp], dout[(b * t + i) * c + col], dv);
+    }
+    (dq, dk, dv)
+}
+
+/// Both launches of the board's attention backward on the CPU (mode 0 over every row, then mode 1 over every
+/// element): returns (dS [B, H, T, T], dqkv [B·T, 3C]). `None` for a bad shape or wrong slice lengths.
+pub fn attn_back_gpu(
+    s: &AttnShape,
+    qkv: &[f32],
+    p: &[f32],
+    dout: &[f32],
+    scale: f32,
+) -> Option<(Vec<f32>, Vec<f32>)> {
+    let (nq, no, np) = s.sizes()?;
+    if qkv.len() != nq || dout.len() != no || p.len() != np {
+        return None;
+    }
+    let mut ds = alloc::vec![0.0f32; np];
+    for b in 0..s.batch {
+        for h in 0..s.heads {
+            for i in 0..s.t {
+                let at = ((b * s.heads + h) * s.t + i) * s.t;
+                ds[at..at + s.t]
+                    .copy_from_slice(&attn_back_row_gpu(s, qkv, p, dout, scale, b, h, i));
+            }
+        }
+    }
+    let mut dqkv = alloc::vec![0.0f32; nq];
+    let c = s.c;
+    for b in 0..s.batch {
+        for h in 0..s.heads {
+            for tp in 0..s.t {
+                let r = b * s.t + tp;
+                for e in 0..s.d() {
+                    let (dq, dk, dv) = attn_back_col_gpu(s, qkv, p, dout, &ds, b, h, tp, e);
+                    let col = h * s.d() + e;
+                    dqkv[r * 3 * c + col] = dq;
+                    dqkv[r * 3 * c + c + col] = dk;
+                    dqkv[r * 3 * c + 2 * c + col] = dv;
+                }
+            }
+        }
+    }
+    Some((ds, dqkv))
+}
+
 /// C-139: every vector one position leaves in the activation scratch of a layer, computed with the **program
 /// models** above (`layernorm_gpu`, `q8::matvec_gpu_order`, `vadd_gpu`, `attention_head_gpu`, `gelu_gpu`) in the order
 /// of the 16 launches — what each launch should have written, to find the first one that did not. In SIMULARE the
