@@ -1,5 +1,22 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 156 — 22 noiembrie 2026, ~10:11–10:50 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (lista `lipita-ln-32` pe placă) + C-160 p.7, partea întâi (estimarea vitezei de antrenare)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă: ciclul automat 10:06, `test-placa --ln-32` → întâi C-157 p.2.
+(Clona veche de pe disc avea istoria scurtată și nu se mai putea actualiza; am clonat din nou, nimic pierdut — totul era pe GitHub.)
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| C-157 p.2, `lipita-ln-32` pe placă | estimat placa ~1 070 µs / ~510 simb/s → ieșit **1 071 µs / 503,5 simb/s** (simbolul median); 16/16 identice, 0 poziții lente; sferturile și LayerNorm nou se adună exact pe lansare; „logit-urile ≠ os-322” = altă ordine a sumelor, normal; amprenta de referință `0x6c8501f0`. `docs/C-157_P2_COMPARATII.md`, nota `integration/cyber-universe/C-157_P2i_os-346_ln-32.md` (propun `lipita-ln-32` implicit) | MĂSURAT (de OS) / comparat |
+| C-160 p.7, partea întâi | `docs/C-160_P7_VITEZA_ESTIMARE.md` + `tools/buget-antrenare/viteza.py`: PyTorch scoate ~25 TFLOP/s (bf16), peste plafonul F32 al plăcii (~21,7) → **un motor numai F32 ajunge cel mult la ~0,5× PyTorch**; ca să-l depășim: circuitele speciale f16 la ~66 % din plafon; `mm_train` de azi ~0,09× (DEDUS); ordinea măsurătorilor scrisă dinainte | DEDUS |
+| `tools/check.sh` | format, clippy `-D warnings`, **773 de teste** (+7 ignorate), build no_std | PASS (SIMULARE) |
+| Pe RTX 3070 Ti | `colsum`, pasul de aur mic | NOT TESTED (predate) |
+
+**Următorul pas:** la primul test nou pe placă: C-157 p.2 (#651 pe sferturi ~293 simb/s, `colsum` 3 778/3 778 bit cu bit, pasul de aur mic).
+Până atunci: C-160 p.7 partea a doua — programul `mm_tc` (f16 × f16 → f32 pe circuitele speciale, aceeași interfață ca `mm_train`) în SIMULARE.
+
+---
+
 ## Sesiunea 155 — 22 noiembrie 2026, ~09:10–09:35 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 6, partea a doua (pasul de aur mic întreg ca listă pentru OS)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-343 (deja comparat în sesiunea 154) →
