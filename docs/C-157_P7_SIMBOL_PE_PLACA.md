@@ -66,4 +66,4 @@ pe test (programul `embed_dev` + o trimitere cu mai multe poziții).
 | 6. Viteza | nemăsurată (DEDUS, în nota pentru OS) | NOT TESTED |
 
 `tools/check.sh`: format, clippy `-D warnings`, **864 de teste**, build no_std — PASS. Nota pentru OS:
-`integration/cyber-universe/C-157_P7_simbol-pe-placa.md` (commit de legat `40a82b0`).
+`integration/cyber-universe/C-157_P7_simbol-pe-placa.md` (commit de legat `0d22357` (CI verde; codul `40a82b0`)).

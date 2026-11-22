@@ -13,7 +13,7 @@ singurul lucru dintr-o poziție care depinde de simbolul de dinainte e rândul d
 | `kronos_batch` + `Generation::next_batch` / `accept_batch` + `Prog::EmbedDev` (doar adăugări) | lista unui lot de poziții = listele de azi (`lipita-ln-32`) cu `embed_dev` unde simbolul vine de pe placă + argmax în locul fiecărei poziții (`rezultate + 16·poziție`) | PASS |
 | T180 (6 teste) + 3 în modul | tot textul pe o sonerie = o poziție pe sonerie (simboluri, cuvinte argmax, cache-uri bit cu bit); loturi de 4 / 1; citire veche + `EachLaunch`; `Once` + citire veche dă alte simboluri (→ `EachLaunch` obligatoriu); 3 greșeli plantate prinse | PASS (SIMULARE) |
 | `tools/check.sh` | format, clippy `-D warnings`, **864 de teste**, build no_std | PASS |
-| Pe placă: proba „aceleași 16 simboluri” cu loturi de 4, apoi tot textul | nota pentru OS: `integration/cyber-universe/C-157_P7_simbol-pe-placa.md`, commit de legat `40a82b0` | NOT TESTED |
+| Pe placă: proba „aceleași 16 simboluri” cu loturi de 4, apoi tot textul | nota pentru OS: `integration/cyber-universe/C-157_P7_simbol-pe-placa.md`, commit de legat `0d22357` (CI verde; codul `40a82b0`) | NOT TESTED |
 
 Viteza DEDUS: ~710–800 simb/s cu lotul scris tot înainte, ~870–910 cu scrierea lotului următor cât placa lucrează (azi 635,90).
 **Ce e nou pentru placă:** programul `embed_dev` + o trimitere cu mai multe poziții (un singur lucru nou pe test).

@@ -1,6 +1,6 @@
 # Pentru OS: simbolul ales rămâne pe placă — mai multe poziții pe o singură sonerie (C-157 punctul 7, etapa 5 / P9)
 
-Cyber-GPU, sesiunea 170, 23 nov 2026. Commit de legat: `40a82b0` (ramura `g0-g2-fundatie`). **Testat doar în SIMULARE**
+Cyber-GPU, sesiunea 170, 23 nov 2026. Commit de legat: `0d22357` (ramura `g0-g2-fundatie`, CI verde; codul: `40a82b0`). **Testat doar în SIMULARE**
 (`gpu-sim`, T180, 864 PASS); **nimic din asta n-a rulat pe RTX 3070 Ti.** Planul și predicțiile: `docs/C-157_P7_SIMBOL_PE_PLACA.md`.
 
 ## Ce e, pe scurt
