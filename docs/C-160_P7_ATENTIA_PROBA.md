@@ -19,9 +19,9 @@ Modul nou `nvidia_ga104::attn_tile_probe` (doar adăugări), ca `mm_tc_probe`:
   5. `ascutit` (B 1, T 96, C 64, H 1) — A = 6: softmax aproape „un singur 1” (exponenți mari negativi);
   6. **`atentie-513-b4`** (B 4, T 512, C 768, H 12 — o treime din bucata #513), A = 2, **5 repetări** din fiecare program → timpul median.
 - **Un buffer pe set:** qkv, dO, apoi P, att, dS, dqkv, fiecare urmat de 256 de cuvinte-gardă; ieșirile + gărzile umplute cu NaN
-  înainte (un element nescris nu poate trece, o scriere peste capăt se vede). Setul 6: ~133 MB.
+  înainte (un element nescris nu poate trece, o scriere peste capăt se vede). Setul 6: ~151 MB (corectat după cod; în prima versiune scrisesem ~133).
 - **Ce se citește înapoi:** seturile 1–5 tot (P, att, dS, dqkv + gărzile). Setul 6 pe benzi: pentru b ∈ {0, 3}, toate cele 12 capete,
-  rândurile i ∈ {0, 300, 511} din P și dS, rândurile b·T + i din att, rândul b·T + 511 din dqkv, + cele 4 gărzi (~0,6 MB).
+  rândurile i ∈ {0, 300, 511} din P și dS, rândurile b·T + i din att, rândul b·T + 511 din dqkv, + cele 4 gărzi (~0,34 MB; în prima versiune scrisesem ~0,6).
 - **Judecata, câte una pe program, astfel încât fiecare să fie judecat singur:**
   - `attn_fwd_tile` față de modelul pe procesor `layer::attn_fwd_tile_row_gpu` (pe qkv-ul scris): deasupra diagonalei P exact +0;
     altfel **marginea MUFU** (modelul are `EX2` / `RCP` rotunjite corect, placa le are aproximative):
@@ -62,3 +62,19 @@ doar prin Release-ul OS, cu „ce e nou pentru placă” scris în nota pentru O
 Planul probei e cel din `mm_tc_probe` (sesiunea 160) și `colsum_probe` (sesiunea 158). Precizia `exp2f` / `__frcp_rn` aproximative:
 ghidul public CUDA (anexa „Mathematical Functions”, „intrinsic functions”). Formulele atenției: `gpu_compute::train` (oracolul
 pasului de aur, T151).
+
+## Rezultatul (SIMULARE, T176; codul după planul `608f377`)
+- Modulul `nvidia_ga104::attn_tile_probe` (doar adăugări) + testul `crates/nvidia-ga104/tests/sim_c160_p7_attn_tile_probe.rs`.
+- **T176a:** 5 / 5 seturi mici prin procesorul de comenzi simulat (cbuf + QMD din `launch_bytes`, cele trei lansări în ordine, citirea
+  pe `read_ranges`): toate trei programele în margine, **toate elementele exacte** (154 018 / 86 690 / 201 984) — așteptat, programele
+  simulate sunt chiar modelele (egalitatea model = GLSL e T173–T175). Pe placă, exactitatea lui `attn_fwd_tile` e predicția 3 (20–80 %).
+- **T176b, predicția 5: DA** — P stricat cu 2⁻¹⁴ după lansarea înainte: doar `attn_fwd_tile` NU TRECE, cele două „înapoi” rămân 100 %
+  exacte (judecate pe P-ul plăcii — izolarea cerută); o unitate în dS: în marginea de siguranță, exacte − 1; gardă scrisă: INVALID doar
+  la programul acela; `attn_back_tile` nelansat: INVALID; grila înainte cu un bloc lipsă: INVALID; un set lipsă: proba nu trece.
+- **T176c:** un set mediu pe benzi rulat întreg: citirea pe benzi = exact ieșirea modelului pe benzi.
+- **T176d:** setul de timp judecat pe ieșirea modelului (benzile), rândurile `kt atentie …` citite înapoi de `parse_attn_tile`.
+- **Două socoteli greșite în plan, corectate:** bufferul setului de timp e **~151 MB** (144 MiB), nu ~133 (socoteala de mână greșită cu ~18 MB, cât un qkv); citirea
+  înapoi e **~0,34 MB**, nu ~0,6.
+- `tools/check.sh`: format, clippy (Rust 1.97), **835 de teste** (+7 ignorate), build no_std — PASS.
+- Predicțiile 1–4 (pe placă) și viteza: **NOT TESTED** până la rularea pe placă. Nota pentru OS:
+  `integration/cyber-universe/C-160_P7e_atentia-pe-placi-proba.md`.

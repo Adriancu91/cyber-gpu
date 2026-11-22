@@ -62,6 +62,7 @@ pub mod attn_back_tile0;
 pub mod attn_fwd;
 pub mod attn_fwd128;
 pub mod attn_fwd_tile;
+pub mod attn_tile_probe;
 pub mod backend;
 pub mod board_compare;
 pub mod boot;

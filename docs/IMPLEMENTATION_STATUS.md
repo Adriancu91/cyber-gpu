@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 166 — 22 noiembrie 2026, ~20:10–21:05 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (os-353, dieta 2) + C-160 p.7: proba atenției pe plăci**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. **Test nou pe placă:** os-353 (dieta 2 A+B, 19:36) → C-157 p.2 întâi.
+Apoi C-160 p.7: proba atenției pe plăci pentru placă, cu planul și predicțiile urcate **înainte** de cod (`608f377`). Clona veche de
+pe disc avea ramura locală desincronizată; am lucrat într-o clonă proaspătă, nimic șters.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| C-157 p.2, os-353 | driverul **390 µs** (estimat 410–460), **635,90 simb/s** (estimat 625–645), 18/18 corecte, 8 cuvinte de înregistrări, 21 de citiri ale așteptării; ținta dietei „driver sub 0,5 ms” **atinsă pe placă**; `docs/C-157_P2_COMPARATII.md` (`4d2d849`) | PASS (MĂSURAT pe placă de OS) |
+| `attn_tile_probe` (modul nou, doar adăugări) | lanțul `attn_fwd_tile` → `attn_back_tile0` → `attn_back_tile`, 5 seturi mici + `atentie-513-b4` (B 4, T 512, ~151 MB) pentru timp; fiecare program judecat singur (cele „înapoi” pe P / dS citite de pe placă → predicție bit cu bit); rânduri `kt atentie`, `parse_attn_tile` | PASS (SIMULARE) |
+| T176 | 5/5 seturi, toate elementele exacte (simulatorul = modelele); greșeli plantate prinse (P stricat → doar înainte pică); benzile = lansarea întreagă; rândurile citite înapoi | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy `-D warnings` (Rust 1.97), **835 de teste** (+7 ignorate), build no_std | PASS |
+| Pe RTX 3070 Ti: corectitudine + viteza (estimat ~0,53 / ~0,49 / ~0,42–0,68 ms pe lansare la B 4; ~52–61 ms pe bucată #513) | predat OS-ului, după os-351 și os-352 | NOT TESTED |
+
+Note: `docs/C-160_P7_ATENTIA_PROBA.md`, nota pentru OS `integration/cyber-universe/C-160_P7e_atentia-pe-placi-proba.md`. Două socoteli
+din plan corectate după cod (bufferul ~151 MB, nu ~133; citirea ~0,34 MB, nu ~0,6).
+
+**Următorul pas:** la primul test nou pe placă: C-157 p.2 (os-351 pasul de aur mic, os-352 `mm_tc`, apoi proba atenției). Până atunci,
+C-160 p.7: „înapoi” fără P păstrat (P recalculat din Q, K — memoria pentru #651), sau C-157 p.7/p.8 când C-160 așteaptă; plan înainte.
+
+---
+
 ## Sesiunea 165 — 22 noiembrie 2026, ~19:11–19:35 (ora României), în cloud, FĂRĂ placă — **C-160 p.7: atenția înapoi pe plăci, modul 0**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la ciclul 15:06 → C-160 p.7. Planul și
