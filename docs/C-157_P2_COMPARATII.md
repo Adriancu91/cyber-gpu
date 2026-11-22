@@ -2,6 +2,30 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-346 `test-placa --i9 c135 --ln-32` (lista `lipita-ln-32` pe placă, ciclul automat 22 nov 2026, 10:06) — sesiunea 156
+Sursa: `Cyber-hub/rezultate/os-automat/2026-11-22/ciclu-auto-20261122-1006.txt` + `gpu-jurnal-044.txt` (nucleul cu `cyber-gpu feb0819`;
+#513 de două ori pe același text: întâi `lipita-ln` = implicitul, apoi `lipita-ln-32` = LayerNorm nou + toate înmulțirile pe sferturi).
+- **Estimat** (sesiunea 151, mai jos, DEDUS): placa **≈ 1 070 µs** pe simbol, driverul ~830, jurnalul ~62 → ~1 960 µs = **~510 simb/s**;
+  aceleași simboluri, abaterea față de lista lipită sub 1e-4.
+- **Ieșit (MĂSURAT):** placa **1 071 µs** (la o microsecundă de estimare), driverul 825, jurnalul 60 → **1 986 µs = 503,5 simb/s** pe
+  simbolul median (−1,3 % față de ~510); media rulării cu pauzele driverului 480,63 simb/s; doar lansările 935,9 simb/s. Corect: 16/16
+  simboluri identice cu procesorul, față de `lipita-ln` max |d| 1,0e-5 (aceleași simboluri), 0 poziții lente. Windows/PyTorch 129,12 → **×3,9**.
+- **Sferturile și LayerNorm-ul nou se adună exact (MĂSURAT, pe lansare):** fc 18,78 µs (ciclul 05:06: 18,72), qkv 14,69 (14,62),
+  proj 11,90 (11,90), out 6,05 (6,08), logit 88,0 (87,9), atenția 20,77 (20,7), ln1/ln2 4,03/3,87 (os-331: ~4,0). Nicio interacțiune
+  între cele două schimbări → socotelile pe lansare de până acum rămân bune (și estimarea #651 pe sferturi, ~293 simb/s, câștigă încredere).
+- **Rândul „logit-urile identice bit cu bit cu os-322? NU” (cerut de OS să-l lămurim):** e așteptat. Pe sferturi fiecare fir adună alte
+  bucăți ale rândului, deci altă ordine a sumelor → alți biți în ultimele zecimale. Abaterea față de procesor 1,74e-5 (`0x37920000`; os-322
+  cu lista veche: 1,62e-5, `0x37880000`), ambele de ~6 ori sub pragul 1e-4. Amprenta de referință pentru `lipita-ln-32`: **`0x6c8501f0`**
+  (de comparat cu ea, nu cu os-322, la rulările următoare ale acestei liste).
+- **Unde e timpul acum (MĂSURAT, din 1 986 µs):** driverul 825 (**42 %**, cel mai mare bloc), înmulțirile 702 (35 %: fc 225, qkv 175,
+  proj 142, logit 88, out 72), atenția 251 (13 %), LayerNorm 99, restul ~110. Deci următorul câștig mare e **pe procesor**, nu pe placă:
+  dieta 2 (predată, `C-157_P3_dieta-doi.md`, driverul ~330–410) + argmax fără copie (`os-343`, încă netestat pe placă) →
+  1 071 + ~330–410 + 60 ≈ 1 460–1 540 µs = **~650–685 simb/s** (DEDUS; Windows ×5,0–5,3).
+- **Ce tai mai departe:** (1) propun **`lipita-ln-32` implicit** în `test-placa` (programele pe sferturi au trecut de două ori: 05:06 și
+  10:06; `--lipita-ln` rămâne pentru comparație) și pentru `--k651`; (2) dieta 2 + argmax fără copie pe placă; (3) abia apoi înmulțirile
+  pe rândurile scurte și atenția. Mărunt, rămas: rândul `kt lista` spune „87 lansări”, tabelul pe fel = 88.
+- Nota pentru OS: `integration/cyber-universe/C-157_P2i_os-346_ln-32.md`. Nimic nou pentru placă.
+
 ## os-343 `test-placa --i9 c135 --k651` (Kronos #651 pe placă, primul test al modelului mare, 22 nov 2026, 07:36) — sesiunea 154
 Sursa: `Cyber-hub/rezultate/2026-11-22-workstation-os343-k651/REZULTAT.md` + `rezultate/os-automat/2026-11-22/ciclu-auto-20261122-0736.txt`
 (nucleul cu `cyber-gpu cf9e911`; lista lipită cu LayerNorm nou, **fără sferturi**).
