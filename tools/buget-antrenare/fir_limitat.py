@@ -239,7 +239,44 @@ def print_tiled_back():
               f" -> ~{chunk*1e3:.0f} ms pe bucata (12 lansari)")
 
 
+def tiled_back_rows():
+    """C-160 p.7, session 165: attn_back mode 0 (rows of dS) "pe placi" (attn_back_tile0.comp, plan written BEFORE the code).
+
+    Blocks of 256 threads (16 x 16) own 64 rows (b, h, i0..i0+63). For every column tile up to the diagonal: dO and V
+    tiles in shared, 4 x 4 dP per thread (one matmul), dP written to dS, then the dP tile and the P tile in shared and
+    one thread per row carries the dot chain (64 dependent ffma per tile, 2 warps of 8 busy). Then every thread
+    re-reads its own dP and P and writes dS over the whole row (zeros above the diagonal).
+    Arithmetic: 1 matmul on every pair on or below the diagonal, diagonal tiles in full.
+    Bytes: dP written + re-read, P read twice on those pairs, dS written in full, + dO / V tiles per pair (mostly L2).
+    The dot chain adds at most ~25 % to the arithmetic (DEDUCED). DEDUCED; factor 2.
+    """
+    tiles_rows = -(-T // 64)
+    tiles_lower = tiles_rows * (tiles_rows + 1) // 2
+    bh = B * H
+    flop = bh * tiles_lower * (64 * 64 * D * 2)
+    tile_bytes = bh * tiles_lower * 64 * 64 * 4
+    full_p = bh * T * T * 4
+    p_bytes = 4 * tile_bytes + full_p
+    other_bytes = bh * tiles_lower * 64 * D * 4 * 2
+    out = []
+    for rate in (4e12, 8e12):
+        t_ar = flop / rate * 1.25
+        t_bw = (p_bytes + other_bytes) / BANDWIDTH
+        out.append((rate, t_ar, t_bw, max(t_ar, t_bw) * L))
+    return flop, p_bytes, out
+
+
+def print_tiled_back0():
+    flop, nbytes, out = tiled_back_rows()
+    print("\nAtentia inapoi, modul 0 (randurile lui dS) \"pe placi\" (attn_back_tile0, plan sesiunea 165, DEDUS):")
+    print(f"  pe lansare: {flop/1e9:.1f} GFLOP calculate (diagonala intreaga), dP + P + dS mutate {nbytes/1e6:.0f} MB")
+    for rate, t_ar, t_bw, chunk in out:
+        print(f"  la {rate/1e12:.0f} TFLOP/s F32 efectiv: calcul {t_ar*1e3:.2f} ms (cu lantul dot), memorie {t_bw*1e3:.2f} ms"
+              f" -> ~{chunk*1e3:.0f} ms pe bucata (12 lansari)")
+
+
 if __name__ == "__main__":
     main()
     print_tiled()
     print_tiled_back()
+    print_tiled_back0()

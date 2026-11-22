@@ -32,6 +32,7 @@
 #   sh tools/nak/build.sh attn_back128   # C-160 point 7: attn_back with blocks of 128 (session 162)
 #   sh tools/nak/build.sh attn_fwd_tile  # C-160 point 7: attention forward on 64-row tiles, 4x4 per thread (session 163)
 #   sh tools/nak/build.sh attn_back_tile # C-160 point 7: attention backward mode 1 on 64-position tiles (session 164)
+#   sh tools/nak/build.sh attn_back_tile0 # C-160 point 7: attention backward mode 0 on 64-row tiles (session 165)
 #   sh tools/nak/build.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): apt install glslang-tools spirv-tools libvulkan-dev libdrm-dev
@@ -131,6 +132,9 @@ attn_fwd_tile)
     ;;
 attn_back_tile)
     exec sh "$0" kernel attn_back_tile 64
+    ;;
+attn_back_tile0)
+    exec sh "$0" kernel attn_back_tile0 64
     ;;
 attn_back128)
     exec sh "$0" kernel attn_back128 64

@@ -1,0 +1,159 @@
+// C-160 point 7 (docs/C-160_P7_ATENTIA_INAPOI_MOD0_PE_PLACI.md, plan written before this code, commit 80968c3): mode 0
+// (the rows of dS) of the causal attention backward "on tiles". Same arguments as attn_back.comp (the same constant
+// buffer: qkv / P / dO / dS / dqkv, T, C, H, d, mode, scale); only mode 0 is done here, any other mode exits writing
+// nothing (mode 1 stays attn_back.comp / attn_back_tile.comp, launched after this one).
+// Blocks of 256 threads (16 x 16) own 64 rows (b, h, i0 .. i0+63); grid [ceil(T/64), H, B]. Thread (tx, ty) owns rows
+// i = i0 + ty + 16a and, in column tile jt, columns j = jt*64 + tx + 16k (a, k = 0..3): 4 x 4 values of dP.
+// Pass 1, column tiles jt = 0 .. bx (up to the diagonal), two 64 x 64 tiles in shared (32 KiB):
+//   dP_ij = ffma chain from 0 over e = 0 .. d-1 ascending of dO_ie * V_je, written into dS for j <= i < T;
+//   then the dP tile and the P tile go to shared and thread r < 64 carries on dot_r = ffma(P_rj, dP_rj, dot_r) over
+//   the tile's columns ascending, only j <= i (tiles come in ascending jt: the very chain of attn_back mode 0).
+// Pass 2: every thread re-reads its own dP values (the split it wrote them with: no cross-thread global dependency)
+//   and writes dS_ij = (P_ij * (dP_ij - dot_i)) * scale for j <= i, 0 for i < j < T.
+// Every value is the one attn_back.comp mode 0 computes (same chains, same order, same three operations), so the CPU
+// model is gpu_compute::layer::attn_back_row_gpu, bit for bit. No atomics, no MUFU. Formula: PyTorch / llm.c (BSD /
+// MIT, idea only); tiling idea: our matmul_2d / attn_*_tile steps (siboehm SGEMM_CUDA, MIT, idea only).
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Buf { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args {
+    In qkv; In p; In dout; Buf ds; Out dqkv;
+    uint t; uint c; uint heads; uint d; uint mode; float scale;
+} args;
+
+shared float sa[64 * 64];  // pass 1: dO tile [r][e], then the dP tile (r, jj) skewed; pass 2: dot of row r at [r]
+shared float sb[64 * 64];  // pass 1: V tile (e, jj) skewed, then the P tile (r, jj) skewed
+
+// Skewed tile address of (row, column): rotating every row by its index keeps the column reads of the dot chain
+// (32 rows, one column) and the row writes on 32 different banks. Only addresses change, never values.
+uint sk(uint row, uint col) {
+    return row * 64u + ((col + row) & 63u);
+}
+
+void main() {
+    if (args.mode != 0u) {
+        return;
+    }
+    uint T = args.t;
+    uint C = args.c;
+    uint d = args.d;
+    uint b = gl_WorkGroupID.z;
+    uint h = gl_WorkGroupID.y;
+    uint bx = gl_WorkGroupID.x;
+    uint i0 = bx * 64u;
+    uint lid = gl_LocalInvocationID.x;
+    uint tx = lid & 15u;
+    uint ty = lid >> 4u;
+    uint ntiles = (T + 63u) / 64u;
+    uint row3 = 3u * C;
+    uint base = (b * args.heads + h) * T * T;
+
+    float dot = 0.0;  // thread lid < 64: the chain of row i0 + lid
+    for (uint jt = 0u; jt <= bx; jt++) {
+        barrier();
+        [[dont_unroll]] for (uint n = 0u; n < 16u; n++) {
+            uint idx = lid + 256u * n;
+            uint r = idx >> 6u;
+            uint x = idx & 63u;
+            uint i = i0 + r;
+            uint jr = jt * 64u + r;
+            float ov = 0.0;
+            if (i < T && x < d) {
+                ov = args.dout.v[(b * T + i) * C + h * d + x];
+            }
+            sa[idx] = ov;
+            float vv = 0.0;
+            if (jr < T && x < d) {
+                vv = args.qkv.v[(b * T + jr) * row3 + 2u * C + h * d + x];
+            }
+            sb[sk(x, r)] = vv;
+        }
+        barrier();
+        float acc[16];
+        [[unroll]] for (uint n = 0u; n < 16u; n++) {
+            acc[n] = 0.0;
+        }
+        [[dont_unroll]] for (uint e = 0u; e < d; e++) {
+            float ob[4];
+            float vb[4];
+            [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                ob[a] = sa[(ty + 16u * a) * 64u + e];
+            }
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                vb[k] = sb[sk(e, tx + 16u * k)];
+            }
+            [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                    acc[a * 4u + k] = fma(ob[a], vb[k], acc[a * 4u + k]);
+                }
+            }
+        }
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint i = i0 + ty + 16u * a;
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                uint j = jt * 64u + tx + 16u * k;
+                if (i < T && j <= i) {
+                    args.ds.v[base + i * T + j] = acc[a * 4u + k];
+                }
+            }
+        }
+        barrier();
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                sa[sk(ty + 16u * a, tx + 16u * k)] = acc[a * 4u + k];
+            }
+        }
+        [[dont_unroll]] for (uint n = 0u; n < 16u; n++) {
+            uint idx = lid + 256u * n;
+            uint r = idx >> 6u;
+            uint x = idx & 63u;
+            uint i = i0 + r;
+            uint j = jt * 64u + x;
+            float pv = 0.0;
+            if (i < T && j <= i) {
+                pv = args.p.v[base + i * T + j];
+            }
+            sb[sk(r, x)] = pv;
+        }
+        barrier();
+        if (lid < 64u) {
+            uint i = i0 + lid;
+            [[dont_unroll]] for (uint jj = 0u; jj < 64u; jj++) {
+                uint j = jt * 64u + jj;
+                if (i < T && j <= i) {
+                    dot = fma(sb[sk(lid, jj)], sa[sk(lid, jj)], dot);
+                }
+            }
+        }
+    }
+    barrier();
+    if (lid < 64u) {
+        sa[lid] = dot;
+    }
+    barrier();
+    float dr[4];
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        dr[a] = sa[ty + 16u * a];
+    }
+    for (uint jt = 0u; jt < ntiles; jt++) {
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint i = i0 + ty + 16u * a;
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                uint j = jt * 64u + tx + 16u * k;
+                if (i < T && j < T) {
+                    float y = 0.0;
+                    if (j <= i) {
+                        float x = args.ds.v[base + i * T + j] - dr[a];
+                        y = (args.p.v[base + i * T + j] * x) * args.scale;
+                    }
+                    args.ds.v[base + i * T + j] = y;
+                }
+            }
+        }
+    }
+}

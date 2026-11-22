@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 165 — 22 noiembrie 2026, ~19:11–19:35 (ora României), în cloud, FĂRĂ placă — **C-160 p.7: atenția înapoi pe plăci, modul 0**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la ciclul 15:06 → C-160 p.7. Planul și
+predicțiile au fost urcate **înainte** de cod (`80968c3`). Clona veche de pe disc avea ramura locală desincronizată; am lucrat într-o
+clonă proaspătă, nimic șters. Mesa NAK 25.0.7 reconstruit în cloud (`attn_back_tile` ieșit identic).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `attn_back_tile0` (Mesa NAK 25.0.7) | modul 0 (rândurile lui dS) pe plăci de 64 de rânduri: dP 4 × 4 pe fir din plăci dO / V partajate, lanțul dot un fir pe rând, apoi fiecare fir își rescrie valorile; adrese rotite în memoria partajată (fără conflicte de bănci); același cbuf ca `attn_back`, modul ≠ 0 → nimic scris; SHA-256 `7107ecc6…06530a9a`, **50 de registre**, 32 KiB partajați, 17 `ffma` | PASS (SIMULARE) |
+| T175 | emularea literală a GLSL + lansarea = `attn_back` modul 0 **bit cu bit** pe 10 forme (și semnul zerourilor); lanțul → modul 1 = dqkv-ul lui `attn_back`; oracolul f64 ≤ 2⁻¹⁶; NaN deasupra diagonalei fără efect; greșeli plantate prinse (inclusiv bucla e până la 64 pe un rând construit cu −0) | PASS (SIMULARE) |
+| Predicțiile 1–4 | toate DA (registre 50 ≤ 80) | PASS |
+| `tools/check.sh` | format, clippy `-D warnings` (Rust 1.97), **826 de teste** (+7 ignorate), build no_std | PASS |
+| Viteza pe RTX 3070 Ti (estimat ~18 ms pe bucată, față de ~34; atenția întreagă pe plăci ~52–61 ms față de ~257) | nepredat | NOT TESTED |
+
+Note: `docs/C-160_P7_ATENTIA_INAPOI_MOD0_PE_PLACI.md`. Nimic nou pentru placă (doar adăugări: `nvidia_ga104::attn_back_tile0`,
+`gpu_sim::cmdproc::attn_back_tile0_on_cpu`).
+
+**Următorul pas:** la primul test nou pe placă: C-157 p.2 (pasul de aur mic F32, os-351; proba `mm_tc`, os-352). Până atunci: C-160
+p.7 — proba de viteză a atenției pe plăci pentru placă (cele trei programe noi, corectitudine + timp, ca `mm_tc_probe`), cu plan și
+predicții scrise înainte.
+
+---
+
 ## Sesiunea 164 — 22 noiembrie 2026, ~18:11–19:20 (ora României), în cloud, FĂRĂ placă — **C-160 p.7: atenția înapoi pe plăci, modul 1**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la ciclul 15:06 → C-160 p.7. Planul și

@@ -49,6 +49,33 @@ octeți). Face **doar modul 0**: cu modul ≠ 0 iese fără să scrie nimic. Ord
    de ~34 azi. Lanțul dot (64 de `ffma` dependente pe placă, doar 2 warp-uri din 8) adaugă cel mult ~25 % la calcul. Cu toate
    trei plăcile, atenția întreagă ar scădea de la ~257 la ~50–65 ms pe bucată.
 
+## Rezultatul (SIMULARE, T175, `crates/nvidia-ga104/tests/sim_attn_back_tile0.rs`; codul după planul `80968c3`)
+- **Binarul** (Mesa NAK **25.0.7**, reconstruit în cloud; `attn_back_tile` a ieșit identic, `1da80d3f…`):
+  `attn_back_tile0.sm86.sass` SHA-256 **`7107ecc6eceddd05b0e7c0d4360d5fe01b79e5ffa2bbf306afafe2ab06530a9a`**, 21 024 de octeți
+  (1 314 instrucțiuni), **50 de registre**, 32 768 de octeți partajați (în QMD), **17 `ffma`** (16 în bucla dP, unul pe rezultat,
+  + 1 în lanțul dot), 16 × (`fadd`, `fmul`, `fmul`) în trecerea 2 — aceleași trei operații ca `attn_back`, NAK nu le-a contopit;
+  nicio `atomic`, niciun MUFU, nicio memorie locală.
+- **Adresele „rotite” în memoria partajată** (rândul r rotit cu r poziții): lanțul dot citește o coloană din 32 de rânduri și
+  scrierile pe rânduri cad pe 32 de bănci diferite. Schimbă doar adresele, nu valorile; emularea din test folosește aceleași adrese.
+- **Predicția 1 (bit cu bit = `attn_back` modul 0): DA** pe toate cele 10 forme (modelul mic, T 70 / d 32, d 40, T 5 / B 3, d 1,
+  softmax ascuțit, gradienți 1e-4, T 129, #513 cu T 200 și d 64, T 64 exact): emularea literală a GLSL = `attn_back` = lansarea
+  prin procesorul de comenzi; dS-ul emulat dat modului 1 dă dqkv-ul lui `attn_back` bit cu bit; față de oracolul f64 cu P în
+  f64, fiecare parte ≤ 2⁻¹⁶ din cea mai mare valoare (ca T159 / T174).
+- **Predicția 2: DA** — NaN și 1e30 deasupra diagonalei în P nu schimbă niciun bit; zerourile de acolo sunt +0.
+- **Predicția 3: DA** — 50 de registre (≤ 80; 4 blocuri pe SM după registre, 3 după cei 32 KiB partajați → 24 de warp-uri pe
+  SM), 32 KiB, fără `atomic` / MUFU / memorie locală; 17 `ffma` (varianta „16 + 1” din predicție).
+- **Predicția 4: DA** — grila cu un bloc lipsă lasă exact rândurile 128 și 129 nescrise (2 × 2 × 130 de gărzi pe rând, ca
+  emularea); blocuri 128 / 16 × 16, grila peste ⌈T/64⌉ sau peste H, d = 65 refuzate; modul 1 în cbuf → nimic scris (și `shape_ok`
+  îl refuză); lanțul dot adunat pe plăci dă alți biți; pe rândul construit (d 32, produse −5·10⁻³⁹, aduse la −0) `attn_back` și
+  programul dau dS = −0, bucla până la 64 dă +0 — prinsă.
+- `tools/check.sh`: **826 de teste** (+7 ignorate), format, clippy `-D warnings` (Rust 1.97), build no_std — PASS.
+- **Viteza: nemăsurată** (doar pe placă). `fir_limitat.py` (`print_tiled_back0`): ~2,7 GFLOP și ~491 MB pe lansare → **~18 ms pe
+  bucată** la #513 (interval 8–40, DEDUS), față de ~34 azi; limitat de memorie, nu de calcul. Cu toate trei plăcile atenția ar fi
+  ~19 + ~15–24 + ~18 ≈ **52–61 ms pe bucată** în loc de ~257 (DEDUS).
+
+Nepredat pentru placă (intră la viteza pasului, ca probă separată, după pasul de aur mic și `mm_tc`, împreună cu `attn_fwd_tile`
+și `attn_back_tile`).
+
 ## Ce NU face
 Nimic pe placă. Nu schimbă `attn_back` / `attn_back128` / `attn_back_tile` / `attn_fwd*`.
 
