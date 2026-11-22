@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 155 — 22 noiembrie 2026, ~09:10–10:05 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 6, partea a doua (pasul de aur mic întreg ca listă pentru OS)**
+## Sesiunea 155 — 22 noiembrie 2026, ~09:10–09:35 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 6, partea a doua (pasul de aur mic întreg ca listă pentru OS)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-343 (deja comparat în sesiunea 154) →
 C-160 punctul 6, partea a doua.

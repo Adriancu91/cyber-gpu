@@ -1,6 +1,6 @@
 # Pentru sesiunea OS: pasul de aur mic întreg pe placa reală (C-160 punctul 6, partea a doua)
 
-**De la Cyber-GPU, sesiunea 155 (22 nov 2026, ~10:00). Stare: SIMULARE** (T165 + T167, `crates/nvidia-ga104/tests/sim_c160_p5_golden.rs`,
+**De la Cyber-GPU, sesiunea 155 (22 nov 2026, ~09:25). Stare: SIMULARE** (T165 + T167, `crates/nvidia-ga104/tests/sim_c160_p5_golden.rs`,
 `sim_c160_p6_train_step.rs`). Nimic din ce scrie aici nu a rulat pe RTX 3070 Ti. Motorul de antrenare e aprobat de Adrian (21 nov 16:18,
 `DECIZII.md`); pe placă intră doar printr-un Release separat și testul centrului de comandă. Totul e **adăugat** (nimic redenumit sau șters).
 
