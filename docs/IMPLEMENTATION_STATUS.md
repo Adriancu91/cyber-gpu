@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 162 — 22 noiembrie 2026, ~16:12–16:35 (ora României), în cloud, FĂRĂ placă — **C-160 p.7: cine e limitat de un fir; atenția cu blocuri de 128**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la ciclul 15:06 (comparat în sesiunea 161) →
+C-160 p.7: aceeași privire ca la `colsum` pentru celelalte programe ale pasului. Planul și predicțiile au fost urcate **înainte** de cod
+(`b656c68`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Cine e limitat de un fir, la #513 (`tools/buget-antrenare/fir_limitat.py`) | `ln_back`, AdamW, `gnorm`, `xent`, `gelu_tr`: au destule fire, limitate de memorie (~20 ms pe bucată împreună); **atenția ~257 ms din ~290** (blocuri de 32 → doar 16 warp-uri din 48 pe SM; un fir pe rând); `emb_back` ~12 ms (depinde de text) | DEDUS (factor 2–3) |
+| `attn_fwd128`, `attn_back128` (Mesa NAK 25.0.7, reconstruit; `attn_fwd` ieșit identic) | același cod pe fir, blocuri de 128; SHA-256 `2fa2e8ff…fb78b` / `5c611f12…cbb45f`, 25 de registre; în listă `attn_fwd128` diferă printr-o singură instrucțiune (×128 în loc de ×32), operațiile cu virgulă identice | PASS (SIMULARE) |
+| T172 | 7 forme: P, att, dS, dqkv **bit cu bit** = programele de 32, niciun element nescris; greșeli plantate (grile prea mici, capul uitat, bloc greșit) prinse | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy `-D warnings` (Rust 1.100), **811 teste** (+7 ignorate), build no_std | PASS |
+| Viteza atenției de 128 pe RTX 3070 Ti (estimat ~257 → ~115 ms pe bucată) | nepredat | NOT TESTED |
+
+Note: `docs/C-160_P7_FIR_LIMITAT.md`. Nimic nou pentru placă (interfața publică: doar adăugări — `nvidia_ga104::{attn_fwd128, attn_back128}`,
+`gpu_sim::cmdproc::{attn_fwd128_on_cpu, attn_back128_on_cpu}`).
+
+**Următorul pas:** la primul test nou pe placă: C-157 p.2 (pasul de aur mic F32, os-351; apoi proba `mm_tc`). Până atunci: C-160 p.7 —
+atenția „pe plăci” (rândurile împărțite între fire, sumele pe bucăți), cu plan și predicții scrise înainte.
+
+---
+
 ## Sesiunea 161 — 22 noiembrie 2026, ~15:11–15:20 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: ciclul automat 15:06 (argmax fără copie)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă: ciclul automat 15:06, `test-placa --i9 c135
