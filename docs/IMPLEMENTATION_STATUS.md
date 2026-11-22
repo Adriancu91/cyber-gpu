@@ -1,5 +1,36 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 150 — 22 noiembrie 2026, ~04:11–04:30 (ora României), în cloud, FĂRĂ placă — **C-160 punctul 4, programul 8 (încorporările: `emb_fwd` + `emb_back`)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-340 (comparat în sesiunea 149) →
+C-160 punctul 4 mai departe. (Dosarul local vechi avea ramura în urmă; am trecut-o pe `origin/g0-g2-fundatie`; istoria de pe GitHub neatinsă.)
+
+**Ce s-a făcut:** încorporările pasului de antrenare, în două programe fără nicio unitate aproximativă: `emb_fwd` (x = emb[simbol] +
+poz[i], rândul b·T + i luat din grilă — fără împărțire; 42 de instrucțiuni, SHA-256 `247e0e42…1cd5bebb`) și `emb_back` (gradientul
+celor două tabele, fără `atomic`: driverul grupează rândurile lui dx în segmente pe procesor, un fir pe (segment, coloană), lanț de
+adunări în ordine fixă; `emb_token` se adună peste dW-ul capului legat, `emb_pozitie` se scrie; 80 de instrucțiuni, SHA-256
+`fca7b007…a12af0be`). Mesa NAK 25.0.7 reconstruit în cloud (`attn_fwd` identic). **Am scos o împărțire:** prima variantă lua
+poziția ca r mod T, pe care NAK o face cu `mufu.rcp`; pașii NAK refăcuți pe procesor dau rest greșit dacă RCP-ul plăcii greșește
+cu 2 unități (r = 6, T = 2) → poziția vine acum din z-ul grilei. Adăugări (nimic redenumit, OS-ul compilează neschimbat):
+`nvidia_ga104::{emb_fwd, emb_back}`, `gpu_compute::layer::{emb_fwd_gpu, EmbSegments, emb_back_seg_gpu, emb_back_gpu}`,
+`gpu_compute::train::{embed_rows, embed_back_rows, embed_grad_inputs}` (liniile din `loss_and_grad` mutate în funcții; T151
+trece neschimbat), `gpu_sim::cmdproc::{emb_fwd_on_cpu, emb_back_on_cpu}`. Nota: `docs/C-160_P4_EMB.md`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Compilarea NAK | Mesa reconstruit în cloud; `attn_fwd` identic; `emb_fwd`, `emb_back` noi | PASS (compilat, nerulat) |
+| T161 „înainte” | bit cu bit egal cu oracolul pe tabelele + lotul pasului de aur mic și pe 8 forme | PASS (SIMULARE) |
+| T161 „înapoi” față de oracolul f64 | 8 forme: ≤ 48,8 % din marginea scrisă | PASS (SIMULARE) |
+| T161 pasul de aur mic față de PyTorch | gradientul `emb_token` / `emb_pozitie` la pasul 1: max \|Δ\| 1,5e-8 (tol. 1e-6) | PASS (SIMULARE) |
+| T161 biți, segmente, grilă scurtă, două programe, refuzuri, 8 greșeli plantate | toate | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy `-D warnings`, **738 de teste**, build no_std | PASS |
+| `emb_fwd` / `emb_back` pe RTX 3070 Ti | nepredate (C-160 p.6) | NOT TESTED |
+
+**Următorul pas:** C-160 punctul 4: norma + tăierea gradientului, apoi AdamW; după ele punctul 5 (pasul de aur mic cap-coadă pe placa
+simulată); la primul test nou pe placă: C-157 punctul 2.
+
+---
+
 ## Sesiunea 149 — 22 noiembrie 2026, ~03:10–03:45 (ora României), în cloud, FĂRĂ placă — **C-157 p.2 (os-340) + C-160 punctul 4, programul 6, jumătatea „înainte” (`attn_fwd`)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă: **os-340** (argmax pe placă, 18/18) → întâi comparația

@@ -1391,6 +1391,96 @@ pub fn attn_fwd_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// The CPU stand-in for C-160 point 4's embedding forward (`emb_fwd.sm86.sass`, program 8): blocks of 64 along k, grid
+/// [≤ ⌈C/64⌉, T, B] (position i = the block's y, text b = its z); cbuf0 tok/emb/pos/x at 0x28/0x30/0x38/0x40, C at 0x48,
+/// T at 0x4c (NAK dump). Every block (i, b): r = b·T + i, id = tok[r], `x[r, k] = fadd.ftz(emb[id, k], pos[i, k])` for
+/// k < min(C, 64·x) — the program reads the table at id·C as it is (the driver checks the ids, the program does not)
+/// and does not compare i with T (a grid y past T is the driver's mistake, modelled as the program does it).
+pub fn emb_fwd_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    use gpu_compute::math::add_f32_ftz;
+    if l.block != [64, 1, 1] {
+        return Err(bad("SIM: emb_fwd cere blocuri de 64x1x1"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 || l.mem.read_u32(l.cbuf0 + 0x8)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0..0x8) diferita de 0, nemodelata",
+        ));
+    }
+    let r64 = |l: &Launch<'_>, o: u64| l.mem.read_u64(l.cbuf0 + o);
+    let (tok, emb, pos, x) = (r64(l, 0x28)?, r64(l, 0x30)?, r64(l, 0x38)?, r64(l, 0x40)?);
+    let c = l.mem.read_u32(l.cbuf0 + 0x48)? as usize;
+    let t = l.mem.read_u32(l.cbuf0 + 0x4c)? as usize;
+    let cols = c.min(64 * l.grid[0] as usize);
+    if cols == 0 {
+        return Ok(());
+    }
+    for b in 0..l.grid[2] as usize {
+        for i in 0..l.grid[1] as usize {
+            let r = b * t + i;
+            let id = l.mem.read_u32(tok + 4 * r as u64)? as u64;
+            let e = l.mem.read_f32s(emb + 4 * id * c as u64, cols)?;
+            let p = l.mem.read_f32s(pos + 4 * (i * c) as u64, cols)?;
+            let out: Vec<f32> = e.iter().zip(&p).map(|(&a, &b)| add_f32_ftz(a, b)).collect();
+            l.mem.write_f32s(x + 4 * (r * c) as u64, &out);
+        }
+    }
+    Ok(())
+}
+
+/// The CPU stand-in for C-160 point 4's embedding backward (`emb_back.sm86.sass`, program 8): blocks of 64 along k,
+/// grid [≤ ⌈C/64⌉, S, 1] (segment s = the block's y); cbuf0 dx/off/dst/rows/g at 0x28/0x30/0x38/0x40/0x48, C at 0x50,
+/// the mode at 0x54 (0 = write, anything else = add, as the program's `isetp`) (NAK dump). Every segment s < grid y,
+/// k < min(C, 64·x): the chain `a = 0; a = fadd.ftz(a, dx[rows[j], k])` for j in off[s]..off[s+1], then
+/// `g[dst[s], k] = a` or `fadd.ftz(g, a)` — the lists are read as they are (the driver checks them). Segments run in
+/// order s = 0, 1, …: with repeated destinations (which the driver refuses) the board's result would depend on
+/// timing, the model's does not. A grid z ≠ 1 is refused as not modelled.
+pub fn emb_back_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    use gpu_compute::math::add_f32_ftz;
+    if l.block != [64, 1, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: emb_back cere blocuri de 64x1x1, grila 2D"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let r64 = |l: &Launch<'_>, o: u64| l.mem.read_u64(l.cbuf0 + o);
+    let (dx, off, dst, rows, g) = (
+        r64(l, 0x28)?,
+        r64(l, 0x30)?,
+        r64(l, 0x38)?,
+        r64(l, 0x40)?,
+        r64(l, 0x48)?,
+    );
+    let c = l.mem.read_u32(l.cbuf0 + 0x50)? as usize;
+    let add = l.mem.read_u32(l.cbuf0 + 0x54)? != 0;
+    let cols = c.min(64 * l.grid[0] as usize);
+    if cols == 0 {
+        return Ok(());
+    }
+    for s in 0..l.grid[1] as u64 {
+        let lo = l.mem.read_u32(off + 4 * s)? as u64;
+        let hi = l.mem.read_u32(off + 4 * (s + 1))? as u64;
+        let mut a = alloc::vec![0.0f32; cols];
+        for j in lo..hi {
+            let r = l.mem.read_u32(rows + 4 * j)? as u64;
+            let v = l.mem.read_f32s(dx + 4 * r * c as u64, cols)?;
+            for (ak, vk) in a.iter_mut().zip(v) {
+                *ak = add_f32_ftz(*ak, vk);
+            }
+        }
+        let o = g + 4 * l.mem.read_u32(dst + 4 * s)? as u64 * c as u64;
+        if add {
+            let old = l.mem.read_f32s(o, cols)?;
+            for (ak, ok) in a.iter_mut().zip(old) {
+                *ak = add_f32_ftz(ok, *ak);
+            }
+        }
+        l.mem.write_f32s(o, &a);
+    }
+    Ok(())
+}
+
 /// The CPU stand-in for C-160 point 4's column-sum program (`colsum.sm86.sass`): blocks of 256 (one thread per
 /// column, grid x = ⌈c/256⌉); cbuf0 dy/x/μ/rstd/s0/s1 at 0x28/0x30/0x38/0x40/0x48/0x50, rows at 0x58, c at 0x5c, the
 /// mode at 0x60 (0 = bias, else LayerNorm: dγ in s0, dβ in s1) (NAK dump). The columns are

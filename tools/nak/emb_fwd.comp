@@ -1,0 +1,24 @@
+// C-160 point 4, program 8 (forward half): the input embeddings of the training step, F32.
+//   x[r, k] = emb[tok[r], k] + pos[r mod T, k]      for the N = B·T rows of the batch, k < C
+// One thread per element: block 64 along k, grid [ceil(C/64), T, B] (position i = workgroup y, text b = workgroup z,
+// row r = b·T + i: no division, no approximate unit). One fadd per element, so the result is the CPU's f32 addition bit
+// for bit (with FTZ). The token ids are checked against the vocabulary by the
+// driver before the launch (the program trusts them: an id past the table would read outside it).
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Ids { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args { Ids tok; In emb; In pos; Out x; uint c; uint t; } args;
+void main() {
+    uint k = gl_GlobalInvocationID.x;
+    uint i = gl_WorkGroupID.y;
+    uint r = gl_WorkGroupID.z * args.t + i;
+    if (k >= args.c) {
+        return;
+    }
+    uint id = args.tok.v[r];
+    args.x.v[r * args.c + k] = args.emb.v[id * args.c + k] + args.pos.v[i * args.c + k];
+}

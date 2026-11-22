@@ -64,6 +64,8 @@ pub mod chain;
 pub mod chain_log;
 pub mod colsum;
 pub mod driver_split;
+pub mod emb_back;
+pub mod emb_fwd;
 pub mod fb_layout;
 pub mod firmware;
 pub mod flr_reset;

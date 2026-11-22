@@ -706,6 +706,86 @@ fn attention_back_core(
     dqkv
 }
 
+/// The input embeddings of the batch, `x[r, k] = emb[tok[r], k] + pos[r mod T, k]` (one f32 addition), N = `tok.len()`
+/// rows of C: the first lines of the forward pass, and the oracle of the board's `emb_fwd` program (C-160 point 4,
+/// program 8).
+pub fn embed_rows(
+    emb: &[f32],
+    pos: &[f32],
+    tok: &[u32],
+    t: usize,
+    c: usize,
+) -> GpuResult<Vec<f32>> {
+    need(
+        c > 0 && t > 0 && !tok.is_empty() && tok.len().is_multiple_of(t),
+        "embed: forma",
+    )?;
+    need(
+        emb.len().is_multiple_of(c) && pos.len() >= t * c,
+        "embed: tabelele",
+    )?;
+    let vocab = emb.len() / c;
+    need(
+        tok.iter().all(|&s| (s as usize) < vocab),
+        "embed: simbol in afara vocabularului",
+    )?;
+    let mut x = vec![0.0f32; tok.len() * c];
+    for (r, &id) in tok.iter().enumerate() {
+        let (e, p) = (id as usize * c, (r % t) * c);
+        for k in 0..c {
+            x[r * c + k] = emb[e + k] + pos[p + k];
+        }
+    }
+    Ok(x)
+}
+
+/// Backward of [`embed_rows`]: the gradients of `emb_token` [vocab, C] and `emb_pozitie` [ctx, C] from dx [N, C]. Each
+/// element is the f64 sum of the rows that used it, rounded once to f32; `head` (the tied output head's dW, same shape
+/// as the token table) is then added in f32 — exactly `loss_and_grad`'s lines. Positions ≥ T and tokens not in the
+/// batch get 0 (+ the head's part). The oracle of the board's `emb_back` program (C-160 point 4, program 8).
+pub fn embed_back_rows(
+    dx: &[f32],
+    tok: &[u32],
+    t: usize,
+    c: usize,
+    vocab: usize,
+    ctx: usize,
+    head: Option<&[f32]>,
+) -> GpuResult<(Vec<f32>, Vec<f32>)> {
+    need(
+        c > 0 && t > 0 && t <= ctx && !tok.is_empty() && tok.len().is_multiple_of(t),
+        "embed_back: forma",
+    )?;
+    need(dx.len() == tok.len() * c, "embed_back: dx")?;
+    need(
+        tok.iter().all(|&s| (s as usize) < vocab),
+        "embed_back: simbol in afara vocabularului",
+    )?;
+    need(
+        head.is_none_or(|h| h.len() == vocab * c),
+        "embed_back: capul legat",
+    )?;
+    let mut acc_tok = vec![0.0f64; vocab * c];
+    let mut acc_pos = vec![0.0f64; ctx * c];
+    for (r, &id) in tok.iter().enumerate() {
+        let (e, p) = (id as usize * c, (r % t) * c);
+        for k in 0..c {
+            acc_tok[e + k] += dx[r * c + k] as f64;
+            acc_pos[p + k] += dx[r * c + k] as f64;
+        }
+    }
+    let d_tok = match head {
+        Some(h) => acc_tok
+            .iter()
+            .zip(h)
+            .map(|(&s, &hk)| s as f32 + hk)
+            .collect(),
+        None => acc_tok.iter().map(|&s| s as f32).collect(),
+    };
+    let d_pos = acc_pos.iter().map(|&s| s as f32).collect();
+    Ok((d_tok, d_pos))
+}
+
 // ---------------------------------------------------------------- the step
 
 /// What the forward pass keeps for the backward pass.
@@ -739,16 +819,7 @@ fn forward(a: &Arch, params: &[Vec<f32>], batch: &Batch) -> GpuResult<Forward> {
     let pos = &params[1];
 
     // Forward.
-    let mut x = vec![0.0f32; n * c];
-    for b in 0..bsz {
-        for i in 0..t {
-            let r = b * t + i;
-            let tok = batch.inputs[r] as usize;
-            for k in 0..c {
-                x[r * c + k] = emb[tok * c + k] + pos[i * c + k];
-            }
-        }
-    }
+    let mut x = embed_rows(emb, pos, batch.inputs, t, c)?;
     let mut caches: Vec<LayerCache> = Vec::with_capacity(a.layers);
     for l in 0..a.layers {
         let w = |off: usize| &params[a.at(l, off)][..];
@@ -836,6 +907,41 @@ pub fn loss_and_grad(
     params: &[Vec<f32>],
     batch: &Batch,
 ) -> GpuResult<(f32, Vec<Vec<f32>>)> {
+    let (loss, mut grads, dx, d_emb_head) = backward(a, params, batch)?;
+    // Embeddings: scatter-add of dx (f64 sums), then the tied head's part.
+    let (d_tok, d_pos) = embed_back_rows(
+        &dx,
+        batch.inputs,
+        batch.len,
+        a.n_emb,
+        a.vocab,
+        a.ctx,
+        Some(&d_emb_head),
+    )?;
+    grads[0] = d_tok;
+    grads[1] = d_pos;
+    Ok((loss, grads))
+}
+
+/// What reaches the embedding tables in [`loss_and_grad`]: dx [B·T, C] (the gradient of the residual stream entering
+/// layer 0) and the tied output head's dW [vocab, C] — the inputs of the board's `emb_back` program (C-160 point 4,
+/// program 8), from the same lines as the step.
+pub fn embed_grad_inputs(
+    a: &Arch,
+    params: &[Vec<f32>],
+    batch: &Batch,
+) -> GpuResult<(Vec<f32>, Vec<f32>)> {
+    let (_, _, dx, d_emb_head) = backward(a, params, batch)?;
+    Ok((dx, d_emb_head))
+}
+
+/// The step up to the embeddings: (loss, the gradients of every tensor but the two tables — left 0 —, dx, the head's dW).
+#[allow(clippy::type_complexity)]
+fn backward(
+    a: &Arch,
+    params: &[Vec<f32>],
+    batch: &Batch,
+) -> GpuResult<(f32, Vec<Vec<f32>>, Vec<f32>, Vec<f32>)> {
     let Forward {
         caches,
         hf,
@@ -953,26 +1059,7 @@ pub fn loss_and_grad(
             grads[a.at(l, off)] = g;
         }
     }
-    // Embeddings: scatter-add of dx (f64 sums), then the tied head's part.
-    let mut acc_tok = vec![0.0f64; v * c];
-    let mut acc_pos = vec![0.0f64; a.ctx * c];
-    for b in 0..bsz {
-        for i in 0..t {
-            let r = b * t + i;
-            let tok = batch.inputs[r] as usize;
-            for k in 0..c {
-                acc_tok[tok * c + k] += dx[r * c + k] as f64;
-                acc_pos[i * c + k] += dx[r * c + k] as f64;
-            }
-        }
-    }
-    for (k, g) in grads[0].iter_mut().enumerate() {
-        *g = acc_tok[k] as f32 + d_emb_head[k];
-    }
-    for (k, g) in grads[1].iter_mut().enumerate() {
-        *g = acc_pos[k] as f32;
-    }
-    Ok((loss, grads))
+    Ok((loss, grads, dx, d_emb_head))
 }
 
 /// Total L2 norm of all gradients ("norm of norms", as `clip_grad_norm_`).

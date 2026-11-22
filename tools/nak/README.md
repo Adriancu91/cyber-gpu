@@ -323,3 +323,16 @@ Oracolul: `gpu_compute::train::attention_back_rows` (f64), într-o margine scris
 
 Oracolul: `gpu_compute::train::attention_rows` (f64), într-o margine scrisă (cu loc 2⁻²² pentru fiecare MUFU). Testul T160.
 Nota: `docs/C-160_P4_ATTN_FWD.md`.
+
+## C-160 punctul 4, programul 8: `emb_fwd` + `emb_back` (22 nov 2026, sesiunea 150, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh emb_fwd` / `emb_back` (Mesa 25.0.7 reconstruit în cloud; `attn_fwd` a ieșit **identic**).
+
+| Ce | `emb_fwd` | `emb_back` |
+|---|---|---|
+| Program | x = emb[simbol] + poz[i], rândul b·T + i; blocuri de 64, grila [⌈C/64⌉, T, B] | gradientul tabelelor pe segmente (listă de pe procesor), fără `atomic`; blocuri de 64, grila [⌈C/64⌉, S, 1] |
+| Ieșire | **672 octeți**, 42 de instrucțiuni, 19 registre | **1 280 octeți**, 80 de instrucțiuni, 19 registre |
+| SHA-256 | `247e0e42871932822aa201cc6ee8e254ae9e657bec4ce6e30bbd3b691cd5bebb` | `fca7b007aebb0b8fbfbdbb209f6d4a7162e579212132b47a85da0524a12af0be` |
+| Bufferul constant 0 | simboluri / emb / poz / x la 0x28 / 0x30 / 0x38 / 0x40, C 0x48, T 0x4c; baza 0x0 / 0x4 / 0x8 = 0 | dx / off / dst / rows / g la 0x28 … 0x48, C 0x50, modul 0x54; baza 0x0 / 0x4 = 0 |
+| Aritmetica | un `fadd.ftz`, nimic altceva (fără împărțire: prima variantă cu r mod T folosea `mufu.rcp` și a fost scoasă) | lanțul `fadd.ftz` de la 0 + un `fadd.ftz` în modul „adună”; fără MUFU |
+
+Oracolul: `gpu_compute::train::{embed_rows, embed_back_rows}`. Testul T161. Nota: `docs/C-160_P4_EMB.md`.

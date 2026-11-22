@@ -23,6 +23,8 @@
 #   sh tools/nak/build.sh gelu_tr        # C-160 point 4, program 5: GELU forward (mode 0) / backward (mode 1) (session 147)
 #   sh tools/nak/build.sh attn_back      # C-160 point 4, program 6 (backward): causal attention backward, rows / columns (session 148)
 #   sh tools/nak/build.sh attn_fwd       # C-160 point 4, program 6 (forward): causal attention over T positions, writes P (session 149)
+#   sh tools/nak/build.sh emb_fwd        # C-160 point 4, program 8 (forward): x = emb[tok] + pos (session 150)
+#   sh tools/nak/build.sh emb_back       # C-160 point 4, program 8 (backward): embedding gradients by segments, no atomics (session 150)
 #   sh tools/nak/build.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): apt install glslang-tools spirv-tools libvulkan-dev libdrm-dev
@@ -110,6 +112,12 @@ attn_back)
     ;;
 attn_fwd)
     exec sh "$0" kernel attn_fwd 44
+    ;;
+emb_fwd)
+    exec sh "$0" kernel emb_fwd 40
+    ;;
+emb_back)
+    exec sh "$0" kernel emb_back 48
     ;;
 kernel)
     NAME=${2:?nume}; PUSH=${3:?octeti push constants}

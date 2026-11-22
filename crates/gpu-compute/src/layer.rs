@@ -844,6 +844,186 @@ pub fn attn_fwd_gpu(s: &AttnShape, qkv: &[f32], scale: f32) -> Option<(Vec<f32>,
     Some((p, att))
 }
 
+/// C-160 point 4, program 8 (forward): the board's `emb_fwd.comp` on the CPU — x [N, C] with
+/// `x[r, k] = fadd.ftz(emb[tok[r], k], pos[i, k])`, r = b·T + i, N = `tok.len()` = B·T (`None` otherwise). One `fadd.ftz` per element, so the board's
+/// result is this one bit for bit. `None` for a bad shape, an id past the table (`emb.len() / C` rows) or a position
+/// table shorter than T rows (the program trusts the ids: the driver checks them with this same rule).
+pub fn emb_fwd_gpu(emb: &[f32], pos: &[f32], tok: &[u32], t: usize, c: usize) -> Option<Vec<f32>> {
+    if c == 0
+        || t == 0
+        || tok.is_empty()
+        || !tok.len().is_multiple_of(t)
+        || !emb.len().is_multiple_of(c)
+        || pos.len() < t * c
+    {
+        return None;
+    }
+    let vocab = emb.len() / c;
+    if tok.iter().any(|&id| id as usize >= vocab) {
+        return None;
+    }
+    let mut x = alloc::vec![0.0f32; tok.len() * c];
+    for (r, &id) in tok.iter().enumerate() {
+        let (e, p) = (id as usize * c, (r % t) * c);
+        for k in 0..c {
+            x[r * c + k] = add_f32_ftz(emb[e + k], pos[p + k]);
+        }
+    }
+    Some(x)
+}
+
+/// The segments of one `emb_back` launch (C-160 point 4, program 8, backward), built on the CPU: segment s sums the
+/// rows `rows[off[s]..off[s+1]]` of dx into row `dst[s]` of the gradient. `dst` rows are distinct (no two threads of
+/// the launch write the same element), every list is in a fixed order (the same bits on every run).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EmbSegments {
+    /// `S + 1` offsets into `rows`, from 0, non-decreasing.
+    pub off: Vec<u32>,
+    /// `S` destination rows, distinct.
+    pub dst: Vec<u32>,
+    /// The rows of dx, grouped by segment.
+    pub rows: Vec<u32>,
+}
+
+impl EmbSegments {
+    /// One segment per **distinct input token**, tokens ascending, each with its rows ascending: the scatter-add of
+    /// `emb_token`'s gradient (`loss_and_grad`'s order). `None` for an empty batch or an id ≥ `vocab`.
+    pub fn tokens(tok: &[u32], vocab: usize) -> Option<Self> {
+        if tok.is_empty() || tok.iter().any(|&id| id as usize >= vocab) {
+            return None;
+        }
+        let mut count = alloc::vec![0u32; vocab];
+        for &id in tok {
+            count[id as usize] += 1;
+        }
+        let mut seg = Self {
+            off: alloc::vec![0],
+            dst: Vec::new(),
+            rows: Vec::with_capacity(tok.len()),
+        };
+        let mut start = alloc::vec![0u32; vocab];
+        for (id, &n) in count.iter().enumerate() {
+            if n > 0 {
+                start[id] = *seg.off.last()?;
+                seg.dst.push(id as u32);
+                seg.off.push(start[id] + n);
+            }
+        }
+        seg.rows.resize(tok.len(), 0);
+        let mut fill = start;
+        for (r, &id) in tok.iter().enumerate() {
+            let at = &mut fill[id as usize];
+            seg.rows[*at as usize] = r as u32;
+            *at += 1;
+        }
+        Some(seg)
+    }
+
+    /// One segment per **position** i < T, with the rows b·T + i for b ascending: `emb_pozitie`'s gradient (summed
+    /// over the batch). `None` for an empty shape.
+    pub fn positions(batch: usize, t: usize) -> Option<Self> {
+        if batch == 0 || t == 0 {
+            return None;
+        }
+        let mut seg = Self {
+            off: Vec::with_capacity(t + 1),
+            dst: (0..t as u32).collect(),
+            rows: Vec::with_capacity(batch * t),
+        };
+        seg.off.push(0);
+        for i in 0..t {
+            for b in 0..batch {
+                seg.rows.push((b * t + i) as u32);
+            }
+            seg.off.push(seg.rows.len() as u32);
+        }
+        Some(seg)
+    }
+
+    /// Number of segments S (the grid's y).
+    pub fn len(&self) -> usize {
+        self.dst.len()
+    }
+
+    /// No segment.
+    pub fn is_empty(&self) -> bool {
+        self.dst.is_empty()
+    }
+
+    /// The shape rules the driver checks before a launch: offsets from 0, non-decreasing, ending at `rows.len()`;
+    /// rows < `n_rows`; distinct destinations < `g_rows`.
+    pub fn check(&self, n_rows: usize, g_rows: usize) -> bool {
+        let s = self.dst.len();
+        if s == 0 || self.off.len() != s + 1 || self.off[0] != 0 {
+            return false;
+        }
+        if self.off.windows(2).any(|w| w[0] > w[1])
+            || *self.off.last().unwrap_or(&1) as usize != self.rows.len()
+        {
+            return false;
+        }
+        if self.rows.iter().any(|&r| r as usize >= n_rows) {
+            return false;
+        }
+        let mut seen = alloc::vec![false; g_rows];
+        for &d in &self.dst {
+            let Some(f) = seen.get_mut(d as usize) else {
+                return false;
+            };
+            if *f {
+                return false;
+            }
+            *f = true;
+        }
+        true
+    }
+}
+
+/// One segment of the board's `emb_back.comp` on the CPU: for every k < C, the chain `a = 0; a = fadd.ftz(a, dx[row, k])`
+/// over the segment's rows in their order (the program's loop).
+pub fn emb_back_seg_gpu(dx: &[f32], c: usize, rows: &[u32]) -> Vec<f32> {
+    let mut a = alloc::vec![0.0f32; c];
+    for &r in rows {
+        let at = r as usize * c;
+        for k in 0..c {
+            a[k] = add_f32_ftz(a[k], dx[at + k]);
+        }
+    }
+    a
+}
+
+/// The whole `emb_back` launch on the CPU: for every segment s, row `dst[s]` of `g` becomes the segment's sum
+/// (`add = false`) or `fadd.ftz(g, sum)` (`add = true`); the other rows of g are untouched. `None` (and g unchanged)
+/// for segments that break [`EmbSegments::check`] or a dx / g length that is not a whole number of rows of C.
+pub fn emb_back_gpu(
+    dx: &[f32],
+    c: usize,
+    seg: &EmbSegments,
+    g: &mut [f32],
+    add: bool,
+) -> Option<()> {
+    if c == 0
+        || !dx.len().is_multiple_of(c)
+        || !g.len().is_multiple_of(c)
+        || !seg.check(dx.len() / c, g.len() / c)
+    {
+        return None;
+    }
+    for s in 0..seg.len() {
+        let rows = &seg.rows[seg.off[s] as usize..seg.off[s + 1] as usize];
+        let sum = emb_back_seg_gpu(dx, c, rows);
+        let o = seg.dst[s] as usize * c;
+        for k in 0..c {
+            g[o + k] = if add {
+                add_f32_ftz(g[o + k], sum[k])
+            } else {
+                sum[k]
+            };
+        }
+    }
+    Some(())
+}
+
 /// C-139: every vector one position leaves in the activation scratch of a layer, computed with the **program
 /// models** above (`layernorm_gpu`, `q8::matvec_gpu_order`, `vadd_gpu`, `attention_head_gpu`, `gelu_gpu`) in the order
 /// of the 16 launches — what each launch should have written, to find the first one that did not. In SIMULARE the

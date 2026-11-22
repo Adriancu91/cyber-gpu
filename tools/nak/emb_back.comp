@@ -1,0 +1,36 @@
+// C-160 point 4, program 8 (backward half): the gradient of the embedding tables, without atomics.
+// The driver groups the rows of dx into S segments (a list built on the CPU, in a fixed order): segment s sums the rows
+// rows[off[s]] .. rows[off[s+1]-1] of dx [N, C] and puts the sum in row dst[s] of g [*, C]:
+//   add = 0: g[dst[s], k] = Σ dx[row, k]                   (emb_pozitie: one segment per position, rows b·T + i)
+//   add = 1: g[dst[s], k] = g[dst[s], k] + Σ dx[row, k]   (emb_token: one segment per distinct input token; g already
+//                                                            holds the tied head's dW, as in loss_and_grad)
+// One thread per (segment, k): block 64 along k, grid [ceil(C/64), S, 1]. Each sum is one thread's chain of fadd, in the
+// segment's order, from 0: no atomics, no shared memory, the same bits on every run. Distinct dst rows (the driver's list)
+// mean no two threads write the same element. Rows of g in no segment are not touched.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Ids { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Acc { float v[]; };
+layout(push_constant) uniform Args { In dx; Ids off; Ids dst; Ids rows; Acc g; uint c; uint add; } args;
+void main() {
+    uint k = gl_GlobalInvocationID.x;
+    uint s = gl_WorkGroupID.y;
+    if (k >= args.c) {
+        return;
+    }
+    uint lo = args.off.v[s];
+    uint hi = args.off.v[s + 1u];
+    float a = 0.0;
+    for (uint j = lo; j < hi; j++) {
+        a += args.dx.v[args.rows.v[j] * args.c + k];
+    }
+    uint o = args.dst.v[s] * args.c + k;
+    if (args.add != 0u) {
+        args.g.v[o] = args.g.v[o] + a;
+    } else {
+        args.g.v[o] = a;
+    }
+}

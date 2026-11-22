@@ -1,0 +1,76 @@
+NAK IR after calc_instr_deps:
+block.u 0 L1 [] -> {
+      r0    = s2r sr[0x25]                            // delay=3 wr:0
+      r1    = s2r sr[0x26]                            // delay=1 wr:1
+      r2    = s2r sr[0x27]                            // delay=1 wr:2
+      r3    = s2r sr[0x21]                            // delay=1 wr:3
+      r0    = iadd3 r0 c[0x0][0x0] rZ                 // delay=6 wt=000001
+      r0    = shf.l.w.i32 r0 rZ 0x6                   // delay=6
+      r0    = iadd3 r0 r3 rZ                          // delay=1 wt=001000
+      r1    = iadd3 r1 c[0x0][0x4] rZ                 // delay=1 wt=000010
+      r2    = iadd3 r2 c[0x0][0x8] rZ                 // delay=6 wt=000100
+      r2    = imad r2 c[0x0][0x4c] r1                 // delay=1
+      p0    = isetp.lt.u32 r0 c[0x0][0x48]            // delay=13
+@!p0          bra L0                                  // delay=1
+} -> [1, 2]
+block 1 L3 [0] -> {
+      r3    = prmt r2 [0xbbbb] rZ                     // delay=1
+      r4    = shf.l.w.u64 r2 rZ 0x2                   // delay=5
+      r3    = shf.l.w.u64.hi r2 r3 0x2                // delay=1
+      r4 p0 = iadd3 r4 c[0x0][0x28] rZ                // delay=13
+      r5    = iadd3.x r3 c[0x0][0x2c] rZ p0 pF        // delay=6
+      r3    = ld.global.a64.constant.b32 [r4..6]      // delay=5 wr:0
+      r2    = imad r2 c[0x0][0x48] r0                 // delay=1
+      r3    = imad r3 c[0x0][0x48] r0                 // delay=6 wt=000001
+      r4    = prmt r3 [0xbbbb] rZ                     // delay=4
+      r5    = shf.l.w.u64 r3 rZ 0x2                   // delay=2
+      r3    = shf.l.w.u64.hi r3 r4 0x2                // delay=4
+      r4 p0 = iadd3 r5 c[0x0][0x30] rZ                // delay=13
+      r5    = iadd3.x r3 c[0x0][0x34] rZ p0 pF        // delay=6
+      r3    = ld.global.a64.constant.b32 [r4..6]      // delay=1 rd:0 wr:1
+      r0    = imad r1 c[0x0][0x48] r0                 // delay=6
+      r1    = prmt r0 [0xbbbb] rZ                     // delay=1
+      r4    = shf.l.w.u64 r0 rZ 0x2                   // delay=5 wt=000001
+      r0    = shf.l.w.u64.hi r0 r1 0x2                // delay=1
+      r4 p0 = iadd3 r4 c[0x0][0x38] rZ                // delay=13
+      r5    = iadd3.x r0 c[0x0][0x3c] rZ p0 pF        // delay=6
+      r0    = ld.global.a64.constant.b32 [r4..6]      // delay=6 wr:0
+      r0    = fadd.ftz r3 r0                          // delay=1 wt=000011
+      r1    = prmt r2 [0xbbbb] rZ                     // delay=4
+      r3    = shf.l.w.u64 r2 rZ 0x2                   // delay=2
+      r1    = shf.l.w.u64.hi r2 r1 0x2                // delay=4
+      r2 p0 = iadd3 r3 c[0x0][0x40] rZ                // delay=13
+      r3    = iadd3.x r1 c[0x0][0x44] rZ p0 pF        // delay=6
+              st.global.a64.strong.sys.b32 [r2..4] r0 // delay=2 rd:0
+              exit                                    // delay=1 wt=000001
+} -> []
+block 2 L0 [0] -> {
+              exit                                    // delay=1
+} -> []
+
+Stage: compute
+Instruction count: 42
+Num GPRs: 19
+SLM size: 0
+Encoded shader:
+  00007919 00000000 00002500 000e0600 00017919 00000000 00002600 000e4200
+  00027919 00000000 00002700 000e8200 00037919 00000000 00002100 000ec200
+  00007a10 00000000 07ffe0ff 001fcc00 00007819 00000006 00000cff 000fcc00
+  00007210 00000003 07ffe0ff 008fc200 01017a10 00000100 07ffe0ff 002fc200
+  02027a10 00000200 07ffe0ff 004fcc00 02027a24 00001300 000e0001 000fc200
+  00007a0c 00001200 03f01070 000fda00 00008947 000001d0 03800000 000fc200
+  02037816 0000bbbb 000000ff 000fc200 02047819 00000002 00000aff 000fca00
+  02037819 00000002 00010a03 000fc200 04047a10 00000a00 07f1e0ff 000fda00
+  03057a10 00000b00 007fe4ff 000fcc00 04037381 00000000 001e8900 000e0a00
+  02027a24 00001200 000e0000 000fc200 03037a24 00001200 000e0000 001fcc00
+  03047816 0000bbbb 000000ff 000fc800 03057819 00000002 00000aff 000fc400
+  03037819 00000002 00010a04 000fc800 05047a10 00000c00 07f1e0ff 000fda00
+  03057a10 00000d00 007fe4ff 000fcc00 04037381 00000000 001e8900 00004200
+  01007a24 00001200 000e0000 000fcc00 00017816 0000bbbb 000000ff 000fc200
+  00047819 00000002 00000aff 001fca00 00007819 00000002 00010a01 000fc200
+  04047a10 00000e00 07f1e0ff 000fda00 00057a10 00000f00 007fe4ff 000fcc00
+  04007381 00000000 001e8900 000e0c00 03007221 00000000 00010000 003fc200
+  02017816 0000bbbb 000000ff 000fc800 02037819 00000002 00000aff 000fc400
+  02017819 00000002 00010a01 000fc800 03027a10 00001000 07f1e0ff 000fda00
+  01037a10 00001100 007fe4ff 000fcc00 02007386 00000000 00114900 0001c400
+  0000794d 00000000 03800000 001fc200 0000794d 00000000 03800000 000fc200
