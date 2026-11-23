@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 182 — 23 noiembrie 2026, ~12:11–12:40 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: proba „vechi lângă nou” cu cele trei `_3`**
+## Sesiunea 182 — 23 noiembrie 2026, ~12:11–12:25 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: proba „vechi lângă nou” cu cele trei `_3`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-364. Planul și predicțiile urcate
 **înainte** de cod (`b6e3b5b`, `docs/C-157_P2_ATTN_TILE3.md`, secțiunea sesiunii 182).
