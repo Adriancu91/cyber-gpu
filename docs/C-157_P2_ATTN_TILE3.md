@@ -229,3 +229,37 @@ Nimic nu rulează pe placă din sesiunea asta; `attn_fwd_tile`, `attn_fwd_tile2`
 
 **Ce e nou pentru placă:** nimic încă (programul nu e legat în probă). **Toate trei `_3` sunt gata în SIMULARE.** Următorul pas: proba
 „vechi lângă nou” cu cele trei `_3` (ca os-364: `_2` lângă `_3`, aceleași seturi) și nota pentru OS.
+
+---
+
+## Proba „vechi lângă nou” cu cele trei `_3` — planul și predicțiile (sesiunea 182, scrise ÎNAINTE de cod)
+
+**Ce:** a treia generație lângă primele două, în aceeași rulare `--atentie-placi` a OS-ului (după lanțul vechi și după `_2`, pe
+aceleași seturi). Totul e **adăugare** în `nvidia_ga104::attn_tile_probe`: `Prog`, `PROGS`, `Prog2`, `PROGS2`, `launch_bytes(2)`,
+`judge*`, `Probe`, `Probe2`, rândurile `kt atentie …` / `kt atentie2 …` și parserele lor rămân neschimbate (codul OS de azi, os-364,
+se compilează la fel și dă aceleași rânduri).
+
+**Piese noi:**
+1. `Prog3(pub Prog)` / `PROGS3` — `attn_fwd_tile3` (120 registre, 37 888 B), `attn_back_tile0_3` (68, 33 024), `attn_back_tile_3`
+   (80, 33 024 + ce scrie modulul); `name / binary / sha256 / registers / shared`, `old()` (gen 1), `prev()` (`Prog2`).
+2. `launch_bytes3` — același cbuf și aceeași grilă ca vechii; QMD-ul cu registrele și memoria partajată ale lui `_3`.
+3. Judecata: `judge_pair` / `judge_pair_set` **așa cum sunt** (lanțul `_3` judecat cu marginile vechi + comparat cuvânt cu cuvânt cu
+   lanțul **vechi, gen 1** — referința marginilor; `_2` = gen 1 pe placă, os-364).
+4. `Probe3` — rânduri **`kt atentie3 …`** (aceleași nume ca la `atentie2`, alt prefix; parserele `atentie` / `atentie2` nu le văd),
+   `lines(label, Some(&probe2))`: timpul `_3` lângă `_2` din aceeași rulare; fără el, mediane os-364 (`OS364_NS` = 1,53 / 1,54 /
+   2,25 ms). `parse_attn_tile3`.
+5. Test T191 (SIMULARE): SHA / registre / memorie ale celor trei `_3`; lanțul `_3` pe cele 5 seturi mici prin procesorul de comenzi =
+   lanțul vechi cuvânt cu cuvânt și în margine; greșeli plantate prinse (QMD-ul lui fwd3 cu registrele lui `_2`, un ulp în dqkv-ul nou,
+   citire scurtă, set lipsă); rândurile ↔ parserul; `atentie2` și `atentie3` nu se amestecă; `Probe2` dă exact aceleași rânduri ca
+   înainte.
+6. Nota PREDARE: `integration/cyber-universe/C-157_P2n_atentie3-vechi-langa-nou.md`.
+
+**Predicții (pe placă, DEDUS; NOT TESTED):**
+- P1: `6 / 6 seturi in margine`; back0_3 / back1_3 100 % exacte față de model; fwd3 la fel ca fwd2 în os-364.
+- P2: **`6 / 6 seturi identice bit cu bit cu programele vechi`** (încredere ~85 % pe program, ~65 % toate trei; aceleași operații în
+  aceeași ordine — doar citirile mutate și alegerile pe adresă; în SIMULARE au ieșit identice pe 10 forme).
+- P3 (timpul, mediana a 5, `atentie-513-b4`): fwd3 **~0,7–1,1 ms** (model 0,81) față de 1,53; back0_3 **~0,5–0,9** (model 0,55) față de
+  1,54; back1_3 **~1,6–2,0** (model 1,60) față de 2,25. Lanțul întreg ~2,9 ms față de 5,32 (`_2`) și 8,29 (gen 1).
+- P4: nicio lansare neterminată; gărzile neatinse; memoria VRAM aceeași (bufferul refolosit, încă 3 programe + 3 pagini cbuf / QMD).
+
+**Ce NU face:** nu leagă `_3` în `train_step` (asta după ce placa confirmă P2); nu schimbă nimic din probele os-358 / os-364.
