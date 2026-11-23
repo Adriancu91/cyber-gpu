@@ -517,3 +517,8 @@ niciun octet de firmware NVIDIA.
   `integration/cyber-universe/C-157_P2r_legatura-port.md`, documentul `docs/C-157_PCIE_LEGATURA.md`: scrise de noi din
   specificația PCI Express (Link Capabilities / Link Status, tipul portului, magistrala secundară a punții) și din manualul public
   Dell Precision 5820 (tabelul sloturilor). Nicio sursă de cod externă; nimic GPL, niciun octet de firmware NVIDIA.
+- **Ordinea 20:11 pasul 2 — pasul mixt pe forma lui `antrenare mini` (sesiunea 191):** testul
+  `crates/nvidia-ga104/tests/sim_c160_p7_mixed_mini.rs`, documentul `docs/C-160_P7_PAS_MIXT_MINI.md`, nota
+  `integration/cyber-universe/C-160_P7f_antrenare-mini-mixt.md`: scrise de noi. Forma modelului și legea greutăților de start citite din
+  `cyber-universe/kernel/src/shell/antrenare_mini.rs` (repo-ul nostru public, doar citit); generatorul xorshift64* al nostru. Ideea scalării:
+  Micikevicius et al., „Mixed Precision Training”, ICLR 2018; formatul f16: IEEE 754-2008. Nimic GPL, niciun octet de firmware NVIDIA.

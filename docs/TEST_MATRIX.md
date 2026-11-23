@@ -1,5 +1,11 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 191 (23 nov 2026, ~21:15–22:30, cloud, fără placă) — ordinea 20:11 pasul 2: pasul mixt pe forma lui `antrenare mini`, SIMULARE
+
+| ID | Ce | Comanda | Așteptat | Observat | Rezultat |
+|---|---|---|---|---|---|
+| T199 | Pasul mixt (`Plan::step_mixed`: toate înmulțirile pe `mm_tc`, f16 + sume f32, scalarea erorii S) pe forma `antrenare mini` (vocabular 16 384, ctx 32, E 64, 4 capete, 2 straturi, lot 2 × 32, AdamW lr 1e-3, decay 0,1, tăiere 1,0), 5 pași pe placa simulată față de oracolul pe procesor; plan + predicții înainte (`265557b`, `docs/C-160_P7_PAS_MIXT_MINI.md`) | `cargo test --release -p nvidia-ga104 --test sim_c160_p7_mixed_mini -- --nocapture` | martorul F32 ≤ 1e-5 / 1e-3; S = 1 024: eroarea ≤ 1e-3, gradientul ≤ 5e-3, rândurile rare ≤ 1e-3, mișcarea ≤ 5e-2; S = 1: rândurile rare 5e-3…5e-2 și ≥ 10× mai rău, `emb_token` întreg < 3×, mișcarea rândurilor rare ≤ 10×; `_3` = simplu în 2×; greșeala „norma față de 1,0” prinsă | F32: 0 / 2,9e-6; S = 1 024: 7,6e-6 / 8,7e-4 / 4,8e-4 / 1,7e-2 (27 de lansări `mm_tc` pe pas); S = 1: rare 7,8e-3 (×16,0), întreg ×1,07, mișcarea rare ×5,7; `_3` aceleași cifre; greșeala: mișcarea 0,55 | PASS (SIMULARE) |
+
 ## Rezultate — sesiunea 190 (23 nov 2026, ~20:13–21:00, cloud, fără placă) — C-157 (decizia 23 nov 20:11): de ce legătura PCIe e x8, SIMULARE
 
 | ID | Ce | Comanda | Așteptat | Observat | Rezultat |

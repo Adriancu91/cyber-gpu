@@ -1,5 +1,32 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 191 — 23 noiembrie 2026, ~21:10–22:35 (ora României), în cloud, FĂRĂ placă — **ordinea 20:11, pasul 2: circuitele speciale în înmulțirile antrenării, pe forma lui `antrenare mini`**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-376 (ciclurile 17:36 / 17:38 deja
+comparate); decizia lui Adrian 20:36: RAM-ul deoparte, înainte cu antrenarea pe placă și viteza ei → pasul 2 al ordinii din 20:11
+(circuitele speciale în înmulțirile antrenării). Pe GA104 prin NAK asta înseamnă f16 + scalarea erorii (bf16 nu e oferit). Clona veche de
+pe disc lăsată neatinsă; lucrat într-o clonă nouă a `origin/g0-g2-fundatie`. Plan + predicții urcate **înainte** de cod
+(`265557b`, `docs/C-160_P7_PAS_MIXT_MINI.md`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| T199 (6 teste, test nou, biblioteca neschimbată) | pasul mixt (`Plan::step_mixed`, 27 de lansări `mm_tc` pe pas) pe forma `antrenare mini` (vocabular 16 384, ctx 32, E 64, 4 capete, 2 straturi, lot 2 × 32, AdamW lr 1e-3 / decay 0,1, tăiere 1,0), 5 pași, față de oracolul pe procesor; martorul F32; S = 1 024, S = 1; atenția `_3` | PASS (SIMULARE) |
+| Predicțiile (5/5 ieșite) | S = 1 024: eroarea 7,6·10⁻⁶, gradientul 8,7·10⁻⁴, rândurile rare ale lui `emb_token` 4,8·10⁻⁴, mișcarea greutăților 1,7·10⁻²; **S = 1: rândurile rare 7,8·10⁻³ = ×16 mai rău** (d(logits) ≈ 10⁻⁶ în zona subnormală f16), pe tot `emb_token` doar ×1,07; AdamW: mișcarea ×5,7; `_3` = simplu | PASS (SIMULARE) |
+| Greșeli plantate | norma față de 1,0 în loc de S → mișcarea 0,55 (prinsă); o țintă trecută drept rară → refuzată | PASS (SIMULARE) |
+| Nota pentru OS | `integration/cyber-universe/C-160_P7f_antrenare-mini-mixt.md` (`--mixt` pe `antrenare mini`, după `--antrenare-mini` F32 și os-352) | — |
+| `tools/check.sh` | format, clippy, **958 de teste** (+7 ignorate), build no_std | PASS |
+| Pe placă: `--antrenare-mini --mixt` | — | NOT TESTED |
+
+**Corectură la T169 (sesiunea 158):** „scalarea nu s-a dovedit necesară” era adevărat doar pe modelul de 256 de simboluri; pe vocabularul
+lui Kronos e necesară (×16 pe gradientul simbolurilor rare).
+
+**Ce e nou pentru placă:** doar `mm_tc` în pasul de antrenare (programul însuși rulează prima oară în os-352).
+
+**Următorul pas:** comparațiile când rulează pe placă (`--antrenare-mini`, os-352 `mm_tc`, gen 4, „lot”, `pci.legatura.port`); apoi pasul 3
+al ordinii din 20:11 — lipirea operațiilor „înapoi” (plan întâi); C-157 p.8 (fișa de model) când antrenarea așteaptă.
+
+---
+
 ## Sesiunea 190 — 23 noiembrie 2026, ~20:13–20:35 (ora României), în cloud, FĂRĂ placă — **de ce RAM ↔ VRAM merge cu ~6 GB/s (decizia lui Adrian, 23 nov 20:11)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Decizia nouă din hub (DECIZII 23 nov 20:11): nimic din antrenare în

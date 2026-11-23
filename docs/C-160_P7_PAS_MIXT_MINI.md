@@ -49,8 +49,43 @@ refuză.
 Ce NU dovedește: nimic despre placă; modelul sumatorului din circuitele speciale e cel potrivit pe os-335 (P8), nu dovedit bit cu bit;
 viteza nu se măsoară aici (estimarea pentru `mm_tc` rămâne ~8–17 TFLOP/s, `docs/C-160_P7_MM_TC.md` §6, DEDUS).
 
-## Rezultatele
-(se completează după rulare)
+## Rezultatele (SIMULARE, T199, 6 teste, ~43 s) — toate cele 5 predicții au ieșit
+
+Startul: eroarea 9,741 (ln 16 384 = 9,704 → softmax aproape uniform, cum prezisesem); 16 319 din 16 384 de rânduri ale lui `emb_token` sunt
+„rare”. Lista mixtă are **27 de lansări pe `mm_tc` pe pas** (toate înmulțirile modelului) + o singură `mm_train` 1×1×1 (c/S).
+
+| Măsura (față de oracolul pe procesor) | F32 (martor) | Mixt S = 1 024 | Mixt S = 1 | Mixt S = 1 024, atenția `_3` |
+|---|---|---|---|---|
+| Eroarea, cel mai rău pas din 5 (relativ) | 0 | 7,6·10⁻⁶ | 6,7·10⁻⁶ | 7,7·10⁻⁶ |
+| Gradientul pasului 1, cel mai rău tensor | 2,9·10⁻⁶ | 8,7·10⁻⁴ (`ln1.bias`, stratul 0) | 8,9·10⁻⁴ | 8,6·10⁻⁴ |
+| `emb_token` întreg | 1,4·10⁻⁶ | 4,7·10⁻⁴ | 5,1·10⁻⁴ | 4,7·10⁻⁴ |
+| **Rândurile rare ale lui `emb_token`** | 2,4·10⁻⁷ | **4,8·10⁻⁴** | **7,8·10⁻³** | 4,8·10⁻⁴ |
+| Mișcarea greutăților, cel mai rău tensor | 1,5·10⁻⁴ | 1,7·10⁻² (`out_proj`, stratul 0) | 1,9·10⁻² | 1,7·10⁻² |
+| Mișcarea rândurilor rare | 7,1·10⁻⁶ | 2,8·10⁻³ | 1,6·10⁻² | 2,8·10⁻³ |
+
+Față de predicții:
+1. Martorul F32: eroarea identică, gradientul 2,9·10⁻⁶ (≤ 1·10⁻³) — **DA**.
+2. S = 1 024: eroarea 7,6·10⁻⁶ (≤ 1·10⁻³), gradientul 8,7·10⁻⁴ (≤ 5·10⁻³), rândurile rare 4,8·10⁻⁴ (≤ 1·10⁻³; prezis ~2–5·10⁻⁴),
+   mișcarea 1,7·10⁻² (≤ 5·10⁻²) — **DA**.
+3. S = 1: rândurile rare **7,8·10⁻³** (în intervalul prezis 5·10⁻³ – 5·10⁻²; prezisesem ~1,8 % — a ieșit ~0,8 %, deci ceva mai bine),
+   **de 16,0 ori mai rău** decât S = 1 024 (prezis ≥ 10); pe tot `emb_token` raportul e **1,07** (prezis < 3: măsura pe tensor întreg
+   ascunde efectul) — **DA**.
+4. AdamW micșorează efectul: mișcarea rândurilor rare S = 1 / S = 1 024 = **5,7** (prezis ≤ 10, mai puțin decât cele 16 de la gradient) — **DA**.
+5. Atenția `_3`: aceleași cifre ca așezarea simplă (diferențe în a treia cifră) — **DA**.
+
+Greșelile plantate: norma comparată cu 1,0 în loc de S → mișcarea greutăților **0,55** (prinsă, de 11 ori peste 5·10⁻²); eroarea
+rămâne bună (2,6·10⁻³ — doar eroarea nu ajunge ca probă, la fel ca în T169); o țintă trecută drept „rară” → refuzată.
+
+**Ce înseamnă:** pe vocabularul lui Kronos **scalarea erorii e necesară** (fără ea, gradientul celor 16 319 simboluri rare pierde ~16× din
+precizie, fiindcă d(logits) ≈ 10⁻⁶ cade în zona subnormală a f16), iar cu S = 1 024 pasul mixt rămâne lângă oracolul F32 la toate măsurile.
+Asta corectează concluzia din T169 („pe acest set nu s-a dovedit necesară”), care era adevărată doar pentru modelul de 256 de simboluri.
+Mișcarea greutăților de ~1,7 % față de oracol după 5 pași e mai mare decât la F32 (1,5·10⁻⁴) — normal pentru f16: AdamW (m/√v) mărește
+diferențele mici ale gradienților mici; de urmărit pe o antrenare lungă prin curba erorii, nu prin greutăți bit cu bit.
+
+Ce urmează pe placă (în ordine, fiecare test separat, prin OS): `--antrenare-mini` F32 (C-161, al OS-ului) → proba `mm_tc` (os-352,
+GATA DE TEST) → **`--antrenare-mini --mixt`** (nota pentru OS `integration/cyber-universe/C-160_P7f_antrenare-mini-mixt.md`).
+
+`tools/check.sh`: vezi `docs/IMPLEMENTATION_STATUS.md`, sesiunea 191.
 
 ## Surse
 - Scalarea erorii: Micikevicius et al., „Mixed Precision Training”, ICLR 2018 (idee). Formatul f16 și zona subnormală: IEEE 754-2008.
