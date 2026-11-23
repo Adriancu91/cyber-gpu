@@ -1,5 +1,11 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 183 (23 nov 2026, ~13:10–14:10, cloud, fără placă) — C-157: proba RAM ↔ VRAM cu motorul de copiere, SIMULARE
+
+| ID | Ce | Comanda | Așteptat | Observat | Rezultat |
+|---|---|---|---|---|---|
+| T192 | `ram_vram`: obiectul de copiere alocat pe canalul de lucru (FakeRm); proba întreagă (M = 256 KiB și 1 MiB) prin procesorul de comenzi cu modelul motorului de copiere: 31 de înregistrări, 48 de copii (18 `PIPELINED`), B bit cu bit = modelul, A neatins, timpii = ceasul modelului; rândurile `kt ramvram` ↔ parser; greșeli plantate (sfertul paralel mutat cu 16 B, trimitere tăiată, bit necunoscut în `LAUNCH_DMA`) | `cargo test -p nvidia-ga104 --test sim_c157_ram_vram` + `--lib ram_vram` | trec; greșelile prinse | conform | PASS (SIMULARE) |
+
 ## Rezultate — sesiunea 134 (21 nov 2026, ~12:10–13:10, cloud, fără placă) — C-155 punctul 3: argmax pe placă, SIMULARE
 
 | ID | Test | Comandă | Așteptat | Obținut | Stare |
