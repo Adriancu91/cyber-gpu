@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 179 — 23 noiembrie 2026, ~09:11–09:55 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: `attn_back_tile0_3` (citiri fără ramură)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-364. Planul și predicțiile urcate
+**înainte** de cod (`c266ba2`, `docs/C-157_P2_ATTN_TILE3.md`). Mesa NAK 25.0.7 reconstruit în cloud (`attn_back_tile0_2` identic).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Program nou `attn_back_tile0_3` (lângă `_2`, neschimbat) | citirile globale fără ramură (adresa strânsă, citirea mereu, apoi alegerea); trecerea a doua pe trei feluri de plăci (deasupra diagonalei: 0 fără citire); SHA-256 `d8f4ec40…3b611f`, **68 de registre** (3 blocuri pe SM, ca `_2`) | PASS (compilat) |
+| Aflat la compilare | NAK emite în ordinea din sursă: „citește, apoi alege” imediat → tot o așteptare pe citire; GLSL rescris: citirile întâi, alegerile după | reparat |
+| Buclele (`nak_bucle.py`, coloana nouă `nou`) | urcarea plăcilor **2** latențe la 8 citiri (`_2`: 8); trecerea a doua **7** la 32 (`_2`: 32); plafonul vine din cele 6 tabele de scor ale plăcii | PREDICȚIE PE JUMĂTATE (prezisese 1 / ≤ 2) |
+| Modelul pe bucle | `_2` 0,50 → `_3` 0,18 ms; cu factorul măsurat ×3,12: **~0,55 ms** pe setul mare față de 1,54 (os-364) | DEDUS |
+| T188 (4 teste) | emularea literală a GLSL = `attn_back` mod 0 **bit cu bit** pe 10 forme; lansarea = `attn_back_tile0`; NaN deasupra diagonalei fără efect; greșeli plantate prinse; alegerea plăcii P scoasă = aceiași biți (intrările ei nu sunt citite niciodată — scris în notă) | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy, **896 de teste** (+7 ignorate), build no_std | PASS |
+| `attn_back_tile0_3` pe RTX 3070 Ti | — | NOT TESTED |
+
+**Ce e nou pentru placă:** nimic încă (nelegat în probă; interfața publică doar adăugată: modulul `nvidia_ga104::attn_back_tile0_3`).
+
+**Următorul pas:** `attn_fwd_tile3` și `attn_back_tile_3` cu aceeași rețetă (plan + predicții întâi), apoi proba „vechi lângă nou” cu
+`_3` (ca os-364) și nota pentru OS; altfel C-157 p.7 partea a doua / p.8, sau punctul nou al lui Adrian (măsurarea RAM ↔ VRAM + studiul
+`docs/C-157_RAM_OFFLOAD.md`).
+
+---
+
 ## Sesiunea 178 — 23 noiembrie 2026, ~08:11–08:50 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: comparația os-364 (atenția „vechi lângă nou”)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. os-364 a rulat pe placă (07:42): 6/6 în margine, **6/6 identice bit cu

@@ -1,0 +1,249 @@
+// C-157 point 2 after os-364 (docs/C-157_P2_ATTN_TILE3.md, plan written before this code, commit c266ba2):
+// attn_back_tile0_2 with THE SAME arithmetic in the same order (the same dS bits, predicted) and branch-free loads.
+// os-364 showed that NAK keeps every global load guarded by an `if` in its own region and waits for it at the region's
+// exit, so the loads of a tile ran one after another. Here:
+//   G1 pass 2 split by tile kind: below the diagonal the dS and P loads run always (row clamped to T - 1), the store
+//      only for i < T; on the diagonal the loads at (min(i, T-1), min(j, that)) and a select 0 / value; above the
+//      diagonal 0.0 is stored with no load (the old code stored 0.0 there after a branch);
+//   G2 the dO, V and P tile loads with clamped addresses, always issued, then a select 0 / value (8 at a time, as _2).
+// Everything else (arguments, mode 0 only, grid [ceil(T/64), H, B], blocks of 256, shared tiles, the dP loop, the dot
+// chain, every chain's order) is attn_back_tile0_2.comp's. CPU model: gpu_compute::layer::attn_back_row_gpu
+// (unchanged). Idea (select instead of a branch): the public CUDA guide (predication); no line copied.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Buf { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args {
+    In qkv; In p; In dout; Buf ds; Out dqkv;
+    uint t; uint c; uint heads; uint d; uint mode; float scale;
+} args;
+
+shared float sa[64 * 64];  // pass 1: dO tile [r][e] (64 wide), then the dP tile (r, jj) skewed; pass 2: dot of row r at [r]
+shared float sb[64 * 65];  // pass 1: V tile [e][jj], then the P tile [r][jj]; rows of 65 (F1)
+
+// Skewed tile address of (row, column) in sa (as attn_back_tile0): the dot chain reads one row per thread.
+uint sk(uint row, uint col) {
+    return row * 64u + ((col + row) & 63u);
+}
+
+void main() {
+    if (args.mode != 0u) {
+        return;
+    }
+    uint T = args.t;
+    uint C = args.c;
+    uint d = args.d;
+    uint b = gl_WorkGroupID.z;
+    uint h = gl_WorkGroupID.y;
+    uint bx = gl_WorkGroupID.x;
+    uint i0 = bx * 64u;
+    uint lid = gl_LocalInvocationID.x;
+    uint tx = lid & 15u;
+    uint ty = lid >> 4u;
+    uint ntiles = (T + 63u) / 64u;
+    uint row3 = 3u * C;
+    uint base = (b * args.heads + h) * T * T;
+    uint d4 = d & ~3u;
+
+    float dot = 0.0;  // thread lid < 64: the chain of row i0 + lid
+    for (uint jt = 0u; jt <= bx; jt++) {
+        barrier();
+        [[dont_unroll]] for (uint hh = 0u; hh < 16u; hh += 8u) {
+            // NAK emits in source order: the 8 loads first, the selects after them (a select right after its load
+            // would wait for that load before the next one is issued).
+            float lo[8];
+            [[unroll]] for (uint m = 0u; m < 8u; m++) {
+                uint idx = lid + 256u * (hh + m);
+                uint i = i0 + (idx >> 6u);
+                uint x = idx & 63u;
+                lo[m] = args.dout.v[(b * T + min(i, T - 1u)) * C + h * d + min(x, d - 1u)];
+            }
+            [[unroll]] for (uint m = 0u; m < 8u; m++) {
+                uint idx = lid + 256u * (hh + m);
+                uint i = i0 + (idx >> 6u);
+                uint x = idx & 63u;
+                sa[idx] = (i < T && x < d) ? lo[m] : 0.0;
+            }
+        }
+        [[dont_unroll]] for (uint hh = 0u; hh < 16u; hh += 8u) {
+            float lv[8];
+            [[unroll]] for (uint m = 0u; m < 8u; m++) {
+                uint idx = lid + 256u * (hh + m);
+                uint jr = jt * 64u + (idx >> 6u);
+                uint x = idx & 63u;
+                lv[m] = args.qkv.v[(b * T + min(jr, T - 1u)) * row3 + 2u * C + h * d + min(x, d - 1u)];
+            }
+            [[unroll]] for (uint m = 0u; m < 8u; m++) {
+                uint idx = lid + 256u * (hh + m);
+                uint jr = jt * 64u + (idx >> 6u);
+                uint x = idx & 63u;
+                sb[(idx & 63u) * 65u + (idx >> 6u)] = (jr < T && x < d) ? lv[m] : 0.0;
+            }
+        }
+        barrier();
+        float acc[16];
+        [[unroll]] for (uint n = 0u; n < 16u; n++) {
+            acc[n] = 0.0;
+        }
+        for (uint e0 = 0u; e0 < d4; e0 += 4u) {
+            // One base per operand and iteration; the rest constant (folded into the shared load's offset).
+            uint ob0 = ty * 64u + e0;
+            uint vb0 = e0 * 65u + tx;
+            [[unroll]] for (uint u = 0u; u < 4u; u++) {
+                float ob[4];
+                float vb[4];
+                [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                    ob[a] = sa[ob0 + (1024u * a + u)];
+                    vb[a] = sb[vb0 + (65u * u + 16u * a)];
+                }
+                [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                    [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                        acc[a * 4u + k] = fma(ob[a], vb[k], acc[a * 4u + k]);
+                    }
+                }
+            }
+        }
+        for (uint e = d4; e < d; e++) {
+            float ob[4];
+            float vb[4];
+            [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                ob[a] = sa[(ty + 16u * a) * 64u + e];
+                vb[a] = sb[e * 65u + tx + 16u * a];
+            }
+            [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                    acc[a * 4u + k] = fma(ob[a], vb[k], acc[a * 4u + k]);
+                }
+            }
+        }
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint i = i0 + ty + 16u * a;
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                uint j = jt * 64u + tx + 16u * k;
+                // F2: below the diagonal j < i0 <= i always.
+                if (i < T && (jt < bx || j <= i)) {
+                    args.ds.v[base + i * T + j] = acc[a * 4u + k];
+                }
+            }
+        }
+        barrier();
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                sa[sk(ty + 16u * a, tx + 16u * k)] = acc[a * 4u + k];
+            }
+        }
+        [[dont_unroll]] for (uint hh = 0u; hh < 16u; hh += 8u) {
+            float lp[8];
+            [[unroll]] for (uint m = 0u; m < 8u; m++) {
+                uint idx = lid + 256u * (hh + m);
+                uint i = i0 + (idx >> 6u);
+                uint j = jt * 64u + (idx & 63u);
+                uint ic = min(i, T - 1u);
+                lp[m] = args.p.v[base + ic * T + min(j, ic)];
+            }
+            [[unroll]] for (uint m = 0u; m < 8u; m++) {
+                uint idx = lid + 256u * (hh + m);
+                uint i = i0 + (idx >> 6u);
+                uint j = jt * 64u + (idx & 63u);
+                sb[(idx >> 6u) * 65u + (idx & 63u)] = (i < T && j <= i) ? lp[m] : 0.0;
+            }
+        }
+        barrier();
+        if (lid < 64u) {
+            uint pb = lid * 65u;
+            if (jt < bx) {
+                // F2: j < i0 <= i for every row; rows i >= T hold P = 0 and dP = 0 and their dot is never used.
+                [[dont_unroll]] for (uint jj0 = 0u; jj0 < 64u; jj0 += 4u) {
+                    [[unroll]] for (uint u = 0u; u < 4u; u++) {
+                        dot = fma(sb[pb + (jj0 + u)], sa[sk(lid, jj0 + u)], dot);
+                    }
+                }
+            } else {
+                uint i = i0 + lid;
+                [[dont_unroll]] for (uint jj0 = 0u; jj0 < 64u; jj0 += 4u) {
+                    [[unroll]] for (uint u = 0u; u < 4u; u++) {
+                        uint jj = jj0 + u;
+                        uint j = jt * 64u + jj;
+                        if (i < T && j <= i) {
+                            dot = fma(sb[pb + jj], sa[sk(lid, jj)], dot);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    barrier();
+    if (lid < 64u) {
+        sa[lid] = dot;
+    }
+    barrier();
+    float dr[4];
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        dr[a] = sa[ty + 16u * a];
+    }
+    // G1, below the diagonal (j < i0 <= i): every load issued, the row clamped; rows i >= T are not stored.
+    for (uint jt = 0u; jt < bx; jt++) {
+        // The 32 loads first, the arithmetic after them (NAK emits in source order).
+        float lds_[16];
+        float lps[16];
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint ic = min(i0 + ty + 16u * a, T - 1u);
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                uint o = base + ic * T + jt * 64u + tx + 16u * k;
+                lds_[a * 4u + k] = args.ds.v[o];
+                lps[a * 4u + k] = args.p.v[o];
+            }
+        }
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint i = i0 + ty + 16u * a;
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                float x = lds_[a * 4u + k] - dr[a];
+                float y = (lps[a * 4u + k] * x) * args.scale;
+                if (i < T) {
+                    args.ds.v[base + i * T + jt * 64u + tx + 16u * k] = y;
+                }
+            }
+        }
+    }
+    // G1, the diagonal tile: the loads at (min(i, T-1), min(j, that)), always in the buffer, then a select.
+    {
+        uint jt = bx;
+        float lds_[16];
+        float lps[16];
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint ic = min(i0 + ty + 16u * a, T - 1u);
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                uint o = base + ic * T + min(jt * 64u + tx + 16u * k, ic);
+                lds_[a * 4u + k] = args.ds.v[o];
+                lps[a * 4u + k] = args.p.v[o];
+            }
+        }
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint i = i0 + ty + 16u * a;
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                uint j = jt * 64u + tx + 16u * k;
+                float x = lds_[a * 4u + k] - dr[a];
+                float v = (lps[a * 4u + k] * x) * args.scale;
+                if (i < T && j < T) {
+                    args.ds.v[base + i * T + j] = (j <= i) ? v : 0.0;
+                }
+            }
+        }
+    }
+    // G1, above the diagonal (j > i): 0.0, no load (the old code stored the same 0.0 after a branch).
+    for (uint jt = bx + 1u; jt < ntiles; jt++) {
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint i = i0 + ty + 16u * a;
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                uint j = jt * 64u + tx + 16u * k;
+                if (i < T && j < T) {
+                    args.ds.v[base + i * T + j] = 0.0;
+                }
+            }
+        }
+    }
+}

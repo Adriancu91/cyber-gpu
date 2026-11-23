@@ -88,6 +88,36 @@ def waits(blocks, ids):
     return n
 
 
+def waits_fresh(blocks, ids):
+    """Fresh memory latencies (session 179, for the branch-free `_3` programs): like `waits`, but a wait counts only
+    when the load waited on was issued AFTER the previous counted wait (its latency starts after that wait ended);
+    a wait on a load issued before it overlaps a latency already paid and is not counted. NAK has 6 scoreboards, so
+    with more than 5 loads in flight a later load waits for an earlier one: 8 branch-free loads = 2 latencies.
+    On code whose loads are waited on one at a time this gives the same number as `waits`."""
+    pending = {}
+    issued = 0
+    mark = 0
+    n = 0
+    for b in sorted(ids):
+        for ins in blocks[b]["ins"]:
+            m = WT.search(ins)
+            if m and pending:
+                bits = m.group(1)[::-1]
+                hit = [sb for sb in pending if sb < len(bits) and bits[sb] == "1"]
+                if hit:
+                    if max(pending[sb] for sb in hit) > mark:
+                        n += 1
+                        mark = issued
+                    for sb in hit:
+                        del pending[sb]
+            if "ld.global" in ins:
+                w = WR.search(ins)
+                if w:
+                    issued += 1
+                    pending[int(w.group(1))] = issued
+    return n
+
+
 def loops(blocks):
     """Natural loops: for a back edge tail -> head (head <= tail), the head plus every block that reaches the tail
     walking predecessors without passing the head. Innermost (fewest blocks) first."""
@@ -118,7 +148,7 @@ def main():
     for path in sys.argv[1:]:
         blocks = parse(path)
         print(f"== {path}")
-        print("  bucla (blocuri)   instr  stall  ffma lds32 lds128 ldg stg sts bssy bar sir")
+        print("  bucla (blocuri)   instr  stall  ffma lds32 lds128 ldg stg sts bssy bar sir nou")
         found = loops(blocks)
         for head, tail, body in found:
             inner = set()
@@ -128,7 +158,7 @@ def main():
             own = [x for x in body if x not in inner]
             s = stats(blocks, own)
             print(f"  {head:4d}..{tail:<6d} {s['instr']:9d} {s['stall']:6d} {s['ffma']:5d} {s['lds32']:5d} {s['lds128']:6d}"
-                  f" {s['ldg']:3d} {s['stg']:3d} {s['sts']:3d} {s['bssy']:4d} {s['bar']:3d} {waits(blocks, own):3d}")
+                  f" {s['ldg']:3d} {s['stg']:3d} {s['sts']:3d} {s['bssy']:4d} {s['bar']:3d} {waits(blocks, own):3d} {waits_fresh(blocks, own):3d}")
 
 
 
@@ -268,7 +298,26 @@ PROGRAMS364 = {
 }
 
 
-def model364(name, lw=LDG_WAIT, drop_waits=False):
+# Session 179: attn_back_tile0_3 (branch-free loads, docs/C-157_P2_ATTN_TILE3.md); waits counted with waits_fresh().
+# Pass 2 is split: below the diagonal (loop 153, 28 tiles per (b, h) = "below"), above (loop 256, no loads, 28 tiles =
+# "below" by symmetry); the diagonal tile of pass 2 is straight code (no loop) and is NOT in the model (1 tile of 8).
+PROGRAMS179 = {
+    "attn_back_tile0_3": ("tools/nak/out/attn_back_tile0_3.sm86.txt", 6, None, [
+        (2, "pair", 1, 8, False, 4, None),       # dS store, dP tile to shared
+        (6, "pair", 2, 8, False, 8, None),       # dO tile load, 8 at a time, branch-free
+        (9, "pair", 2, 8, False, 8, None),       # V tile load
+        (114, "pair", 2, 8, False, 8, None),     # P tile load
+        (12, "pair", 16, 8, True, 48, None),     # dP = dO . V^T, unrolled by 4 (as _2)
+        (119, "below", 16, 2, True, 8, None),    # dot chain under the diagonal
+        (126, "diag", 16, 2, True, 8, None),     # dot chain on the diagonal
+        (153, "below", 1, 8, False, 0, None),    # pass 2 under the diagonal: 32 loads first, then the arithmetic
+        (256, "below", 1, 8, False, 0, None),    # pass 2 above the diagonal: 0.0 stored, no load
+    ]),
+}
+PROGRAMS364.update(PROGRAMS179)
+
+
+def model364(name, lw=LDG_WAIT, drop_waits=False, fresh=False):
     """(issue, chain, shared, waits per block-pair summary) in seconds for one program; drop_waits=True models the
     branch-free loads (every tile load / pass waited on once per iteration instead of once per load)."""
     path, w, measured, items = PROGRAMS364[name]
@@ -284,7 +333,7 @@ def model364(name, lw=LDG_WAIT, drop_waits=False):
                 inner |= set(b2)
         own = [x for x in body if x not in inner]
         s = stats(blocks, own)
-        nw = waits(blocks, own) if override is None else override
+        nw = (waits_fresh(blocks, own) if fresh else waits(blocks, own)) if override is None else override
         if drop_waits and nw > 1:
             nw = 1
         times = PER[per] * count
@@ -294,14 +343,14 @@ def model364(name, lw=LDG_WAIT, drop_waits=False):
         mem_lat += times * 8 * nw * lw
         shared += times * warps * wf
     k = SMSPS * CLOCK_HZ
-    return issue / k, lat / (k * w), shared / 48 / CLOCK_HZ, mem_lat / (k * w), measured / 1e9
+    return issue / k, lat / (k * w), shared / 48 / CLOCK_HZ, mem_lat / (k * w), (measured or 0) / 1e9
 
 
 def os364():
     print("\nos-364, setul atentie-513-b4, vechi langa nou (DEDUS din listari; asteptarile memoriei NUMARATE; 1,77 GHz):")
     print("  program             emisie  lant-bloc (din el memoria)  partajata   model max   masurat   masurat/max")
     ratios = {}
-    for name in PROGRAMS364:
+    for name in [n for n in PROGRAMS364 if n not in PROGRAMS179]:
         i, l, sh, mem, m = model364(name)
         lo = max(i, l, sh)
         ratios[name] = (lo, m)
@@ -320,9 +369,23 @@ def os364():
               f"~{lo2*m/lo*1e3:5.2f} ms")
 
 
+def s179():
+    print("\nsesiunea 179, attn_back_tile0_3 (citiri fara ramura; asteptarile NUMARATE cu waits_fresh; DEDUS, nemasurat):")
+    i2, l2, sh2, mem2, m2 = model364("attn_back_tile0_2", fresh=True)
+    lo2 = max(i2, l2, sh2)
+    i3, l3, sh3, mem3, _ = model364("attn_back_tile0_3", fresh=True)
+    lo3 = max(i3, l3, sh3)
+    f = m2 / lo2
+    print(f"  attn_back_tile0_2  emisie {i2*1e3:5.2f} lant {l2*1e3:5.2f} (memoria {mem2*1e3:5.2f}) partajata {sh2*1e3:5.2f}"
+          f" -> model {lo2*1e3:5.2f} ms, masurat os-364 {m2*1e3:5.2f} ms (x{f:.2f})")
+    print(f"  attn_back_tile0_3  emisie {i3*1e3:5.2f} lant {l3*1e3:5.2f} (memoria {mem3*1e3:5.2f}) partajata {sh3*1e3:5.2f}"
+          f" -> model {lo3*1e3:5.2f} ms; cu factorul x{f:.2f}: ~{lo3*f*1e3:5.2f} ms (castig x{lo2/lo3:.2f})")
+
+
 if __name__ == "__main__" and len(sys.argv) == 1:
     os358()
     os364()
+    s179()
 
 
 if __name__ == "__main__" and len(sys.argv) > 1:

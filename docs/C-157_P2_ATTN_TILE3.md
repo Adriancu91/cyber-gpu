@@ -50,3 +50,46 @@ Predicții:
 ## Surse
 - `docs/C-157_P2_COMPARATII.md` (os-364, predicția 4), `tools/buget-antrenare/nak_bucle.py` (`waits`, `model364`).
 - Ideea „citire strânsă + alegere în loc de ramură”: ghidul public CUDA (divergența ramurilor, „predication”); nicio linie copiată.
+
+## Rezultatul pentru `attn_back_tile0_3` (sesiunea 179, SIMULARE, T188 `crates/nvidia-ga104/tests/sim_attn_back_tile0_3.rs`)
+- **Binarul** (Mesa NAK 25.0.7 reconstruit în cloud; `attn_back_tile0_2` a ieșit **identic**, `9a8f9760…`): `attn_back_tile0_3.sm86.sass`
+  SHA-256 **`d8f4ec408707d6a12ae32b153962a3a55742adb05bc1ac21f1fddaa7c83b611f`**, **68 de registre**, 33 024 de octeți partajați.
+- **Am aflat la prima compilare (deci nu e predicție):** NAK emite instrucțiunile **în ordinea din sursă**. Cu „citește, apoi alege”
+  scrise unul după altul (`v = citire; lo = cond ? v : 0`), alegerea stătea imediat după citire și o aștepta → tot 8 așteptări pe 8
+  citiri, chiar fără ramură. Reparat în GLSL: întâi cele 8 citiri (în registre), apoi alegerile și scrierile partajate; în trecerea a
+  doua întâi cele 32 de citiri (dS și P), apoi aritmetica. Prima compilare: 55 de registre; cea finală: 68.
+- **Predicția 1: DA** — 0 `mufu`, nicio atomică, nicio memorie locală, 6 `bar.sync` (ca `_2`); 88 `ffma` (ca `_2`); `fadd` / `fmul`
+  doar în trecerea a doua, aceleași feluri (`fadd.ftz` dS − dot, `fmul.ftz` P·x, `fmul.ftz` ·scale), de două ori mai multe (32 / 64 față
+  de 16 / 32) pentru că trecerea a doua e scrisă de două ori (sub diagonală și diagonala); nou: 40 `sel`, 104 `imnmx` (adresele strânse).
+- **Predicția 2: DA** — 68 ≤ 80 → 3 blocuri de 256 pe SM (72 × 256 × 3 = 55 296 ≤ 65 536), ca `_2`.
+- **Predicția 3: PE JUMĂTATE.** Numărate cu `nak_bucle.py` (coloana nouă `nou` = latențe proaspete: o așteptare contează doar dacă
+  citirea așteptată a fost emisă după așteptarea precedentă; pe programele vechi dă exact aceleași cifre ca `sir`):
+
+  | buclă | `_2` (`sir`) | `_3` (`nou`) | predicție |
+  |---|---|---|---|
+  | urcarea dO / V / P, 8 citiri | 8 / 8 / 8 | **2 / 2 / 2** | 1 — ratat |
+  | trecerea a doua, o placă sub diagonală (32 de citiri) | 32 | **7** | ≤ 2 — ratat |
+  | zone `bssy` în urcare | 8 / 8 / 8 | **0 / 0 / 0** | 0 — DA |
+  | zone `bssy` în trecerea a doua sub diagonală | 32 | **17** | 0 — ratat (garda scrierii `i < T`) |
+
+  De ce mai multe decât 1–2: GA104 are doar **6 „tabele de scor”** (semnalele care spun că o citire a sosit); NAK dă fiecărei citiri
+  câte unul, deci după 5 citiri în zbor a 6-a trebuie să aștepte prima. 8 citiri = 2 latențe, 32 = 7. Zonele `bssy` rămase păzesc
+  doar **scrierile** (`if (i < T)`): o scriere nu se așteaptă, deci nu adaugă latențe (doar instrucțiuni).
+- **Ce dă modelul pe bucle (DEDUS, `python3 tools/buget-antrenare/nak_bucle.py`, funcția `s179`):** `attn_back_tile0_2` 0,50 ms (din
+  care memoria 0,36) → `attn_back_tile0_3` **0,18 ms** (memoria 0,06), ×2,8; cu factorul măsurat la `_2` (×3,12) → **~0,55 ms** pe setul
+  mare (os-364: 1,54). Placa diagonalei din trecerea a doua (cod drept, fără buclă) nu e în model (1 placă din 8 pe bloc).
+- **Predicția 4: DA, cu o greșeală plantată care nu e greșeală.** Emularea literală a noului GLSL (citiri la adresele strânse — un
+  indice în afara bufferului ar opri testul —, apoi alegerile; trecerea a doua pe trei feluri de plăci) = `attn_back` modul 0 **bit cu
+  bit** pe cele 10 forme (d = 1, 32, 40, 64; T = 5 … 200); lansarea = `attn_back_tile0` bit cu bit; NaN / 1e30 deasupra diagonalei lui
+  P nu schimbă niciun bit. Prinse: alegerea scoasă pe diagonala trecerii a doua, plăcile de deasupra diagonalei sărite, QMD cu memoria
+  partajată a lui `attn_back_tile0`, grila cu un bloc lipsă, mod 1, d = 65. **Neprinsă (și pe drept):** alegerea scoasă la placa P nu
+  schimbă niciun bit — valorile pe care le păzește (j > i, rândurile i ≥ T) **nu sunt citite niciodată**: lanțul `dot` își păstrează
+  garda `j <= i` pe diagonală, iar `dot`-ul rândurilor i ≥ T nu e folosit. La fel și la dO / V (coloanele x ≥ d nu intră în bucla lui dP,
+  rândurile ≥ T nu ajung în dS). Alegerile de la plăci rămân (planul): țin intrările nefolosite la 0, ca înainte. Testul scrie
+  observația (NoSelectOnP = programul, pe două forme).
+- **Predicția 5 (pe placă): NEMĂSURATĂ.** Rămâne ~0,5–0,9 ms pe setul mare față de 1,54 (DEDUS; modelul de azi: ~0,55).
+- `tools/check.sh`: **896 de teste** (+7 ignorate), format, clippy, build no_std — PASS.
+
+**Ce e nou pentru placă:** nimic încă (programul nu e legat în probă). **Următorul pas:** `attn_fwd_tile2` → `attn_fwd_tile3` și
+`attn_back_tile_2` → `attn_back_tile_3` cu aceeași rețetă (citirile întâi, alegerile după; câte 5 în zbor e plafonul), plan + predicții
+întâi; apoi proba „vechi lângă nou” cu `_3` (ca os-364) și nota pentru OS.
