@@ -62,3 +62,37 @@ aceea **dQ nu se atinge**.
   0,336 → 0,267, suma 1,03 → 0,86. Cu factorul măsurat al lui `_3`: **~1,23 ms** (după maxim) până la **~1,34 ms** (după sumă) față de
   1,60 — scrisesem 1,1–1,3; estimarea „după sumă” iese puțin peste. Lanțul atenției ~3,43 → ~3,1–3,2 ms; bucata #513 ~123 → ~110–114 ms (DEDUS).
 - `tools/check.sh`: **941 PASS**, 0 eșecuri. Pe placă: NOT TESTED. Nelegat în pas și în proba „vechi lângă nou” (pasul următor).
+
+---
+
+## Proba „vechi lângă nou” cu `attn_back_tile_4` — planul și predicțiile (sesiunea 189, scrise ÎNAINTE de cod)
+
+**Ce:** a patra generație a lanțului, în aceeași rulare `--atentie-placi` a OS-ului, după `_3` și pe aceleași seturi. Lanțul
+gen 4 = `attn_fwd_tile3` → `attn_back_tile0_3` → **`attn_back_tile_4`**: doar al treilea program e nou (primele două sunt
+**aceleași fișiere** ca la `_3`; trebuie rulate din nou pentru că `attn_back_tile_4` citește P și dS scrise de ele în același
+buffer). Totul e **adăugare** în `nvidia_ga104::attn_tile_probe`: `Prog`…`Prog3`, `PROGS`…`PROGS3`, `launch_bytes(2,3)`,
+`judge*`, `Probe`…`Probe3`, rândurile `kt atentie …` / `atentie2` / `atentie3` și parserele lor rămân neschimbate.
+
+**Piese noi:**
+1. `Prog4(pub Prog)` / `PROGS4` — `name / binary / sha256 / registers / shared`, `old()` (gen 1, comparat cuvânt cu cuvânt),
+   `prev()` (`Prog3`, cronometrat lângă). Fwd / Rows = binarele `_3`; Cols = `attn_back_tile_4` (80 registre, 33 024 B).
+2. `launch_bytes4` — același cbuf și aceeași grilă; QMD-ul cu registrele / memoria lui `Prog4`.
+3. Judecata: `judge_pair` / `judge_pair_set` **așa cum sunt**, cu ieșirea lanțului gen 1 ca referință.
+4. `Probe4` — rânduri **`kt atentie4 …`** (aceleași nume, alt prefix), `lines(label, Some(&probe3))`: timpii lângă `_3` din aceeași
+   rulare; fără el, medianele os-375 (`OS375_NS` = 1,000 / 0,830 / 1,597 ms). `parse_attn_tile4`.
+5. Test T197 (SIMULARE): SHA / registre / memorie; lanțul gen 4 pe cele 5 seturi mici prin procesorul de comenzi = gen 1 cuvânt cu
+   cuvânt; greșeli plantate (QMD-ul lui `attn_back_tile_4` cu memoria partajată a lui gen 1 → refuzat; un ulp în dqkv; citire
+   scurtă; set lipsă); rândurile ↔ parserul; cele patru prefixe nu se amestecă; `Probe3` dă exact aceleași rânduri ca înainte.
+   Limita testului: în simulator toate generațiile au **același model pe procesor**, deci egalitatea e prin construcție — testul
+   verifică drumul (QMD, buffere, comparație, rânduri), nu placa; egalitatea GLSL `_4` ↔ model e T196.
+6. Nota PREDARE: `integration/cyber-universe/C-157_P2q_atentie4-vechi-langa-nou.md`.
+
+**Predicții (pe placă, DEDUS; NOT TESTED):**
+- Q1: `6 / 6 seturi in margine`; back1_4 100 % exact față de model.
+- Q2: **`6 / 6 seturi identice bit cu bit cu programele vechi`** — încredere ~85 % (în SIMULARE aceiași biți pe 10 forme, T196;
+  riscul: semnul lui zero pe placa diagonalei, dacă placa ar da −0 unde modelul dă +0 — s-ar vedea doar la cuvintele dK / dV).
+- Q3 (timpul, mediana a 5, `atentie-513-b4`): fwd / back0 = aceleași programe ca `_3` → **±5 %** față de `_3` din aceeași rulare;
+  `attn_back_tile_4` **~1,2–1,35 ms** față de ~1,60 (`_3`), adică de ×1,2–1,3 mai rapid.
+- Q4: nicio lansare neterminată; gărzile neatinse; aceeași memorie VRAM (bufferul refolosit; încă 1 program nou + 3 pagini cbuf / QMD).
+
+**Ce NU face:** nu leagă `_4` în `train_step` (după ce placa confirmă Q2); nu schimbă nimic din probele os-358 / os-364 / os-375.
