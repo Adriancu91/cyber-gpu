@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 192 — 23 noiembrie 2026, ~22:11–22:50 (ora României), în cloud, FĂRĂ placă — **ordinea 20:11, pasul 3: lipirea operațiilor „înapoi”, prima lipire (`ln_back_res`)**
+## Sesiunea 192 — 23 noiembrie 2026, ~22:11–22:36 (ora României), în cloud, FĂRĂ placă — **ordinea 20:11, pasul 3: lipirea operațiilor „înapoi”, prima lipire (`ln_back_res`)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 191 terminată 21:28), l-am pus `ocupat`. Niciun rezultat nou de pe placă de comparat.
 Plan + predicții urcate **înainte** de cod (`3b696e0`, `docs/C-160_P7_LIPIRE_INAPOI.md`). Mesa 25.0.7 reconstruit în cloud (`ln_back` a
