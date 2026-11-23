@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 177 — 23 noiembrie 2026, ~07:10–07:55 (ora României), în cloud, FĂRĂ placă — **C-160 p.7: programele pe plăci legate în pas (`Plan::new_tiles`)**
+## Sesiunea 177 — 23 noiembrie 2026, ~07:10–07:30 (ora României), în cloud, FĂRĂ placă — **C-160 p.7: programele pe plăci legate în pas (`Plan::new_tiles`)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-358 (os-364 încă nerulat). Clonele
 de pe disc erau vechi: ramura locală adusă la `origin/g0-g2-fundatie`. Planul și predicțiile urcate **înainte** de cod (`4311134`,
