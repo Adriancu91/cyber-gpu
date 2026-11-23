@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 172 — 23 noiembrie 2026, ~02:11–02:45 (ora României), în cloud, FĂRĂ placă — **C-157 p.2, partea a doua pentru os-358: `attn_fwd_tile2`**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-358. Planul și predicțiile urcate
+**înainte** de cod (`7fa6afa`, `docs/C-157_P2_ATTN_TILE2.md`). Mesa NAK 25.0.7 reconstruit în cloud (`attn_fwd_tile` a ieșit identic).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Program nou `attn_fwd_tile2` (lângă cel vechi, nimic schimbat) | aceleași operații în aceeași ordine ca `attn_fwd_tile`; rânduri de 65 în memoria partajată; plăcile de sub diagonală fără gardă; citirile plăcilor Q / K / V emise deodată; bucle desfăcute câte 4; SHA-256 `2e8cda57…a3dc08`, 117 registre, 37 888 B partajați | PASS (compilat, listarea verificată) |
+| Buclele (din listare) | faza A 27,3 instrucțiuni la 16 `ffma` (vechi 38), faza C sub diagonală 26,5 (vechi 68), 0 `bssy`; prima compilare era peste prag (43 / 36) — reparat cu adrese bază + constantă | PASS (după o reparație) |
+| T181 (4 teste) | 10 forme: = `attn_fwd_tile` bit cu bit (același model pe procesor); QMD cu memoria partajată veche, grilă scurtă, bloc greșit, d > 64 — prinse | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy, **868 de teste** (+7 ignorate), build no_std | PASS |
+| Pe placă: aceiași biți ca `attn_fwd_tile` și ~0,6–1,2 ms față de 2,49 | — | NOT TESTED |
+
+**Ce e nou pentru placă:** nimic încă (nepredat; vine în proba „vechi lângă nou”, după cele două programe „înapoi”).
+
+**Următorul pas:** `attn_back_tile0_2` și `attn_back_tile_2` (aceleași patru schimbări; plan + predicții întâi), apoi proba „vechi lângă
+nou” ca adăugare în `attn_tile_probe` și nota pentru OS. C-160 p.7 (`attn_p`) când OS-ul adaugă `T::AttnP`; la orice test nou pe
+placă, C-157 p.2 are întâietate.
+
+---
+
 ## Sesiunea 171 — 23 noiembrie 2026, ~01:10–01:30 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: comparația os-358 (atenția de antrenare pe plăci, pe placa reală)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Test nou pe placă (os-358, 00:36) → C-157 p.2 are întâietate; centrul de
