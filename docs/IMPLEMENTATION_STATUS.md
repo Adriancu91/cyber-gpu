@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 195 — 24 noiembrie 2026, ~01:11–01:50 (ora României), în cloud, FĂRĂ placă — **ordinea 20:11, pasul 4: recalcularea activărilor**
+## Sesiunea 195 — 24 noiembrie 2026, ~01:11–01:25 (ora României), în cloud, FĂRĂ placă — **ordinea 20:11, pasul 4: recalcularea activărilor**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 194 terminată 00:27), l-am pus `ocupat`. Niciun rezultat nou de pe placă de comparat
 (os-384 `--antrenare-mini --mixt` e doar „gata de test”). Plan + predicții urcate **înainte** de cod (`abfbc71`, `docs/C-160_P9_RECALCULARE.md`).
