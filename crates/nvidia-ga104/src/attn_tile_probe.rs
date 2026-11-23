@@ -28,6 +28,11 @@
 //! (`attn_*_3`, branch-free loads, same operations in the same order), [`launch_bytes3`], [`Probe3`] (`kt atentie3 …`
 //! rows, judged with [`judge_pair`] against the first generation, timed beside the second) and [`parse_attn_tile3`].
 //! Plan: `docs/C-157_P2_ATTN_TILE3.md` (section of session 182); tested only in SIMULARE (T191).
+//!
+//! After os-375 it adds, again beside everything above (unchanged), the fourth generation: [`Prog4`] / [`PROGS4`]
+//! (`attn_fwd_tile3` → `attn_back_tile0_3` → `attn_back_tile_4`: only the last program is new), [`launch_bytes4`],
+//! [`Probe4`] (`kt atentie4 …` rows, judged with [`judge_pair`] against the first generation, timed beside the third)
+//! and [`parse_attn_tile4`]. Plan: `docs/C-157_P2_ATTN_TILE4.md` (section of session 189); tested only in SIMULARE (T197).
 
 use alloc::format;
 use alloc::string::String;
@@ -38,6 +43,7 @@ use gpu_core::diag::{Event, Journal};
 use gpu_core::error::{GpuError, GpuResult};
 
 use crate::attn_back::{self as ab, Mode};
+use crate::attn_back_tile_4 as b14;
 use crate::attn_fwd as af;
 use crate::qmd::{ComputeQmd, SharedMemory};
 use crate::{attn_back_tile as b1, attn_back_tile0 as b0, attn_fwd_tile as ft};
@@ -231,6 +237,62 @@ impl Prog3 {
             Prog::Fwd => ft3::SHARED,
             Prog::Rows => b03::SHARED,
             Prog::Cols => b13::SHARED,
+        }
+    }
+}
+
+/// C-157 point 2 after os-375: the **fourth generation** — [`crate::attn_fwd_tile3`] and [`crate::attn_back_tile0_3`]
+/// (the same binaries as [`Prog3`]; run again because the last program reads the P and dS they write) and
+/// [`crate::attn_back_tile_4`] (the whole diagonal tile of dK / dV on the unguarded loop; the same bits predicted).
+/// Wraps the role ([`Prog`]); [`PROGS`], [`PROGS2`] and [`PROGS3`] are unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Prog4(pub Prog);
+
+/// The fourth generation in launch order.
+pub const PROGS4: [Prog4; 3] = [Prog4(Prog::Fwd), Prog4(Prog::Rows), Prog4(Prog::Cols)];
+
+impl Prog4 {
+    pub fn name(self) -> &'static str {
+        match self.0 {
+            Prog::Cols => "attn_back_tile_4",
+            _ => Prog3(self.0).name(),
+        }
+    }
+    /// The first-generation program it is compared with word for word.
+    pub fn old(self) -> Prog {
+        self.0
+    }
+    /// The third-generation program it is timed beside.
+    pub fn prev(self) -> Prog3 {
+        Prog3(self.0)
+    }
+    /// Whether the binary differs from the third generation's (only `attn_back_tile_4`).
+    pub fn is_new(self) -> bool {
+        self.0 == Prog::Cols
+    }
+    /// The program bytes the OS loads.
+    pub fn binary(self) -> &'static [u8] {
+        match self.0 {
+            Prog::Cols => b14::ATTN_BACK_TILE_4,
+            _ => Prog3(self.0).binary(),
+        }
+    }
+    pub fn sha256(self) -> &'static str {
+        match self.0 {
+            Prog::Cols => b14::ATTN_BACK_TILE_4_SHA256,
+            _ => Prog3(self.0).sha256(),
+        }
+    }
+    pub fn registers(self) -> u32 {
+        match self.0 {
+            Prog::Cols => b14::REGISTERS,
+            _ => Prog3(self.0).registers(),
+        }
+    }
+    pub fn shared(self) -> SharedMemory {
+        match self.0 {
+            Prog::Cols => b14::SHARED,
+            _ => Prog3(self.0).shared(),
         }
     }
 }
@@ -662,6 +724,18 @@ pub fn launch_bytes3(
     launch_common(set, prog.0, 3, prog_va, cbuf_va, buf_va)
 }
 
+/// [`launch_bytes`] for the fourth generation ([`Prog4`]): the same cbuf and grid, the QMD with the program's registers
+/// and shared memory (for `fwd` / `back0` exactly [`launch_bytes3`]'s).
+pub fn launch_bytes4(
+    set: &ProbeSet,
+    prog: Prog4,
+    prog_va: u64,
+    cbuf_va: u64,
+    buf_va: u64,
+) -> GpuResult<([u8; CBUF_SIZE], [u8; nvidia_rm570::QMD_SIZE])> {
+    launch_common(set, prog.0, 4, prog_va, cbuf_va, buf_va)
+}
+
 fn launch_common(
     set: &ProbeSet,
     prog: Prog,
@@ -686,7 +760,7 @@ fn launch_common(
             let c = a.cbuf().ok_or(bad("atentie proba: argumente"))?;
             match generation {
                 2 => (c.to_vec(), ft2::grid(&a), ft2::BLOCK),
-                3 => (c.to_vec(), ft3::grid(&a), ft3::BLOCK),
+                3 | 4 => (c.to_vec(), ft3::grid(&a), ft3::BLOCK),
                 _ => (c.to_vec(), ft::grid(&a), ft::BLOCK),
             }
         }
@@ -695,7 +769,7 @@ fn launch_common(
             let c = a.cbuf().ok_or(bad("atentie proba: argumente"))?;
             match generation {
                 2 => (c.to_vec(), b02::grid(&a), b02::BLOCK),
-                3 => (c.to_vec(), b03::grid(&a), b03::BLOCK),
+                3 | 4 => (c.to_vec(), b03::grid(&a), b03::BLOCK),
                 _ => (c.to_vec(), b0::grid(&a), b0::BLOCK),
             }
         }
@@ -705,6 +779,7 @@ fn launch_common(
             match generation {
                 2 => (c.to_vec(), b12::grid(&a), b12::BLOCK),
                 3 => (c.to_vec(), b13::grid(&a), b13::BLOCK),
+                4 => (c.to_vec(), b14::grid(&a), b14::BLOCK),
                 _ => (c.to_vec(), b1::grid(&a), b1::BLOCK),
             }
         }
@@ -712,6 +787,7 @@ fn launch_common(
     let (registers, shared) = match generation {
         2 => (Prog2(prog).registers(), Prog2(prog).shared()),
         3 => (Prog3(prog).registers(), Prog3(prog).shared()),
+        4 => (Prog4(prog).registers(), Prog4(prog).shared()),
         _ => (prog.registers(), prog.shared()),
     };
     cb[..bytes.len()].copy_from_slice(&bytes);
@@ -1444,6 +1520,7 @@ macro_rules! pair_row_names {
 
 const NAMES2: PairRowNames = pair_row_names!("2");
 const NAMES3: PairRowNames = pair_row_names!("3");
+const NAMES4: PairRowNames = pair_row_names!("4");
 
 fn pair_probe(sets: &[PairResult]) -> Probe2 {
     Probe2 {
@@ -1666,6 +1743,90 @@ impl Probe3 {
     }
 }
 
+/// The probe of the fourth generation (`attn_fwd_tile3` → `attn_back_tile0_3` → `attn_back_tile_4`) beside the third:
+/// one [`PairResult`] per set run, in order, each from [`judge_pair`] with the **first** generation's read-back as
+/// `old_out` (the reference of the margins; os-375 found the third generation identical to it on the board).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Probe4 {
+    pub sets: Vec<PairResult>,
+}
+
+/// Measured medians of the third generation on `atentie-513-b4` (os-375, 23 nov 2026, ns): the reference when the
+/// third chain's own times are not given.
+pub const OS375_NS: [u64; 3] = [1_000_000, 830_000, 1_597_000];
+
+impl Probe4 {
+    pub fn add(&mut self, r: PairResult) {
+        self.sets.push(r);
+    }
+    /// The timing set was not run.
+    pub fn timing_skipped(&self) -> bool {
+        pair_probe(&self.sets).timing_skipped()
+    }
+    /// Sets 0–4 all judged and every program of the fourth chain within its margin on every set run.
+    pub fn passes(&self) -> bool {
+        pair_probe(&self.sets).passes()
+    }
+    /// Sets in which the fourth chain is within its margins.
+    pub fn in_margin(&self) -> usize {
+        pair_probe(&self.sets).in_margin()
+    }
+    /// Sets in which every word read back equals the first chain's.
+    pub fn identical_sets(&self) -> usize {
+        pair_probe(&self.sets).identical_sets()
+    }
+    /// Every set run identical to the first chain — false when nothing was run.
+    pub fn identical(&self) -> bool {
+        pair_probe(&self.sets).identical()
+    }
+    /// Per program: exact elements, judged elements, worst ‰ (as [`Probe::per_prog`]).
+    pub fn per_prog(&self) -> [(u32, u32, u32); 3] {
+        pair_probe(&self.sets).per_prog()
+    }
+    /// Per program: words equal to the first chain's, words compared (all sets).
+    pub fn same_per_prog(&self) -> [(u32, u32); 3] {
+        pair_probe(&self.sets).same_per_prog()
+    }
+
+    /// The `kt atentie4 …` rows (read back by [`parse_attn_tile4`]; the readers of the first three generations do not
+    /// see them).
+    pub fn rows(&self) -> Vec<(&'static str, u32)> {
+        pair_rows(&self.sets, &NAMES4)
+    }
+
+    pub fn journal(&self, j: &mut Journal) {
+        for (what, value) in self.rows() {
+            j.push(Event::Value { what, value });
+        }
+    }
+
+    /// Report lines (`label`: "SIMULARE" or "placa"). `prev`: the third generation's probe from the same run (its
+    /// timing-set medians are the reference); without it, the os-375 medians ([`OS375_NS`]).
+    pub fn lines(&self, label: &str, prev: Option<&Probe3>) -> Vec<String> {
+        let prev = prev.map(|p| pair_probe(&p.sets));
+        let (old_ns, src) = match prev.as_ref().and_then(Probe2::timing) {
+            Some(r) => (
+                [0, 1, 2].map(|k| r.new.progs[k].median_ns()),
+                "aceeasi rulare",
+            ),
+            None => (OS375_NS.map(Some), "os-375"),
+        };
+        pair_lines(
+            &self.sets,
+            &PairText {
+                label,
+                tag: "atentie4",
+                names: PROGS4.map(Prog4::name),
+                same_with: PROGS4.map(|p| p.old().name()),
+                time_ref: PROGS4.map(|p| p.prev().name()),
+                est: ["~0,95-1,05", "~0,79-0,87", "~1,2-1,35"],
+                old_ns,
+                src,
+            },
+        )
+    }
+}
+
 /// What [`parse_attn_tile2`] reads back.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ParsedAttnTile2 {
@@ -1692,6 +1853,14 @@ pub fn parse_attn_tile2(text: &str) -> ParsedAttnTile2 {
 /// Reads the rows of [`Probe3::rows`] (`gpu: valoare kt atentie3 … = 0x…`). A new `kt atentie3 seturi` row starts over.
 pub fn parse_attn_tile3(text: &str) -> ParsedAttnTile3 {
     parse_pair(text, "valoare kt atentie3 ")
+}
+
+/// What [`parse_attn_tile4`] reads back (the same fields as for the second generation).
+pub type ParsedAttnTile4 = ParsedAttnTile2;
+
+/// Reads the rows of [`Probe4::rows`] (`gpu: valoare kt atentie4 … = 0x…`). A new `kt atentie4 seturi` row starts over.
+pub fn parse_attn_tile4(text: &str) -> ParsedAttnTile4 {
+    parse_pair(text, "valoare kt atentie4 ")
 }
 
 fn parse_pair(text: &str, key: &str) -> ParsedAttnTile2 {
