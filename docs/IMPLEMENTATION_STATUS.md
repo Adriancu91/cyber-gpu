@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 193 — 23 noiembrie 2026, ~23:12–23:40 (ora României), în cloud, FĂRĂ placă — **ordinea 20:11, pasul 3, partea a doua: GELU' lipit în „proj-dX” (`mm_train_gelu`)**
+## Sesiunea 193 — 23 noiembrie 2026, ~23:12–23:30 (ora României), în cloud, FĂRĂ placă — **ordinea 20:11, pasul 3, partea a doua: GELU' lipit în „proj-dX” (`mm_train_gelu`)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 192 terminată 22:36), l-am pus `ocupat`. Niciun rezultat nou de pe placă de comparat
 (os-380 `--antrenare-mini` aprobat de Adrian la 23:05, încă nerulat). Planul și predicțiile erau urcate **înainte** de cod (`fe05169`,
