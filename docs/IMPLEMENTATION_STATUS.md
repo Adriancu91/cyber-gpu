@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 180 — 23 noiembrie 2026, ~10:11–10:55 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: `attn_back_tile_3` (citiri fără ramură)**
+## Sesiunea 180 — 23 noiembrie 2026, ~10:11–10:30 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: `attn_back_tile_3` (citiri fără ramură)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-364. Clona veche de pe disc (sesiunea
 110) adusă la `origin/g0-g2-fundatie`. Planul și predicțiile urcate **înainte** de cod (`535b88c`, `docs/C-157_P2_ATTN_TILE3.md`).
