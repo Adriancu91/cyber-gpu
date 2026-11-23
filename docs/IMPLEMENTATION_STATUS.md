@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 195 — 24 noiembrie 2026, ~01:11–01:50 (ora României), în cloud, FĂRĂ placă — **ordinea 20:11, pasul 4: recalcularea activărilor**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 194 terminată 00:27), l-am pus `ocupat`. Niciun rezultat nou de pe placă de comparat
+(os-384 `--antrenare-mini --mixt` e doar „gata de test”). Plan + predicții urcate **înainte** de cod (`abfbc71`, `docs/C-160_P9_RECALCULARE.md`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Biblioteca (doar adăugări) | `Plan::with_recompute` (un singur set de bufere de strat; pe strat rămâne doar ieșirea), `recomputes`, `recomputed`, `recompute_launches`, `RECOMPUTE_PER_LAYER`; „înainte”-ul unui strat scos în `layer_forward` (aceleași lansări pentru planurile vechi); `resident` păstrează recalcularea; planurile vechi neschimbate | — |
+| T203 (4 teste) | pasul de aur mic 10 pași `sgd` / `adamw_513` (P păstrat, `_3` + lipiri, `p_only_tiles3`): **bit cu bit**, verdictul PyTorch trece, +8 / +8 / +7 lansări; 4 straturi 3 pași AdamW bit cu bit (+24); greșeli plantate prinse (fără recalculare grad_abs 0,257; intrarea greșită); rezident + recalculare | PASS (SIMULARE), R1–R5 ieșite |
+| Memoria (R6) | #513 12 × 512: 6,15 → **3,25 GiB**; #651 12 × 512: 10,79 → **4,73 GiB**; cel mai mare lot al lui #651 sub 7 GiB: 25 (azi 6) | PASS (DEDUS) |
+| Nota pentru OS | `integration/cyber-universe/C-160_P9_recalculare.md` | — |
+| `tools/check.sh` | format, clippy, **975 de teste**, build no_std | PASS |
+| Costul pe placă (R7: +15–25 %) | — | NOT TESTED |
+
+**Ce e nou pentru placă:** nimic în registre, niciun program; doar 8·(L − 1) lansări în plus ale programelor deja probate.
+
+**Următorul pas:** comparațiile când rulează pe placă (os-384 `--antrenare-mini --mixt`, gen 4, arena în VRAM, os-352); altfel ordinea 20:11
+pasul 5 doar în SIMULARE (lotul următor în paralel cu pasul de antrenare; AdamW în RAM rămâne doar simulare) sau lipirea GELU' pe `mm_tc`.
+
+---
+
 ## Sesiunea 194 — 24 noiembrie 2026, ~00:11–00:40 (ora României), în cloud, FĂRĂ placă — **comparația os-380 + arena antrenării în VRAM („planul rezident”)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 193 terminată 23:30), l-am pus `ocupat`. Rezultat nou pe placă: **os-380** (23:12,

@@ -53,3 +53,17 @@ Concret, **doar adăugări** (interfața veche neatinsă; `Plan::new` și toate 
 ## Ce NU face
 Nu schimbă niciun program GPU și niciun plan existent. Nu alege încă **ce** straturi se refac (toate sau din k în k — un pas
 următor, dacă memoria rămasă o cere). Nimic pe placa reală; pe placă doar prin OS, după comanda centrului de comandă.
+
+## Rezultatul (după cod, sesiunea 195; cod `c5fcb2e`, testele T203 în `crates/nvidia-ga104/tests/sim_c160_p5_golden.rs`)
+| Predicția | Ieșit | |
+|---|---|---|
+| 1. pasul mic, 10 pași, bit cu bit, 81 / 83 de lansări | `sgd` și `adamw_513`: **DA**, 73 → 81 / 75 → 83, verdictul față de PyTorch TRECE; arena 2 947 584 → 2 664 960 B | PASS (SIMULARE) |
+| 2. cu plăci `_3` + lipiri: +8; `p_only_tiles3`: +7 | 67 → 75 / 69 → 77 (+8); 74 → 81 / 76 → 83 (+7); toate bit cu bit, verdictul TRECE | PASS (SIMULARE) |
+| 3. 4 straturi, 3 pași AdamW, +24 | 125 → 149, **bit cu bit**; arena 5 145 600 → 4 297 728 B | PASS (SIMULARE) |
+| 4. greșeli plantate prinse | fără `recalcul:*`: biți diferiți, pasul mic `sgd` grad_abs 0,257 față de PyTorch (toleranța 1e-4); intrarea stratului 1 la stratul 0: biți diferiți | PASS (SIMULARE) |
+| 5. rezident + recalculare | aceeași arenă în ambele ordini, `rebatch` aceleași adrese, 8·(L − 1) lansări `recalcul:*`, 0 relansări P | PASS (SIMULARE) |
+| 6. memoria (±5 %) | #513 12 × 512: **6,15 → 3,25 GiB** (est. 3,25); #651 4 × 512: 5,42 → 3,39 (3,40); 6 × 512: 6,76 → 3,73 (3,73); **12 × 512: 10,79 → 4,73** (4,73); cel mai mare lot al lui #651 sub 7 GiB: **25** (est. ~25) | PASS (DEDUS) |
+| 7. costul (+15–25 % timp pe pas) | nemăsurat | NOT TESTED |
+
+Ce înseamnă: cu recalcularea, **#651 se poate antrena cu lotul adevărat al lui #513 (12 × 512) într-o singură bucată**, la ~4,7 GiB;
+memoria rămasă e dominată de greutăți + gradient + m + v și de logit-uri, nu de activări. Prețul (DEDUS): ~+15–25 % timp pe pas.
