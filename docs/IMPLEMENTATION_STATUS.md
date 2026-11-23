@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 186 — 23 noiembrie 2026, ~16:11–16:45 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: comparația probei `_3` de pe placă**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. **Test nou pe placă:** ciclul automat 15:57 (cyber-gpu `d885efd`) a rulat
+`--atentie-placi --atentie2 --atentie3` → comparația are întâietate (C-157 p.2). Planul analizei și predicțiile A1–A3 urcate **înainte** de
+socoteli (`bc77467`). Rezultatul: `docs/C-157_P2_COMPARATII.md`, prima secțiune.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Corectitudinea pe placă (predicțiile P1, P2, P4 din sesiunea 182) | 6 / 6 seturi în margine, **6 / 6 identice bit cu bit cu vechii** (281 032 / 209 096 / 206 592 cuvinte), back0_3 / back1_3 100 % exacte față de model, gărzi neatinse | PASS (pe placă, rulat de OS) |
+| Timpul pe placă (P3) | `_3` 1,00 / 0,83 / 1,60 ms față de `_2` 1,52 / 1,55 / 2,26 și gen 1 2,49 / 1,81 / 4,00; toate în intervalele scrise; lanțul 3,43 ms; bucata #513 ~123 ms (DEDUS) | PASS (în intervale) |
+| Analiza `att3()` în `tools/buget-antrenare/nak_bucle.py` | A1 DA; A2 NU pe jumătate (cel mai strâns lw = 500, nu sub; împrăștierea ×1,67); modelul fără suprapunere strânge la ×1,47; o constantă pe lansare nu explică (b ≈ 0) | DEDUS |
+| Ciclul 15:59 (dieta 2, #513) | 18 / 18 identice, driverul 379 µs, 642,55 simb/s = os-355 | repetabil |
+| `tools/check.sh` | format, clippy, **931 de teste** (+7 ignorate), build no_std | PASS |
+
+**Ce e nou pentru placă:** nimic (doar comparație și o funcție de socoteală).
+
+**Următorul pas:** legarea `_3` în `train_step` (`Plan::new_tiles3` / `new_p_only_tiles3`, doar adăugări; condiția „după ce placa confirmă
+P2” e îndeplinită) — plan și predicții întâi; apoi tăietura în buclele dK / dV ale lui `attn_back_tile_3` (cel mai lung, 47 % din lanț).
+Comparațiile probelor `ram_vram` și „lot” au întâietate când rulează pe placă; C-157 p.8 rămâne în coadă.
+
+---
+
 ## Sesiunea 185 — 23 noiembrie 2026, ~15:11–15:45 (ora României), în cloud, FĂRĂ placă — **C-157 p.7 partea a doua: lotul următor scris cât placa lucrează**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-364 (proba cu `_3` și proba

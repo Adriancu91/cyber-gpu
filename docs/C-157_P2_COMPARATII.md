@@ -21,6 +21,29 @@ Predicții (scrise acum):
 - A3: tăietura următoare, dacă A1–A2 țin: la `attn_back_tile_3` (cel mai lung, limitat de emisie) — mai puține instrucțiuni pe
   buclă; la fwd3 / back0_3 — barierele și ocuparea, nu memoria.
 
+### Ce a ieșit (sesiunea 186)
+- **Corectitudinea = predicțiile, toate (P1, P2, P4):** 6 / 6 seturi în margine; **6 / 6 identice bit cu bit cu programele vechi**
+  (281 032 / 209 096 / 206 592 de cuvinte; încrederea scrisă era ~65 % pentru toate trei); fwd3 exact ca fwd2 (69 097 / 178 162 față de
+  model, cel mai rău 89 ‰), back0_3 și back1_3 100 % exacte; nicio lansare omisă, gărzile neatinse. Generarea neatinsă (16 / 16 identice).
+- **Timpul (P3, setul mare, aceeași rulare `_2` → `_3`): toate trei în intervalele scrise:** fwd 1,52 → **1,00 ms** (×1,52; scris
+  0,7–1,1, model 0,81), back0 1,55 → **0,83** (×1,86; scris 0,5–0,9, model 0,55), back1 2,26 → **1,60** (×1,41; scris 1,6–2,0, model
+  1,60 — exact). Lanțul întreg **3,43 ms** (scris ~2,9; `_2` 5,33, gen 1 8,30 → ×2,42 față de prima generație). Pe bucata #513:
+  ~191 → **~123 ms** (DEDUS, scalat din ~297 ms al gen 1; estimat ~113; PyTorch face toată bucata în 156 ms).
+- **Analiza (`python3 tools/buget-antrenare/nak_bucle.py`, funcția `att3`, DEDUS):** măsurat / model (max, 500 de cicluri) `_3` = ×3,48 /
+  ×4,70 / ×3,75 față de `_2` ×2,82 / ×3,12 / ×3,77. **A1: DA** — fwd și back0 (scurtate pe memorie) cresc, back1 (limitat de emisie)
+  rămâne la fel (±1 %). **A2: NU pe jumătate** — cel mai strâns `lw` e chiar **500** (nu sub), cu împrăștierea ×1,67 pe 9 programe;
+  latența memoriei nu e nici prea mică, nici prea mare în model. Ce explică mai bine: modelul **fără suprapunere** (emisie + lanț +
+  partajată adunate): măsurat / sumă ×1,26–×1,85, împrăștierea **×1,47**; la back0_3 cele trei părți sunt aproape egale (0,17 / 0,18 /
+  0,14 ms), deci „max” subestimează cel mai tare acolo. O constantă fixă pe lansare nu explică nimic (dreapta potrivită pe 9 puncte:
+  b ≈ −0,01 ms). Factorul rămas ~×1,6 peste sumă: **NECUNOSCUT** (ceasul real sub sarcină necitit, barierele).
+- **Ce tai mai departe (A3, DEDUS):** cel mai lung e acum **`attn_back_tile_3` (1,60 ms, 47 % din lanț)**, limitat de emisie în model →
+  mai puține instrucțiuni în buclele dK / dV (modelul nu se poate „scurta” pe memorie acolo: memoria e doar 0,08 ms). La fwd3 / back0_3
+  emisia, lanțul și memoria partajată sunt apropiate → o tăietură pe o singură parte câștigă puțin; candidat: mai multe blocuri pe SM.
+- **Ce urmează din asta:** condiția din plan („leg `_3` în `train_step` după ce placa confirmă P2”) e **îndeplinită** — adăugarea
+  `Plan::new_tiles3` (aceleași lansări, programele `_3`), cu plan și predicții întâi. Nimic nou de cerut OS-ului din această comparație.
+- **În aceeași pornire, ciclul 15:59 (`--argmax-fara-copie --dieta2`, #513):** 18 / 18 identice cu procesorul, placa 1 076 µs, driverul
+  **379 µs**, **642,55 simb/s** — la fel ca os-355 (379 µs, 647,24); nimic nou, repetabil.
+
 ## os-364 `test-placa --atentie-placi --atentie2` (atenția pe plăci „vechi lângă nou”, 23 nov 2026, 07:42) — sesiunea 178
 Surse: `Cyber-hub/rezultate/2026-11-23-workstation-os364-atentie2/REZULTAT.md`, `rezultate/os-automat/2026-11-23/ciclu-auto-20261123-0742.txt`.
 Predicțiile scrise înainte: `docs/C-157_P2_ATTN_TILE2.md`, nota `integration/cyber-universe/C-157_P2m_atentie2-vechi-langa-nou.md` (§5).

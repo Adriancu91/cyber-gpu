@@ -441,12 +441,50 @@ def s181():
           f" -> model {lo3*1e3:5.2f} ms; cu factorul x{f:.2f}: ~{lo3*f*1e3:5.2f} ms (castig x{lo2/lo3:.2f})")
 
 
+# Session 186: the 15:57 cycle (cyber-gpu d885efd), atentie-513-b4, three generations in one run (medians of 5, ns).
+CYCLE1557_NS = {
+    "attn_fwd_tile": 2488096, "attn_back_tile0": 1813952, "attn_back_tile": 3995008,
+    "attn_fwd_tile2": 1524224, "attn_back_tile0_2": 1547136, "attn_back_tile_2": 2257792,
+    "attn_fwd_tile3": 1000192, "attn_back_tile0_3": 829536, "attn_back_tile_3": 1596608,
+}
+
+
+def att3():
+    print("\nciclul 15:57, atentie-513-b4, trei generatii (DEDUS din listari; masurat pe placa; 1,77 GHz):")
+    print("  program             model max (lw=500)   masurat   masurat/max   limitat de")
+    for name, m in CYCLE1557_NS.items():
+        i, l, sh, mem, _ = model364(name, fresh=name.endswith("3"))
+        lo = max(i, l, sh)
+        by = "emisie" if lo == i else ("lant" if lo == l else "partajata")
+        print(f"  {name:18s}  {lo*1e3:6.2f} ms            {m/1e6:6.3f} ms   x{m/1e9/lo:.2f}        {by}")
+    print("  latenta memoriei lw (cicluri) -> rapoartele masurat/max: cel mai mic .. cel mai mare (imprastierea)")
+    best = None
+    for lw in (100, 200, 300, 400, 500, 700, 1000, 1500, 2000, 3000):
+        rs = []
+        for name, m in CYCLE1557_NS.items():
+            i, l, sh, mem, _ = model364(name, lw=lw, fresh=name.endswith("3"))
+            rs.append(m / 1e9 / max(i, l, sh))
+        spread = max(rs) / min(rs)
+        if best is None or spread < best[1]:
+            best = (lw, spread)
+        print(f"  lw {lw:5d}: x{min(rs):.2f} .. x{max(rs):.2f}  (x{spread:.2f})")
+    print(f"  cel mai strans: lw = {best[0]} cicluri, imprastierea x{best[1]:.2f}")
+    print("  fara suprapunere (emisie + lant + partajata, lw=500):")
+    rs = []
+    for name, m in CYCLE1557_NS.items():
+        i, l, sh, mem, _ = model364(name, fresh=name.endswith("3"))
+        rs.append(m / 1e9 / (i + l + sh))
+        print(f"  {name:18s}  suma {(i+l+sh)*1e3:5.2f} ms   masurat/suma x{rs[-1]:.2f}")
+    print(f"  imprastierea x{max(rs)/min(rs):.2f}")
+
+
 if __name__ == "__main__" and len(sys.argv) == 1:
     os358()
     os364()
     s179()
     s180()
     s181()
+    att3()
 
 
 if __name__ == "__main__" and len(sys.argv) > 1:
