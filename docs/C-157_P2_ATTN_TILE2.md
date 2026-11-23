@@ -164,3 +164,27 @@ Predicții:
 **Toate trei programele `*_2` sunt gata în SIMULARE.** Următorul pas: proba „vechi lângă nou” (adăugare în `attn_tile_probe`, fără să
 schimb lista `PROGS` de azi: cele 3 programe noi pe aceleași seturi, judecate față de cele vechi bit cu bit, plus timpul pe setul mare)
 și nota PREDARE pentru OS.
+
+## Proba „vechi lângă nou” — planul și predicțiile (sesiunea 174, 23 nov 2026, scrise ÎNAINTE de cod)
+**Adăugare** în `nvidia_ga104::attn_tile_probe`; nimic din ce folosește OS-ul azi (`Prog`, `PROGS`, `launch_bytes`, `judge*`, `Probe`,
+rândurile `kt atentie …`, `parse_attn_tile`) nu se schimbă la comportament.
+- `Prog2` (rolul vechi + generația a doua) și `PROGS2`: numele, binarele, SHA-256, registrele (117 / 52 / 79) și memoria partajată
+  (37 888 / 33 024 / 33 024) ale celor trei programe `*_2`; `launch_bytes2`: același cbuf și aceeași grilă ca `launch_bytes`, QMD-ul cu
+  registrele și memoria partajată ale programului nou.
+- Pe placă, în aceeași rulare `--atentie-placi`: după lanțul vechi pe un set, **același buffer** reumplut (`set.buffer()` la seturile mici;
+  la setul mare doar benzile cu NaN, intrările rămân în VRAM), lanțul nou (fwd2 → back0_2 → back1_2), citit la fel.
+- `judge_pair(set, iesire_veche, iesire_noua, timpi_noi)`: lanțul nou judecat cu aceleași margini ca cel vechi (`judge`) **și** comparat
+  cuvânt cu cuvânt cu ieșirea veche (P + att, dS, dqkv; fără gărzi) → `identice / cuvinte` pe program.
+- `Probe2`: rândurile `kt atentie2 …` (alt prefix: parserul vechi nu le vede, `parse_attn_tile2` nu le vede pe cele vechi), liniile de
+  raport cu timpul nou lângă cel vechi (raportul vechi / nou), `parse_attn_tile2`.
+- Test T184 (SIMULARE): ambele lanțuri prin modelul procesorului de comenzi (aceleași programe-model pe procesor: în simulare identitatea
+  e garantată, testul verifică doar drumul), greșeli plantate.
+
+Predicții (pentru placă; în SIMULARE doar drumul):
+1. Lanțul nou: **6 / 6 seturi în margine**, gărzile neatinse; back0_2 / back1_2 **100 % exacte** față de model; fwd2 20–80 % exacte, ≤ 300 ‰.
+2. **Aceiași biți ca lanțul vechi pe toate cuvintele citite, pe toate 6 seturile** (aceleași operații în aceeași ordine; și fwd, fiindcă
+   ambele folosesc aceleași unități MUFU ale plăcii). Încredere ~80 %: dacă NAK a contractat altfel o înmulțire + adunare în `ffma`,
+   ar apărea diferențe mici doar la fwd2 (și de acolo în lanț) — atunci în margine, dar „identice” < „cuvinte”.
+3. Timpul (mediana a 5) pe `atentie-513-b4`: **~0,6–1,2 / ~0,7–1,1 / ~1,2–2,0 ms** față de 2,49 / 1,81 / 3,99 (os-358) → raportul
+   vechi / nou ~2–4 la fwd, ~1,6–2,6 la back0, ~2–3,3 la back1; pe bucata #513 ~90–155 ms față de ~297 (DEDUS).
+4. Nimic nou în registre sau prin GSP; nou pentru placă doar cele 3 programe (117 / 52 / 79 registre; 37 888 / 33 024 / 33 024 B).
