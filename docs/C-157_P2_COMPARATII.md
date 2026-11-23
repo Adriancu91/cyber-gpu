@@ -2,6 +2,32 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-364 `test-placa --atentie-placi --atentie2` (atenția pe plăci „vechi lângă nou”, 23 nov 2026, 07:42) — sesiunea 178
+Surse: `Cyber-hub/rezultate/2026-11-23-workstation-os364-atentie2/REZULTAT.md`, `rezultate/os-automat/2026-11-23/ciclu-auto-20261123-0742.txt`.
+Predicțiile scrise înainte: `docs/C-157_P2_ATTN_TILE2.md`, nota `integration/cyber-universe/C-157_P2m_atentie2-vechi-langa-nou.md` (§5).
+- **Corectitudinea = predicțiile, toate:** 6/6 seturi în margine; **6/6 identice bit cu bit cu programele vechi** (281 032 / 209 096 /
+  206 592 de cuvinte; încrederea scrisă era ~80 %); exacte față de model ca la os-358 (fwd2 69 097 / 178 162, cel mai rău 89 ‰;
+  back0_2 și back1_2 100 %). Generarea neatinsă (16 identice, 933 simb/s pe placă; 495,78 cu proba după).
+- **Timpul (setul mare, aceeași rulare, vechi → nou): mai rapid, dar peste estimare la toate trei:** fwd 2,50 → **1,53 ms** (×1,63; estimat
+  0,6–1,2), back0 1,81 → **1,54** (×1,17; estimat 0,7–1,1), back1 3,99 → **2,25** (×1,77; estimat 1,2–2,0). Pe bucata #513:
+  ~297 → **~191 ms** (estimat ~90–155).
+
+### Planul analizei (scris ÎNAINTE de socoteli, sesiunea 178)
+Ce am văzut deja, înainte de plan (deci **nu** e predicție): în listările NAK ale programelor noi, fiecare citire globală păzită de un
+`if` (marginea lui T sau d) stă în zona ei `bssy` / `bsync`, iar ieșirea din zonă **așteaptă rezultatul citirii** (`bra … wt=000001`).
+Adică F3 („toate citirile emise deodată”) nu s-a întâmplat în cod: citirile tot una după alta, câte o latență întreagă a memoriei.
+Plan: în `tools/buget-antrenare/nak_bucle.py` (1) număr automat, pe buclă, **așteptările memoriei puse în șir** (o citire globală al cărei
+rezultat e așteptat înainte de următoarea); (2) modelul os-358 refăcut cu așteptările numărate (nu presupuse „una pe iterație”), aceleași
+constante (1,77 GHz, 500 de cicluri de memorie, 20 partajată), pentru cele 3 programe vechi **și** cele 3 noi.
+Predicții (scrise acum):
+1. Pe încărcările de plăci, programele noi au **același număr** de așteptări în șir ca cele vechi (F3 = 0 câștig); în `fwd` faza B / C și
+   în trecerea a doua din `back0` câte 16 / 32 de așteptări pe iterație, la vechi și la nou.
+2. Cu așteptările numărate, raportul măsurat / model iese **mai strâns** decât la os-358 (×2,8 / ×5,2 / ×4,1): toate cele 6 rapoarte
+   (3 vechi + 3 noi) într-un interval de cel mult ×1,6 între cel mai mic și cel mai mare.
+3. Câștigul nou / vechi prezis de model (fără factorul comun) e în ±25 % din cel măsurat (1,63 / 1,17 / 1,77).
+4. Remediul care urmează (dacă 1–3 țin): **citiri fără ramură** — adresa strânsă în marginea bufferului, citirea mereu, apoi `sel`
+   0 / valoare (aceiași biți); modelul dă cât ar câștiga fiecare program.
+
 ## os-358 `test-placa --atentie-placi` (atenția de antrenare „pe plăci”, 23 nov 2026, 00:36) — sesiunea 171
 Surse: `Cyber-hub/rezultate/os-automat/2026-11-23/ciclu-auto-20261123-0036.txt`, `-0038.txt`, `gpu-jurnal-055.txt` (nucleul cu
 `cyber-gpu 44a4d16`). Predicțiile scrise înainte: `docs/C-160_P7_ATENTIA_PROBA.md` (`608f377`).
