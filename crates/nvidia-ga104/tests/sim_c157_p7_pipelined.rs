@@ -490,8 +490,8 @@ fn t194e_bad_index_stops_as_t180e_and_drains() {
     assert_eq!(got.run.drained_positions, 4);
     assert_eq!(got.run.sent, 3);
     // Every position after the bad slot saw NaN on the board: "no token".
-    for p in at + 1..12 {
-        let r = am::ArgmaxResult::from_words(got.words[p]);
+    for (p, &w) in got.words.iter().enumerate().take(12).skip(at + 1) {
+        let r = am::ArgmaxResult::from_words(w);
         assert_eq!(r.token(m.vocab).unwrap(), None, "pozitia {p}");
     }
 }
