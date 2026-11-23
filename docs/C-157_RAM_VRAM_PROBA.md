@@ -19,8 +19,13 @@ Planul și predicțiile sunt scrise **înainte** de cod (sesiunea 183). Totul se
   înregistrările canalului pe care placa le scrie deja (DEDUS: forma celor 4 cuvinte din antet, de confirmat pe placă).
 
 Toate numerele vin din antetul NVIDIA `clc7b5.h` (open-gpu-doc, MIT), generat acum în `nvidia-rm570::regs::clc7b5` (doar
-adăugare). Niciun registru nou, nimic prin GSP, niciun obiect RM nou. Memoria: aceleași PTE spre RAM ca la I11
-(`mmu::alloc_sys_mapped`).
+adăugare). Niciun registru nou. Memoria: aceleași PTE spre RAM ca la I11 (`mmu::alloc_sys_mapped`).
+
+**Corectură aflată la cod (sesiunea 183, înainte de orice test):** canalul de lucru (`open_work_channel`) alocă doar
+obiectul de calcul; cel de copiere e alocat doar pe canalul „golden”. Deci mai trebuie **un mesaj RM**: alocarea aceleiași
+clase `AMPERE_DMA_COPY_B` (fără parametri) pe canalul de lucru — `gsp::user_space::alloc_copy_object` (adăugare). E aceeași
+alocare pe care placa a acceptat-o deja la imaginea golden, pe alt canal. Fără ea, `SET_OBJECT` pe subcanalul 4 ar fi
+refuzat de placă (modelul nostru nu verifică asta — scris și în notă).
 
 ## Proba (o singură trimitere)
 
@@ -31,7 +36,7 @@ Mărimea maximă `M` o alege OS-ul (implicit **64 MiB**; în QEMU mai mică). Bu
 | `A` | RAM | `M` | sursa, umplută de OS cu modelul `transfer::pattern_word` |
 | `B` | RAM | `2M` | destinația, umplută cu `0xEE`: prima jumătate pentru copiile simple, a doua pentru cele în paralel |
 | `V1`, `V2` | VRAM | `M` fiecare | V1 pentru copiile simple, V2 doar pentru cele în paralel |
-| înregistrări | RAM | 31 × 16 B | ceasul |
+| înregistrări | VRAM (ca la I11) | 31 × 16 B | ceasul |
 
 Ordinea, după înregistrarea 0 (a canalului, ca până acum):
 
@@ -71,3 +76,15 @@ formă (de pildă valoarea pe 64 de biți) — analiza citește doar cuvântul d
 - `clc7b5.h` (NVIDIA open-gpu-doc, MIT, commit fixat în `tools/gen-rm570/generate.sh`) — metodele și câmpurile;
 - tinygrad `ops_nv.py` (MIT), citit ca specificație: copia într-o linie (`OFFSET_IN/OUT`, `LINE_LENGTH_IN`, `LAUNCH_DMA` =
   neînlănțuit + pitch + pitch) — codul nostru e scris de noi.
+
+## Rezultat în SIMULARE (sesiunea 183)
+
+- Cod: `nvidia_ga104::ram_vram` (codarea, analiza, judecata octeților, rândurile `kt ramvram …`, `parse_ramvram`),
+  `gsp::user_space::alloc_copy_object`, modelul motorului de copiere în `gpu_sim::cmdproc` (metodele de mai sus; orice
+  bit necunoscut din `LAUNCH_DMA` refuzat; semaforul fără `FLUSH_ENABLE` refuzat; copiile `PIPELINED` **nu** se
+  suprapun în model — timpul lor în SIMULARE nu spune nimic despre paralelism).
+- T192 (`tests/sim_c157_ram_vram.rs`, 4 teste) + 4 teste în modul: obiectul alocat pe canalul de lucru; proba cu
+  M = 256 KiB și 1 MiB trece bit cu bit, 31 de înregistrări, 48 de copii (18 înlănțuite), timpii = exact ceasul
+  modelului; greșeli plantate prinse (ultimul sfert „jos în paralel” mutat cu 16 octeți → văzut în a doua jumătate a lui
+  B; trimitere tăiată → înregistrarea 30 lipsește, oprire curată; un bit necunoscut în `LAUNCH_DMA` → refuzat).
+- `tools/check.sh`: 918 teste, 0 eșecuri. **Pe placă: NOT TESTED.**

@@ -279,6 +279,24 @@ pub fn open_work_channel<T: RmTransport + ?Sized, M: GoldenMemory + ?Sized>(
     )
 }
 
+/// C-157 (RAM ↔ VRAM): the copy engine object (`AMPERE_DMA_COPY_B`, no parameters) on the work channel `w`, with
+/// the first free handle `w.next_handle` — the same class the golden image already allocates on its own channel
+/// (`golden`, step 6). Returns `(object handle, next free handle)`; the caller keeps the second for later objects.
+/// One RM message; nothing is written to the board.
+pub fn alloc_copy_object<T: RmTransport + ?Sized>(
+    t: &mut T,
+    u: &UserSpace,
+    w: &WorkChannel,
+) -> GpuResult<(u32, u32)> {
+    let mut rm = Rm {
+        t,
+        client: u.client,
+        next: w.next_handle,
+    };
+    let h = rm.alloc(w.channel, class::DMA_COPY, &[])?;
+    Ok((h, rm.next))
+}
+
 /// C-125 (V2): memory that can map a buffer with the PTE `PRIVILEGE` bit.
 pub trait PrivilegedMemory {
     /// As [`GoldenMemory::alloc_mapped`], every page mapped privileged.

@@ -37,7 +37,7 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 
 use gpu_core::error::{GpuError, GpuResult};
-use nvidia_rm570::regs::{clc7c0 as c, clc56f as h, qmd_v03_00 as q};
+use nvidia_rm570::regs::{clc7b5 as ce, clc7c0 as c, clc56f as h, qmd_v03_00 as q};
 use nvidia_rm570::rmapi::AmpereAControlGPFifo;
 use nvidia_rm570::{Field, QMD_SIZE, QmdField};
 
@@ -348,10 +348,39 @@ pub struct Needs {
 /// Events the model records, in order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
-    SetObject { subch: u8, class: u32 },
-    Release { addr: u64, payload: u64 },
-    Acquire { addr: u64, at_least: u64 },
-    Launch { qmd: u64, program: usize },
+    SetObject {
+        subch: u8,
+        class: u32,
+    },
+    Release {
+        addr: u64,
+        payload: u64,
+    },
+    Acquire {
+        addr: u64,
+        at_least: u64,
+    },
+    Launch {
+        qmd: u64,
+        program: usize,
+    },
+    /// C-157 (RAM ↔ VRAM): one copy of the copy engine (`AMPERE_DMA_COPY_B`).
+    CeCopy {
+        src: u64,
+        dst: u64,
+        bytes: u64,
+        pipelined: bool,
+    },
+}
+
+/// C-157 (RAM ↔ VRAM), SIMULARE: the methods of the copy engine object seen so far (`clc7b5.h`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CeState {
+    pub offset_in: u64,
+    pub offset_out: u64,
+    pub line_length: u32,
+    pub sem_addr: u64,
+    pub sem_payload: u32,
 }
 
 pub struct CommandProcessor {
@@ -381,6 +410,13 @@ pub struct CommandProcessor {
     pub sim_method_ns: u64,
     /// C-69: `(addr, payload, time_ns)` of every timestamp release.
     pub timestamps: Vec<(u64, u64, u64)>,
+    /// C-157, SIMULARE: the copy engine's method state.
+    pub ce: CeState,
+    /// C-157, SIMULARE: the copy engine's simulated speed (MB/s = bytes per µs; 0 = copies take no time). Pipelined
+    /// copies are NOT overlapped by the model: it runs one copy after the other.
+    pub sim_ce_mb_s: u64,
+    /// C-157, SIMULARE: simulated fixed cost of one copy (ns).
+    pub sim_ce_copy_ns: u64,
 }
 
 impl Default for CommandProcessor {
@@ -411,6 +447,9 @@ impl CommandProcessor {
             sim_launch_ns: 0,
             sim_method_ns: 0,
             timestamps: Vec::new(),
+            ce: CeState::default(),
+            sim_ce_mb_s: 0,
+            sim_ce_copy_ns: 0,
         }
     }
 
@@ -550,6 +589,9 @@ impl CommandProcessor {
             self.events.push(Event::SetObject { subch, class });
             return Ok(());
         }
+        if self.objects[subch as usize] == ce::AMPERE_DMA_COPY_B {
+            return self.ce_method(m, d);
+        }
         if self.objects[subch as usize] != c::AMPERE_COMPUTE_B {
             return Err(bad(
                 "SIM: metoda de calcul pe un subcanal fara AMPERE_COMPUTE_B",
@@ -653,6 +695,118 @@ impl CommandProcessor {
             return Ok(());
         }
         Err(bad("SIM: metoda de calcul nemodelata"))
+    }
+
+    /// C-157 (RAM ↔ VRAM): the copy engine methods a one-line copy needs (`clc7b5.h`, tinygrad's copy as the
+    /// specification): source / destination VAs, the length, the semaphore, `LAUNCH_DMA`. Any bit of `LAUNCH_DMA`
+    /// the model does not know is refused (block-linear layouts, several lines, remap, physical addresses,
+    /// interrupts, reductions).
+    fn ce_method(&mut self, m: u32, d: u32) -> GpuResult<()> {
+        let upper = |f: Field| -> GpuResult<u64> {
+            if f.get(d) << f.lo != d {
+                return Err(bad("SIM: biti in afara campului UPPER (copiere)"));
+            }
+            Ok((f.get(d) as u64) << 32)
+        };
+        let st = &mut self.ce;
+        match m {
+            ce::NVC7B5_OFFSET_IN_UPPER => {
+                st.offset_in =
+                    upper(ce::NVC7B5_OFFSET_IN_UPPER_UPPER)? | (st.offset_in & 0xffff_ffff)
+            }
+            ce::NVC7B5_OFFSET_IN_LOWER => st.offset_in = (st.offset_in & !0xffff_ffff) | d as u64,
+            ce::NVC7B5_OFFSET_OUT_UPPER => {
+                st.offset_out =
+                    upper(ce::NVC7B5_OFFSET_OUT_UPPER_UPPER)? | (st.offset_out & 0xffff_ffff)
+            }
+            ce::NVC7B5_OFFSET_OUT_LOWER => {
+                st.offset_out = (st.offset_out & !0xffff_ffff) | d as u64
+            }
+            ce::NVC7B5_LINE_LENGTH_IN => st.line_length = d,
+            ce::NVC7B5_SET_SEMAPHORE_A => {
+                st.sem_addr = upper(ce::NVC7B5_SET_SEMAPHORE_A_UPPER)? | (st.sem_addr & 0xffff_ffff)
+            }
+            ce::NVC7B5_SET_SEMAPHORE_B => st.sem_addr = (st.sem_addr & !0xffff_ffff) | d as u64,
+            ce::NVC7B5_SET_SEMAPHORE_PAYLOAD => st.sem_payload = d,
+            ce::NVC7B5_LAUNCH_DMA => return self.ce_launch(d),
+            _ => return Err(bad("SIM: metoda de copiere nemodelata")),
+        }
+        Ok(())
+    }
+
+    fn ce_launch(&mut self, d: u32) -> GpuResult<()> {
+        let known = [
+            ce::NVC7B5_LAUNCH_DMA_DATA_TRANSFER_TYPE,
+            ce::NVC7B5_LAUNCH_DMA_FLUSH_ENABLE,
+            ce::NVC7B5_LAUNCH_DMA_SEMAPHORE_TYPE,
+            ce::NVC7B5_LAUNCH_DMA_SRC_MEMORY_LAYOUT,
+            ce::NVC7B5_LAUNCH_DMA_DST_MEMORY_LAYOUT,
+        ];
+        if known.iter().fold(d, |r, f| f.set(r, 0)) != 0 {
+            return Err(bad("SIM: biti nemodelati in LAUNCH_DMA"));
+        }
+        let pitch = ce::NVC7B5_LAUNCH_DMA_SRC_MEMORY_LAYOUT_PITCH;
+        if ce::NVC7B5_LAUNCH_DMA_SRC_MEMORY_LAYOUT.get(d) != pitch
+            || ce::NVC7B5_LAUNCH_DMA_DST_MEMORY_LAYOUT.get(d)
+                != ce::NVC7B5_LAUNCH_DMA_DST_MEMORY_LAYOUT_PITCH
+        {
+            return Err(bad("SIM: copiere block-linear nemodelata"));
+        }
+        let sem = ce::NVC7B5_LAUNCH_DMA_SEMAPHORE_TYPE.get(d);
+        let four = ce::NVC7B5_LAUNCH_DMA_SEMAPHORE_TYPE_RELEASE_FOUR_WORD_SEMAPHORE;
+        if sem != ce::NVC7B5_LAUNCH_DMA_SEMAPHORE_TYPE_NONE && sem != four {
+            return Err(bad("SIM: semafor de copiere nemodelat"));
+        }
+        let st = self.ce;
+        let pipelined = match ce::NVC7B5_LAUNCH_DMA_DATA_TRANSFER_TYPE.get(d) {
+            ce::NVC7B5_LAUNCH_DMA_DATA_TRANSFER_TYPE_PIPELINED => true,
+            ce::NVC7B5_LAUNCH_DMA_DATA_TRANSFER_TYPE_NON_PIPELINED => false,
+            _ => return Err(bad("SIM: LAUNCH_DMA fara copiere (nemodelat)")),
+        };
+        let bytes = st.line_length as u64;
+        if bytes == 0 {
+            return Err(bad("SIM: copiere de 0 octeti"));
+        }
+        let (se, de) = (st.offset_in + bytes, st.offset_out + bytes);
+        if st.offset_in < de && st.offset_out < se {
+            return Err(bad("SIM: copiere cu sursa si destinatia suprapuse"));
+        }
+        let mut buf = alloc::vec![0u8; bytes as usize];
+        self.mem.read(st.offset_in, &mut buf)?;
+        self.mem.write(st.offset_out, &buf);
+        self.events.push(Event::CeCopy {
+            src: st.offset_in,
+            dst: st.offset_out,
+            bytes,
+            pipelined,
+        });
+        self.gpu_time_ns += self.sim_ce_copy_ns;
+        if self.sim_ce_mb_s != 0 {
+            self.gpu_time_ns += (bytes as u128 * 1000 / self.sim_ce_mb_s as u128) as u64;
+        }
+        if sem == four {
+            // DEDUS: the four-word release = payload at +0, the GPU time at +8 (as the channel's timestamp record).
+            if ce::NVC7B5_LAUNCH_DMA_FLUSH_ENABLE.get(d) != ce::NVC7B5_LAUNCH_DMA_FLUSH_ENABLE_TRUE
+            {
+                return Err(bad(
+                    "SIM: semafor de copiere fara FLUSH_ENABLE (datele pot sosi dupa el)",
+                ));
+            }
+            if !st.sem_addr.is_multiple_of(16) {
+                return Err(bad("SIM: semafor de copiere nealiniat la 16"));
+            }
+            let mut rec = [0u8; 16];
+            rec[..4].copy_from_slice(&st.sem_payload.to_le_bytes());
+            rec[8..].copy_from_slice(&self.gpu_time_ns.to_le_bytes());
+            self.mem.write(st.sem_addr, &rec);
+            self.timestamps
+                .push((st.sem_addr, st.sem_payload as u64, self.gpu_time_ns));
+            self.events.push(Event::Release {
+                addr: st.sem_addr,
+                payload: st.sem_payload as u64,
+            });
+        }
+        Ok(())
     }
 
     fn host_method(&mut self, m: u32, d: u32) -> GpuResult<()> {

@@ -127,6 +127,7 @@ pub mod q8_matvec32;
 pub mod q8_race;
 pub mod qmd;
 pub mod radix3;
+pub mod ram_vram;
 pub mod read_tour;
 pub mod recovery;
 pub mod regs;
