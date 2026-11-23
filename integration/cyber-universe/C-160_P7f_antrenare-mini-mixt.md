@@ -1,6 +1,6 @@
 # Pentru sesiunea OS: `antrenare mini` cu înmulțirile pe circuitele speciale (pasul mixt) — ordinea 20:11, pasul 2
 
-**De la Cyber-GPU, sesiunea 191 (23 nov 2026, ~22:20). Stare: SIMULARE** (T199, `crates/nvidia-ga104/tests/sim_c160_p7_mixed_mini.rs`).
+**De la Cyber-GPU, sesiunea 191 (23 nov 2026, ~21:25). Stare: SIMULARE** (T199, `crates/nvidia-ga104/tests/sim_c160_p7_mixed_mini.rs`).
 Nimic de aici nu a rulat pe RTX 3070 Ti. **Fără cod nou în bibliotecă**: tot ce trebuie există deja (`Plan::step_mixed`, `pack_mixed`,
 `mixed_uploads`, `mm_tc`, din sesiunea 158, T169); nou e doar testul care le probează pe forma lui `antrenare mini`.
 Planul și predicțiile, scrise înainte: `cyber-gpu/docs/C-160_P7_PAS_MIXT_MINI.md` (commit `265557b`).

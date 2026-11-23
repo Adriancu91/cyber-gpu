@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 191 — 23 noiembrie 2026, ~21:10–22:35 (ora României), în cloud, FĂRĂ placă — **ordinea 20:11, pasul 2: circuitele speciale în înmulțirile antrenării, pe forma lui `antrenare mini`**
+## Sesiunea 191 — 23 noiembrie 2026, ~21:10–21:30 (ora României), în cloud, FĂRĂ placă — **ordinea 20:11, pasul 2: circuitele speciale în înmulțirile antrenării, pe forma lui `antrenare mini`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-376 (ciclurile 17:36 / 17:38 deja
 comparate); decizia lui Adrian 20:36: RAM-ul deoparte, înainte cu antrenarea pe placă și viteza ei → pasul 2 al ordinii din 20:11

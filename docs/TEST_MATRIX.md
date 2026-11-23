@@ -1,6 +1,6 @@
 # Matricea de teste
 
-## Rezultate — sesiunea 191 (23 nov 2026, ~21:15–22:30, cloud, fără placă) — ordinea 20:11 pasul 2: pasul mixt pe forma lui `antrenare mini`, SIMULARE
+## Rezultate — sesiunea 191 (23 nov 2026, ~21:15–21:30, cloud, fără placă) — ordinea 20:11 pasul 2: pasul mixt pe forma lui `antrenare mini`, SIMULARE
 
 | ID | Ce | Comanda | Așteptat | Observat | Rezultat |
 |---|---|---|---|---|---|
