@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 194 — 24 noiembrie 2026, ~00:11–01:00 (ora României), în cloud, FĂRĂ placă — **comparația os-380 + arena antrenării în VRAM („planul rezident”)**
+## Sesiunea 194 — 24 noiembrie 2026, ~00:11–00:40 (ora României), în cloud, FĂRĂ placă — **comparația os-380 + arena antrenării în VRAM („planul rezident”)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 193 terminată 23:30), l-am pus `ocupat`. Rezultat nou pe placă: **os-380** (23:12,
 primul pas întreg de antrenare pe placa reală, TRECE). Nota centrului de comandă 23:36: pe placă (1) `--mixt` + gen 4, (2) **arena în
