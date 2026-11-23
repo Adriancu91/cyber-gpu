@@ -385,6 +385,34 @@ impl Generation {
         ))
     }
 
+    /// C-157 point 7, second part: the batch that starts at `pos` (at most `max` positions), known WITHOUT the results of
+    /// the batches before it — a prompt position takes its token from the driver, every later one from the board
+    /// (`embed_dev`). This is what lets the driver write batch k+1 while the board works on batch k. `None` after a
+    /// stop, for an empty batch, or past the last position.
+    pub fn batch_ahead(
+        &self,
+        pos: usize,
+        max: usize,
+    ) -> Option<(usize, Vec<crate::kronos_batch::Input>)> {
+        use crate::kronos_batch::Input;
+        if self.stop.is_some() {
+            return None;
+        }
+        let end = pos.saturating_add(max).min(self.plan.positions());
+        if end <= pos {
+            return None;
+        }
+        Some((
+            pos,
+            (pos..end)
+                .map(|q| match self.plan.prompt.get(q) {
+                    Some(&t) => Input::Cpu(t),
+                    None => Input::Board,
+                })
+                .collect(),
+        ))
+    }
+
     /// C-157 point 7: the results of one batch, position by position from [`Self::next`], each through
     /// [`Self::accept_top`] (the same clock checks, the same stops); after a stop the rest of the batch is dropped
     /// (the board ran it, nothing of it is kept). An error for the whole batch stops at its first position.

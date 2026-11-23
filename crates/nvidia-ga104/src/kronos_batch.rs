@@ -195,6 +195,188 @@ pub fn read_results(buf: &[u8], first_pos: usize, n: usize) -> GpuResult<Vec<Arg
         .collect()
 }
 
+// ------------------------------------------------------------------------------------------------ C-157 point 7, part 2
+
+/// C-157 point 7, second part: the two zones of what the driver writes per batch (the launches' cbufs + QMDs in
+/// `slots_per_zone` launch slots, and the batch's records). Batch `k` goes into zone `k mod 2`; a zone is written again
+/// only after the driver has read the fence of the batch in it ([`Self::release`]), so at most two batches are ever at
+/// the board and nothing the board may still read is overwritten. A refusal writes nothing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TwoZones {
+    pub slots_per_zone: usize,
+    busy: [Option<usize>; 2],
+}
+
+impl TwoZones {
+    pub fn new(slots_per_zone: usize) -> GpuResult<Self> {
+        if slots_per_zone == 0 {
+            return Err(bad("zone: zero lansari pe zona"));
+        }
+        Ok(TwoZones {
+            slots_per_zone,
+            busy: [None, None],
+        })
+    }
+
+    /// The first launch slot of `zone`.
+    pub fn first_slot(&self, zone: usize) -> usize {
+        zone * self.slots_per_zone
+    }
+
+    /// Takes zone `k mod 2` for batch `k` of `launches` launches. Refused while the zone still holds an unread batch
+    /// or when the batch does not fit.
+    pub fn claim(&mut self, k: usize, launches: usize) -> GpuResult<usize> {
+        let z = k % 2;
+        if launches == 0 || launches > self.slots_per_zone {
+            return Err(bad("zone: lotul nu incape in zona"));
+        }
+        if self.busy[z].is_some() {
+            return Err(bad("zone: zona e inca la placa"));
+        }
+        self.busy[z] = Some(k);
+        Ok(z)
+    }
+
+    /// Gives back the zone of batch `k` once its fence was read. Refused if that zone does not hold batch `k`.
+    pub fn release(&mut self, k: usize) -> GpuResult<()> {
+        let z = k % 2;
+        if self.busy[z] != Some(k) {
+            return Err(bad("zone: lotul nu e in zona lui"));
+        }
+        self.busy[z] = None;
+        Ok(())
+    }
+
+    /// Batches written and not yet read back.
+    pub fn in_flight(&self) -> usize {
+        self.busy.iter().filter(|b| b.is_some()).count()
+    }
+}
+
+/// What the driver does for [`run_pipelined`] (the OS writes these two; the loop is here).
+pub trait BatchIo {
+    /// Writes the launches of the batch (`batch_launches` of `first_pos`, `inputs`) into `zone` — its launch slots
+    /// from [`TwoZones::first_slot`] and its records — and rings. Does NOT wait.
+    fn send(&mut self, zone: usize, first_pos: usize, inputs: &[Input]) -> GpuResult<()>;
+    /// Waits for the fence of the batch last sent into `zone` and reads its `n` argmax slots and times.
+    fn wait(
+        &mut self,
+        zone: usize,
+        first_pos: usize,
+        n: usize,
+    ) -> GpuResult<Vec<crate::kronos_gen::TopOutput>>;
+}
+
+/// What [`run_pipelined`] did.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PipelineRun {
+    pub stop: crate::kronos_gen::Stop,
+    /// Batches sent (= doorbells).
+    pub sent: usize,
+    /// Batches written while the one before was still at the board.
+    pub overlapped: usize,
+    /// Most batches at the board at once (never above 2).
+    pub max_in_flight: usize,
+    /// Batches (and their positions) sent before the stop was known: waited for, results dropped.
+    pub drained_batches: usize,
+    pub drained_positions: usize,
+    /// The first error while waiting for a batch after the stop (reported, never hidden; the stop stays).
+    pub drain_error: Option<GpuError>,
+}
+
+/// C-157 point 7, second part: the generation in batches of at most `max` positions with TWO batches at the board:
+/// send batch k, send k+1 (written while k runs), wait k → `accept_batch`, send k+2 into k's zone, ... After a stop
+/// (EOS, error, "no token") nothing more is sent, but the batch already sent is still waited for (its memory is not
+/// touched while the board may read it) and its results are dropped. An error while sending stops the generation at
+/// that batch's first position, after the batch before it was read normally. `per_position`: launches per position
+/// ([`launches_per_position`]).
+pub fn run_pipelined<B: BatchIo + ?Sized>(
+    g: &mut crate::kronos_gen::Generation,
+    io: &mut B,
+    zones: &mut TwoZones,
+    per_position: usize,
+    max: usize,
+) -> PipelineRun {
+    use alloc::collections::VecDeque;
+    let mut run = PipelineRun {
+        stop: crate::kronos_gen::Stop::Gata,
+        sent: 0,
+        overlapped: 0,
+        max_in_flight: 0,
+        drained_batches: 0,
+        drained_positions: 0,
+        drain_error: None,
+    };
+    let mut next_pos = match g.next() {
+        Some((_, p)) => p,
+        None => {
+            run.stop = g.stop.clone().unwrap_or(crate::kronos_gen::Stop::Gata);
+            return run;
+        }
+    };
+    let mut q: VecDeque<(usize, usize, usize, usize)> = VecDeque::new();
+    let mut send_err: Option<GpuError> = None;
+    let mut k = 0usize;
+    loop {
+        while q.len() < 2 && g.stop.is_none() && send_err.is_none() {
+            let Some((p, inputs)) = g.batch_ahead(next_pos, max) else {
+                break;
+            };
+            let zone = match per_position
+                .checked_mul(inputs.len())
+                .ok_or(bad("lot: prea multe lansari"))
+                .and_then(|n| zones.claim(k, n))
+            {
+                Ok(z) => z,
+                Err(e) => {
+                    send_err = Some(e);
+                    break;
+                }
+            };
+            if let Err(e) = io.send(zone, p, &inputs) {
+                // Nothing of this batch is at the board (a refused send writes no doorbell).
+                let _ = zones.release(k);
+                send_err = Some(e);
+                break;
+            }
+            if !q.is_empty() {
+                run.overlapped += 1;
+            }
+            q.push_back((k, zone, p, inputs.len()));
+            run.sent += 1;
+            run.max_in_flight = run.max_in_flight.max(q.len());
+            next_pos = p + inputs.len();
+            k += 1;
+        }
+        let Some((kk, zone, p, n)) = q.pop_front() else {
+            break;
+        };
+        let out = io.wait(zone, p, n);
+        if out.is_ok() {
+            // The fence was read: the zone is the driver's again.
+            let _ = zones.release(kk);
+        }
+        if g.stop.is_some() {
+            run.drained_batches += 1;
+            run.drained_positions += n;
+            if let Err(e) = out
+                && run.drain_error.is_none()
+            {
+                run.drain_error = Some(e);
+            }
+        } else {
+            g.accept_batch(out);
+        }
+    }
+    if let Some(e) = send_err
+        && g.stop.is_none()
+    {
+        g.accept_batch(Err(e));
+    }
+    run.stop = g.stop.clone().unwrap_or(crate::kronos_gen::Stop::Gata);
+    run
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,5 +439,24 @@ mod tests {
         assert_eq!(r[0].words, [10, 11, 12, 13]);
         assert_eq!(r[2].words, [30, 31, 32, 33]);
         assert!(read_results(&b, 2, 3).is_err());
+    }
+
+    #[test]
+    fn two_zones_refuse_busy_and_too_big() {
+        let mut z = TwoZones::new(10).unwrap();
+        assert!(TwoZones::new(0).is_err());
+        assert_eq!(z.claim(0, 10).unwrap(), 0);
+        assert_eq!(z.claim(1, 4).unwrap(), 1);
+        assert_eq!(z.first_slot(1), 10);
+        assert_eq!(z.in_flight(), 2);
+        // Batch 2 wants zone 0 while batch 0 is unread: refused, nothing changed.
+        assert!(z.claim(2, 4).is_err());
+        assert!(z.release(2).is_err());
+        z.release(0).unwrap();
+        assert!(z.release(0).is_err());
+        assert!(z.claim(2, 11).is_err());
+        assert!(z.claim(2, 0).is_err());
+        assert_eq!(z.claim(2, 10).unwrap(), 0);
+        assert_eq!(z.in_flight(), 2);
     }
 }
