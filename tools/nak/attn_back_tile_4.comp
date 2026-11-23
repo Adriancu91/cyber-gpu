@@ -1,0 +1,209 @@
+// C-157 point 2 after the 15:57 cycle (docs/C-157_P2_ATTN_TILE4.md, plan written before this code, commit 8033a14):
+// attn_back_tile_3 (mode 1: dQ, dK, dV) with ONE change, K1: in passes dK / dV the full diagonal tile (it == bx,
+// it*64 + 64 <= T) also takes the unguarded inner loop. The guard is not needed there: the tile load already wrote +0
+// into sa above the diagonal, the diagonal tile is the first of the it loop (acc is still +0 at every masked step,
+// they come before the first valid one, ii < r) and +0 + (+-0) = +0, so for finite Q / dO the same bits are predicted.
+// The partial last tile keeps its guard; pass dQ is unchanged (its masked steps come after the valid ones).
+// Everything else is attn_back_tile_3.comp's. CPU model: gpu_compute::layer::attn_back_col_gpu (unchanged).
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Buf { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args {
+    In qkv; In p; In dout; Buf ds; Out dqkv;
+    uint t; uint c; uint heads; uint d; uint mode; float scale;
+} args;
+
+shared float sa[64 * 65];  // dQ: dS tile [t][j], rows of 65 (F1); dK: dS tile [i][t]; dV: P tile [i][t] (rows of 64)
+shared float sb[64 * 64];  // dQ: K tile [j][e];  dK: Q tile [i][e];  dV: dO tile [i][e]
+
+void main() {
+    if (args.mode != 1u) {
+        return;
+    }
+    uint T = args.t;
+    uint C = args.c;
+    uint d = args.d;
+    uint b = gl_WorkGroupID.z;
+    uint h = gl_WorkGroupID.y;
+    uint bx = gl_WorkGroupID.x;
+    uint t0 = bx * 64u;
+    uint lid = gl_LocalInvocationID.x;
+    uint tx = lid & 15u;
+    uint ty = lid >> 4u;
+    uint ntiles = (T + 63u) / 64u;
+    uint row3 = 3u * C;
+    uint base = (b * args.heads + h) * T * T;
+
+    // pass dQ
+    float acc[16];
+    [[unroll]] for (uint n = 0u; n < 16u; n++) {
+        acc[n] = 0.0;
+    }
+    for (uint jt = 0u; jt <= bx; jt++) {
+        barrier();
+        [[dont_unroll]] for (uint hh = 0u; hh < 16u; hh += 2u) {
+            // The 4 loads first, the selects after them.
+            float ls[2];
+            float lk[2];
+            [[unroll]] for (uint m = 0u; m < 2u; m++) {
+                uint idx = lid + 256u * (hh + m);
+                uint r = idx >> 6u;
+                uint x = idx & 63u;
+                uint tc = min(t0 + r, T - 1u);
+                uint j = jt * 64u + x;
+                ls[m] = args.ds.v[base + tc * T + min(j, tc)];
+                uint jr = jt * 64u + r;
+                lk[m] = args.qkv.v[(b * T + min(jr, T - 1u)) * row3 + C + h * d + min(x, d - 1u)];
+            }
+            [[unroll]] for (uint m = 0u; m < 2u; m++) {
+                uint idx = lid + 256u * (hh + m);
+                uint r = idx >> 6u;
+                uint x = idx & 63u;
+                uint tp = t0 + r;
+                uint j = jt * 64u + x;
+                uint jr = jt * 64u + r;
+                sa[r * 65u + x] = (tp < T && j <= tp) ? ls[m] : 0.0;
+                sb[idx] = (jr < T && x < d) ? lk[m] : 0.0;
+            }
+        }
+        barrier();
+        if (jt < bx) {
+            // F2: j < t0 <= t for every row of the block.
+            for (uint jj0 = 0u; jj0 < 64u; jj0 += 4u) {
+                uint sb0 = ty * 65u + jj0;
+                uint kb0 = jj0 * 64u + tx;
+                [[unroll]] for (uint u = 0u; u < 4u; u++) {
+                    float kb[4];
+                    [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                        kb[k] = sb[kb0 + (64u * u + 16u * k)];
+                    }
+                    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                        float sv = sa[sb0 + (1040u * a + u)];
+                        [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                            acc[a * 4u + k] = fma(sv, kb[k], acc[a * 4u + k]);
+                        }
+                    }
+                }
+            }
+        } else {
+            for (uint jj0 = 0u; jj0 < 64u; jj0 += 4u) {
+                [[unroll]] for (uint u = 0u; u < 4u; u++) {
+                    uint jj = jj0 + u;
+                    uint j = jt * 64u + jj;
+                    float kb[4];
+                    [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                        kb[k] = sb[jj * 64u + tx + 16u * k];
+                    }
+                    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                        uint r = ty + 16u * a;
+                        if (j <= t0 + r) {
+                            float sv = sa[r * 65u + jj];
+                            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                                acc[a * 4u + k] = fma(sv, kb[k], acc[a * 4u + k]);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        uint tp = t0 + ty + 16u * a;
+        [[unroll]] for (uint k = 0u; k < 4u; k++) {
+            uint e = tx + 16u * k;
+            if (tp < T && e < d) {
+                args.dqkv.v[(b * T + tp) * row3 + h * d + e] = acc[a * 4u + k];
+            }
+        }
+    }
+
+    // passes dK (pass 0: dS with Q) and dV (pass 1: P with dO)
+    [[dont_unroll]] for (uint pass = 0u; pass < 2u; pass++) {
+        [[unroll]] for (uint n = 0u; n < 16u; n++) {
+            acc[n] = 0.0;
+        }
+        // H2: the buffers and the row stride of this pass, chosen once on the address.
+        In srcs = In((pass == 0u) ? uint64_t(args.ds) : uint64_t(args.p));
+        In srcb = In((pass == 0u) ? uint64_t(args.qkv) : uint64_t(args.dout));
+        uint strb = (pass == 0u) ? row3 : C;
+        for (uint it = bx; it < ntiles; it++) {
+            barrier();
+            [[dont_unroll]] for (uint hh = 0u; hh < 16u; hh += 2u) {
+                // The 4 loads first, the selects after them.
+                float ls[2];
+                float lb[2];
+                [[unroll]] for (uint m = 0u; m < 2u; m++) {
+                    uint idx = lid + 256u * (hh + m);
+                    uint r = idx >> 6u;
+                    uint x = idx & 63u;
+                    uint ic = min(it * 64u + r, T - 1u);
+                    ls[m] = srcs.v[base + ic * T + min(t0 + x, ic)];
+                    lb[m] = srcb.v[(b * T + ic) * strb + h * d + min(x, d - 1u)];
+                }
+                [[unroll]] for (uint m = 0u; m < 2u; m++) {
+                    uint idx = lid + 256u * (hh + m);
+                    uint r = idx >> 6u;
+                    uint x = idx & 63u;
+                    uint i = it * 64u + r;
+                    uint tp = t0 + x;
+                    sa[idx] = (i < T && tp <= i) ? ls[m] : 0.0;
+                    sb[idx] = (i < T && x < d) ? lb[m] : 0.0;
+                }
+            }
+            barrier();
+            if (it * 64u + 64u <= T) {
+                // F2 (K1): every row i < T; above the diagonal sa holds +0 (see the header).
+                for (uint ii0 = 0u; ii0 < 64u; ii0 += 4u) {
+                    uint bb0 = ii0 * 64u + tx;
+                    uint sa0 = ii0 * 64u + ty;
+                    [[unroll]] for (uint u = 0u; u < 4u; u++) {
+                        float bb[4];
+                        [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                            bb[k] = sb[bb0 + (64u * u + 16u * k)];
+                        }
+                        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                            float sv = sa[sa0 + (64u * u + 16u * a)];
+                            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                                acc[a * 4u + k] = fma(sv, bb[k], acc[a * 4u + k]);
+                            }
+                        }
+                    }
+                }
+            } else {
+                for (uint ii0 = 0u; ii0 < 64u; ii0 += 4u) {
+                    [[unroll]] for (uint u = 0u; u < 4u; u++) {
+                        uint ii = ii0 + u;
+                        uint i = it * 64u + ii;
+                        float bb[4];
+                        [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                            bb[k] = sb[ii * 64u + tx + 16u * k];
+                        }
+                        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                            uint r = ty + 16u * a;
+                            if (i < T && t0 + r <= i) {
+                                float sv = sa[ii * 64u + r];
+                                [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                                    acc[a * 4u + k] = fma(sv, bb[k], acc[a * 4u + k]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint tp = t0 + ty + 16u * a;
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                uint e = tx + 16u * k;
+                if (tp < T && e < d) {
+                    args.dqkv.v[(b * T + tp) * row3 + (pass + 1u) * C + h * d + e] = acc[a * 4u + k];
+                }
+            }
+        }
+    }
+}

@@ -47,3 +47,18 @@ aceea **dQ nu se atinge**.
 - P5 — greșeli plantate prinse: (a) condiția fără `+ 64 <= T` (și placa parțială fără gardă) → diferă pe formele cu `T` nemultiplu
   de 64 sau trece (dacă și acolo `sa` / `sb` sunt 0 — atunci notez că și placa parțială poate merge fără gardă); (b) bucla `it`
   pornită de la `bx + 1` → dK / dV greșite.
+
+## Rezultat în SIMULARE (sesiunea 188, după plan)
+
+- Mesa NAK 25.0.7 reconstruit în cloud; `attn_back_tile_3` recompilat **identic** (SHA-256 `67c8d9a5…ba085a9c`), deci unealta e aceeași.
+- `attn_back_tile_4`: SHA-256 `74f2cb81c2d7d69e9311b3fac4ff3ccd690da97f27e8875f516e1827c19eac35`, **80 de registre** (P3: DA),
+  1 572 de instrucțiuni în listare (față de 1 579: bucla cu gardă rămâne pentru placa parțială, dar pe setul mare nu mai rulează).
+- T196 (`crates/nvidia-ga104/tests/sim_attn_back_tile_4.rs`, 6 teste): **P1 DA** — aceiași biți ca `_3` și ca `attn_back` modul 1 pe
+  10 forme; NaN deasupra diagonalei lui P / dS fără efect; −0 păstrat pe placa întreagă a diagonalei (T 64, 128) și la T 70.
+  **P5:** P în dK, pasul C, diagonala sărită — prinse; placa parțială fără gardă **nu** se vede pe date întâmplătoare (rândurile
+  i ≥ T au sa = sb = +0), se vede doar pe capul construit cu −0 — deci garda plăcii parțiale e necesară doar pentru semnul lui zero.
+  Observație nouă: la `_3` alegerile 0 / valoare din urcare nu contau (T189); la `_4` contează (fără ele, alte dK / dV).
+- **P4** (`nak_bucle.py`, `s188`): emisia modelului **0,426 → 0,328 ms** (×1,30; scris ~0,31–0,33 → la marginea de sus), lanțul
+  0,336 → 0,267, suma 1,03 → 0,86. Cu factorul măsurat al lui `_3`: **~1,23 ms** (după maxim) până la **~1,34 ms** (după sumă) față de
+  1,60 — scrisesem 1,1–1,3; estimarea „după sumă” iese puțin peste. Lanțul atenției ~3,43 → ~3,1–3,2 ms; bucata #513 ~123 → ~110–114 ms (DEDUS).
+- `tools/check.sh`: **941 PASS**, 0 eșecuri. Pe placă: NOT TESTED. Nelegat în pas și în proba „vechi lângă nou” (pasul următor).

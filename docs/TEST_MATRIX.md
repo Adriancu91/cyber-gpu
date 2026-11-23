@@ -1,5 +1,11 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 188 (23 nov 2026, ~18:12–19:30, cloud, fără placă) — C-157 p.2: `attn_back_tile_4`, SIMULARE
+
+| ID | Ce | Comanda | Așteptat | Observat | Rezultat |
+|---|---|---|---|---|---|
+| T196 | `attn_back_tile_4` = `attn_back_tile_3` cu placa întreagă a diagonalei dK / dV pe bucla fără gardă (K1; plan + predicții înainte `8033a14`): emularea literală a GLSL = emularea lui `_3` = `attn_back` modul 1 **bit cu bit** pe cele 10 forme ale T189; NaN / 1e30 deasupra diagonalei lui P / dS fără efect; capul construit cu dK = −0 (produse subnormale negative) păstrează −0 la T 64 / 128 (placa întreagă) și T 70; greșeli plantate prinse (P în dK, pasul C, diagonala sărită, placa parțială fără gardă — doar pe capul −0); alegerile 0 / valoare acum contează; listarea: SHA-256 `74f2cb81…19eac35`, 80 de registre, fără atomice / MUFU / memorie locală, barierele lui `_3`; `_3` recompilat identic (`67c8d9a5…`) | `cargo test -p nvidia-ga104 --release --test sim_attn_back_tile_4` | P1 aceiași biți, P3 ≤ 80 registre, P5 prinse | toate; 941 PASS în `tools/check.sh` | PASS (SIMULARE) |
+
 ## Rezultate — sesiunea 185 (23 nov 2026, ~15:10–15:50, cloud, fără placă) — C-157 p.7 partea a doua: lotul următor scris cât placa lucrează, SIMULARE
 
 | ID | Ce | Comanda | Așteptat | Observat | Rezultat |

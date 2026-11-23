@@ -41,6 +41,7 @@
 #   sh tools/nak/build.sh attn_back_tile0_3 # C-157 point 2: attn_back_tile0_2, same bits, branch-free loads (session 179)
 #   sh tools/nak/build.sh attn_back_tile_2 # C-157 point 2: attn_back_tile, same bits, shorter loops (session 173)
 #   sh tools/nak/build.sh attn_back_tile_3 # C-157 point 2: attn_back_tile_2, same bits, branch-free loads (session 180)
+#   sh tools/nak/build.sh attn_back_tile_4 # C-157 point 2: attn_back_tile_3, full diagonal tile of dK / dV unguarded (session 188)
 #   sh tools/nak/build.sh attn_p_tile    # C-160 point 7: attn_fwd_tile2 without P·V, only P (session 176)
 #   sh tools/nak/build.sh kernel <name> <push-constant bytes>
 #
@@ -171,6 +172,9 @@ attn_back_tile_2)
     ;;
 attn_back_tile_3)
     exec sh "$0" kernel attn_back_tile_3 64
+    ;;
+attn_back_tile_4)
+    exec sh "$0" kernel attn_back_tile_4 64
     ;;
 attn_back128)
     exec sh "$0" kernel attn_back128 64

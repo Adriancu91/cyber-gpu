@@ -350,6 +350,24 @@ PROGRAMS364.update(PROGRAMS181)
 PROGRAMS179.update(PROGRAMS181)  # kept out of os364()'s list of measured programs
 
 
+# Session 188: attn_back_tile_4 = _3 with the full diagonal tile of dK / dV on the unguarded loop (K1). On atentie-513-b4
+# (T 512) every tile is full: the unguarded loop runs for below + diagonal (= every pair), the guarded one never.
+PROGRAMS188 = {
+    "attn_back_tile_4": ("tools/nak/out/attn_back_tile_4.sm86.txt", 6, None, [
+        (2, "pair", 1, 8, False, 0, None),       # dQ outer
+        (6, "pair", 8, 8, False, 4, None),       # dQ: dS + K tile load (as _3)
+        (10, "below", 16, 8, True, 32, None),    # dQ inner under the diagonal (as _3)
+        (17, "diag", 16, 8, True, 32, None),     # dQ inner on the diagonal, guarded (as _3)
+        (120, "block", 2, 8, False, 0, None),    # pass (dK, dV)
+        (124, "pair2", 1, 8, False, 0, None),    # it loop
+        (128, "pair2", 8, 8, False, 4, None),    # tile load (as _3)
+        (132, "pair2", 16, 8, True, 32, None),   # K1: dK / dV inner, unguarded, below AND on the diagonal
+    ]),
+}
+PROGRAMS364.update(PROGRAMS188)
+PROGRAMS179.update(PROGRAMS188)  # kept out of os364()'s list of measured programs
+
+
 def model364(name, lw=LDG_WAIT, drop_waits=False, fresh=False):
     """(issue, chain, shared, waits per block-pair summary) in seconds for one program; drop_waits=True models the
     branch-free loads (every tile load / pass waited on once per iteration instead of once per load)."""
@@ -478,6 +496,20 @@ def att3():
     print(f"  imprastierea x{max(rs)/min(rs):.2f}")
 
 
+def s188():
+    print("\nsesiunea 188, attn_back_tile_4 (K1: placa intreaga a diagonalei dK / dV fara garda; DEDUS, nemasurat):")
+    m3 = CYCLE1557_NS["attn_back_tile_3"] / 1e9
+    i3, l3, sh3, _, _ = model364("attn_back_tile_3", fresh=True)
+    i4, l4, sh4, _, _ = model364("attn_back_tile_4", fresh=True)
+    lo3, lo4 = max(i3, l3, sh3), max(i4, l4, sh4)
+    su3, su4 = i3 + l3 + sh3, i4 + l4 + sh4
+    print(f"  attn_back_tile_3   emisie {i3*1e3:5.3f} lant {l3*1e3:5.3f} partajata {sh3*1e3:5.3f}  max {lo3*1e3:5.3f}"
+          f"  suma {su3*1e3:5.3f} ms; masurat 15:57 {m3*1e3:5.3f} ms")
+    print(f"  attn_back_tile_4   emisie {i4*1e3:5.3f} lant {l4*1e3:5.3f} partajata {sh4*1e3:5.3f}  max {lo4*1e3:5.3f}"
+          f"  suma {su4*1e3:5.3f} ms")
+    print(f"  pe placa cu factorul lui _3: dupa max ~{lo4*m3/lo3*1e3:5.2f} ms (x{lo3/lo4:.2f}),"
+          f" dupa suma ~{su4*m3/su3*1e3:5.2f} ms (x{su3/su4:.2f})")
+
 if __name__ == "__main__" and len(sys.argv) == 1:
     os358()
     os364()
@@ -485,6 +517,7 @@ if __name__ == "__main__" and len(sys.argv) == 1:
     s180()
     s181()
     att3()
+    s188()
 
 
 if __name__ == "__main__" and len(sys.argv) > 1:

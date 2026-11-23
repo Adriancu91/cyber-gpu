@@ -502,3 +502,10 @@ niciun octet de firmware NVIDIA.
   (double buffering) a bufferelor de comenzi, fără o sursă anume; ordinea pe un canal și gardurile pe semafor ca în tinygrad
   `ops_nv.py` (MIT), citit ca specificație. Scrise de noi: `TwoZones`, `BatchIo`, `run_pipelined` în
   `crates/nvidia-ga104/src/kronos_batch.rs`, `Generation::batch_ahead`, testul T194.
+- **C-157 punctul 2 după ciclul 15:57 — `attn_back_tile_4` (sesiunea 188):** `tools/nak/attn_back_tile_4.comp` (din
+  `attn_back_tile_3.comp`, al nostru; o singură condiție schimbată), `crates/nvidia-ga104/src/attn_back_tile_4.rs`, testul
+  `crates/nvidia-ga104/tests/sim_attn_back_tile_4.rs` (emularea literală, a noastră), `PROGRAMS188` / `s188` din
+  `tools/buget-antrenare/nak_bucle.py`, `docs/C-157_P2_ATTN_TILE4.md`: scrise de noi, din observația proprie că urcarea scrie deja +0
+  deasupra diagonalei. Mesa NAK 25.0.7 (MIT) doar folosit pe gazdă. Comparația os-376 (sesiunea 188): plafonul PCIe 3.0 x8 socotit din
+  specificația publică PCIe (128b/130b, antetele pachetelor), sloturile Dell 5820 din fișa tehnică publică Dell. Nimic GPL, niciun octet
+  de firmware NVIDIA.
