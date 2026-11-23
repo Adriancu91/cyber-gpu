@@ -124,3 +124,35 @@ Predicții:
    buclele interioare (din memoria partajată) cântăresc mai mult. Cifra exactă o scrie `nak_bucle.py` după compilare.
 
 Nimic nu rulează pe placă din sesiunea asta; `attn_back_tile`, `attn_back_tile_2`, `train_step` și proba os-364 rămân neschimbate.
+
+## Rezultatul pentru `attn_back_tile_3` (sesiunea 180, SIMULARE, T189 `crates/nvidia-ga104/tests/sim_attn_back_tile_3.rs`)
+- **Binarul** (Mesa NAK 25.0.7 reconstruit în cloud; `attn_back_tile_2` a ieșit **identic**, `dc50f7d4…`):
+  `attn_back_tile_3.sm86.sass` SHA-256 **`67c8d9a564f6b5e3fde212262c74b456918920a8664462865a256123ba085a9c`**, **80 de registre**,
+  33 024 de octeți partajați.
+- **Predicția 2: DA, după ramura de rezervă din plan.** Cu urcarea dK / dV câte 4 + 4 (ca `_2`) au ieșit **90** de registre (peste 80
+  → doar 2 blocuri pe SM); coborâtă la 2 + 2, cum scria planul: **80** (80 × 256 × 3 = 61 440 ≤ 65 536 → 3 blocuri pe SM, ca `_2`).
+- **Predicția 1: DA** — 0 `mufu`, nicio atomică, nicio memorie locală, aceleași bariere ca `_2`; **256 `ffma`** (= `_2`); 1 579 de
+  operații față de 1 721 (cele două ramuri `pass == 0` / `pass == 1` de lângă fiecare citire au dispărut); nou: 14 `imnmx`, 99 `sel`
+  (88 la `_2`).
+- **Predicția 3: DA** (numărate cu `nak_bucle.py`, coloana `nou`):
+
+  | buclă | `_2` | `_3` | predicție |
+  |---|---|---|---|
+  | urcarea dQ, 4 citiri pe iterație (8 iterații pe placă) | 4 latențe | **1** | 1 — DA |
+  | urcarea dK / dV, pe placă | 4 × 8 = 32 latențe | **8 × 1 = 8** (2 + 2 citiri, 8 iterații) | 4 × 2 = 8 — DA (aceeași cifră pe placă) |
+  | zone `bssy` în urcări | 4 / 8 | **0 / 0** | 0 — DA |
+
+  Buclele interioare (din memoria partajată) au exact aceleași instrucțiuni ca la `_2` (105 / 107 / 261 / 444).
+- **Predicția 5 (DEDUS, `python3 tools/buget-antrenare/nak_bucle.py`, funcția `s180`):** `attn_back_tile_2` model 0,60 ms (memoria
+  0,33) → `attn_back_tile_3` **0,43 ms** (memoria 0,08; acum hotărăște emisia instrucțiunilor, nu memoria), ×1,40; cu factorul măsurat
+  la `_2` (×3,76) → **~1,60 ms** pe setul mare față de 2,25 (os-364). În intervalul prezis (1,6–2,0).
+- **Predicția 4: DA.** Emularea literală (fiecare citire la adresa ei strânsă — un indice în afara bufferului ar opri testul —, apoi
+  alegerea) = `attn_back` modul 1 **bit cu bit** pe cele 10 forme; lansarea = `attn_back_tile` (și `_2`) bit cu bit; NaN / 1e30 deasupra
+  diagonalei lui dS și P fără efect; −0 al ultimei plăci păstrat. Prinse: P în loc de dS la trecerea dK, Q citit cu pasul C, QMD cu
+  memoria partajată a lui `attn_back_tile`, grila cu un bloc lipsă, blocul greșit, mod 0, d = 65. **Observație (ca la back0):** toate
+  alegerile scoase dau **aceiași biți** — valorile pe care le păzesc nu sunt citite niciodată (plăcile diagonalei își păstrează
+  gărzile, celelalte au doar intrări valide, acumulatorii rândurilor ≥ T sau coloanelor ≥ d nu se scriu). Alegerile rămân (planul).
+- `tools/check.sh`: vezi `docs/IMPLEMENTATION_STATUS.md`, sesiunea 180.
+
+**Ce e nou pentru placă:** nimic încă (programul nu e legat în probă). **Următorul pas:** `attn_fwd_tile2` → `attn_fwd_tile3` (plan +
+predicții întâi), apoi proba „vechi lângă nou” cu cele trei `_3` (ca os-364) și nota pentru OS.

@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 180 — 23 noiembrie 2026, ~10:11–10:55 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: `attn_back_tile_3` (citiri fără ramură)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-364. Clona veche de pe disc (sesiunea
+110) adusă la `origin/g0-g2-fundatie`. Planul și predicțiile urcate **înainte** de cod (`535b88c`, `docs/C-157_P2_ATTN_TILE3.md`).
+Mesa NAK 25.0.7 reconstruit în cloud (`attn_back_tile_2` identic, `dc50f7d4…`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Program nou `attn_back_tile_3` (lângă `_2`, neschimbat) | urcările plăcilor fără ramură (adresa strânsă, citirile întâi, alegerile după); dS / P și Q / dO alese o dată pe trecere, pe adresă; SHA-256 `67c8d9a5…ba085a9c`, **80 de registre** (cu 4 + 4 citiri: 90 → coborât la 2 + 2, cum scria planul; 3 blocuri pe SM, ca `_2`) | PASS (compilat) |
+| Buclele (`nak_bucle.py`, `nou`) | urcarea dQ 4 → **1** latență pe iterație; dK / dV 32 → **8** pe placă; 0 `bssy` în urcări; buclele interioare identice cu `_2` | PREDICȚIE: DA |
+| Modelul pe bucle (`s180`) | `_2` 0,60 → `_3` 0,43 ms (acum hotărăște emisia, nu memoria); cu factorul măsurat ×3,76: **~1,60 ms** pe setul mare față de 2,25 (os-364) | DEDUS |
+| T189 (6 teste) | emularea literală a GLSL = `attn_back` mod 1 **bit cu bit** pe 10 forme; lansarea = `attn_back_tile`; NaN deasupra diagonalei fără efect; −0 al ultimei plăci păstrat; greșeli plantate prinse; toate alegerile scoase = aceiași biți (valorile păzite nu sunt citite — scris în notă) | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy, **902 teste** (+7 ignorate), build no_std | PASS |
+| `attn_back_tile_3` pe RTX 3070 Ti | — | NOT TESTED |
+
+**Ce e nou pentru placă:** nimic încă (nelegat în probă; interfața publică doar adăugată: modulul `nvidia_ga104::attn_back_tile_3`).
+
+**Următorul pas:** `attn_fwd_tile3` cu aceeași rețetă (plan + predicții întâi), apoi proba „vechi lângă nou” cu cele trei `_3` (ca
+os-364) și nota pentru OS; după ele punctul nou al lui Adrian (măsurarea RAM ↔ VRAM + studiul `docs/C-157_RAM_OFFLOAD.md`).
+
+---
+
 ## Sesiunea 179 — 23 noiembrie 2026, ~09:11–09:30 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: `attn_back_tile0_3` (citiri fără ramură)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-364. Planul și predicțiile urcate

@@ -316,6 +316,24 @@ PROGRAMS179 = {
 }
 PROGRAMS364.update(PROGRAMS179)
 
+# Session 180: attn_back_tile_3 (branch-free tile loads, docs/C-157_P2_ATTN_TILE3.md); the inner loops = attn_back_tile_2's
+# (same instruction counts in the listing); only the two load loops change. dK / dV loads 2 + 2 at a time (8 iterations).
+PROGRAMS180 = {
+    "attn_back_tile_3": ("tools/nak/out/attn_back_tile_3.sm86.txt", 6, None, [
+        (2, "pair", 1, 8, False, 0, None),       # dQ outer
+        (6, "pair", 8, 8, False, 4, None),       # dQ: dS + K tile load, 2 + 2 at a time, branch-free
+        (10, "below", 16, 8, True, 32, None),    # dQ inner under the diagonal
+        (17, "diag", 16, 8, True, 32, None),     # dQ inner on the diagonal, guarded
+        (120, "block", 2, 8, False, 0, None),    # pass (dK, dV)
+        (124, "pair2", 1, 8, False, 0, None),    # it loop
+        (128, "pair2", 8, 8, False, 4, None),    # tile load, 2 + 2 at a time, branch-free
+        (135, "below2", 16, 8, True, 32, None),  # dK / dV inner under the diagonal
+        (142, "diag2", 16, 8, True, 32, None),   # dK / dV inner on the diagonal, guarded
+    ]),
+}
+PROGRAMS364.update(PROGRAMS180)
+PROGRAMS179.update(PROGRAMS180)  # kept out of os364()'s list of measured programs
+
 
 def model364(name, lw=LDG_WAIT, drop_waits=False, fresh=False):
     """(issue, chain, shared, waits per block-pair summary) in seconds for one program; drop_waits=True models the
@@ -382,10 +400,24 @@ def s179():
           f" -> model {lo3*1e3:5.2f} ms; cu factorul x{f:.2f}: ~{lo3*f*1e3:5.2f} ms (castig x{lo2/lo3:.2f})")
 
 
+def s180():
+    print("\nsesiunea 180, attn_back_tile_3 (citiri fara ramura; asteptarile NUMARATE cu waits_fresh; DEDUS, nemasurat):")
+    i2, l2, sh2, mem2, m2 = model364("attn_back_tile_2", fresh=True)
+    lo2 = max(i2, l2, sh2)
+    i3, l3, sh3, mem3, _ = model364("attn_back_tile_3", fresh=True)
+    lo3 = max(i3, l3, sh3)
+    f = m2 / lo2
+    print(f"  attn_back_tile_2   emisie {i2*1e3:5.2f} lant {l2*1e3:5.2f} (memoria {mem2*1e3:5.2f}) partajata {sh2*1e3:5.2f}"
+          f" -> model {lo2*1e3:5.2f} ms, masurat os-364 {m2*1e3:5.2f} ms (x{f:.2f})")
+    print(f"  attn_back_tile_3   emisie {i3*1e3:5.2f} lant {l3*1e3:5.2f} (memoria {mem3*1e3:5.2f}) partajata {sh3*1e3:5.2f}"
+          f" -> model {lo3*1e3:5.2f} ms; cu factorul x{f:.2f}: ~{lo3*f*1e3:5.2f} ms (castig x{lo2/lo3:.2f})")
+
+
 if __name__ == "__main__" and len(sys.argv) == 1:
     os358()
     os364()
     s179()
+    s180()
 
 
 if __name__ == "__main__" and len(sys.argv) > 1:
