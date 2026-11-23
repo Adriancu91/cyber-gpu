@@ -1,5 +1,30 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 173 — 23 noiembrie 2026, ~03:10–03:45 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: `attn_back_tile0_2` și `attn_back_tile_2`**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-358. Clonele vechi de pe disc nu se
+puteau aduce la zi (istorii fără legătură): lucrat din clone noi. Mesa NAK 25.0.7 reconstruit în cloud (`attn_back_tile0` identic).
+Planurile și predicțiile urcate **înainte** de cod (`133ce7c`, `f145d37`; `docs/C-157_P2_ATTN_TILE2.md`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `attn_back_tile0_2` (lângă cel vechi) | aceleași operații în aceeași ordine; plăcile V / P cu rânduri de 65, `dot` fără gardă sub diagonală, citiri câte 8, bucle câte 4; SHA-256 `9a8f9760…4a00d2`, **52 de registre** (prima compilare 135 → reparat), 33 024 B | PASS (compilat) |
+| Buclele `attn_back_tile0_2` | dP 26 instrucțiuni la 16 `ffma` (vechi 53), 0 `bssy`; `dot` sub diagonală 43 la 4 (vechi 84), 0 `bssy` | PASS |
+| T182 (4 teste) | emularea literală a GLSL-ului nou = `attn_back` mod 0 bit cu bit pe 10 forme; lansarea = `attn_back_tile0`; 7 greșeli plantate prinse | PASS (SIMULARE) |
+| `attn_back_tile_2` (lângă cel vechi) | dS-ul lui dQ cu rânduri de 65, plăcile fără gardă, citiri câte 2 / 4, bucle câte 4; SHA-256 `dc50f7d4…67468b`, **79 de registre** (104 / 84 înainte de reparații), 33 024 B | PASS (compilat) |
+| Buclele `attn_back_tile_2` | dQ ≈ 26 la 16 `ffma` (vechi 76), dK / dV 27 la 16 (vechi 120), 0 `bssy` | PASS |
+| T183 (5 teste) | emularea literală = `attn_back` mod 1 bit cu bit pe 10 forme; lansarea = `attn_back_tile`; garda `i < T` scoasă pe ultima placă prinsă (−0 → +0) | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy, **877 de teste** (+7 ignorate), build no_std | PASS |
+| Pe placă: aceiași biți și timpul (~0,7–1,1 / ~1,2–2,0 ms față de 1,81 / 3,99) | — | NOT TESTED |
+
+**Ce e nou pentru placă:** nimic încă (nepredat; vine în proba „vechi lângă nou”).
+
+**Următorul pas:** proba „vechi lângă nou” (adăugare în `attn_tile_probe`: cele 3 programe `*_2` pe aceleași seturi, judecate bit cu bit
+față de cele vechi, plus timpul pe setul mare; fără să schimb `Prog` / `PROGS` de azi, pe care OS-ul le folosește) și nota PREDARE.
+C-160 p.7 (`attn_p`) când OS-ul adaugă `T::AttnP`; la orice test nou pe placă, C-157 p.2 are întâietate.
+
+---
+
 ## Sesiunea 172 — 23 noiembrie 2026, ~02:11–02:45 (ora României), în cloud, FĂRĂ placă — **C-157 p.2, partea a doua pentru os-358: `attn_fwd_tile2`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-358. Planul și predicțiile urcate
