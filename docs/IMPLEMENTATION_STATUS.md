@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 192 — 23 noiembrie 2026, ~22:11–22:50 (ora României), în cloud, FĂRĂ placă — **ordinea 20:11, pasul 3: lipirea operațiilor „înapoi”, prima lipire (`ln_back_res`)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 191 terminată 21:28), l-am pus `ocupat`. Niciun rezultat nou de pe placă de comparat.
+Plan + predicții urcate **înainte** de cod (`3b696e0`, `docs/C-160_P7_LIPIRE_INAPOI.md`). Mesa 25.0.7 reconstruit în cloud (`ln_back` a
+ieșit identic, `369afd8d…`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `ln_back_res` (program nou, NAK) | `ln_back` + adunarea reziduală în aceeași lansare: `dx = rstd·q + dres`; SHA-256 `e2d0961e…913c1ab3ee`, 175 de instrucțiuni (ln_back 171), 19 registre; listarea = `ln_back` + o citire + un `fadd` după `fmul` (fără `ffma` nouă). `precise` pus direct pe expresie ar fi marcat 16 operații (alți biți) → pus într-o funcție separată (`add_exact`) | COMPILAT, NU RULAT |
+| Biblioteca (doar adăugări) | `Prog::LnBackRes`, `PROGRAMS_ALL_FUSED` (22), `PROGRAMS_FUSED_EXTRA`, `Plan::with_fused_back` / `fused_back` / `fused_programs`; `PROGRAMS_ALL` (18) și `PROGRAMS_ALL_3` (21) neschimbate; `check_programs` verifică 22 | — |
+| T200 (4 teste) | pasul de aur mic 10 pași `sgd` / `adamw_513` (P păstrat și `_3`): **bit cu bit** cu pasul nelipit, verdictul PyTorch trece, 73 → 69 / 75 → 71 lansări; 4 straturi 3 pași AdamW bit cu bit (137 → 129); `antrenare mini` mixt S = 1 024 și F32, 5 pași: bit cu bit; lista = cea veche fără cele 2·L `vadd` înapoi | PASS (SIMULARE), 5/5 predicții |
+| Greșeli plantate | contracția `ffma`(rstd, q, dres): 149 288 / 218 496 gradienți alți biți; `dres` greșit: alți biți + grad_abs 0,245 față de PyTorch; `dx` = `dres` / `dy` refuzat | PASS (SIMULARE) |
+| Nota pentru OS | `integration/cyber-universe/C-160_P7g_ln-back-rezidual.md` (atenție: `LnBackRes.index()` = 21) | — |
+| Planul părții a doua | `docs/C-160_P7_LIPIRE_GELU.md`: GELU' lipit în „proj-dX” (`mm_train_gelu`), predicțiile G1–G5 (~1,8 GB / ~4–5 ms pe bucata #513, DEDUS) | doar plan |
+| `tools/check.sh` | format, clippy, **962 de teste** (+7 ignorate), build no_std | PASS |
+| Pe placă: `ln_back_res` | — | NOT TESTED |
+
+**Ce e nou pentru placă:** doar programul `ln_back_res` (după `--antrenare-mini` F32 și os-352).
+
+**Următorul pas:** comparațiile când rulează pe placă (`--antrenare-mini`, os-352, gen 4, „lot”, `pci.legatura.port`); altfel ordinea 20:11
+pasul 3, partea a doua: `mm_train_gelu` după `docs/C-160_P7_LIPIRE_GELU.md` (listarea întâi).
+
+---
+
 ## Sesiunea 191 — 23 noiembrie 2026, ~21:10–21:30 (ora României), în cloud, FĂRĂ placă — **ordinea 20:11, pasul 2: circuitele speciale în înmulțirile antrenării, pe forma lui `antrenare mini`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-376 (ciclurile 17:36 / 17:38 deja
