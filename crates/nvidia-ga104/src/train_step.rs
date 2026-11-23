@@ -49,6 +49,9 @@ pub const MAX_NORM: f32 = 1.0;
 pub const GNORM_CHUNK: u32 = 4_096;
 /// Bytes of one launch in the control zone: the cbuf (0x100) then the QMD (0x100).
 pub const SLOT: u64 = 0x200;
+/// Order 20:11 step 4 ([`Plan::with_recompute`]): launches of one re-run layer — ln1, qkv, attention, out, residual 1,
+/// ln2, fc, GELU (`proj` and residual 2 write `x_out`, which is kept).
+pub const RECOMPUTE_PER_LAYER: usize = 8;
 /// SHA-256 of `vadd.sm86.sass` (Mesa NAK 25.0.7; the generation's residual addition, unchanged).
 pub const VADD_SHA256: &str = "8757ddc1348f2ae034342c24a364639db3bdb85402e70b16a84410cb4e0487f5";
 
@@ -715,6 +718,9 @@ pub struct Plan {
     /// C-160 P8 ([`Plan::resident`]): room (in distinct tokens) of the token segment lists; 0 = the plan is not
     /// resident (its lists are exactly its batch's).
     tok_cap: usize,
+    /// Order 20:11 step 4 ([`Plan::with_recompute`]): one set of layer buffers shared by all layers; the backward pass
+    /// re-runs the forward pass of every layer but the last before going back through it.
+    recompute: bool,
     /// End of the arena (exclusive).
     pub end: u64,
 }
@@ -954,8 +960,80 @@ impl Plan {
     /// How many `attn_fwd` re-launches one step has (0 for [`Plan::new`], L − 1 for [`Plan::new_p_recalc`]).
     pub fn p_relaunches(&self) -> usize {
         (0..self.layers.len())
-            .filter(|&l| self.p_rebuilt(l))
+            .filter(|&l| self.p_relaunch_at(l))
             .count()
+    }
+
+    /// True when the backward pass of layer `l` re-launches the P program alone: P lost and the layer not re-run whole.
+    fn p_relaunch_at(&self, l: usize) -> bool {
+        self.p_rebuilt(l) && !self.recomputed(l)
+    }
+
+    /// Order 20:11 step 4 (`docs/C-160_P9_RECALCULARE.md`): the same plan (programs, tiles, fusions, m/v placement,
+    /// resident or not, base) with **one** set of layer buffers shared by all layers — LayerNorm μ and 1/σ, `h1`,
+    /// `qkv`, P, `att`, `x_mid`, `h2`, `u`, `act`; each layer keeps only its output on the residual stream. The
+    /// backward pass of every layer but the last first re-runs that layer's forward pass up to GELU (8 launches,
+    /// tagged `recalcul:*`: the same programs on the same inputs, fixed summation orders, no atomics → the same
+    /// bits), then goes back through it as before. Costs [`Plan::recompute_launches`] launches per step; a P
+    /// re-launch is no longer needed. No new GPU program. A plan that already recomputes comes back unchanged.
+    pub fn with_recompute(self) -> GpuResult<Self> {
+        if self.recompute {
+            return Ok(self);
+        }
+        let shared_p = self.layers.len() > 1 && self.layers[1].p == self.layers[0].p;
+        let inputs = self.batch_tokens()?;
+        let mut p = Self::build_cap(
+            self.arch,
+            self.batch,
+            self.len,
+            &inputs,
+            self.base,
+            shared_p,
+            self.mv_ram,
+            self.tok_cap > 0,
+            true,
+        )?;
+        p.p_prog = self.p_prog;
+        p.tiles = self.tiles;
+        p.tiles3 = self.tiles3;
+        p.fused_back = self.fused_back;
+        p.fused_gelu = self.fused_gelu;
+        Ok(p)
+    }
+
+    /// True after [`Plan::with_recompute`].
+    pub fn recomputes(&self) -> bool {
+        self.recompute
+    }
+
+    /// True when the backward pass of layer `l` first re-runs the layer's forward pass (every layer but the last of a
+    /// [`Plan::with_recompute`] plan).
+    pub fn recomputed(&self, l: usize) -> bool {
+        self.recompute && l + 1 < self.layers.len()
+    }
+
+    /// The `recalcul:*` launches of one step: 8 per re-run layer, 8·(L − 1) with [`Plan::with_recompute`], else 0.
+    pub fn recompute_launches(&self) -> usize {
+        RECOMPUTE_PER_LAYER
+            * (0..self.layers.len())
+                .filter(|&l| self.recomputed(l))
+                .count()
+    }
+
+    /// The batch's tokens, from the token segment lists (each row written by exactly one segment).
+    fn batch_tokens(&self) -> GpuResult<Vec<u32>> {
+        let n = self.batch * self.len;
+        let s = &self.segs[0];
+        let mut inputs = alloc::vec![0u32; n];
+        for (k, &d) in s.dst.iter().enumerate() {
+            let (a, b) = (s.off[k] as usize, s.off[k + 1] as usize);
+            for &r in s.rows.get(a..b).ok_or(bad("pas-aur: segmentele"))? {
+                *inputs
+                    .get_mut(r as usize)
+                    .ok_or(bad("pas-aur: segmentele"))? = d;
+            }
+        }
+        Ok(inputs)
     }
 
     fn build(
@@ -967,7 +1045,9 @@ impl Plan {
         shared_p: bool,
         mv_ram: bool,
     ) -> GpuResult<Self> {
-        Self::build_cap(arch, batch, len, inputs, base, shared_p, mv_ram, false)
+        Self::build_cap(
+            arch, batch, len, inputs, base, shared_p, mv_ram, false, false,
+        )
     }
 
     /// [`Plan::build`]; `resident` = the token segment lists get room for the worst batch of this shape
@@ -982,6 +1062,7 @@ impl Plan {
         shared_p: bool,
         mv_ram: bool,
         resident: bool,
+        recompute: bool,
     ) -> GpuResult<Self> {
         let (cc, v, h) = (arch.n_emb, arch.vocab, arch.heads);
         let n = batch * len;
@@ -1035,6 +1116,20 @@ impl Plan {
         let mut layers: Vec<LayerBufs> = Vec::new();
         for _ in 0..arch.layers {
             let xin = *xs.last().unwrap_or(&0);
+            // Order 20:11 step 4: every layer after the first reuses the first one's buffers (x_mid too); only its
+            // output x_out (the next layer's input) gets its own room.
+            if let (true, Some(first)) = (recompute, layers.first().copied()) {
+                layers.push(LayerBufs {
+                    ln1: LnSaved {
+                        x: xin,
+                        ..first.ln1
+                    },
+                    ..first
+                });
+                xs.push(first.ln2.x);
+                xs.push(b.alloc(n * cc));
+                continue;
+            }
             let ln1 = LnSaved {
                 x: xin,
                 mean: b.alloc(n),
@@ -1119,6 +1214,7 @@ impl Plan {
             fused_back: false,
             fused_gelu: false,
             tok_cap: if resident { tok_cap } else { 0 },
+            recompute,
             end: b.0,
         })
     }
@@ -1195,6 +1291,7 @@ impl Plan {
             shared_p,
             self.mv_ram,
             true,
+            self.recompute,
         )?;
         p.p_prog = self.p_prog;
         p.tiles = self.tiles;
@@ -1397,6 +1494,7 @@ impl Plan {
         (31 - if self.fused_back { 2 } else { 0 } - if self.fused_gelu { 1 } else { 0 })
             * self.arch.layers
             + self.p_relaunches()
+            + self.recompute_launches()
             + if recipe == Recipe::AdamW513 { 13 } else { 11 }
     }
 
@@ -1636,6 +1734,122 @@ impl Plan {
 
     /// Forward + loss + backward: every gradient ends up in `g` (the same order as T165).
     /// `loss_scale` multiplies d(logits) (1 = plain F32 step; S at the mixed step, see [`Plan::step_mixed`]).
+    /// The forward pass of layer `l`; `rc` = the backward pass's re-run (order 20:11 step 4): the same launches, tagged
+    /// `recalcul:*`, up to GELU (`proj` and residual 2 write `x_out`, which is kept).
+    fn layer_forward(&self, out: &mut Vec<Launch>, l: usize, rc: bool) -> GpuResult<()> {
+        let tag = |rc: bool, a: &'static str, b: &'static str| if rc { b } else { a };
+        let ar = self.arch;
+        let (bsz, tl) = (self.batch, self.len);
+        let (cc, h) = (ar.n_emb, ar.heads);
+        let n = bsz * tl;
+        let f = 4 * cc;
+        let scale = ab::Args::scale_for((cc / h) as u32);
+        let w = self.w;
+        let wt = |k: usize| self.t(w, Self::li(l, k));
+        let (xin, xmid, xout) = (self.xs[2 * l], self.xs[2 * l + 1], self.xs[2 * l + 2]);
+        let wl = self.layers[l];
+        let tmp = self.dtmp;
+        let ly = Some(l);
+        Self::ln_fwd(
+            out,
+            &wl.ln1,
+            wt(0),
+            wt(1),
+            wl.h1,
+            n,
+            cc,
+            tag(rc, "inainte:ln1", "recalcul:ln1"),
+            ly,
+        )?;
+        Self::mm(
+            out,
+            (wl.h1, wt(2), wl.qkv, wt(3)),
+            (n, 3 * cc, cc),
+            mm::TB,
+            tag(rc, "inainte:qkv", "recalcul:qkv"),
+            ly,
+        )?;
+        let a = af::Args {
+            qkv: wl.qkv,
+            p: wl.p,
+            att: wl.att,
+            batch: bsz as u32,
+            t: tl as u32,
+            c: cc as u32,
+            heads: h as u32,
+            scale,
+        };
+        let fwd = if self.tiles3 {
+            Prog::AttnFwdTile3
+        } else if self.tiles {
+            Prog::AttnFwdTile2
+        } else {
+            Prog::AttnFwd
+        };
+        out.push(launch(
+            fwd,
+            a.cbuf().as_ref().map(|b| &b[..]),
+            attn_fwd_grid(fwd, &a),
+            tag(rc, "inainte:atentia", "recalcul:atentia"),
+            ly,
+        )?);
+        Self::mm(
+            out,
+            (wl.att, wt(4), tmp, wt(5)),
+            (n, cc, cc),
+            mm::TB,
+            tag(rc, "inainte:out", "recalcul:out"),
+            ly,
+        )?;
+        Self::vadd(
+            out,
+            (xin, tmp, xmid),
+            n * cc,
+            tag(rc, "inainte:rezidual1", "recalcul:rezidual1"),
+            ly,
+        )?;
+        Self::ln_fwd(
+            out,
+            &wl.ln2,
+            wt(6),
+            wt(7),
+            wl.h2,
+            n,
+            cc,
+            tag(rc, "inainte:ln2", "recalcul:ln2"),
+            ly,
+        )?;
+        Self::mm(
+            out,
+            (wl.h2, wt(8), wl.u, wt(9)),
+            (n, f, cc),
+            mm::TB,
+            tag(rc, "inainte:fc", "recalcul:fc"),
+            ly,
+        )?;
+        Self::gelu(
+            out,
+            (wl.u, 0, wl.act),
+            n * f,
+            gt::Mode::Forward,
+            tag(rc, "inainte:gelu", "recalcul:gelu"),
+            ly,
+        )?;
+        if rc {
+            return Ok(());
+        }
+        Self::mm(
+            out,
+            (wl.act, wt(10), tmp, wt(11)),
+            (n, cc, f),
+            mm::TB,
+            "inainte:proj",
+            ly,
+        )?;
+        Self::vadd(out, (xmid, tmp, xout), n * cc, "inainte:rezidual2", ly)?;
+        Ok(())
+    }
+
     fn forward_backward(&self, out: &mut Vec<Launch>, loss_scale: f32) -> GpuResult<()> {
         let ar = self.arch;
         let (bsz, tl) = (self.batch, self.len);
@@ -1664,79 +1878,7 @@ impl Plan {
             None,
         )?);
         for l in 0..ar.layers {
-            let wt = |k: usize| self.t(w, Self::li(l, k));
-            let (xin, xmid, xout) = (self.xs[2 * l], self.xs[2 * l + 1], self.xs[2 * l + 2]);
-            let wl = self.layers[l];
-            let tmp = self.dtmp;
-            let ly = Some(l);
-            Self::ln_fwd(out, &wl.ln1, wt(0), wt(1), wl.h1, n, cc, "inainte:ln1", ly)?;
-            Self::mm(
-                out,
-                (wl.h1, wt(2), wl.qkv, wt(3)),
-                (n, 3 * cc, cc),
-                mm::TB,
-                "inainte:qkv",
-                ly,
-            )?;
-            let a = af::Args {
-                qkv: wl.qkv,
-                p: wl.p,
-                att: wl.att,
-                batch: bsz as u32,
-                t: tl as u32,
-                c: cc as u32,
-                heads: h as u32,
-                scale,
-            };
-            let fwd = if self.tiles3 {
-                Prog::AttnFwdTile3
-            } else if self.tiles {
-                Prog::AttnFwdTile2
-            } else {
-                Prog::AttnFwd
-            };
-            out.push(launch(
-                fwd,
-                a.cbuf().as_ref().map(|b| &b[..]),
-                attn_fwd_grid(fwd, &a),
-                "inainte:atentia",
-                ly,
-            )?);
-            Self::mm(
-                out,
-                (wl.att, wt(4), tmp, wt(5)),
-                (n, cc, cc),
-                mm::TB,
-                "inainte:out",
-                ly,
-            )?;
-            Self::vadd(out, (xin, tmp, xmid), n * cc, "inainte:rezidual1", ly)?;
-            Self::ln_fwd(out, &wl.ln2, wt(6), wt(7), wl.h2, n, cc, "inainte:ln2", ly)?;
-            Self::mm(
-                out,
-                (wl.h2, wt(8), wl.u, wt(9)),
-                (n, f, cc),
-                mm::TB,
-                "inainte:fc",
-                ly,
-            )?;
-            Self::gelu(
-                out,
-                (wl.u, 0, wl.act),
-                n * f,
-                gt::Mode::Forward,
-                "inainte:gelu",
-                ly,
-            )?;
-            Self::mm(
-                out,
-                (wl.act, wt(10), tmp, wt(11)),
-                (n, cc, f),
-                mm::TB,
-                "inainte:proj",
-                ly,
-            )?;
-            Self::vadd(out, (xmid, tmp, xout), n * cc, "inainte:rezidual2", ly)?;
+            self.layer_forward(out, l, false)?;
         }
         let lnf = self.lnf;
         Self::ln_fwd(
@@ -1826,6 +1968,10 @@ impl Plan {
             );
             let dx2 = self.dx[1 - cur];
             let ly = Some(l);
+            if self.recomputed(l) {
+                // A later layer's forward pass overwrote this layer's buffers: re-run its forward pass (same bits).
+                self.layer_forward(out, l, true)?;
+            }
             // MLP: x = x_mid + proj(gelu(fc(LN2(x_mid))))
             if self.fused_gelu {
                 // dwide2 = GELU'(u) ⊙ (dx · W_proj), in one launch (`mm_train_gelu`).
@@ -1933,7 +2079,7 @@ impl Plan {
                 ly,
             )?;
             Self::bias_grad(out, (dx2, gt_(5)), n, cc, "inapoi:out-db", ly)?;
-            if self.p_rebuilt(l) {
+            if self.p_relaunch_at(l) {
                 // A later layer's forward pass overwrote this layer's P: rebuild it, bit for bit (same program, same
                 // qkv; att is rewritten with its own bits).
                 let a = af::Args {

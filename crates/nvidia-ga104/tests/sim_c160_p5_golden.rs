@@ -254,6 +254,10 @@ enum Fault {
     /// T201: every `mm_train_gelu` launch run as plain `mm_train` (GELU' forgotten; u's address in the bias slot,
     /// no BIAS flag, so it is not read).
     GeluForgotten,
+    /// T203: the `recalcul:*` launches dropped (the earlier layers go back on the last layer's buffers).
+    NoRecompute,
+    /// T203: layer 0's `recalcul:ln1` reads layer 1's input.
+    RecomputeWrongInput,
 }
 
 /// Which arena: P kept per layer ([`Plan::new`]), one shared P rebuilt with `attn_fwd` ([`Plan::new_p_recalc`]) or
@@ -281,6 +285,12 @@ enum Kind {
     Tiles3Gelu,
     /// T201: [`Plan::new_tiles3`] + both fusions.
     Tiles3Both,
+    /// T203: [`Plan::new`] + [`Plan::with_recompute`].
+    KeptRecompute,
+    /// T203: [`Plan::new_tiles3`] + both fusions + [`Plan::with_recompute`].
+    Tiles3BothRecompute,
+    /// T203: [`Plan::new_p_only_tiles3`] + [`Plan::with_recompute`].
+    POnlyTiles3Recompute,
 }
 
 fn plant(plan: &Plan, list: &mut Vec<Launch>, f: Fault) {
@@ -372,6 +382,16 @@ fn plant(plan: &Plan, list: &mut Vec<Launch>, f: Fault) {
                 l.prog = Prog::MmTrain;
             }
         }
+        Fault::NoRecompute => list.retain(|l| !l.tag.starts_with("recalcul:")),
+        Fault::RecomputeWrongInput => {
+            let l = list
+                .iter_mut()
+                .find(|l| l.tag == "recalcul:ln1" && l.layer == Some(0))
+                .unwrap();
+            let (from, to) = (plan.xs[0].to_le_bytes(), plan.xs[2].to_le_bytes());
+            let at = l.cbuf.windows(8).position(|w| w == from).unwrap();
+            l.cbuf[at..at + 8].copy_from_slice(&to);
+        }
         Fault::FusedWrongRes => {
             let mut n = 0;
             for l in list.iter_mut().filter(|l| l.prog == Prog::LnBackRes) {
@@ -455,6 +475,20 @@ fn run_plan(
             .unwrap()
             .with_fused_back()
             .with_fused_gelu(),
+        Kind::KeptRecompute => Plan::new(ar, bsz, tl, inputs, HEAP)
+            .unwrap()
+            .with_recompute()
+            .unwrap(),
+        Kind::Tiles3BothRecompute => Plan::new_tiles3(ar, bsz, tl, inputs, HEAP)
+            .unwrap()
+            .with_fused_back()
+            .with_fused_gelu()
+            .with_recompute()
+            .unwrap(),
+        Kind::POnlyTiles3Recompute => Plan::new_p_only_tiles3(ar, bsz, tl, inputs, HEAP)
+            .unwrap()
+            .with_recompute()
+            .unwrap(),
     };
     // T187: the arena of `Plan::new` (the same addresses as `new_tiles`), for `Fault::OldBackward`.
     let old = Plan::new(ar, bsz, tl, inputs, HEAP).unwrap();
@@ -480,6 +514,12 @@ fn run_plan(
         assert_eq!(
             list.iter().filter(|l| l.tag == "inapoi:atentia-P").count(),
             plan.p_relaunches()
+        );
+        assert_eq!(
+            list.iter()
+                .filter(|l| l.tag.starts_with("recalcul:"))
+                .count(),
+            plan.recompute_launches()
         );
         plant(&plan, &mut list, fault);
         if fault == Fault::OldBackward {
@@ -2166,4 +2206,191 @@ fn t201_fused_gelu_four_layers_and_planted_mistakes() {
         "kt c201 4 straturi: {} -> {} lansari, 3 pasi AdamW bit cu bit DA; epilogul fara ffma: {n_unf} din {n_grad} gradienti cu alti biti (PRINS); u al stratului urmator: grad_abs={:.2e} fata de PyTorch (PRINS); GELU' uitat: grad_abs={:.2e} (PRINS) (SIMULARE)",
         old.total_per_step, new.total_per_step, worst_abs[0], worst_abs[1]
     );
+}
+
+// ------------------------------------------------------------------ order 20:11 step 4: recomputation (T203)
+
+/// Predictions 1 and 2 (`docs/C-160_P9_RECALCULARE.md`): the small golden step with every layer but the last re-run in
+/// the backward pass gives the plan's own numbers bit for bit, 10 steps, both recipes (SIMULARE).
+#[test]
+fn t203_recompute_small_golden_step_is_bit_for_bit() {
+    for (recipe, name, n) in [
+        (Recipe::Sgd, "sgd", 73usize),
+        (Recipe::AdamW513, "adamw_513", 75),
+    ] {
+        let mut lines = Vec::new();
+        for (old_k, new_k, more) in [
+            (Kind::Kept, Kind::KeptRecompute, 8isize),
+            (Kind::Tiles3Both, Kind::Tiles3BothRecompute, 8),
+            (Kind::POnlyTiles3, Kind::POnlyTiles3Recompute, 7),
+        ] {
+            let old = run_mic_plan(old_k, recipe, 10, Fault::None);
+            let new = run_mic_plan(new_k, recipe, 10, Fault::None);
+            if old_k == Kind::Kept {
+                assert_eq!(old.total_per_step, n);
+            }
+            assert_eq!(
+                new.total_per_step as isize,
+                old.total_per_step as isize + more
+            );
+            assert!(new.board_bytes < old.board_bytes);
+            let same = same_bits(&new.out, &old.out);
+            let v = ts::judge(recipe, new.total_per_step, &new.out, &refs(name));
+            lines.push(format!(
+                "{new_k:?}: {} -> {} lansari, arena {} -> {} B, 10 pasi bit cu bit {}, verdictul {}",
+                old.total_per_step,
+                new.total_per_step,
+                old.board_bytes,
+                new.board_bytes,
+                if same { "DA" } else { "NU" },
+                if v.passes() { "TRECE" } else { "NU TRECE" }
+            ));
+            assert!(same, "{name} {new_k:?}: recalculat != pastrat");
+            assert!(v.passes(), "{name} {new_k:?}: verdictul");
+        }
+        println!("kt c203 {name}: {} (SIMULARE)", lines.join("; "));
+    }
+}
+
+/// Predictions 3 and 4 on four layers: bit for bit, +24 launches; the re-run forgotten or fed the wrong input caught.
+#[test]
+fn t203_recompute_four_layers_and_planted_mistakes() {
+    let ar = Arch { layers: 4, ..MIC };
+    let mut r = rng(203);
+    let params: Vec<Vec<f32>> = ar
+        .tensors()
+        .iter()
+        .map(|s| {
+            let n = s.elements();
+            if s.name.ends_with("ln1.weight")
+                || s.name.ends_with("ln2.weight")
+                || s.name == "ln.weight"
+            {
+                (0..n).map(|_| 1.0 + 0.1 * r()).collect()
+            } else {
+                (0..n).map(|_| 0.3 * r()).collect()
+            }
+        })
+        .collect();
+    let inputs = read_i32(&dir().join("intrari.i32"));
+    let targets = read_i32(&dir().join("tinte.i32"));
+    let run = |kind: Kind, fault: Fault| {
+        run_plan(
+            kind,
+            ar,
+            (B, T),
+            &params,
+            (&inputs, &targets),
+            Recipe::AdamW513,
+            3,
+            fault,
+        )
+    };
+    let old = run(Kind::Tiles3Both, Fault::None);
+    let new = run(Kind::Tiles3BothRecompute, Fault::None);
+    assert_eq!(new.total_per_step, old.total_per_step + 24);
+    assert!(
+        same_bits(&new.out, &old.out),
+        "4 straturi: recalculat != pastrat"
+    );
+    let nr = run(Kind::Tiles3BothRecompute, Fault::NoRecompute);
+    assert_eq!(nr.total_per_step, old.total_per_step);
+    assert!(
+        !same_bits(&nr.out, &old.out),
+        "fara recalculare: aceiasi biti?"
+    );
+    let wi = run(Kind::Tiles3BothRecompute, Fault::RecomputeWrongInput);
+    assert!(
+        !same_bits(&wi.out, &old.out),
+        "intrarea gresita: aceiasi biti?"
+    );
+    let rf = refs("sgd");
+    let w = run_mic_plan(Kind::KeptRecompute, Recipe::Sgd, 1, Fault::NoRecompute);
+    let g = worst(&w.out.grad1, &rf.grad1);
+    assert!(
+        g.abs > train::TOL_GRAD_ABS || g.rel_norm > train::TOL_GRAD_REL_NORM,
+        "fara recalculare neprins fata de PyTorch"
+    );
+    println!(
+        "kt c203 4 straturi: {} -> {} lansari, arena {} -> {} B, 3 pasi AdamW bit cu bit DA; fara recalculare: biti diferiti (PRINS), pas mic sgd grad_abs={:.2e} fata de PyTorch (PRINS); intrarea stratului 1 la stratul 0: biti diferiti (PRINS) (SIMULARE)",
+        old.total_per_step, new.total_per_step, old.board_bytes, new.board_bytes, g.abs
+    );
+}
+
+/// Prediction 5: a resident plan keeps the recomputation; `rebatch` keeps every address.
+#[test]
+fn t203_recompute_and_resident() {
+    let inputs = read_i32(&dir().join("intrari.i32"));
+    let a = Plan::new_tiles3(MIC, B, T, &inputs, HEAP)
+        .unwrap()
+        .with_recompute()
+        .unwrap()
+        .resident()
+        .unwrap();
+    let b = Plan::new_tiles3(MIC, B, T, &inputs, HEAP)
+        .unwrap()
+        .resident()
+        .unwrap()
+        .with_recompute()
+        .unwrap();
+    assert!(a.recomputes() && a.is_resident() && a.tiles3());
+    assert_eq!(a, b);
+    let again = a.clone().with_recompute().unwrap();
+    assert_eq!(again, a);
+    let other: Vec<u32> = inputs.iter().map(|&t| (t + 1) % MIC.vocab as u32).collect();
+    let rb = a.rebatch(&other).unwrap();
+    assert_eq!(
+        (rb.layers.clone(), rb.xs.clone(), rb.end),
+        (a.layers.clone(), a.xs.clone(), a.end)
+    );
+    assert_eq!(rb.recompute_launches(), 8 * (MIC.layers - 1));
+    assert_eq!(rb.p_relaunches(), 0);
+    println!(
+        "kt c203 rezident: recalcularea pastrata, aceeasi arena ({} B) in ambele ordini, lotul nou aceleasi adrese (SIMULARE)",
+        a.bytes()
+    );
+}
+
+/// Prediction 6 (DEDUS, addresses only — nothing runs): the arena of #513 / #651 with recomputation.
+#[test]
+fn t203_arena_memory_with_recompute() {
+    let gib = |b: u64| b as f64 / (1u64 << 30) as f64;
+    let m651 = Arch {
+        layers: 24,
+        ..train::M513
+    };
+    let tl = 512;
+    let plan = |ar: Arch, bsz: usize, rc: bool| {
+        let inputs: Vec<u32> = (0..(bsz * tl) as u32)
+            .map(|i| (i * 7919) % 16_384)
+            .collect();
+        let p = Plan::new_p_recalc(ar, bsz, tl, &inputs, HEAP).unwrap();
+        if rc { p.with_recompute().unwrap() } else { p }
+    };
+    let mut lines = Vec::new();
+    for (name, ar, bsz, want) in [
+        ("#513 12x512", train::M513, 12usize, 3.25f64),
+        ("#651 4x512", m651, 4, 3.40),
+        ("#651 6x512", m651, 6, 3.73),
+        ("#651 12x512", m651, 12, 4.73),
+    ] {
+        let before = gib(plan(ar, bsz, false).bytes());
+        let after = gib(plan(ar, bsz, true).bytes());
+        lines.push(format!(
+            "{name}: P recalculat {before:.2} -> stratul recalculat {after:.2} GiB (estimat {want})"
+        ));
+        assert!((after / want - 1.0).abs() <= 0.05, "{name}: {after}");
+        assert!(after < 7.0);
+    }
+    let mut best = 0;
+    for bsz in 1..=40 {
+        if gib(plan(m651, bsz, true).bytes()) < 7.0 {
+            best = bsz;
+        }
+    }
+    println!(
+        "kt c203 memoria arenei: {}; cel mai mare lot x 512 al lui #651 sub 7 GiB: {best} (estimat ~25) (DEDUS)",
+        lines.join("; ")
+    );
+    assert!((23..=27).contains(&best), "{best}");
 }
