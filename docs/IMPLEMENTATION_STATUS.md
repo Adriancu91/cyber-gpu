@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 183 — 23 noiembrie 2026, ~13:10–13:45 (ora României), în cloud, FĂRĂ placă — **C-157: punctul RAM ↔ VRAM (a + b)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-364 (proba cu `_3` încă nerulată).
+Planul și predicțiile urcate **înainte** de cod (`477455c`, `docs/C-157_RAM_VRAM_PROBA.md`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Antetul `clc7b5.h` (NVIDIA, MIT) | generat în `nvidia-rm570::regs::clc7b5` (`gen_regs.py` + o linie; restul fișierului identic) | PASS |
+| (a) `nvidia_ga104::ram_vram` (nou) | proba vitezei cu **motorul de copiere** (subcanalul 4): sus / jos la M/64…M, 4 × M/4 în paralel (`PIPELINED`), câte 3 ori; înregistrări = semaforul motorului în 4 cuvinte; `analyze`, `judge`, rânduri `kt ramvram`, `parse_ramvram` | PASS (compilat) |
+| Aflat la cod | canalul de lucru are doar obiectul de calcul → `gsp::user_space::alloc_copy_object` (un mesaj RM, aceeași clasă ca la imaginea golden; adăugare) | corectat în plan |
+| `gpu-sim::cmdproc` | modelul motorului de copiere (metodele din antet, biții necunoscuți refuzați, semafor fără flush refuzat; paralelismul NEmodelat) | PASS |
+| T192 (4 + 4 teste) | proba trece bit cu bit (M = 256 KiB, 1 MiB), 31 înregistrări, 48 de copii; greșeli plantate prinse | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy, **918 teste** (+7 ignorate), build no_std | PASS |
+| (b) studiul `docs/C-157_RAM_OFFLOAD.md` | ZeRO-Offload / ZeRO-Infinity / FlexGen / llama.cpp; ce mutăm în RAM pentru #513 / #651 (întâi m, v ale AdamW: ~8–10 %, ~0 suprapus); până la ~6 B parametri încap în 128 GB, practic 0,3–1,3 B | gata (DEDUS) |
+| Proba pe RTX 3070 Ti (predicție 11–13 GB/s sus, 11–13,5 jos) | — | NOT TESTED |
+
+**Ce e nou pentru placă:** motorul de copiere — un mesaj RM (`AMPERE_DMA_COPY_B` pe canalul de lucru) și metodele lui pe subcanalul 4;
+niciun registru nou. Nota: `integration/cyber-universe/C-157_RAM_VRAM_proba-motor-copiere.md`.
+
+**Următorul pas:** comparațiile când OS-ul rulează pe placă proba cu `_3` și proba `ram_vram` (au întâietate); altfel C-157: AdamW cu m, v
+în RAM strat cu strat, în SIMULARE (pasul 2 din studiu).
+
+---
+
 ## Sesiunea 182 — 23 noiembrie 2026, ~12:11–12:25 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: proba „vechi lângă nou” cu cele trei `_3`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-364. Planul și predicțiile urcate
