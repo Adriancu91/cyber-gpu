@@ -93,3 +93,34 @@ Predicții:
 **Ce e nou pentru placă:** nimic încă (programul nu e legat în probă). **Următorul pas:** `attn_fwd_tile2` → `attn_fwd_tile3` și
 `attn_back_tile_2` → `attn_back_tile_3` cu aceeași rețetă (citirile întâi, alegerile după; câte 5 în zbor e plafonul), plan + predicții
 întâi; apoi proba „vechi lângă nou” cu `_3` (ca os-364) și nota pentru OS.
+
+## `attn_back_tile_3` — planul și predicțiile (sesiunea 180, 23 nov 2026, scrise ÎNAINTE de cod)
+Program nou **lângă** `attn_back_tile` și `attn_back_tile_2` (neschimbate). Pornește de la `attn_back_tile_2.comp`: aceleași
+argumente (cbuf-ul lui `attn_back`, modul 1: dQ, dK, dV), aceeași grilă [⌈T/64⌉, H, B], blocuri de 256, aceeași memorie partajată
+(33 024 B), același model pe procesor (`attn_back_col_gpu`), fiecare lanț în aceeași ordine. Aici singurele citiri globale din bucle
+sunt **urcările plăcilor** (buclele interioare citesc doar memoria partajată), deci se schimbă doar ele:
+- **H1 — trecerea dQ (placa dS și placa K), câte 2 + 2 citiri ca la `_2`:** dS la `(tc, min(j, tc))` cu `tc = min(t, T − 1)`, K la
+  rândul `min(j, T − 1)` și coloana `min(x, d − 1)`; întâi toate citirile, apoi alegerile `cond ? v : 0,0` și scrierile partajate
+  (rețeta aflată la `attn_back_tile0_3`: NAK emite în ordinea din sursă).
+- **H2 — trecerile dK / dV (placa dS sau P, placa Q sau dO), câte 4 + 4 ca la `_2`:** dS / P la `(ic, min(t, ic))` cu
+  `ic = min(i, T − 1)`, Q / dO la rândul `ic` și coloana `min(x, d − 1)`; alegerea între dS și P (și între Q și dO, cu pasul de rând
+  3C sau C) se face **o dată pe trecere**, pe adresă (`uint64_t`), nu cu `if (pass == 0)` lângă fiecare citire.
+- Restul (buclele interioare F2 / F4, scrierile rezultatelor cu garda lor) = `attn_back_tile_2`, neschimbat.
+- De ce aceiași biți: fiecare valoare scrisă în `sa` / `sb` e aceeași ca la `_2` (aceeași adresă când condiția e adevărată, 0,0 când
+  e falsă); valorile citite la adresele strânse și aruncate nu intră nicăieri.
+
+Predicții:
+1. **Aceleași operații:** 0 `mufu`, nicio atomică, nicio memorie locală, 6 `bar.sync` (ca `_2`); același număr de `ffma` ca `_2`
+   (doar buclele interioare le au); nou doar `sel` / `imnmx` (și aritmetica pe 64 de biți a adresei alese).
+2. **Registre ≤ 80** (`_2` are 79: risc real). Dacă ies peste 80, cobor urcarea dK / dV de la 4 + 4 la 2 + 2 și notez.
+3. **Buclele (`nak_bucle.py`, coloana `nou`):** urcarea dQ (4 citiri) **1** latență pe iterație (`_2`: 4); urcarea dK / dV (8 citiri)
+   **2** (`_2`: 8, plafonul celor 6 tabele de scor); **0** zone `bssy` în ambele bucle de urcare.
+4. **SIMULARE:** emularea literală a GLSL-ului nou = `attn_back` modul 1 **bit cu bit** pe cele 10 forme din T183; lansarea =
+   `attn_back_tile` bit cu bit; NaN deasupra diagonalei lui dS / P și NaN în Q / K / dO dincolo de `d` nu schimbă niciun bit. Greșeli
+   plantate prinse: alegerea scoasă la placa dS a trecerii dQ (dacă intrările ei ajung în sume — altfel o notez ca la `_3` back0),
+   placa P în loc de dS la trecerea dK, pasul de rând C în loc de 3C la Q, QMD cu memoria partajată greșită.
+5. **Modelul pe bucle (DEDUS):** `attn_back_tile_2` → `_3` scade doar partea de memorie a urcărilor (la `_2` ~8 + 8 latențe pe placă
+   → ~2 + 2); pe placă estimat **~1,6–2,0 ms** pe setul mare față de 2,25 (os-364) — câștig mai mic decât la back0, pentru că aici
+   buclele interioare (din memoria partajată) cântăresc mai mult. Cifra exactă o scrie `nak_bucle.py` după compilare.
+
+Nimic nu rulează pe placă din sesiunea asta; `attn_back_tile`, `attn_back_tile_2`, `train_step` și proba os-364 rămân neschimbate.
