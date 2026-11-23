@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 186 — 23 noiembrie 2026, ~16:11–16:45 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: comparația probei `_3` de pe placă**
+## Sesiunea 186 — 23 noiembrie 2026, ~16:11–16:30 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: comparația probei `_3` de pe placă**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. **Test nou pe placă:** ciclul automat 15:57 (cyber-gpu `d885efd`) a rulat
 `--atentie-placi --atentie2 --atentie3` → comparația are întâietate (C-157 p.2). Planul analizei și predicțiile A1–A3 urcate **înainte** de
