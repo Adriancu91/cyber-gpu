@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 187 — 23 noiembrie 2026, ~17:11–17:45 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: atenția `_3` legată în pasul de antrenare**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-375 (proba `ram_vram`, os-376,
+e GATA DE TEST dar nerulată) → următorul pas scris: `_3` în `train_step`. Clona veche de pe disc (sesiunea 110, 50 de commit-uri
+locale vechi) păstrată în ramura locală `backup-local-vechi`; lucrat pe `origin/g0-g2-fundatie`. Planul și predicțiile urcate
+**înainte** de cod (`f8ae615`, `docs/C-157_P2_ATTN3_IN_PAS.md`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `train_step` (adăugare) | `Prog::AttnFwdTile3 / AttnBackTile0_3 / AttnBackTile3`, `PROGRAMS_ALL_3` (21), `PROGRAMS_TILES3` (14), `PROGRAMS_TILES3_P_ONLY` (15), `Plan::new_tiles3`, `new_p_only_tiles3`, `new_tiles3_mv_ram`, `new_p_only_tiles3_mv_ram`, `tiles3()`; **`PROGRAMS_ALL` rămâne 18** (simularea OS-ului refuză un program fără model) | PASS (compilat) |
+| T195 lista | aceleași arene, lansări, cbuf-uri, grile; doar 3·L programe schimbate; relansările P pe `attn_p_tile`; indicii vechi neschimbați; 21 SHA-256 | PASS (SIMULARE) |
+| T195 pasul de aur mic, 10 pași, `sgd` + `adamw_513` | `_3` = `_2` **bit cu bit** (legătura; în simulare `_3` are același model ca `_2`), verdictul PyTorch TRECE, amestecul `_2`/`_3` aceiași biți | PASS (SIMULARE) |
+| T195 4 straturi + greșeli plantate | P refăcut = P păstrat; relansare scoasă / `qkv` greșit / modul 0 pe `attn_back_tile_3` / QMD fără memorie partajată (3 din 3): PRINSE | PASS (SIMULARE) |
+| T195 `_mv_ram` | m, v în RAM = pe placă = `_2`, bit cu bit, 5 pași AdamW | PASS (SIMULARE) |
+| Predicție greșită | „memoria partajată a lui `_2` e mai mică” — nu, `attn_back_tile_2` și `_3` au aceeași (33 024 octeți) | notat în doc |
+| `tools/check.sh` | format, clippy, **935 de teste** (+4; 7 ignorate), build no_std | PASS |
+| Pe RTX 3070 Ti (atenția #513 ~191 → ~123 ms pe pas, DEDUS) | — | NOT TESTED |
+
+**Ce e nou pentru placă:** doar cele 3 programe `_3` în pas (rulate deja în proba os-375). Nota pentru OS:
+`integration/cyber-universe/C-157_P2o_atentie3-in-pas.md`; commit `e899760`.
+
+**Următorul pas:** tăietura în buclele dK / dV ale lui `attn_back_tile_3` (cel mai lung, 47 % din lanț) — plan și predicții
+întâi; comparațiile `ram_vram` (os-376) și „lot” au întâietate când rulează pe placă; C-157 p.8 (fișa de model) rămâne în coadă.
+
+---
+
 ## Sesiunea 186 — 23 noiembrie 2026, ~16:11–16:30 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: comparația probei `_3` de pe placă**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. **Test nou pe placă:** ciclul automat 15:57 (cyber-gpu `d885efd`) a rulat
