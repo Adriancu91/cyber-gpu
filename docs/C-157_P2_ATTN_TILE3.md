@@ -263,3 +263,16 @@ se compilează la fel și dă aceleași rânduri).
 - P4: nicio lansare neterminată; gărzile neatinse; memoria VRAM aceeași (bufferul refolosit, încă 3 programe + 3 pagini cbuf / QMD).
 
 **Ce NU face:** nu leagă `_3` în `train_step` (asta după ce placa confirmă P2); nu schimbă nimic din probele os-358 / os-364.
+
+## Rezultatul probei cu `_3` (sesiunea 182, SIMULARE, T191 `crates/nvidia-ga104/tests/sim_c157_p2_attn_tile3_probe.rs`)
+- Cod: `Prog3` / `PROGS3`, `launch_bytes3`, `Probe3` (rânduri `kt atentie3 …`), `OS364_NS`, `parse_attn_tile3` / `ParsedAttnTile3`
+  (commit `d885efd`). Rândurile și liniile lui `Probe2` scoase acum dintr-o funcție comună: **identice** cu cele de dinainte (192 / 192,
+  verificat cu aceeași probă construită pe ambele versiuni, inclusiv un set neidentic) — codul OS os-364 scrie aceleași rânduri.
+- T191 (4 teste, SIMULARE): SHA / registre (120 / 68 / 80) / memorie (37 888 / 33 024 / 33 024); același cbuf ca gen 1 și `_2`, QMD
+  diferit de ambele; cele trei lanțuri pe 5 seturi mici prin procesorul de comenzi: `_3` = gen 1 cuvânt cu cuvânt (și = `_2`), în
+  margine, toate exacte față de model; prinse: QMD-ul lui fwd3 cu memoria partajată gen 1 (refuzat), un ulp în dqkv (back1 „identice”
+  −1, celelalte neatinse), citire scurtă (INVALID, 0 identice), set lipsă (nu trece); rândurile ↔ parserul; cele trei parsere nu se
+  amestecă; rândurile `atentie3` = rândurile `atentie2` cu alt prefix (aceleași valori în afară de timp).
+- `tools/check.sh`: **910 teste** (+7 ignorate), clippy, format, build no_std — PASS.
+- Pe placă: NOT TESTED. Predicțiile P1–P4 de mai sus rămân de verificat când OS-ul rulează proba (nota
+  `integration/cyber-universe/C-157_P2n_atentie3-vechi-langa-nou.md`).

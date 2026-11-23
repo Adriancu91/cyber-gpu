@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 182 — 23 noiembrie 2026, ~12:11–12:40 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: proba „vechi lângă nou” cu cele trei `_3`**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-364. Planul și predicțiile urcate
+**înainte** de cod (`b6e3b5b`, `docs/C-157_P2_ATTN_TILE3.md`, secțiunea sesiunii 182).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `attn_tile_probe` (adăugare) | `Prog3` / `PROGS3` (`old()` = gen 1, `prev()` = `_2`), `launch_bytes3`, `Probe3` (rânduri `kt atentie3 …`, timpul lângă `_2`), `OS364_NS`, `parse_attn_tile3`; judecata = `judge_pair` neschimbat, față de gen 1 | PASS (compilat) |
+| Interfața veche | rândurile și liniile lui `Probe2` din funcții comune: identice cu cele de dinainte (192 / 192, ambele versiuni) | PASS |
+| T191 (4 teste) | SHA / registre / memorie ale celor 3 `_3`; trei lanțuri pe 5 seturi mici prin procesorul de comenzi: `_3` = gen 1 = `_2` cuvânt cu cuvânt, în margine; greșeli plantate prinse (memoria partajată gen 1 în QMD-ul fwd3, un ulp în dqkv, citire scurtă, set lipsă); rândurile ↔ parserul, cele trei parsere nu se amestecă | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy, **910 teste** (+7 ignorate), build no_std | PASS |
+| Nota PREDARE pentru OS | `integration/cyber-universe/C-157_P2n_atentie3-vechi-langa-nou.md` | gata |
+| Pe placă: aceiași biți ca gen 1; ~0,7–1,1 / ~0,5–0,9 / ~1,6–2,0 ms față de 1,53 / 1,54 / 2,25 | — | NOT TESTED |
+
+**Ce e nou pentru placă:** cele 3 programe `attn_fwd_tile3` / `attn_back_tile0_3` / `attn_back_tile_3` (120 / 68 / 80 registre,
+37 888 / 33 024 / 33 024 B partajați); nimic în registre sau prin GSP.
+
+**Următorul pas:** comparația, când OS-ul rulează proba cu `_3` pe placă (are întâietate); până atunci punctul nou al lui Adrian
+(măsurarea RAM ↔ VRAM + studiul `docs/C-157_RAM_OFFLOAD.md`).
+
+---
+
 ## Sesiunea 181 — 23 noiembrie 2026, ~11:10–11:35 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: `attn_fwd_tile3` (citiri fără ramură)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-364. Ramura locală veche (sesiunea 110)
