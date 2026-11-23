@@ -18,13 +18,14 @@ use std::path::{Path, PathBuf};
 
 use gpu_compute::train::{self, AdamW, Arch, Batch, Recipe};
 use gpu_sim::cmdproc::{
-    CommandProcessor, Event, GNORM_NEEDS, LN_BACK_NEEDS, LN_FWD_NEEDS, MM_TRAIN_NEEDS, XENT_NEEDS,
-    attn_back_on_cpu, attn_fwd_on_cpu, attn_p_on_cpu, colsum_on_cpu, emb_back_on_cpu,
+    CommandProcessor, Event, GNORM_NEEDS, LN_BACK_NEEDS, LN_FWD_NEEDS, MM_TRAIN_NEEDS, Needs,
+    XENT_NEEDS, attn_back_on_cpu, attn_back_tile_on_cpu, attn_back_tile0_on_cpu, attn_fwd_on_cpu,
+    attn_fwd_tile_on_cpu, attn_p_on_cpu, attn_p_tile_on_cpu, colsum_on_cpu, emb_back_on_cpu,
     emb_fwd_on_cpu, gelu_tr_on_cpu, gnorm_on_cpu, ln_back_on_cpu, ln_fwd_on_cpu, mm_train_on_cpu,
     opt_step_on_cpu, vadd_on_cpu, xent_on_cpu,
 };
 use nvidia_ga104::push::{self, PushBuf};
-use nvidia_ga104::train_step::{self as ts, Launch, Outcome, PROGRAMS_P_ONLY, Plan, Prog, Refs};
+use nvidia_ga104::train_step::{self as ts, Launch, Outcome, PROGRAMS_ALL, Plan, Prog, Refs};
 use nvidia_ga104::{transfer, xent as xe};
 use nvidia_rm570::regs::clc7c0 as c;
 
@@ -45,6 +46,14 @@ const PROGS: u64 = VA + 0x40_0000;
 /// The arena's base (`Plan::new`).
 const HEAP: u64 = VA + 0x100_0000;
 
+/// What the simulated board checks in a tiled program's QMD: its own shared memory and barriers.
+fn needs(s: nvidia_ga104::qmd::SharedMemory) -> Needs {
+    Needs {
+        shared_bytes: s.bytes,
+        barriers: u32::from(s.barriers),
+    }
+}
+
 fn prog_va(p: Prog) -> u64 {
     PROGS + 0x1_0000 * p.index() as u64
 }
@@ -64,8 +73,9 @@ impl Board {
     fn new() -> Self {
         ts::check_programs().expect("SHA-256 programe");
         let mut cp = CommandProcessor::new();
-        // All 14 (the 13 of every plan + `attn_p`, used only by `Plan::new_p_only`).
-        for p in PROGRAMS_P_ONLY {
+        // All 18 (the 13 of every plan + `attn_p`, used only by `Plan::new_p_only`, + the four tiled ones of
+        // `Plan::new_tiles` / `new_p_only_tiles`).
+        for p in PROGRAMS_ALL {
             let code = p.code();
             match p {
                 Prog::MmTrain => {
@@ -84,6 +94,26 @@ impl Board {
                 Prog::OptStep => cp.register_program(code, opt_step_on_cpu),
                 Prog::Vadd => cp.register_program(code, vadd_on_cpu),
                 Prog::AttnP => cp.register_program(code, attn_p_on_cpu),
+                Prog::AttnFwdTile2 => cp.register_program_with_needs(
+                    code,
+                    attn_fwd_tile_on_cpu,
+                    needs(p.shared().unwrap()),
+                ),
+                Prog::AttnBackTile0_2 => cp.register_program_with_needs(
+                    code,
+                    attn_back_tile0_on_cpu,
+                    needs(p.shared().unwrap()),
+                ),
+                Prog::AttnBackTile2 => cp.register_program_with_needs(
+                    code,
+                    attn_back_tile_on_cpu,
+                    needs(p.shared().unwrap()),
+                ),
+                Prog::AttnPTile => cp.register_program_with_needs(
+                    code,
+                    attn_p_tile_on_cpu,
+                    needs(p.shared().unwrap()),
+                ),
             };
             cp.mem.write(prog_va(p), code);
         }
@@ -101,7 +131,15 @@ impl Board {
 
     /// One step = one submission: the control zone, then `encode_sequence_fresh` over all the QMDs.
     fn submit(&mut self, launches: &[Launch]) {
-        let (zone, qmds) = ts::pack(launches, prog_va, ZONE).unwrap();
+        self.try_submit(launches, |_| {})
+            .unwrap_or_else(|err| panic!("pasul: {err}"));
+    }
+
+    /// [`Board::submit`] with the control zone patched first (T187: a QMD without its shared memory); the command
+    /// processor's refusal comes back as an error.
+    fn try_submit(&mut self, launches: &[Launch], patch: impl Fn(&mut [u8])) -> Result<(), String> {
+        let (mut zone, qmds) = ts::pack(launches, prog_va, ZONE).unwrap();
+        patch(&mut zone);
         assert!(zone.len() as u64 <= REC - ZONE, "zona de control prea mare");
         self.cp.mem.write(ZONE, &zone);
         let n = launches.len();
@@ -117,7 +155,7 @@ impl Board {
         let e = push::gpfifo_entry(PUSH, nw as u32, false).unwrap();
         self.cp
             .run_gpfifo(&[(e.entry0, e.entry1)])
-            .unwrap_or_else(|err| panic!("pasul: {err:?}"));
+            .map_err(|err| format!("{err:?}"))?;
         let rec: Vec<u8> = (0..4 * (n + 1))
             .flat_map(|k| {
                 self.cp
@@ -131,6 +169,7 @@ impl Board {
         self.step_ns.push(ns.iter().sum());
         self.first = self.first.wrapping_add(n as u32 + 1);
         self.log.extend(launches.iter().map(|l| l.prog));
+        Ok(())
     }
 }
 
@@ -153,6 +192,11 @@ enum Fault {
     NoPRebuild,
     /// C-160 point 7 (`docs/C-160_P7_ATTN_P_IN_PAS.md`): layer 0's P re-launch reads layer 1's `qkv`.
     PWrongQkv,
+    /// T187 (`docs/C-160_P7_PLACI_IN_PAS.md` prediction 3 — not a mistake): the two backward attention launches of a
+    /// tiled plan replaced by `Plan::new`'s `attn_back` launches (same arena), the tiled forward kept.
+    OldBackward,
+    /// T187: mode 0 (the rows of dS) launched on `attn_back_tile_2` (which exits writing nothing for mode 0).
+    TileRowsOnCols,
 }
 
 /// Which arena: P kept per layer ([`Plan::new`]), one shared P rebuilt with `attn_fwd` ([`Plan::new_p_recalc`]) or
@@ -162,6 +206,10 @@ enum Kind {
     Kept,
     Recalc,
     POnly,
+    /// [`Plan::new_tiles`] (P kept, attention on tiles).
+    Tiles,
+    /// [`Plan::new_p_only_tiles`] (one P rebuilt with `attn_p_tile`).
+    POnlyTiles,
 }
 
 fn plant(plan: &Plan, list: &mut Vec<Launch>, f: Fault) {
@@ -199,6 +247,14 @@ fn plant(plan: &Plan, list: &mut Vec<Launch>, f: Fault) {
             list.insert(at, head);
         }
         Fault::NoPRebuild => list.retain(|l| l.tag != "inapoi:atentia-P"),
+        Fault::OldBackward => {}
+        Fault::TileRowsOnCols => {
+            for l in list.iter_mut() {
+                if l.prog == Prog::AttnBackTile0_2 {
+                    l.prog = Prog::AttnBackTile2;
+                }
+            }
+        }
         Fault::PWrongQkv => {
             let l = list
                 .iter_mut()
@@ -254,7 +310,11 @@ fn run_plan(
         Kind::Kept => Plan::new(ar, bsz, tl, inputs, HEAP).unwrap(),
         Kind::Recalc => Plan::new_p_recalc(ar, bsz, tl, inputs, HEAP).unwrap(),
         Kind::POnly => Plan::new_p_only(ar, bsz, tl, inputs, HEAP).unwrap(),
+        Kind::Tiles => Plan::new_tiles(ar, bsz, tl, inputs, HEAP).unwrap(),
+        Kind::POnlyTiles => Plan::new_p_only_tiles(ar, bsz, tl, inputs, HEAP).unwrap(),
     };
+    // T187: the arena of `Plan::new` (the same addresses as `new_tiles`), for `Fault::OldBackward`.
+    let old = Plan::new(ar, bsz, tl, inputs, HEAP).unwrap();
     let mut b = Board::new();
     for (va, bytes) in plan.uploads(params, inputs, targets).unwrap() {
         b.cp.mem.write(va, &bytes);
@@ -273,6 +333,17 @@ fn run_plan(
             plan.p_relaunches()
         );
         plant(&plan, &mut list, fault);
+        if fault == Fault::OldBackward {
+            assert_eq!(kind, Kind::Tiles);
+            let ol = old.step(recipe, &opt, step).unwrap();
+            assert_eq!(ol.len(), list.len());
+            for (l, o) in list.iter_mut().zip(ol) {
+                assert_eq!((l.tag, l.layer, l.cbuf), (o.tag, o.layer, o.cbuf));
+                if l.tag.starts_with("inapoi:atentia-d") {
+                    *l = o;
+                }
+            }
+        }
         b.submit(&list);
         let rows = b.read(plan.loss_rows, bsz * tl);
         out.losses.push(Outcome::mean_loss(&rows));
@@ -956,6 +1027,277 @@ fn t185_attn_p_four_layers_and_planted_mistakes() {
     );
     println!(
         "kt c185 4 straturi: {} lansari (3 attn_p), 3 pasi AdamW bit cu bit = DA; fara relansari: PRINSA; qkv-ul altui strat: PRINSA",
+        only.total_per_step
+    );
+}
+
+// ------------------------------------------------------------------ T187: the tiled programs in the step (C-160 point 7)
+
+/// Prediction 1 (`docs/C-160_P7_PLACI_IN_PAS.md`): the tiled plans have the arenas of `new` / `new_p_only`, the same
+/// launches with the same tags, layers and cbufs; only the program and grid of the attention launches change.
+#[test]
+fn t187_the_tiled_list() {
+    let inputs = read_i32(&dir().join("intrari.i32"));
+    let params = tensors("initiale");
+    let opt = AdamW::recipe_513(&params);
+    let h = MIC.heads as u32;
+    for recipe in [Recipe::Sgd, Recipe::AdamW513] {
+        for (old, new, programs) in [
+            (
+                Plan::new(MIC, B, T, &inputs, HEAP).unwrap(),
+                Plan::new_tiles(MIC, B, T, &inputs, HEAP).unwrap(),
+                &ts::PROGRAMS_TILES[..],
+            ),
+            (
+                Plan::new_p_only(MIC, B, T, &inputs, HEAP).unwrap(),
+                Plan::new_p_only_tiles(MIC, B, T, &inputs, HEAP).unwrap(),
+                &ts::PROGRAMS_TILES_P_ONLY[..],
+            ),
+        ] {
+            assert_eq!(old.bytes(), new.bytes());
+            assert!(new.tiles() && !old.tiles());
+            assert_eq!(new.programs(), programs);
+            assert_eq!(new.p_relaunches(), old.p_relaunches());
+            let (lo, ln) = (
+                old.step(recipe, &opt, 1).unwrap(),
+                new.step(recipe, &opt, 1).unwrap(),
+            );
+            assert_eq!(lo.len(), ln.len());
+            assert_eq!(ln.len(), new.launches_per_step(recipe));
+            let mut swapped = 0;
+            for (o, n) in lo.iter().zip(&ln) {
+                assert_eq!((o.tag, o.layer, o.cbuf), (n.tag, n.layer, n.cbuf));
+                assert!(
+                    programs.contains(&n.prog),
+                    "{} nu e in lista",
+                    n.prog.name()
+                );
+                let want = match (o.prog, o.tag) {
+                    (Prog::AttnFwd, "inainte:atentia") => Prog::AttnFwdTile2,
+                    (Prog::AttnP, _) => Prog::AttnPTile,
+                    (Prog::AttnBack, "inapoi:atentia-dS") => Prog::AttnBackTile0_2,
+                    (Prog::AttnBack, "inapoi:atentia-dqkv") => Prog::AttnBackTile2,
+                    _ => o.prog,
+                };
+                assert_eq!(n.prog, want, "{}", o.tag);
+                if want != o.prog {
+                    swapped += 1;
+                    assert_eq!(n.grid, [1, h, B as u32], "{}", o.tag);
+                    assert!(n.prog.shared().is_some());
+                } else {
+                    assert_eq!(n.grid, o.grid);
+                }
+            }
+            let l = MIC.layers;
+            assert_eq!(swapped, 3 * l + old.p_relaunches());
+        }
+    }
+    // d > 64 refused.
+    let wide = Arch {
+        heads: 1,
+        n_emb: 128,
+        ..MIC
+    };
+    assert!(Plan::new_tiles(wide, B, T, &inputs, HEAP).is_err());
+    assert!(Plan::new_p_only_tiles(wide, B, T, &inputs, HEAP).is_err());
+    // Every program of every plan: the SHA-256 checked, the old indices unchanged.
+    ts::check_programs().unwrap();
+    for (k, p) in ts::PROGRAMS_P_ONLY.iter().enumerate() {
+        assert_eq!(p.index(), k);
+    }
+    for (k, p) in ts::PROGRAMS_ALL.iter().enumerate() {
+        assert_eq!(p.index(), k);
+    }
+    println!(
+        "kt c187 lista: aceleasi lansari, etichete si cbuf-uri ca new / new_p_only; schimbate doar {} lansari de atentie pe pas (grila [1, {h}, {B}])",
+        3 * MIC.layers + 1
+    );
+}
+
+/// Predictions 2–4: the small golden step on tiles, 10 steps, both recipes — PyTorch's verdict passes; the tiled
+/// backward = the old backward bit for bit on the same P; P rebuilt with `attn_p_tile` = P kept bit for bit.
+#[test]
+fn t187_tiled_small_golden_step() {
+    for (recipe, name) in [(Recipe::Sgd, "sgd"), (Recipe::AdamW513, "adamw_513")] {
+        let kept = run_mic_plan(Kind::Kept, recipe, 10, Fault::None);
+        let tiles = run_mic_plan(Kind::Tiles, recipe, 10, Fault::None);
+        let only = run_mic_plan(Kind::POnlyTiles, recipe, 10, Fault::None);
+        let oldb = run_mic_plan(Kind::Tiles, recipe, 10, Fault::OldBackward);
+        assert_eq!(tiles.total_per_step, kept.total_per_step);
+        assert_eq!(only.total_per_step, kept.total_per_step + 1);
+        let v = ts::judge(recipe, tiles.total_per_step, &tiles.out, &refs(name));
+        let vo = ts::judge(recipe, only.total_per_step, &only.out, &refs(name));
+        // Against `Plan::new` (the old attention): the losses and the weights after the last step.
+        let loss_rel = tiles
+            .out
+            .losses
+            .iter()
+            .zip(&kept.out.losses)
+            .map(|(&a, &b)| ((a - b) as f64 / b as f64).abs())
+            .fold(0.0f64, f64::max);
+        let w = worst(&tiles.out.after_last, &kept.out.after_last);
+        // The K part of every `in_proj_bias` (entries C … 2C): its true gradient is 0 (softmax does not change when a
+        // row of scores moves by a constant), so the gradient there is rounding noise and AdamW turns noise into
+        // steps of the learning rate's size — it is judged apart (absolute), everything else in the relative norm.
+        let cc = MIC.n_emb;
+        let split = |ws: &[Vec<f32>]| {
+            let mut rest = ws.to_vec();
+            let mut kb = Vec::new();
+            for (t, spec) in rest.iter_mut().zip(MIC.tensors()) {
+                if spec.name.ends_with("atentie.in_proj_bias") {
+                    kb.extend_from_slice(&t[cc..2 * cc]);
+                    t[cc..2 * cc].fill(0.0);
+                }
+            }
+            (rest, kb)
+        };
+        let ((rt, kt), (rk, kk)) = (split(&tiles.out.after_last), split(&kept.out.after_last));
+        let w_rest = worst(&rt, &rk);
+        let kbias_abs = kt
+            .iter()
+            .zip(&kk)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        let same_kept = same_bits(&tiles.out, &kept.out);
+        let same_oldb = same_bits(&tiles.out, &oldb.out);
+        let same_only = same_bits(&tiles.out, &only.out);
+        println!(
+            "kt c187 {name}: pe placi {} lansari; verdictul fata de PyTorch: {} (P refacut: {}); fata de Plan::new: bit cu bit {}, eroarea rel {:.2e}, greutatile dupa 10 pasi rel {:.2e} (abs {:.2e}, {}), fara bias-ul K rel {:.2e}, bias-ul K abs {:.2e}; inapoi pe placi = inapoi vechi bit cu bit {}; P refacut cu attn_p_tile = P pastrat bit cu bit {}",
+            tiles.total_per_step,
+            if v.passes() { "TRECE" } else { "NU TRECE" },
+            if vo.passes() { "TRECE" } else { "NU TRECE" },
+            if same_kept { "DA" } else { "NU" },
+            loss_rel,
+            w.rel_norm,
+            w.abs,
+            w.where_,
+            w_rest.rel_norm,
+            kbias_abs,
+            if same_oldb { "DA" } else { "NU" },
+            if same_only { "DA" } else { "NU" },
+        );
+        assert!(v.passes() && vo.passes(), "{name}: verdictul");
+        assert!(
+            loss_rel <= 1e-6,
+            "{name}: erorile prea departe de Plan::new"
+        );
+        // Prediction 2 said rel ≤ 1e-5 for every tensor: missed at `adamw_513` on the K bias only (3.9e-3 rel there,
+        // 7.8e-6 abs — see the doc); the bound below for the K bias is written after the run.
+        assert!(
+            w_rest.rel_norm <= 1e-5,
+            "{name}: greutatile prea departe de Plan::new"
+        );
+        assert!(kbias_abs <= 2e-5, "{name}: bias-ul K prea departe");
+        assert!(same_oldb, "{name}: inapoi pe placi != inapoi vechi");
+        assert!(same_only, "{name}: attn_p_tile != P pastrat");
+    }
+}
+
+/// Prediction 4 on four layers (3 `attn_p_tile` re-launches) and prediction 5: the planted mistakes are caught.
+#[test]
+fn t187_tiled_four_layers_and_planted_mistakes() {
+    let ar = Arch { layers: 4, ..MIC };
+    let mut r = rng(187);
+    let params: Vec<Vec<f32>> = ar
+        .tensors()
+        .iter()
+        .map(|s| {
+            let n = s.elements();
+            if s.name.ends_with("ln1.weight")
+                || s.name.ends_with("ln2.weight")
+                || s.name == "ln.weight"
+            {
+                (0..n).map(|_| 1.0 + 0.1 * r()).collect()
+            } else {
+                (0..n).map(|_| 0.3 * r()).collect()
+            }
+        })
+        .collect();
+    let inputs = read_i32(&dir().join("intrari.i32"));
+    let targets = read_i32(&dir().join("tinte.i32"));
+    let run = |kind: Kind, fault: Fault| {
+        run_plan(
+            kind,
+            ar,
+            (B, T),
+            &params,
+            (&inputs, &targets),
+            Recipe::AdamW513,
+            3,
+            fault,
+        )
+    };
+    let tiles = run(Kind::Tiles, Fault::None);
+    let only = run(Kind::POnlyTiles, Fault::None);
+    assert_eq!(only.total_per_step, tiles.total_per_step + 3);
+    assert_eq!(
+        only.launches_per_step
+            .iter()
+            .find(|e| e.0 == Prog::AttnPTile)
+            .map(|e| e.1),
+        Some(3)
+    );
+    assert!(same_bits(&tiles.out, &only.out), "4 straturi: alti biti");
+    let oldb = run(Kind::Tiles, Fault::OldBackward);
+    assert!(same_bits(&tiles.out, &oldb.out), "4 straturi: inapoi vechi");
+    let none = run(Kind::POnlyTiles, Fault::NoPRebuild);
+    assert!(
+        !same_bits(&tiles.out, &none.out),
+        "fara attn_p_tile: aceiasi biti?"
+    );
+    let wrong = run(Kind::POnlyTiles, Fault::PWrongQkv);
+    assert!(
+        !same_bits(&tiles.out, &wrong.out),
+        "qkv gresit: aceiasi biti?"
+    );
+    // Mode 0 on `attn_back_tile_2`: dS is never written, so the columns read a dS no launch wrote — on the simulated
+    // board that memory is unmapped and the step is refused; either way (refused or other bits) the mistake is caught.
+    let rows = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run(Kind::Tiles, Fault::TileRowsOnCols)
+    }));
+    let rows_caught = match &rows {
+        Err(_) => "pasul refuzat",
+        Ok(r) if !same_bits(&tiles.out, &r.out) => "alti biti",
+        Ok(_) => "NEPRINSA",
+    };
+    assert_ne!(
+        rows_caught, "NEPRINSA",
+        "modul 0 pe attn_back_tile_2: aceiasi biti?"
+    );
+
+    // A tiled launch whose QMD lacks the program's shared memory: refused by the command processor.
+    let plan = Plan::new_tiles(MIC, B, T, &inputs, HEAP).unwrap();
+    let mic_params = tensors("initiale");
+    let mut b = Board::new();
+    for (va, bytes) in plan.uploads(&mic_params, &inputs, &targets).unwrap() {
+        b.cp.mem.write(va, &bytes);
+    }
+    let list = plan
+        .step(Recipe::Sgd, &AdamW::recipe_513(&mic_params), 1)
+        .unwrap();
+    let k = list
+        .iter()
+        .position(|l| l.prog == Prog::AttnFwdTile2)
+        .unwrap();
+    let l = list[k].clone();
+    let refused = b.try_submit(&list, |zone| {
+        let at = k * ts::SLOT as usize;
+        let q = nvidia_ga104::qmd::ComputeQmd {
+            program_va: prog_va(l.prog),
+            registers: l.prog.registers(),
+            cbuf0_va: ZONE + at as u64,
+            cbuf0_size: 0x100,
+            grid: l.grid,
+            block: l.prog.block(),
+            release: None,
+        }
+        .to_bytes()
+        .unwrap();
+        zone[at + 0x100..at + 0x100 + q.len()].copy_from_slice(&q);
+    });
+    assert!(refused.is_err(), "QMD fara memoria partajata: acceptat?");
+    println!(
+        "kt c187 4 straturi: {} lansari (3 attn_p_tile), 3 pasi AdamW bit cu bit = P pastrat DA, = inapoi vechi DA; fara relansari / qkv-ul altui strat / modul 0 pe attn_back_tile_2 ({rows_caught}) / QMD fara memoria partajata: PRINSE",
         only.total_per_step
     );
 }

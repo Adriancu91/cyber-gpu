@@ -30,9 +30,10 @@ use gpu_core::error::{GpuError, GpuResult};
 
 use crate::qmd::{ComputeQmd, SharedMemory};
 use crate::{
-    attn_back as ab, attn_fwd as af, attn_p as ap, colsum as cs, emb_back as eb, emb_fwd as ef,
-    gelu_tr as gt, gnorm as gn, kronos_layer, ln_back as lb, ln_fwd as lf, mm_train as mm,
-    opt_step as os, xent as xe,
+    attn_back as ab, attn_back_tile_2 as abt2, attn_back_tile0_2 as abt02, attn_fwd as af,
+    attn_fwd_tile2 as aft2, attn_p as ap, attn_p_tile as apt, colsum as cs, emb_back as eb,
+    emb_fwd as ef, gelu_tr as gt, gnorm as gn, kronos_layer, ln_back as lb, ln_fwd as lf,
+    mm_train as mm, opt_step as os, xent as xe,
 };
 
 fn bad(why: &'static str) -> GpuError {
@@ -71,6 +72,15 @@ pub enum Prog {
     /// C-160 point 7 (`docs/C-160_P7_ATTN_P_IN_PAS.md`): `attn_p`, P without P·V — only in [`PROGRAMS_P_ONLY`], for
     /// the re-launches of [`Plan::new_p_only`]. Not in [`PROGRAMS`] (what the OS loads for the other plans is unchanged).
     AttnP,
+    /// C-160 point 7 (`docs/C-160_P7_PLACI_IN_PAS.md`): the forward attention on tiles (`attn_fwd_tile2`), only in
+    /// the plans of [`Plan::new_tiles`] / [`Plan::new_p_only_tiles`].
+    AttnFwdTile2,
+    /// The rows of dS (mode 0) on tiles (`attn_back_tile0_2`), tiled plans only.
+    AttnBackTile0_2,
+    /// The columns dQ, dK, dV (mode 1) on tiles (`attn_back_tile_2`), tiled plans only.
+    AttnBackTile2,
+    /// P without P·V on tiles (`attn_p_tile`), the re-launches of [`Plan::new_p_only_tiles`] only.
+    AttnPTile,
 }
 
 /// Every program a step uses (the OS loads all 13 once; `Gnorm` only runs at `adamw_513`).
@@ -88,6 +98,66 @@ pub const PROGRAMS: [Prog; 13] = [
     Prog::Gnorm,
     Prog::OptStep,
     Prog::Vadd,
+];
+
+/// Every program any plan may launch: [`PROGRAMS_P_ONLY`] then the four tiled ones, so every older program keeps its
+/// [`Prog::index`] (`check_programs` checks all of them).
+pub const PROGRAMS_ALL: [Prog; 18] = [
+    Prog::MmTrain,
+    Prog::Xent,
+    Prog::LnFwd,
+    Prog::LnBack,
+    Prog::Colsum,
+    Prog::GeluTr,
+    Prog::AttnFwd,
+    Prog::AttnBack,
+    Prog::EmbFwd,
+    Prog::EmbBack,
+    Prog::Gnorm,
+    Prog::OptStep,
+    Prog::Vadd,
+    Prog::AttnP,
+    Prog::AttnFwdTile2,
+    Prog::AttnBackTile0_2,
+    Prog::AttnBackTile2,
+    Prog::AttnPTile,
+];
+
+/// What a [`Plan::new_tiles`] step launches: the 11 programs without attention + the three tiled attention programs.
+pub const PROGRAMS_TILES: [Prog; 14] = [
+    Prog::MmTrain,
+    Prog::Xent,
+    Prog::LnFwd,
+    Prog::LnBack,
+    Prog::Colsum,
+    Prog::GeluTr,
+    Prog::EmbFwd,
+    Prog::EmbBack,
+    Prog::Gnorm,
+    Prog::OptStep,
+    Prog::Vadd,
+    Prog::AttnFwdTile2,
+    Prog::AttnBackTile0_2,
+    Prog::AttnBackTile2,
+];
+
+/// [`PROGRAMS_TILES`] + [`Prog::AttnPTile`]: what a [`Plan::new_p_only_tiles`] step launches.
+pub const PROGRAMS_TILES_P_ONLY: [Prog; 15] = [
+    Prog::MmTrain,
+    Prog::Xent,
+    Prog::LnFwd,
+    Prog::LnBack,
+    Prog::Colsum,
+    Prog::GeluTr,
+    Prog::EmbFwd,
+    Prog::EmbBack,
+    Prog::Gnorm,
+    Prog::OptStep,
+    Prog::Vadd,
+    Prog::AttnFwdTile2,
+    Prog::AttnBackTile0_2,
+    Prog::AttnBackTile2,
+    Prog::AttnPTile,
 ];
 
 /// [`PROGRAMS`] + [`Prog::AttnP`] at the end (so every old program keeps its [`Prog::index`]): what a
@@ -126,6 +196,10 @@ impl Prog {
             Prog::OptStep => os::OPT_STEP,
             Prog::Vadd => kronos_layer::VADD,
             Prog::AttnP => ap::ATTN_P,
+            Prog::AttnFwdTile2 => aft2::ATTN_FWD_TILE2,
+            Prog::AttnBackTile0_2 => abt02::ATTN_BACK_TILE0_2,
+            Prog::AttnBackTile2 => abt2::ATTN_BACK_TILE_2,
+            Prog::AttnPTile => apt::ATTN_P_TILE,
         }
     }
 
@@ -146,6 +220,10 @@ impl Prog {
             Prog::OptStep => os::OPT_STEP_SHA256,
             Prog::Vadd => VADD_SHA256,
             Prog::AttnP => ap::ATTN_P_SHA256,
+            Prog::AttnFwdTile2 => aft2::ATTN_FWD_TILE2_SHA256,
+            Prog::AttnBackTile0_2 => abt02::ATTN_BACK_TILE0_2_SHA256,
+            Prog::AttnBackTile2 => abt2::ATTN_BACK_TILE_2_SHA256,
+            Prog::AttnPTile => apt::ATTN_P_TILE_SHA256,
         }
     }
 
@@ -165,6 +243,10 @@ impl Prog {
             Prog::OptStep => os::REGISTERS,
             Prog::Vadd => kronos_layer::Prog::Vadd.registers(),
             Prog::AttnP => ap::REGISTERS,
+            Prog::AttnFwdTile2 => aft2::REGISTERS,
+            Prog::AttnBackTile0_2 => abt02::REGISTERS,
+            Prog::AttnBackTile2 => abt2::REGISTERS,
+            Prog::AttnPTile => apt::REGISTERS,
         }
     }
 
@@ -184,6 +266,10 @@ impl Prog {
             Prog::OptStep => os::BLOCK,
             Prog::Vadd => [kronos_layer::Prog::Vadd.block(), 1, 1],
             Prog::AttnP => ap::BLOCK,
+            Prog::AttnFwdTile2 => aft2::BLOCK,
+            Prog::AttnBackTile0_2 => abt02::BLOCK,
+            Prog::AttnBackTile2 => abt2::BLOCK,
+            Prog::AttnPTile => apt::BLOCK,
         }
     }
 
@@ -194,6 +280,10 @@ impl Prog {
             Prog::LnFwd => Some(lf::SHARED),
             Prog::LnBack => Some(lb::SHARED),
             Prog::Gnorm => Some(gn::SHARED),
+            Prog::AttnFwdTile2 => Some(aft2::SHARED),
+            Prog::AttnBackTile0_2 => Some(abt02::SHARED),
+            Prog::AttnBackTile2 => Some(abt2::SHARED),
+            Prog::AttnPTile => Some(apt::SHARED),
             _ => None,
         }
     }
@@ -215,18 +305,22 @@ impl Prog {
             Prog::OptStep => "opt_step",
             Prog::Vadd => "vadd",
             Prog::AttnP => "attn_p",
+            Prog::AttnFwdTile2 => "attn_fwd_tile2",
+            Prog::AttnBackTile0_2 => "attn_back_tile0_2",
+            Prog::AttnBackTile2 => "attn_back_tile_2",
+            Prog::AttnPTile => "attn_p_tile",
         }
     }
 
-    /// Index in [`PROGRAMS_P_ONLY`] (= the index in [`PROGRAMS`] for its 13 programs).
+    /// Index in [`PROGRAMS_ALL`] (= the index in [`PROGRAMS`] / [`PROGRAMS_P_ONLY`] for their programs).
     pub fn index(self) -> usize {
-        PROGRAMS_P_ONLY.iter().position(|&p| p == self).unwrap_or(0)
+        PROGRAMS_ALL.iter().position(|&p| p == self).unwrap_or(0)
     }
 }
 
 /// Checks every program's bytes against its SHA-256 (what the OS does before loading; refuse on a mismatch).
 pub fn check_programs() -> GpuResult<()> {
-    for p in PROGRAMS_P_ONLY {
+    for p in PROGRAMS_ALL {
         if hex(&crate::sha256::digest(p.code())) != p.sha256() {
             return Err(bad("pas-aur: SHA-256 al unui program nu se potriveste"));
         }
@@ -326,6 +420,16 @@ pub fn pack(
     Ok((bytes, qmds))
 }
 
+/// The grid of a forward-attention-shaped launch (`attn_fwd::Args`): [⌈T/64⌉, H, B] for the tiled programs, the
+/// program's own grid otherwise.
+fn attn_fwd_grid(prog: Prog, a: &af::Args) -> [u32; 3] {
+    match prog {
+        Prog::AttnFwdTile2 => aft2::grid(a),
+        Prog::AttnPTile => apt::grid(a),
+        _ => a.grid(),
+    }
+}
+
 // ------------------------------------------------------------------ the arena
 
 /// What one LayerNorm keeps for the backward pass: its input, μ and rstd.
@@ -400,6 +504,8 @@ pub struct Plan {
     /// The program of the backward pass's P re-launches: `attn_fwd` ([`Plan::new_p_recalc`]) or `attn_p`
     /// ([`Plan::new_p_only`]); never launched by [`Plan::new`].
     p_prog: Prog,
+    /// True for [`Plan::new_tiles`] / [`Plan::new_p_only_tiles`]: the attention launches use the tiled programs.
+    tiles: bool,
     /// End of the arena (exclusive).
     pub end: u64,
 }
@@ -452,13 +558,59 @@ impl Plan {
         Ok(plan)
     }
 
+    /// The arena of [`Plan::new`] (P kept per layer), but every attention launch on the **tiled** programs
+    /// (`docs/C-160_P7_PLACI_IN_PAS.md`): `attn_fwd_tile2`, then `attn_back_tile0_2` (mode 0) and `attn_back_tile_2`
+    /// (mode 1), the same cbufs, the grid [⌈T/64⌉, H, B]. Needs d = C / H ≤ 64. Its programs are [`PROGRAMS_TILES`].
+    pub fn new_tiles(
+        arch: Arch,
+        batch: usize,
+        len: usize,
+        inputs: &[u32],
+        base: u64,
+    ) -> GpuResult<Self> {
+        let mut plan = Self::build(arch, batch, len, inputs, base, false)?;
+        plan.set_tiles(Prog::AttnFwdTile2)?;
+        Ok(plan)
+    }
+
+    /// The arena of [`Plan::new_p_only`] (one shared P) with the tiled attention of [`Plan::new_tiles`]; a lost P is
+    /// rebuilt with **`attn_p_tile`** (phases A and B of `attn_fwd_tile2`, the same P bits, T186). Its programs are
+    /// [`PROGRAMS_TILES_P_ONLY`].
+    pub fn new_p_only_tiles(
+        arch: Arch,
+        batch: usize,
+        len: usize,
+        inputs: &[u32],
+        base: u64,
+    ) -> GpuResult<Self> {
+        let mut plan = Self::build(arch, batch, len, inputs, base, true)?;
+        plan.set_tiles(Prog::AttnPTile)?;
+        Ok(plan)
+    }
+
+    fn set_tiles(&mut self, p_prog: Prog) -> GpuResult<()> {
+        let (cc, h) = (self.arch.n_emb, self.arch.heads);
+        if cc / h > aft2::MAX_D as usize {
+            return Err(bad("pas-aur: atentia pe placi cere d <= 64"));
+        }
+        self.tiles = true;
+        self.p_prog = p_prog;
+        Ok(())
+    }
+
+    /// True for the tiled plans ([`Plan::new_tiles`], [`Plan::new_p_only_tiles`]).
+    pub fn tiles(&self) -> bool {
+        self.tiles
+    }
+
     /// The programs this plan's steps launch (load these): [`PROGRAMS_P_ONLY`] for [`Plan::new_p_only`],
-    /// [`PROGRAMS`] otherwise.
+    /// [`PROGRAMS_TILES`] / [`PROGRAMS_TILES_P_ONLY`] for the tiled plans, [`PROGRAMS`] otherwise.
     pub fn programs(&self) -> &'static [Prog] {
-        if self.p_prog == Prog::AttnP {
-            &PROGRAMS_P_ONLY
-        } else {
-            &PROGRAMS
+        match (self.tiles, self.p_prog) {
+            (true, Prog::AttnPTile) => &PROGRAMS_TILES_P_ONLY,
+            (true, _) => &PROGRAMS_TILES,
+            (false, Prog::AttnP) => &PROGRAMS_P_ONLY,
+            _ => &PROGRAMS,
         }
     }
 
@@ -608,6 +760,7 @@ impl Plan {
             res,
             segs: [st, sp],
             p_prog: Prog::AttnFwd,
+            tiles: false,
             end: b.0,
         })
     }
@@ -924,10 +1077,15 @@ impl Plan {
                 heads: h as u32,
                 scale,
             };
+            let fwd = if self.tiles {
+                Prog::AttnFwdTile2
+            } else {
+                Prog::AttnFwd
+            };
             out.push(launch(
-                Prog::AttnFwd,
+                fwd,
                 a.cbuf().as_ref().map(|b| &b[..]),
-                a.grid(),
+                attn_fwd_grid(fwd, &a),
                 "inainte:atentia",
                 ly,
             )?);
@@ -1143,7 +1301,7 @@ impl Plan {
                 out.push(launch(
                     self.p_prog,
                     a.cbuf().as_ref().map(|b| &b[..]),
-                    a.grid(),
+                    attn_fwd_grid(self.p_prog, &a),
                     "inapoi:atentia-P",
                     ly,
                 )?);
@@ -1165,10 +1323,15 @@ impl Plan {
                     scale,
                     mode,
                 };
+                let (prog, grid) = match (self.tiles, mode) {
+                    (false, _) => (Prog::AttnBack, a.grid()),
+                    (true, ab::Mode::Rows) => (Prog::AttnBackTile0_2, abt02::grid(&a)),
+                    (true, ab::Mode::Columns) => (Prog::AttnBackTile2, abt2::grid(&a)),
+                };
                 out.push(launch(
-                    Prog::AttnBack,
+                    prog,
                     a.cbuf().as_ref().map(|b| &b[..]),
-                    a.grid(),
+                    grid,
                     tag,
                     ly,
                 )?);

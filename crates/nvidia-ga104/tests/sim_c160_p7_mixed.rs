@@ -69,7 +69,11 @@ impl Board {
                 Prog::OptStep => cp.register_program(code, opt_step_on_cpu),
                 Prog::Vadd => cp.register_program(code, vadd_on_cpu),
                 // Only in `PROGRAMS_P_ONLY` (`Plan::new_p_only`); this file runs `Plan::new`.
-                Prog::AttnP => unreachable!("attn_p nu e in PROGRAMS"),
+                Prog::AttnP
+                | Prog::AttnFwdTile2
+                | Prog::AttnBackTile0_2
+                | Prog::AttnBackTile2
+                | Prog::AttnPTile => unreachable!("nu e in PROGRAMS"),
             };
             cp.mem.write(prog_va(p), code);
         }
