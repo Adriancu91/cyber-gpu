@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 188 — 23 noiembrie 2026, ~18:12–19:30 (ora României), în cloud, FĂRĂ placă — **comparația os-376 (RAM ↔ VRAM) + `attn_back_tile_4`**
+## Sesiunea 188 — 23 noiembrie 2026, ~18:12–18:55 (ora României), în cloud, FĂRĂ placă — **comparația os-376 (RAM ↔ VRAM) + `attn_back_tile_4`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Clona veche de pe disc (sesiunea 110) păstrată în ramura locală
 `vechi-local-110`; lucrat pe `origin/g0-g2-fundatie`. os-376 (proba `ram_vram`) rulase pe placă la 17:36 → comparația întâi.
@@ -14,7 +14,7 @@ Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Clona veche de pe
 | Mesa NAK 25.0.7 reconstruit | `attn_back_tile_3` recompilat **identic** (`67c8d9a5…`); `attn_back_tile_4`: `74f2cb81…19eac35`, 80 de registre | PASS |
 | T196 (6 teste) | aceiași biți ca `_3` / `attn_back` modul 1 pe 10 forme, −0 păstrat, NaN deasupra diagonalei P / dS fără efect, greșeli plantate prinse | PASS (SIMULARE) |
 | Model (`nak_bucle.py` `s188`) | emisia 0,426 → 0,328 ms (×1,30); pe placă estimat ~1,23–1,34 ms față de 1,60 | DEDUS |
-| `tools/check.sh` | format, clippy, **941 de teste**, build no_std | PASS |
+| `tools/check.sh` | format, clippy, **941 de teste**, build no_std; CI verde pe `6da27a5` | PASS |
 | Pe RTX 3070 Ti | `attn_back_tile_4` | NOT TESTED |
 
 **Ce e nou pentru placă:** nimic încă (`attn_back_tile_4` nu e legat în probă / pas). **Pentru Adrian (opțional):** de verificat în ce

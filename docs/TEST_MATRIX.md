@@ -1,6 +1,6 @@
 # Matricea de teste
 
-## Rezultate — sesiunea 188 (23 nov 2026, ~18:12–19:30, cloud, fără placă) — C-157 p.2: `attn_back_tile_4`, SIMULARE
+## Rezultate — sesiunea 188 (23 nov 2026, ~18:12–18:55, cloud, fără placă) — C-157 p.2: `attn_back_tile_4`, SIMULARE
 
 | ID | Ce | Comanda | Așteptat | Observat | Rezultat |
 |---|---|---|---|---|---|
