@@ -121,3 +121,25 @@ Predicții:
 
 **Următorul pas:** `attn_back_tile_2` (modul 1: dQ, dK, dV; bucla dK/dV are 120 de instrucțiuni la 16 `ffma`) cu aceleași schimbări —
 plan + predicții întâi, cu grija la registre de aici (citiri câte 8) —, apoi proba „vechi lângă nou” și nota pentru OS.
+
+## `attn_back_tile_2` — planul și predicțiile (sesiunea 173, scrise ÎNAINTE de cod)
+Program nou **lângă** `attn_back_tile` (modul 1: dQ, dK, dV; cel vechi neschimbat). Aceleași argumente, grilă [⌈T/64⌉, H, B], blocuri
+de 256, model `attn_back_col_gpu`; fiecare lanț în aceeași ordine. Schimbările:
+- **F1** — în trecerea dQ, placa dS `[t][j]` din `sa` cu **rânduri de 65** (citită pe rânduri `ty` / `ty+1` → acum bănci diferite);
+  în trecerile dK / dV `sa` rămâne `[i][t]` cu rânduri de 64 (citirile acolo sunt deja pe bănci vecine). `sb` neschimbat (64).
+  Memoria partajată: 64 × 65 + 64 × 64 float = **33 024 de octeți** → tot 3 blocuri pe SM (ca la `attn_back_tile0_2`).
+- **F2** — dQ: plăcile `jt < bx` fără garda `j <= t` (acolo `j < t0 ≤ t`); dK / dV: plăcile `it > bx` care se termină înainte de T
+  fără garda `i < T && t <= i` (acolo `t < it·64 ≤ i < T`). Garda lui `i < T` rămâne pe ultima placă: un termen `ffma(0, 0, acc)` în
+  plus ar face din −0 un +0 (vezi T175, „bucla e până la d”).
+- **F3** — urcarea plăcilor câte 8 citiri globale, apoi cele 8 scrieri partajate (lecția de la `attn_back_tile0_2`: câte 16 → peste 120
+  de registre).
+- **F4** — buclele peste `jj` (dQ) și `ii` (dK / dV) desfăcute câte 4 (64 e multiplu de 4: fără rest).
+
+Predicții:
+1. **Aceleași operații:** 0 `mufu`, nicio atomică, nicio memorie locală; aceleași `bar.sync` ca vechiul.
+2. **Registre ≤ 80** (vechi 73) → 3 blocuri pe SM; 33 024 de octeți partajați în QMD.
+3. **Buclele:** dQ sub diagonală ≤ 30 de instrucțiuni la 16 `ffma` (vechi 76, 4 `bssy`) și 0 `bssy`; dK / dV fără gardă ≤ 30 la 16
+  (vechi 120, 8 `bssy`) și 0 `bssy`.
+4. **SIMULARE:** emularea literală a noului GLSL = `attn_back` mod 1 (dqkv) **bit cu bit** pe formele lui T174; lansarea = `attn_back_tile`;
+   prinse: QMD cu memoria partajată veche, grilă scurtă, mod 0, d > 64, garda `i < T` scoasă pe ultima placă (un −0 devine +0).
+5. **Pe placă:** dqkv bit cu bit = `attn_back_tile`; timpul pe setul mare **~1,2–2,0 ms** față de 3,99 (DEDUS).
