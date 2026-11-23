@@ -156,3 +156,40 @@ Nimic nu rulează pe placă din sesiunea asta; `attn_back_tile`, `attn_back_tile
 
 **Ce e nou pentru placă:** nimic încă (programul nu e legat în probă). **Următorul pas:** `attn_fwd_tile2` → `attn_fwd_tile3` (plan +
 predicții întâi), apoi proba „vechi lângă nou” cu cele trei `_3` (ca os-364) și nota pentru OS.
+
+## `attn_fwd_tile3` — planul și predicțiile (sesiunea 181, 23 nov 2026, scrise ÎNAINTE de cod)
+Program nou **lângă** `attn_fwd_tile` și `attn_fwd_tile2` (neschimbate). Pornește de la `attn_fwd_tile2.comp`: aceleași argumente
+(cbuf-ul lui `attn_fwd`), aceeași grilă [⌈T/64⌉, H, B], blocuri de 256, aceeași memorie partajată (37 888 B), același model pe
+procesor (`attn_fwd_tile_gpu`), fiecare sumă în aceeași ordine. Rețeta de la `_3` back (citirile întâi, alegerile după):
+- **J1 — urcarea plăcilor Q, K și V:** rândul strâns `min(i, T − 1)` / `min(j, T − 1)`, coloana `min(e, d − 1)`; cele 16 citiri ale
+  firului emise toate, apoi alegerile `cond ? v : 0,0` și cele 16 scrieri partajate (aceleași valori în `qs` / `ks` ca la `_2`).
+- **J2 — faza B (exp, P recitit și rescris):** cele 16 citiri ale lui P pe placa `jt` la `(ic, min(j, ic))` cu `ic = min(i, T − 1)`,
+  toate întâi; apoi, în ordinea de la `_2` (k afară, a înăuntru), `x = exp(v − rowm)` calculat mereu, `ps[a] = cond ? ps[a] + x :
+  ps[a]` și scrierea lui `x` doar dacă `i < T && j <= i` (o scriere nu se așteaptă).
+- **J3 — faza C, citirea lui P (P · inv, P rescris):** plăcile de **sub diagonală** (`jt < bx`: `j < i0 ≤ i` și `j < T` mereu): citirea
+  la `(ic, j)` fără ramură, `pv = (i < T) ? v · inv : 0,0`, scrierea dacă `i < T`; placa **diagonalei**: citirea la `(ic, min(j, ic))`,
+  `pv = (i < T && j <= i) ? v · inv : 0,0`, scrierea dacă `i < T && j < T` (ca înainte). Plăcile de deasupra diagonalei: neschimbate
+  (scriu 0,0, nicio citire). Apoi placa V (J1).
+- Restul (bucla fazei A, maximul pe rând, sumele din `red`, `rinv`, bucla fazei C sub / pe diagonală, scrierea lui `att`) = `_2`.
+- De ce aceiași biți: fiecare valoare care intră într-o sumă, într-un maxim sau într-o scriere e aceeași ca la `_2` (aceeași adresă când
+  condiția e adevărată, 0,0 sau suma neatinsă când e falsă); valorile citite la adresele strânse și aruncate (și `exp`-urile lor) nu
+  intră nicăieri. Citirile strânse pot nimeri elementul altui fir (diagonala) în timp ce acela îl rescrie: valoarea e aruncată.
+
+Predicții:
+1. **Aceleași operații:** 16 `mufu.ex2` + 1 `mufu.rcp` (ca `_2`: exp-urile fazei B calculate mereu, tot 16 pe placă), nicio atomică,
+   nicio memorie locală, aceleași bariere; același număr de `ffma` ca `_2`; nou doar `sel` / `imnmx` (și `fsel` / `fmnmx` dacă așa
+   scrie NAK alegerile).
+2. **Registre ≤ 128** (`_2`: 117; 2 blocuri de 256 pe SM). Dacă ies peste, cobor urcările de la 16 la 8 citiri deodată și notez.
+3. **Buclele (`nak_bucle.py`, coloana `nou`; la `_2`: 16 / 16 / 32):** bucla fazei A (placa K + S scris) **≤ 4** latențe; faza B
+   **≤ 4**; bucla exterioară a fazei C (P + placa V) **≤ 8**. Zonele `bssy` rămân doar în jurul scrierilor (nicio citire globală într-o
+   zonă `bssy`).
+4. **SIMULARE:** emularea literală a GLSL-ului nou (citiri la adresele strânse — un indice în afara bufferului oprește testul —, apoi
+   alegerile) = `attn_fwd_tile_gpu` **bit cu bit** (P și att) pe cele 10 forme din T173 / T181; lansarea = `attn_fwd_tile2` bit cu bit;
+   NaN în P deasupra diagonalei înainte de lansare (gunoiul unui pas vechi) nu schimbă niciun bit. Greșeli plantate prinse: alegerea
+   scoasă la suma din faza B (dacă intrările ei ajung în sumă — altfel o notez, ca la back), alegerea scoasă pe diagonala fazei C,
+   QMD cu memoria partajată greșită, grila cu un bloc lipsă.
+5. **Pe placă (proba „vechi lângă nou”, mai târziu):** P și att bit cu bit = `attn_fwd_tile` (~85 %); timpul pe setul mare
+   **~0,7–1,1 ms** față de 1,53 la `_2` (DEDUS: modelul cu o așteptare pe iterație dădea 0,54 → 0,27 ms, × factorul măsurat ×2,82 →
+   ~0,76; cifra după compilare o scrie `nak_bucle.py`, funcția `s181`).
+
+Nimic nu rulează pe placă din sesiunea asta; `attn_fwd_tile`, `attn_fwd_tile2`, `train_step` și proba os-364 rămân neschimbate.
