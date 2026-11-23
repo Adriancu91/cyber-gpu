@@ -70,3 +70,31 @@ Ideile (rânduri cu un element în plus contra conflictelor de bancă, citiri em
 
 **Următorul pas:** `attn_back_tile0_2` și `attn_back_tile_2` cu aceleași patru schimbări (plan scurt + predicții întâi), apoi proba
 „vechi lângă nou” (adăugare în `attn_tile_probe`, fără să schimb lista `PROGS` de azi) și nota pentru OS.
+
+## `attn_back_tile0_2` — planul și predicțiile (sesiunea 173, 23 nov 2026, scrise ÎNAINTE de cod)
+Program nou **lângă** `attn_back_tile0` (cel vechi neschimbat). Aceleași argumente (cbuf-ul lui `attn_back`, modul 0), aceeași
+grilă [⌈T/64⌉, H, B], blocuri de 256, același model pe procesor (`attn_back_row_gpu`); fiecare lanț în aceeași ordine. Cele patru
+schimbări, adaptate (aici contează și **ocuparea**: vechiul încape 3 blocuri pe SM = 24 warp-uri; vreau să rămână 3):
+- **F1** — placa V și placa P în `sb` cu **rânduri de 65** (în loc de „rotite”, `sk`), ca adresele să fie bază + constantă. Placa dO
+  rămâne în `sa` cu rânduri de 64 (citirile ei sunt aceeași adresă pe 16 fire; rămâne conflictul de 2 la 1 dintre cele două `ty`
+  ale unui warp, ca la vechi), placa dP din faza „dot” rămâne rotită în `sa` (citită pe rânduri de 64 de fire). Memoria partajată:
+  64 × 64 + 64 × 65 float = **33 024 de octeți** (+256). Cu 1 KiB rezervat pe bloc (NECUNOSCUT dacă și la noi): 3 × 34 048 =
+  102 144 ≤ 102 400 → tot 3 blocuri. Ambele plăci cu 65 (33 280) ar fi trecut peste → 2 blocuri; de aceea doar una.
+- **F2** — lanțul `dot` (firele 0–63): plăcile de sub diagonală (`jt < bx`) fără garda `i < T && j <= i` (acolo `j < i0 ≤ i`; rândurile
+  `i ≥ T` au dO = 0 și P = 0 în plăci → `dot` lor nu e folosit niciodată); placa diagonalei cu garda veche. La fel scrierea lui dP în
+  dS sub diagonală doar cu `i < T`.
+- **F3** — urcarea plăcilor dO, V și P: toate citirile globale ale unui fir emise întâi (în registre), apoi scrierile în `sa` / `sb`.
+- **F4** — bucla lui dP peste `e` și bucla `dot` peste `jj` desfăcute câte 4 (restul lui d într-o buclă scurtă); fiecare
+  acumulator primește aceleași `ffma` în aceeași ordine.
+- Partea a doua (dS = P·(dP − dot)·scale, citiri / scrieri globale) rămâne neschimbată: e limitată de memorie, nu de bucle.
+
+Predicții:
+1. **Aceleași operații:** în listare 0 `mufu`, nicio atomică, nicio memorie locală, 1 barieră; nicio `fadd`/`fmul` nouă față de vechi
+   (aceeași scădere, cele două înmulțiri, `ffma`).
+2. **Registre ≤ 80** (ca să rămână 3 blocuri: 80 × 256 × 3 = 61 440 ≤ 65 536); dacă ies peste, notez și cobor citirile emise deodată.
+3. **Buclele (nak_bucle.py):** bucla lui dP ≤ 28 de instrucțiuni la 16 `ffma` (vechi 53) și 0 `bssy`; bucla `dot` de sub diagonală
+   fără `bssy` (vechi: garda în buclă); plăcile urcate cu toate citirile înaintea primei scrieri partajate.
+4. **SIMULARE:** pe formele testului T175 (`sim_attn_back_tile0.rs`), dS = `attn_back_tile0` **bit cu bit** (același model), gărzile
+   neatinse; greșeli plantate prinse: QMD cu memoria partajată veche (32 768 < 33 024), grilă cu un bloc lipsă, mod 1, d > 64.
+5. **Pe placă (în proba „vechi lângă nou”):** dS bit cu bit = `attn_back_tile0` (100 % exacte față de model, ca în os-358); timpul pe
+   setul mare **~0,7–1,1 ms** față de 1,81 (DEDUS: bucla dP ~×2 mai scurtă, `dot` fără gardă; factorul ~2 NECUNOSCUT din os-358 rămâne).
