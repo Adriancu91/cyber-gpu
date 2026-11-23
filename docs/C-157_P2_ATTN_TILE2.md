@@ -98,3 +98,26 @@ Predicții:
    neatinse; greșeli plantate prinse: QMD cu memoria partajată veche (32 768 < 33 024), grilă cu un bloc lipsă, mod 1, d > 64.
 5. **Pe placă (în proba „vechi lângă nou”):** dS bit cu bit = `attn_back_tile0` (100 % exacte față de model, ca în os-358); timpul pe
    setul mare **~0,7–1,1 ms** față de 1,81 (DEDUS: bucla dP ~×2 mai scurtă, `dot` fără gardă; factorul ~2 NECUNOSCUT din os-358 rămâne).
+
+## Rezultatul pentru `attn_back_tile0_2` (sesiunea 173, SIMULARE, T182 `crates/nvidia-ga104/tests/sim_attn_back_tile0_2.rs`)
+- **Binarul** (Mesa NAK 25.0.7 reconstruit în cloud; `attn_back_tile0` a ieșit **identic**, `7107ecc6…`): `attn_back_tile0_2.sm86.sass`
+  SHA-256 **`9a8f97603cbcc7a89bec9430ed0d34ba940dc03077841064d85cb9962f4a00d2`**, **52 de registre**, 33 024 de octeți partajați.
+- **Predicția 1: DA** — 0 `mufu`, nicio atomică, nicio memorie locală; aceleași 32 `fmul` + 32 `fadd` (partea a doua) și 6 `bar.sync`
+  ca vechiul; `ffma` 88 (vechi 17) doar pentru că buclele sunt desfăcute (64 + 16 restul lui d + 4 + 4 în `dot`).
+- **Predicția 2: DA după o reparație.** Prima compilare (toate cele 16 + 16 citiri ale plăcilor dO și V emise deodată, apoi cele 16 ale
+  lui P): **135 de registre**, apoi 123 cu dO și V despărțite — peste 80, ar fi lăsat **1 bloc pe SM** (8 warp-uri în loc de 24).
+  Cauza: placa P (16 citiri cu adrese pe 64 de biți). Cu citirile emise **câte 8** (8 citiri, apoi cele 8 scrieri partajate, de două
+  ori pe placă): **52 de registre** → 3 blocuri pe SM (ca vechiul, 50). Deci F3 e pe jumătate: 8 așteptări de memorie pe placă → 2.
+- **Predicția 3: DA** — bucla dP: **104 instrucțiuni la 64 `ffma` = 26 la 16** (vechi 53), întârzieri 143 / 4 ≈ 36 la 16 (vechi
+  192), **0 `bssy`**; bucla `dot` de sub diagonală: 43 de instrucțiuni la 4 `ffma`, **0 `bssy`** (vechi 21 la 1 cu 1 `bssy` = 84 la 4);
+  pe diagonală 79 la 4 cu garda (4 `bssy`). Urcarea plăcilor: 8 `ldg` înaintea celor 8 `sts`, de două ori.
+- **Predicția 4: DA** — emularea literală a noului GLSL (placa dO de 64, plăcile V / P de 65, placa dP rotită, buclele desfăcute cu
+  restul lui d, `dot` fără gardă sub diagonală) = `attn_back` mod 0 **bit cu bit** pe cele 10 forme din T175 (d = 1, 32, 40, 64;
+  T = 5 … 200); lansarea = `attn_back_tile0` bit cu bit; NaN / 1e30 deasupra diagonalei lui P nu schimbă niciun bit; prinse: QMD cu
+  memoria partajată veche (32 768), grila cu un bloc lipsă (exact rândurile 128–129 nescrise, = emularea), bloc 128, grilă peste ⌈T/64⌉,
+  mod 1 (nimic scris), d = 65, garda scoasă pe placa diagonalei, restul lui d sărit.
+- **Predicția 5 (pe placă): NEMĂSURATĂ.** Rămâne ~0,7–1,1 ms pe setul mare față de 1,81 (DEDUS).
+- `tools/check.sh`: **872 de teste** (+7 ignorate), format, clippy, build no_std — PASS.
+
+**Următorul pas:** `attn_back_tile_2` (modul 1: dQ, dK, dV; bucla dK/dV are 120 de instrucțiuni la 16 `ffma`) cu aceleași schimbări —
+plan + predicții întâi, cu grija la registre de aici (citiri câte 8) —, apoi proba „vechi lângă nou” și nota pentru OS.
