@@ -1,0 +1,224 @@
+// C-157 point 2 after os-358 (docs/C-157_P2_ATTN_TILE2.md, section attn_back_tile_2, plan written before this code,
+// commit f145d37): attn_back_tile (mode 1: dQ, dK, dV) with THE SAME arithmetic in the same order (the same dqkv bits,
+// predicted) and shorter loops:
+//   F1 pass dQ: the dS tile [t][j] in sa with rows of 65 (the two ty of a warp on different banks); passes dK / dV keep
+//      sa [i][t] with rows of 64 (their reads are already on neighbouring banks); 33 024 bytes keeps 3 blocks per SM;
+//   F2 dQ: tiles jt < bx without the j <= t guard (j < t0 <= t there); dK / dV: tiles it > bx ending before T without
+//      the i < T && t <= i guard (t < it*64 <= i < T there); the last tile keeps i < T (an extra ffma(0, 0, acc) would
+//      turn a -0 into +0);
+//   F3 tile loads: a thread's global loads issued a few at a time (registers), then their shared stores: 2 at a time
+//      in pass dQ (its 16 accumulators stay live across the loads), 4 in dK / dV (8 / 4 gave 104 / 84 registers);
+//   F4 the loops over jj (dQ) and ii (dK / dV) unrolled by 4.
+// Everything else (arguments, mode 1 only, grid [ceil(T/64), H, B], blocks of 256, every chain's order) is
+// attn_back_tile.comp's. CPU model: gpu_compute::layer::attn_back_col_gpu (unchanged). Ideas: CUDA guide (bank
+// conflicts, public), siboehm SGEMM_CUDA (MIT, idea only).
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Buf { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args {
+    In qkv; In p; In dout; Buf ds; Out dqkv;
+    uint t; uint c; uint heads; uint d; uint mode; float scale;
+} args;
+
+shared float sa[64 * 65];  // dQ: dS tile [t][j], rows of 65 (F1); dK: dS tile [i][t]; dV: P tile [i][t] (rows of 64)
+shared float sb[64 * 64];  // dQ: K tile [j][e];  dK: Q tile [i][e];  dV: dO tile [i][e]
+
+void main() {
+    if (args.mode != 1u) {
+        return;
+    }
+    uint T = args.t;
+    uint C = args.c;
+    uint d = args.d;
+    uint b = gl_WorkGroupID.z;
+    uint h = gl_WorkGroupID.y;
+    uint bx = gl_WorkGroupID.x;
+    uint t0 = bx * 64u;
+    uint lid = gl_LocalInvocationID.x;
+    uint tx = lid & 15u;
+    uint ty = lid >> 4u;
+    uint ntiles = (T + 63u) / 64u;
+    uint row3 = 3u * C;
+    uint base = (b * args.heads + h) * T * T;
+
+    // pass dQ
+    float acc[16];
+    [[unroll]] for (uint n = 0u; n < 16u; n++) {
+        acc[n] = 0.0;
+    }
+    for (uint jt = 0u; jt <= bx; jt++) {
+        barrier();
+        [[dont_unroll]] for (uint hh = 0u; hh < 16u; hh += 2u) {
+            float ls[2];
+            float lk[2];
+            [[unroll]] for (uint m = 0u; m < 2u; m++) {
+                uint idx = lid + 256u * (hh + m);
+                uint r = idx >> 6u;
+                uint x = idx & 63u;
+                uint tp = t0 + r;
+                uint j = jt * 64u + x;
+                ls[m] = 0.0;
+                if (tp < T && j <= tp) {
+                    ls[m] = args.ds.v[base + tp * T + j];
+                }
+                lk[m] = 0.0;
+                uint jr = jt * 64u + r;
+                if (jr < T && x < d) {
+                    lk[m] = args.qkv.v[(b * T + jr) * row3 + C + h * d + x];
+                }
+            }
+            [[unroll]] for (uint m = 0u; m < 2u; m++) {
+                uint idx = lid + 256u * (hh + m);
+                sa[(idx >> 6u) * 65u + (idx & 63u)] = ls[m];
+                sb[idx] = lk[m];
+            }
+        }
+        barrier();
+        if (jt < bx) {
+            // F2: j < t0 <= t for every row of the block.
+            for (uint jj0 = 0u; jj0 < 64u; jj0 += 4u) {
+                uint sb0 = ty * 65u + jj0;
+                uint kb0 = jj0 * 64u + tx;
+                [[unroll]] for (uint u = 0u; u < 4u; u++) {
+                    float kb[4];
+                    [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                        kb[k] = sb[kb0 + (64u * u + 16u * k)];
+                    }
+                    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                        float sv = sa[sb0 + (1040u * a + u)];
+                        [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                            acc[a * 4u + k] = fma(sv, kb[k], acc[a * 4u + k]);
+                        }
+                    }
+                }
+            }
+        } else {
+            for (uint jj0 = 0u; jj0 < 64u; jj0 += 4u) {
+                [[unroll]] for (uint u = 0u; u < 4u; u++) {
+                    uint jj = jj0 + u;
+                    uint j = jt * 64u + jj;
+                    float kb[4];
+                    [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                        kb[k] = sb[jj * 64u + tx + 16u * k];
+                    }
+                    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                        uint r = ty + 16u * a;
+                        if (j <= t0 + r) {
+                            float sv = sa[r * 65u + jj];
+                            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                                acc[a * 4u + k] = fma(sv, kb[k], acc[a * 4u + k]);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        uint tp = t0 + ty + 16u * a;
+        [[unroll]] for (uint k = 0u; k < 4u; k++) {
+            uint e = tx + 16u * k;
+            if (tp < T && e < d) {
+                args.dqkv.v[(b * T + tp) * row3 + h * d + e] = acc[a * 4u + k];
+            }
+        }
+    }
+
+    // passes dK (pass 0: dS with Q) and dV (pass 1: P with dO)
+    [[dont_unroll]] for (uint pass = 0u; pass < 2u; pass++) {
+        [[unroll]] for (uint n = 0u; n < 16u; n++) {
+            acc[n] = 0.0;
+        }
+        for (uint it = bx; it < ntiles; it++) {
+            barrier();
+            [[dont_unroll]] for (uint hh = 0u; hh < 16u; hh += 4u) {
+                float ls[4];
+                float lb[4];
+                [[unroll]] for (uint m = 0u; m < 4u; m++) {
+                    uint idx = lid + 256u * (hh + m);
+                    uint r = idx >> 6u;
+                    uint x = idx & 63u;
+                    uint i = it * 64u + r;
+                    uint tp = t0 + x;
+                    ls[m] = 0.0;
+                    lb[m] = 0.0;
+                    if (i < T) {
+                        if (tp <= i) {
+                            if (pass == 0u) {
+                                ls[m] = args.ds.v[base + i * T + tp];
+                            } else {
+                                ls[m] = args.p.v[base + i * T + tp];
+                            }
+                        }
+                        if (x < d) {
+                            if (pass == 0u) {
+                                lb[m] = args.qkv.v[(b * T + i) * row3 + h * d + x];
+                            } else {
+                                lb[m] = args.dout.v[(b * T + i) * C + h * d + x];
+                            }
+                        }
+                    }
+                }
+                [[unroll]] for (uint m = 0u; m < 4u; m++) {
+                    uint idx = lid + 256u * (hh + m);
+                    sa[idx] = ls[m];
+                    sb[idx] = lb[m];
+                }
+            }
+            barrier();
+            if (it > bx && it * 64u + 64u <= T) {
+                // F2: t < it*64 <= i < T for every row and column of the tile.
+                for (uint ii0 = 0u; ii0 < 64u; ii0 += 4u) {
+                    uint bb0 = ii0 * 64u + tx;
+                    uint sa0 = ii0 * 64u + ty;
+                    [[unroll]] for (uint u = 0u; u < 4u; u++) {
+                        float bb[4];
+                        [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                            bb[k] = sb[bb0 + (64u * u + 16u * k)];
+                        }
+                        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                            float sv = sa[sa0 + (64u * u + 16u * a)];
+                            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                                acc[a * 4u + k] = fma(sv, bb[k], acc[a * 4u + k]);
+                            }
+                        }
+                    }
+                }
+            } else {
+                for (uint ii0 = 0u; ii0 < 64u; ii0 += 4u) {
+                    [[unroll]] for (uint u = 0u; u < 4u; u++) {
+                        uint ii = ii0 + u;
+                        uint i = it * 64u + ii;
+                        float bb[4];
+                        [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                            bb[k] = sb[ii * 64u + tx + 16u * k];
+                        }
+                        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                            uint r = ty + 16u * a;
+                            if (i < T && t0 + r <= i) {
+                                float sv = sa[ii * 64u + r];
+                                [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                                    acc[a * 4u + k] = fma(sv, bb[k], acc[a * 4u + k]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint tp = t0 + ty + 16u * a;
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                uint e = tx + 16u * k;
+                if (tp < T && e < d) {
+                    args.dqkv.v[(b * T + tp) * row3 + (pass + 1u) * C + h * d + e] = acc[a * 4u + k];
+                }
+            }
+        }
+    }
+}

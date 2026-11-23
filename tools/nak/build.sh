@@ -37,6 +37,7 @@
 #   sh tools/nak/build.sh embed_dev      # C-157 point 7: embed with the token read from the argmax result (session 170)
 #   sh tools/nak/build.sh attn_fwd_tile2 # C-157 point 2: attn_fwd_tile, same bits, shorter loops (session 172)
 #   sh tools/nak/build.sh attn_back_tile0_2 # C-157 point 2: attn_back_tile0, same bits, shorter loops (session 173)
+#   sh tools/nak/build.sh attn_back_tile_2 # C-157 point 2: attn_back_tile, same bits, shorter loops (session 173)
 #   sh tools/nak/build.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): apt install glslang-tools spirv-tools libvulkan-dev libdrm-dev
@@ -151,6 +152,9 @@ attn_back_tile0)
     ;;
 attn_back_tile0_2)
     exec sh "$0" kernel attn_back_tile0_2 64
+    ;;
+attn_back_tile_2)
+    exec sh "$0" kernel attn_back_tile_2 64
     ;;
 attn_back128)
     exec sh "$0" kernel attn_back128 64

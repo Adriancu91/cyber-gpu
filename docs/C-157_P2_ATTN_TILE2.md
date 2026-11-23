@@ -143,3 +143,24 @@ Predicții:
 4. **SIMULARE:** emularea literală a noului GLSL = `attn_back` mod 1 (dqkv) **bit cu bit** pe formele lui T174; lansarea = `attn_back_tile`;
    prinse: QMD cu memoria partajată veche, grilă scurtă, mod 0, d > 64, garda `i < T` scoasă pe ultima placă (un −0 devine +0).
 5. **Pe placă:** dqkv bit cu bit = `attn_back_tile`; timpul pe setul mare **~1,2–2,0 ms** față de 3,99 (DEDUS).
+
+## Rezultatul pentru `attn_back_tile_2` (sesiunea 173, SIMULARE, T183 `crates/nvidia-ga104/tests/sim_attn_back_tile_2.rs`)
+- **Binarul:** `attn_back_tile_2.sm86.sass` SHA-256 **`dc50f7d4e6fc3ac5b35c2f7ad81d71e7d1aad2d2cfb8a55a2ceddefa7967468b`**, **79 de
+  registre**, 33 024 de octeți partajați.
+- **Predicția 1: DA** — 0 `mufu`, nicio atomică, nicio memorie locală, aceleași 4 `bar.sync` ca vechiul.
+- **Predicția 2: DA după reparații.** Cu citirile plăcilor câte 8: **104 registre** (2 blocuri pe SM); câte 4: 84. Cauza (spre deosebire
+  de `attn_back_tile0_2`): cele 16 acumulatoare **rămân vii peste urcarea plăcilor** (lanțurile dQ / dK / dV trec prin toate plăcile).
+  Cu citirile **câte 2 în trecerea dQ și câte 4 în dK / dV: 79** → 3 blocuri pe SM (vechi 73). F3 e deci mai mic aici: 8, respectiv 4
+  așteptări de memorie pe placă (vechi 16).
+- **Predicția 3: DA** — bucla dQ de sub diagonală: **105 instrucțiuni la 64 `ffma` ≈ 26 la 16** (vechi 76, 4 `bssy`); bucla dK / dV fără
+  gardă: **108 la 64 = 27 la 16** (vechi 120, 8 `bssy`); **0 `bssy`** în ambele. Pe plăcile cu gardă (diagonala, ultima placă): 261 / 444
+  la 64 (16 / 32 `bssy`), cum erau.
+- **Predicția 4: DA** — emularea literală = `attn_back` mod 1 **bit cu bit** pe cele 10 forme din T174; lansarea = `attn_back_tile`; NaN /
+  1e30 deasupra diagonalei lui P și dS fără efect; prinse: QMD cu memoria partajată veche, grila cu un bloc lipsă, bloc 128, grilă peste
+  ⌈T/64⌉, mod 0 (nimic scris), d = 65, **garda `i < T` scoasă pe ultima placă** (un dK construit −0 devine +0).
+- **Predicția 5 (pe placă): NEMĂSURATĂ.** ~1,2–2,0 ms față de 3,99 (DEDUS).
+- `tools/check.sh`: **877 de teste** (+7 ignorate), format, clippy, build no_std — PASS.
+
+**Toate trei programele `*_2` sunt gata în SIMULARE.** Următorul pas: proba „vechi lângă nou” (adăugare în `attn_tile_probe`, fără să
+schimb lista `PROGS` de azi: cele 3 programe noi pe aceleași seturi, judecate față de cele vechi bit cu bit, plus timpul pe setul mare)
+și nota PREDARE pentru OS.
