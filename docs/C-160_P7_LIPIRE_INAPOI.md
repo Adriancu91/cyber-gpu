@@ -57,6 +57,19 @@ pasul de azi (altfel nu mai putem spune „e același antrenament, doar mai repe
 Nu schimbă nimic din înainte, din AdamW sau din atenție. Nu atinge placa reală: pe placă, `ln_back_res` e un program nou
 care se probează abia după `--antrenare-mini` F32 și os-352, cu Adrian de față.
 
-## 7. Rezultatul
+## 7. Rezultatul (sesiunea 192, SIMULARE) — 5/5 predicții ieșite
 
-(se completează după test)
+| Predicția | Rezultat |
+|---|---|
+| P1 biți | pasul de aur mic, 10 pași, `sgd` și `adamw_513`, P păstrat (`Plan::new`) și atenția `_3`: **bit cu bit** cu pasul fără lipire, verdictul față de PyTorch trece; 4 straturi, 3 pași AdamW: bit cu bit; `antrenare mini` (vocabular 16 384), 5 pași AdamW, **mixt (S = 1 024) și F32: bit cu bit** |
+| P2 codul NAK | `ln_back_res.sm86.sass` SHA-256 `e2d0961efd8e01fd8d30f4ed48b85ada8d4fc588a1b8047725fa90913c1ab3ee`, **175 de instrucțiuni (ln_back 171), 19 registre**, 64 B partajați, o barieră; diferența față de `ln_back`: doar adresele argumentelor (dres la 0x58, c la 0x60, 1/c la 0x64) + 4 instrucțiuni: adresa, `ld.global` al lui dres, **`fadd.ftz` după `fmul.ftz r4 r7`** (rstd·q rămâne înmulțire separată, nicio `ffma` nouă). `ln_back` recompilat azi: aceeași sumă `369afd8d…` |
+| P3 lansări | 2·L mai puține: pasul de aur mic 73 → 69 (`sgd`), 75 → 71 (`adamw_513`); 4 straturi 137 → 129; lista = cea veche fără `vadd`-urile „inapoi:rezidual-ln*”, `ln_back` → `ln_back_res` cu aceleași adrese + `dres` = celălalt operand al vechiului `vadd`; restul identic (etichetă, strat, cbuf, grilă) |
+| P4 greșeli plantate | (i) modelul cu o singură `ffma`(rstd, q, dres): **149 288 din 218 496** gradienți cu alți biți — prinsă; (ii) `dres` = alt buffer (`dwide`): alți biți și față de PyTorch gradientul greșit cu 0,245 — prinsă; `dx` = `dres` sau `dy`: argumentele refuzate (`cbuf()` = `None`), modelul refuză suprapunerea |
+| P5 câștig | DEDUS, neschimbat: ~0,9 GB de trafic și 24 de lansări mai puțin pe o bucată #513, ~2–2,5 ms (~1 % din pas). Se vede doar pe placă |
+
+**Un lucru aflat pe drum:** în GLSL, `precise` se propagă înapoi prin toată expresia (16 adunări / înmulțiri marcate, inclusiv cele pe
+care NAK le contopea în `ln_back`) — ar fi schimbat biții. Soluția: adunarea într-o funcție separată (`add_exact`) cu `precise` doar
+acolo; glslang nu duce marcajul prin apel → o singură instrucțiune `NoContraction` în SPIR-V.
+
+**Teste:** T200 — `t200_the_fused_list`, `t200_fused_small_golden_step`, `t200_fused_four_layers_and_planted_mistakes`
+(`tests/sim_c160_p5_golden.rs`), `t200_mixed_mini_fused_is_bit_for_bit` (`tests/sim_c160_p7_mixed_mini.rs`). Nimic pe placa reală.

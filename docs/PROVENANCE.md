@@ -522,3 +522,9 @@ niciun octet de firmware NVIDIA.
   `integration/cyber-universe/C-160_P7f_antrenare-mini-mixt.md`: scrise de noi. Forma modelului și legea greutăților de start citite din
   `cyber-universe/kernel/src/shell/antrenare_mini.rs` (repo-ul nostru public, doar citit); generatorul xorshift64* al nostru. Ideea scalării:
   Micikevicius et al., „Mixed Precision Training”, ICLR 2018; formatul f16: IEEE 754-2008. Nimic GPL, niciun octet de firmware NVIDIA.
+
+- **Ordinea 20:11 pasul 3 — `ln_back_res` (sesiunea 192):** `tools/nak/ln_back_res.comp` (= `ln_back.comp` al nostru + o adunare),
+  `crates/nvidia-ga104/src/ln_back_res.rs`, modelele din `gpu-compute::layer` / `gpu-sim::cmdproc`, testele T200, documentul
+  `docs/C-160_P7_LIPIRE_INAPOI.md`, nota `integration/cyber-universe/C-160_P7g_ln-back-rezidual.md`: scrise de noi. Ideea lipirii (fusion)
+  e generală (llm.c, PyTorch); comportamentul lui `precise` / `NoContraction` citit în specificațiile GLSL 4.60 și SPIR-V 1.6 (Khronos) și
+  observat în ieșirea glslang 15.1. Codul compilat de Mesa NAK 25.0.7 (MIT). Nimic GPL, niciun octet de firmware NVIDIA.

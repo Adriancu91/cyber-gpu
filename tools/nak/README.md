@@ -347,3 +347,15 @@ Oracolul: `gpu_compute::train::{embed_rows, embed_back_rows}`. Testul T161. Nota
 | SHA-256 `colsum_part.sm86.sass` | `740f5d439b357d37c06685384cdfd4fb7ba5cbda84c3023f49a77565d59725ac` |
 | Argumente în bufferul constant 0 | ca la `colsum` (0x28…0x60) + **chunk la 0x64**; blocul y din `sr[0x26]` + **baza la 0x4** (lăsată 0) |
 | Nota | `docs/C-160_P7_COLSUM_IMPARTIT.md` (T170, SIMULARE) |
+
+## `ln_back_res` — `ln_back` cu adunarea reziduală lipită (23 nov 2026, sesiunea 192, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh ln_back_res` (Mesa 25.0.7 reconstruit în cloud; `ln_back` a ieșit **identic**, `369afd8d…`).
+
+| Ce | Valoare |
+|---|---|
+| Program | `ln_back_res.comp`: `ln_back.comp` + argumentul `dres`; ultima trecere scrie `dx = rstd·q + dres` |
+| Ieșire | 175 de instrucțiuni (ln_back 171), 19 registre, 64 B partajați, o barieră |
+| SHA-256 `ln_back_res.sm86.sass` | `e2d0961efd8e01fd8d30f4ed48b85ada8d4fc588a1b8047725fa90913c1ab3ee` |
+| Argumente în bufferul constant 0 | x/dy/γ/μ/rstd/dx la 0x28…0x50, **dres la 0x58, c la 0x60, 1/c la 0x64** |
+| Aritmetica | `fmul.ftz` (rstd·q) apoi `fadd.ftz` (+ dres): două rotunjiri, ca `ln_back` + `vadd`. `precise` stă într-o funcție separată (`add_exact`): pus direct pe expresie, glslang l-ar fi întins pe toate operațiile (16 `NoContraction`) și ar fi schimbat biții lui `ln_back` |
+| Nota | `docs/C-160_P7_LIPIRE_INAPOI.md` (T200, SIMULARE) |

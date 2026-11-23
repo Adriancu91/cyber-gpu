@@ -18,15 +18,16 @@ use std::path::{Path, PathBuf};
 
 use gpu_compute::train::{self, AdamW, Arch, Batch, Recipe};
 use gpu_sim::cmdproc::{
-    CommandProcessor, Event, GNORM_NEEDS, LN_BACK_NEEDS, LN_FWD_NEEDS, MM_TRAIN_NEEDS, Needs,
-    XENT_NEEDS, attn_back_on_cpu, attn_back_tile_on_cpu, attn_back_tile0_on_cpu, attn_fwd_on_cpu,
-    attn_fwd_tile_on_cpu, attn_p_on_cpu, attn_p_tile_on_cpu, colsum_on_cpu, emb_back_on_cpu,
-    emb_fwd_on_cpu, gelu_tr_on_cpu, gnorm_on_cpu, ln_back_on_cpu, ln_fwd_on_cpu, mm_train_on_cpu,
-    opt_step_on_cpu, vadd_on_cpu, xent_on_cpu,
+    CommandProcessor, Event, GNORM_NEEDS, LN_BACK_NEEDS, LN_BACK_RES_NEEDS, LN_FWD_NEEDS,
+    MM_TRAIN_NEEDS, Needs, XENT_NEEDS, attn_back_on_cpu, attn_back_tile_on_cpu,
+    attn_back_tile0_on_cpu, attn_fwd_on_cpu, attn_fwd_tile_on_cpu, attn_p_on_cpu,
+    attn_p_tile_on_cpu, colsum_on_cpu, emb_back_on_cpu, emb_fwd_on_cpu, gelu_tr_on_cpu,
+    gnorm_on_cpu, ln_back_on_cpu, ln_back_res_contracted_on_cpu, ln_back_res_on_cpu, ln_fwd_on_cpu,
+    mm_train_on_cpu, opt_step_on_cpu, vadd_on_cpu, xent_on_cpu,
 };
 use nvidia_ga104::push::{self, PushBuf};
 use nvidia_ga104::train_step::{
-    self as ts, Launch, Outcome, PROGRAMS_ALL, PROGRAMS_ALL_3, Plan, Prog, Refs,
+    self as ts, Launch, Outcome, PROGRAMS_ALL, PROGRAMS_ALL_3, PROGRAMS_ALL_FUSED, Plan, Prog, Refs,
 };
 use nvidia_ga104::{transfer, xent as xe};
 use nvidia_rm570::regs::clc7c0 as c;
@@ -73,12 +74,18 @@ struct Board {
 
 impl Board {
     fn new() -> Self {
+        Self::with_ln_back_res(ln_back_res_on_cpu)
+    }
+
+    /// T200: the board with another CPU stand-in for `ln_back_res` (the contracted one, for the planted mistake).
+    fn with_ln_back_res(ln_back_res: gpu_sim::cmdproc::ProgramFn) -> Self {
         ts::check_programs().expect("SHA-256 programe");
         let mut cp = CommandProcessor::new();
         // All 18 (the 13 of every plan + `attn_p`, used only by `Plan::new_p_only`, + the four tiled ones of
         // `Plan::new_tiles` / `new_p_only_tiles`).
         // T195: + the three `_3` programs (`PROGRAMS_ALL_3`), on the same CPU models as the first tiled ones.
-        for p in PROGRAMS_ALL_3 {
+        // T200: + `ln_back_res` (`PROGRAMS_ALL_FUSED`).
+        for p in PROGRAMS_ALL_FUSED {
             let code = p.code();
             match p {
                 Prog::MmTrain => {
@@ -132,6 +139,9 @@ impl Board {
                     attn_back_tile_on_cpu,
                     needs(p.shared().unwrap()),
                 ),
+                Prog::LnBackRes => {
+                    cp.register_program_with_needs(code, ln_back_res, LN_BACK_RES_NEEDS)
+                }
             };
             cp.mem.write(prog_va(p), code);
         }
@@ -222,6 +232,11 @@ enum Fault {
     Swap3To2Back,
     /// T195 (prediction 4): the backward `_2` launches of a `_2` plan swapped for their `_3` partners.
     Swap2To3Back,
+    /// T200: every `ln_back_res` launch adds the wrong buffer (`dwide`) instead of the residual path's gradient.
+    FusedWrongRes,
+    /// T200: `ln_back_res` run by the contracted model (one FFMA for rstd·q + dres) — what NAK would make without
+    /// `add_exact`.
+    FusedContracted,
 }
 
 /// Which arena: P kept per layer ([`Plan::new`]), one shared P rebuilt with `attn_fwd` ([`Plan::new_p_recalc`]) or
@@ -239,6 +254,10 @@ enum Kind {
     Tiles3,
     /// T195: [`Plan::new_p_only_tiles3`].
     POnlyTiles3,
+    /// T200: [`Plan::new`] + [`Plan::with_fused_back`].
+    KeptFused,
+    /// T200: [`Plan::new_tiles3`] + [`Plan::with_fused_back`].
+    Tiles3Fused,
 }
 
 fn plant(plan: &Plan, list: &mut Vec<Launch>, f: Fault) {
@@ -314,6 +333,15 @@ fn plant(plan: &Plan, list: &mut Vec<Launch>, f: Fault) {
                 }
             }
         }
+        Fault::FusedContracted => {}
+        Fault::FusedWrongRes => {
+            let mut n = 0;
+            for l in list.iter_mut().filter(|l| l.prog == Prog::LnBackRes) {
+                l.cbuf[0x58..0x60].copy_from_slice(&plan.dwide.to_le_bytes());
+                n += 1;
+            }
+            assert_eq!(n, 2 * plan.arch.layers);
+        }
         Fault::PWrongQkv => {
             let l = list
                 .iter_mut()
@@ -373,10 +401,20 @@ fn run_plan(
         Kind::POnlyTiles => Plan::new_p_only_tiles(ar, bsz, tl, inputs, HEAP).unwrap(),
         Kind::Tiles3 => Plan::new_tiles3(ar, bsz, tl, inputs, HEAP).unwrap(),
         Kind::POnlyTiles3 => Plan::new_p_only_tiles3(ar, bsz, tl, inputs, HEAP).unwrap(),
+        Kind::KeptFused => Plan::new(ar, bsz, tl, inputs, HEAP)
+            .unwrap()
+            .with_fused_back(),
+        Kind::Tiles3Fused => Plan::new_tiles3(ar, bsz, tl, inputs, HEAP)
+            .unwrap()
+            .with_fused_back(),
     };
     // T187: the arena of `Plan::new` (the same addresses as `new_tiles`), for `Fault::OldBackward`.
     let old = Plan::new(ar, bsz, tl, inputs, HEAP).unwrap();
-    let mut b = Board::new();
+    let mut b = if fault == Fault::FusedContracted {
+        Board::with_ln_back_res(ln_back_res_contracted_on_cpu)
+    } else {
+        Board::new()
+    };
     for (va, bytes) in plan.uploads(params, inputs, targets).unwrap() {
         b.cp.mem.write(va, &bytes);
     }
@@ -1612,5 +1650,236 @@ fn t195_tiles3_four_layers_and_planted_mistakes() {
     println!(
         "kt c195 4 straturi: {} lansari (3 attn_p_tile), 3 pasi AdamW: _3 = _2 bit cu bit DA, P refacut = P pastrat DA; fara relansari / qkv-ul altui strat / modul 0 pe attn_back_tile_3 ({rows_caught}) / QMD fara memoria partajata ({refused_all} din 3): PRINSE (SIMULARE)",
         only3.total_per_step
+    );
+}
+
+// ------------------------------------------------------------------ T200: ln_back + the residual addition fused
+
+/// T200 prediction 3 (`docs/C-160_P7_LIPIRE_INAPOI.md`): `with_fused_back` = the same list without the 2·L backward
+/// `vadd`, each backward `ln_back` launch now `ln_back_res` with the same arguments + `dres` (the vadd's other
+/// operand); the same arena; `PROGRAMS_ALL` / `PROGRAMS_ALL_3` unchanged.
+#[test]
+fn t200_the_fused_list() {
+    let inputs = read_i32(&dir().join("intrari.i32"));
+    let params = tensors("initiale");
+    let opt = AdamW::recipe_513(&params);
+    let l2 = 2 * MIC.layers;
+    for recipe in [Recipe::Sgd, Recipe::AdamW513] {
+        for old in [
+            Plan::new(MIC, B, T, &inputs, HEAP).unwrap(),
+            Plan::new_tiles3(MIC, B, T, &inputs, HEAP).unwrap(),
+            Plan::new_p_only_tiles3(MIC, B, T, &inputs, HEAP).unwrap(),
+            Plan::new_tiles3_mv_ram(MIC, B, T, &inputs, HEAP).unwrap(),
+        ] {
+            let new = old.clone().with_fused_back();
+            assert!(new.fused_back() && !old.fused_back());
+            assert_eq!(new.bytes(), old.bytes());
+            assert_eq!(new.programs(), old.programs());
+            assert_eq!(new.fused_programs(), &[Prog::LnBackRes]);
+            assert!(old.fused_programs().is_empty());
+            if recipe == Recipe::AdamW513 && old.mv_in_ram() {
+                continue; // the m, v in RAM step is built by `adam_ram` (T193), not by `step`
+            }
+            let (lo, ln) = (
+                old.step(recipe, &opt, 1).unwrap(),
+                new.step(recipe, &opt, 1).unwrap(),
+            );
+            assert_eq!(ln.len(), lo.len() - l2);
+            assert_eq!(ln.len(), new.launches_per_step(recipe));
+            assert_eq!(lo.len(), old.launches_per_step(recipe));
+            // The forward `vadd` stay (2·L), the backward ones are gone.
+            let vadds = |v: &[Launch]| v.iter().filter(|l| l.prog == Prog::Vadd).count();
+            assert_eq!((vadds(&lo), vadds(&ln)), (2 * l2, l2));
+            let mut it = ln.iter();
+            let mut fused = 0;
+            let mut k = 0;
+            while k < lo.len() {
+                let o = &lo[k];
+                let n = it.next().unwrap();
+                assert!(
+                    new.programs().contains(&n.prog) || new.fused_programs().contains(&n.prog),
+                    "{} nu e de incarcat",
+                    n.prog.name()
+                );
+                if o.tag == "inapoi:ln2-dx" || o.tag == "inapoi:ln1-dx" {
+                    // ln_back, colsum, vadd → ln_back_res, colsum.
+                    let (cs, va) = (&lo[k + 1], &lo[k + 2]);
+                    assert_eq!(va.prog, Prog::Vadd);
+                    assert!(va.tag.starts_with("inapoi:rezidual-ln"));
+                    let want_tag = if o.tag == "inapoi:ln2-dx" {
+                        "inapoi:ln2-dx+rezidual"
+                    } else {
+                        "inapoi:ln1-dx+rezidual"
+                    };
+                    assert_eq!(
+                        (n.prog, n.tag, n.layer, n.grid),
+                        (Prog::LnBackRes, want_tag, o.layer, o.grid)
+                    );
+                    // x, dy, γ, μ, rstd, dx: the same addresses; dres = the vadd's other operand.
+                    assert_eq!(n.cbuf[..0x58], o.cbuf[..0x58]);
+                    let (a, b, c) = (
+                        &va.cbuf[0x28..0x30],
+                        &va.cbuf[0x30..0x38],
+                        &va.cbuf[0x38..0x40],
+                    );
+                    assert_eq!(c, &o.cbuf[0x50..0x58], "vadd scrie peste dx al lui ln_back");
+                    let other = if a == c { b } else { a };
+                    assert_eq!(&n.cbuf[0x58..0x60], other);
+                    assert_eq!(n.cbuf[0x60..0x68], o.cbuf[0x58..0x60]); // c, 1/c
+                    let n2 = it.next().unwrap();
+                    assert_eq!(n2, cs);
+                    fused += 1;
+                    k += 3;
+                } else {
+                    assert_eq!(n, o, "{}", o.tag);
+                    k += 1;
+                }
+            }
+            assert!(it.next().is_none());
+            assert_eq!(fused, l2);
+        }
+    }
+    // dx may not be dres or dy: no cbuf.
+    let a = nvidia_ga104::ln_back_res::Args {
+        x: HEAP,
+        dy: HEAP + 0x1000,
+        gamma: HEAP + 0x2000,
+        mean: HEAP + 0x3000,
+        rstd: HEAP + 0x4000,
+        dx: HEAP + 0x5000,
+        dres: HEAP + 0x6000,
+        rows: 4,
+        c: 64,
+    };
+    assert!(a.cbuf().is_some());
+    assert!(
+        nvidia_ga104::ln_back_res::Args { dres: a.dx, ..a }
+            .cbuf()
+            .is_none()
+    );
+    assert!(
+        nvidia_ga104::ln_back_res::Args { dy: a.dx, ..a }
+            .cbuf()
+            .is_none()
+    );
+    // `PROGRAMS_ALL` (18, the OS's simulated board) and `PROGRAMS_ALL_3` (21) unchanged; `ln_back_res` after them.
+    assert_eq!(PROGRAMS_ALL.len(), 18);
+    assert_eq!(PROGRAMS_ALL_3.len(), 21);
+    assert_eq!(PROGRAMS_ALL_FUSED[..21], PROGRAMS_ALL_3[..]);
+    for (k, p) in PROGRAMS_ALL_FUSED.iter().enumerate() {
+        assert_eq!(p.index(), k);
+    }
+    ts::check_programs().unwrap();
+    println!(
+        "kt c200 lista: {l2} lansari mai putine pe pas (toate vadd inapoi), ln_back -> ln_back_res cu aceleasi adrese + dres, restul identic; PROGRAMS_ALL neschimbat (18)"
+    );
+}
+
+/// T200 predictions 1 and 3: the small golden step, 10 steps, both recipes — the fused plan = the plan without the
+/// fusion bit for bit (P kept and `_3` tiles), PyTorch's verdict passes, 2·L launches fewer.
+#[test]
+fn t200_fused_small_golden_step() {
+    for (recipe, name) in [(Recipe::Sgd, "sgd"), (Recipe::AdamW513, "adamw_513")] {
+        let mut lines = Vec::new();
+        for (old_k, new_k) in [
+            (Kind::Kept, Kind::KeptFused),
+            (Kind::Tiles3, Kind::Tiles3Fused),
+        ] {
+            let old = run_mic_plan(old_k, recipe, 10, Fault::None);
+            let new = run_mic_plan(new_k, recipe, 10, Fault::None);
+            assert_eq!(new.total_per_step + 2 * MIC.layers, old.total_per_step);
+            assert_eq!(new.board_bytes, old.board_bytes);
+            assert_eq!(
+                new.launches_per_step
+                    .iter()
+                    .find(|e| e.0 == Prog::LnBackRes)
+                    .map(|e| e.1),
+                Some(2 * MIC.layers)
+            );
+            let same = same_bits(&new.out, &old.out);
+            let v = ts::judge(recipe, new.total_per_step, &new.out, &refs(name));
+            lines.push(format!(
+                "{old_k:?}: {} -> {} lansari, 10 pasi bit cu bit {}, verdictul {}",
+                old.total_per_step,
+                new.total_per_step,
+                if same { "DA" } else { "NU" },
+                if v.passes() { "TRECE" } else { "NU TRECE" }
+            ));
+            assert!(same, "{name} {old_k:?}: lipit != nelipit");
+            assert!(v.passes(), "{name} {old_k:?}: verdictul");
+        }
+        println!("kt c200 {name}: {} (SIMULARE)", lines.join("; "));
+    }
+}
+
+/// T200 predictions 1 and 4 on four layers: bit for bit; the contracted model and a wrong `dres` caught.
+#[test]
+fn t200_fused_four_layers_and_planted_mistakes() {
+    let ar = Arch { layers: 4, ..MIC };
+    let mut r = rng(200);
+    let params: Vec<Vec<f32>> = ar
+        .tensors()
+        .iter()
+        .map(|s| {
+            let n = s.elements();
+            if s.name.ends_with("ln1.weight")
+                || s.name.ends_with("ln2.weight")
+                || s.name == "ln.weight"
+            {
+                (0..n).map(|_| 1.0 + 0.1 * r()).collect()
+            } else {
+                (0..n).map(|_| 0.3 * r()).collect()
+            }
+        })
+        .collect();
+    let inputs = read_i32(&dir().join("intrari.i32"));
+    let targets = read_i32(&dir().join("tinte.i32"));
+    let run = |kind: Kind, fault: Fault| {
+        run_plan(
+            kind,
+            ar,
+            (B, T),
+            &params,
+            (&inputs, &targets),
+            Recipe::AdamW513,
+            3,
+            fault,
+        )
+    };
+    let old = run(Kind::Tiles3, Fault::None);
+    let new = run(Kind::Tiles3Fused, Fault::None);
+    assert_eq!(new.total_per_step + 8, old.total_per_step);
+    assert!(
+        same_bits(&new.out, &old.out),
+        "4 straturi: lipit != nelipit"
+    );
+    // Prediction 4 (i): one FFMA instead of FMUL + FADD → other bits.
+    let fma = run(Kind::Tiles3Fused, Fault::FusedContracted);
+    let n_diff = fma
+        .out
+        .grad1
+        .iter()
+        .flatten()
+        .zip(old.out.grad1.iter().flatten())
+        .filter(|(a, b)| a.to_bits() != b.to_bits())
+        .count();
+    assert!(n_diff > 0, "contractia ffma: aceiasi biti?");
+    // Prediction 4 (ii): `dres` = another buffer → other bits, and against PyTorch the small step fails.
+    let wrong = run(Kind::Tiles3Fused, Fault::FusedWrongRes);
+    assert!(
+        !same_bits(&wrong.out, &old.out),
+        "dres gresit: aceiasi biti?"
+    );
+    let rf = refs("sgd");
+    let w = run_mic_plan(Kind::Tiles3Fused, Recipe::Sgd, 1, Fault::FusedWrongRes);
+    let g = worst(&w.out.grad1, &rf.grad1);
+    assert!(
+        g.abs > train::TOL_GRAD_ABS || g.rel_norm > train::TOL_GRAD_REL_NORM,
+        "dres gresit neprins fata de PyTorch"
+    );
+    let n_grad = old.out.grad1.iter().map(Vec::len).sum::<usize>();
+    println!(
+        "kt c200 4 straturi: {} -> {} lansari, 3 pasi AdamW bit cu bit DA; contractia ffma: {n_diff} din {n_grad} gradienti cu alti biti (PRINSA); dres gresit: alti biti + fata de PyTorch grad_abs={:.2e} (PRINSA) (SIMULARE)",
+        old.total_per_step, new.total_per_step, g.abs
     );
 }

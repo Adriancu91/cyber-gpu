@@ -33,8 +33,8 @@ use crate::{
     attn_back as ab, attn_back_tile_2 as abt2, attn_back_tile_3 as abt3,
     attn_back_tile0_2 as abt02, attn_back_tile0_3 as abt03, attn_fwd as af, attn_fwd_tile2 as aft2,
     attn_fwd_tile3 as aft3, attn_p as ap, attn_p_tile as apt, colsum as cs, emb_back as eb,
-    emb_fwd as ef, gelu_tr as gt, gnorm as gn, kronos_layer, ln_back as lb, ln_fwd as lf,
-    mm_train as mm, opt_step as os, xent as xe,
+    emb_fwd as ef, gelu_tr as gt, gnorm as gn, kronos_layer, ln_back as lb, ln_back_res as lbr,
+    ln_fwd as lf, mm_train as mm, opt_step as os, xent as xe,
 };
 
 fn bad(why: &'static str) -> GpuError {
@@ -90,6 +90,10 @@ pub enum Prog {
     AttnBackTile0_3,
     /// The columns dQ, dK, dV (mode 1), third generation (`attn_back_tile_3`), `_3` plans only.
     AttnBackTile3,
+    /// Order 20:11 step 3 (`docs/C-160_P7_LIPIRE_INAPOI.md`): `ln_back` with the residual addition fused in
+    /// (`ln_back_res`), only in plans with [`Plan::with_fused_back`]. In [`PROGRAMS_ALL_FUSED`], not in
+    /// [`PROGRAMS_ALL`] / [`PROGRAMS_ALL_3`].
+    LnBackRes,
 }
 
 /// Every program a step uses (the OS loads all 13 once; `Gnorm` only runs at `adamw_513`).
@@ -158,6 +162,37 @@ pub const PROGRAMS_ALL_3: [Prog; 21] = [
     Prog::AttnBackTile0_3,
     Prog::AttnBackTile3,
 ];
+
+/// [`PROGRAMS_ALL_3`] + [`Prog::LnBackRes`] at the end (all 21 keep their [`Prog::index`]): every program any plan
+/// may launch, [`Plan::with_fused_back`] included. `PROGRAMS_ALL` and `PROGRAMS_ALL_3` stay as they were.
+/// `check_programs` checks all 22.
+pub const PROGRAMS_ALL_FUSED: [Prog; 22] = [
+    Prog::MmTrain,
+    Prog::Xent,
+    Prog::LnFwd,
+    Prog::LnBack,
+    Prog::Colsum,
+    Prog::GeluTr,
+    Prog::AttnFwd,
+    Prog::AttnBack,
+    Prog::EmbFwd,
+    Prog::EmbBack,
+    Prog::Gnorm,
+    Prog::OptStep,
+    Prog::Vadd,
+    Prog::AttnP,
+    Prog::AttnFwdTile2,
+    Prog::AttnBackTile0_2,
+    Prog::AttnBackTile2,
+    Prog::AttnPTile,
+    Prog::AttnFwdTile3,
+    Prog::AttnBackTile0_3,
+    Prog::AttnBackTile3,
+    Prog::LnBackRes,
+];
+
+/// What a [`Plan::with_fused_back`] plan launches on top of [`Plan::programs`] (load both).
+pub const PROGRAMS_FUSED_EXTRA: [Prog; 1] = [Prog::LnBackRes];
 
 /// What a [`Plan::new_tiles3`] step launches: the 11 programs without attention + the three `_3` attention programs.
 pub const PROGRAMS_TILES3: [Prog; 14] = [
@@ -277,6 +312,7 @@ impl Prog {
             Prog::AttnFwdTile3 => aft3::ATTN_FWD_TILE3,
             Prog::AttnBackTile0_3 => abt03::ATTN_BACK_TILE0_3,
             Prog::AttnBackTile3 => abt3::ATTN_BACK_TILE_3,
+            Prog::LnBackRes => lbr::LN_BACK_RES,
         }
     }
 
@@ -304,6 +340,7 @@ impl Prog {
             Prog::AttnFwdTile3 => aft3::ATTN_FWD_TILE3_SHA256,
             Prog::AttnBackTile0_3 => abt03::ATTN_BACK_TILE0_3_SHA256,
             Prog::AttnBackTile3 => abt3::ATTN_BACK_TILE_3_SHA256,
+            Prog::LnBackRes => lbr::LN_BACK_RES_SHA256,
         }
     }
 
@@ -330,6 +367,7 @@ impl Prog {
             Prog::AttnFwdTile3 => aft3::REGISTERS,
             Prog::AttnBackTile0_3 => abt03::REGISTERS,
             Prog::AttnBackTile3 => abt3::REGISTERS,
+            Prog::LnBackRes => lbr::REGISTERS,
         }
     }
 
@@ -356,6 +394,7 @@ impl Prog {
             Prog::AttnFwdTile3 => aft3::BLOCK,
             Prog::AttnBackTile0_3 => abt03::BLOCK,
             Prog::AttnBackTile3 => abt3::BLOCK,
+            Prog::LnBackRes => lbr::BLOCK,
         }
     }
 
@@ -373,6 +412,7 @@ impl Prog {
             Prog::AttnFwdTile3 => Some(aft3::SHARED),
             Prog::AttnBackTile0_3 => Some(abt03::SHARED),
             Prog::AttnBackTile3 => Some(abt3::SHARED),
+            Prog::LnBackRes => Some(lbr::SHARED),
             _ => None,
         }
     }
@@ -401,19 +441,23 @@ impl Prog {
             Prog::AttnFwdTile3 => "attn_fwd_tile3",
             Prog::AttnBackTile0_3 => "attn_back_tile0_3",
             Prog::AttnBackTile3 => "attn_back_tile_3",
+            Prog::LnBackRes => "ln_back_res",
         }
     }
 
-    /// Index in [`PROGRAMS_ALL_3`] (= the index in [`PROGRAMS_ALL`], [`PROGRAMS`] / [`PROGRAMS_P_ONLY`] for their
-    /// programs).
+    /// Index in [`PROGRAMS_ALL_FUSED`] (= the index in [`PROGRAMS_ALL_3`], [`PROGRAMS_ALL`], [`PROGRAMS`] /
+    /// [`PROGRAMS_P_ONLY`] for their programs).
     pub fn index(self) -> usize {
-        PROGRAMS_ALL_3.iter().position(|&p| p == self).unwrap_or(0)
+        PROGRAMS_ALL_FUSED
+            .iter()
+            .position(|&p| p == self)
+            .unwrap_or(0)
     }
 }
 
 /// Checks every program's bytes against its SHA-256 (what the OS does before loading; refuse on a mismatch).
 pub fn check_programs() -> GpuResult<()> {
-    for p in PROGRAMS_ALL_3 {
+    for p in PROGRAMS_ALL_FUSED {
         if hex(&crate::sha256::digest(p.code())) != p.sha256() {
             return Err(bad("pas-aur: SHA-256 al unui program nu se potriveste"));
         }
@@ -618,6 +662,9 @@ pub struct Plan {
     /// True for the `_mv_ram` plans (C-157): AdamW's m and v live in host RAM ([`crate::adam_ram`]); [`Plan::m`] and
     /// [`Plan::v`] are 0 and the arena has no room for them.
     mv_ram: bool,
+    /// Order 20:11 step 3 ([`Plan::with_fused_back`]): the backward LayerNorms add the residual path themselves
+    /// (`ln_back_res`), no backward `vadd`.
+    fused_back: bool,
     /// End of the arena (exclusive).
     pub end: u64,
 }
@@ -978,8 +1025,33 @@ impl Plan {
             tiles: false,
             tiles3: false,
             mv_ram,
+            fused_back: false,
             end: b.0,
         })
+    }
+
+    /// Order 20:11 step 3 (`docs/C-160_P7_LIPIRE_INAPOI.md`): the same plan (same arena, same addresses) whose
+    /// backward pass fuses each layer's two residual additions into the LayerNorm backward (`ln_back_res`): 2·L
+    /// launches fewer per step, the rest of the list unchanged. Off unless asked for. Load
+    /// [`Plan::programs`] + [`Plan::fused_programs`].
+    pub fn with_fused_back(mut self) -> Self {
+        self.fused_back = true;
+        self
+    }
+
+    /// True after [`Plan::with_fused_back`].
+    pub fn fused_back(&self) -> bool {
+        self.fused_back
+    }
+
+    /// The programs this plan launches on top of [`Plan::programs`]: [`PROGRAMS_FUSED_EXTRA`] with
+    /// [`Plan::with_fused_back`], none otherwise.
+    pub fn fused_programs(&self) -> &'static [Prog] {
+        if self.fused_back {
+            &PROGRAMS_FUSED_EXTRA
+        } else {
+            &[]
+        }
     }
 
     /// Bytes of board memory the arena needs (from `base`).
@@ -1075,7 +1147,8 @@ impl Plan {
 
     /// Launches per step: 31 per layer + 13 at `adamw_513` (11 at `sgd`).
     pub fn launches_per_step(&self, recipe: Recipe) -> usize {
-        31 * self.arch.layers
+        // `with_fused_back`: the two backward `vadd` of each layer are gone (29 per layer).
+        (if self.fused_back { 29 } else { 31 }) * self.arch.layers
             + self.p_relaunches()
             + if recipe == Recipe::AdamW513 { 13 } else { 11 }
     }
@@ -1183,6 +1256,57 @@ impl Plan {
         };
         out.push(launch(
             Prog::LnBack,
+            a.cbuf().as_ref().map(|b| &b[..]),
+            a.grid(),
+            tags[0],
+            layer,
+        )?);
+        let k = cs::Args {
+            dy,
+            x: s.x,
+            mean: s.mean,
+            rstd: s.rstd,
+            s0: dg,
+            s1: db,
+            rows: rows as u32,
+            c: c as u32,
+            mode: cs::Mode::LayerNorm,
+        };
+        out.push(launch(
+            Prog::Colsum,
+            k.cbuf().as_ref().map(|b| &b[..]),
+            k.grid(),
+            tags[1],
+            layer,
+        )?);
+        Ok(())
+    }
+
+    /// [`Plan::ln_back`] with the residual path's gradient `dres` added by the same launch (`ln_back_res`), then dγ,
+    /// dβ (`colsum`, unchanged: it reads `dy`, not `dx`).
+    #[allow(clippy::too_many_arguments)]
+    fn ln_back_res(
+        out: &mut Vec<Launch>,
+        s: &LnSaved,
+        (dy, gamma, dx, dg, db, dres): (u64, u64, u64, u64, u64, u64),
+        rows: usize,
+        c: usize,
+        tags: [&'static str; 2],
+        layer: Option<usize>,
+    ) -> GpuResult<()> {
+        let a = lbr::Args {
+            x: s.x,
+            dy,
+            gamma,
+            mean: s.mean,
+            rstd: s.rstd,
+            dx,
+            dres,
+            rows: rows as u32,
+            c: c as u32,
+        };
+        out.push(launch(
+            Prog::LnBackRes,
             a.cbuf().as_ref().map(|b| &b[..]),
             a.grid(),
             tags[0],
@@ -1498,16 +1622,29 @@ impl Plan {
                 ly,
             )?;
             Self::bias_grad(out, (dwide2, gt_(9)), n, f, "inapoi:fc-db", ly)?;
-            Self::ln_back(
-                out,
-                &wl.ln2,
-                (dtmp, wt(6), dx2, gt_(6), gt_(7)),
-                n,
-                cc,
-                ["inapoi:ln2-dx", "inapoi:ln2-dgamma"],
-                ly,
-            )?;
-            Self::vadd(out, (dx, dx2, dx2), n * cc, "inapoi:rezidual-ln2", ly)?; // dx += d(x_mid) through LN2
+            if self.fused_back {
+                // dx2 = dx + d(x_mid) through LN2, in one launch (`ln_back_res`).
+                Self::ln_back_res(
+                    out,
+                    &wl.ln2,
+                    (dtmp, wt(6), dx2, gt_(6), gt_(7), dx),
+                    n,
+                    cc,
+                    ["inapoi:ln2-dx+rezidual", "inapoi:ln2-dgamma"],
+                    ly,
+                )?;
+            } else {
+                Self::ln_back(
+                    out,
+                    &wl.ln2,
+                    (dtmp, wt(6), dx2, gt_(6), gt_(7)),
+                    n,
+                    cc,
+                    ["inapoi:ln2-dx", "inapoi:ln2-dgamma"],
+                    ly,
+                )?;
+                Self::vadd(out, (dx, dx2, dx2), n * cc, "inapoi:rezidual-ln2", ly)?; // dx += d(x_mid) through LN2
+            }
             // Attention: x_mid = x_in + out(attn(in(LN1(x_in))))
             Self::mm(
                 out,
@@ -1601,16 +1738,29 @@ impl Plan {
                 ly,
             )?;
             Self::bias_grad(out, (dqkv, gt_(3)), n, 3 * cc, "inapoi:qkv-db", ly)?;
-            Self::ln_back(
-                out,
-                &wl.ln1,
-                (dtmp, wt(0), dx, gt_(0), gt_(1)),
-                n,
-                cc,
-                ["inapoi:ln1-dx", "inapoi:ln1-dgamma"],
-                ly,
-            )?;
-            Self::vadd(out, (dx2, dx, dx), n * cc, "inapoi:rezidual-ln1", ly)?; // dx += d(x_in) through LN1
+            if self.fused_back {
+                // dx = dx2 + d(x_in) through LN1, in one launch (`ln_back_res`).
+                Self::ln_back_res(
+                    out,
+                    &wl.ln1,
+                    (dtmp, wt(0), dx, gt_(0), gt_(1), dx2),
+                    n,
+                    cc,
+                    ["inapoi:ln1-dx+rezidual", "inapoi:ln1-dgamma"],
+                    ly,
+                )?;
+            } else {
+                Self::ln_back(
+                    out,
+                    &wl.ln1,
+                    (dtmp, wt(0), dx, gt_(0), gt_(1)),
+                    n,
+                    cc,
+                    ["inapoi:ln1-dx", "inapoi:ln1-dgamma"],
+                    ly,
+                )?;
+                Self::vadd(out, (dx2, dx, dx), n * cc, "inapoi:rezidual-ln1", ly)?; // dx += d(x_in) through LN1
+            }
         }
         // Embeddings: positions (write), then tokens (add onto the head's dW).
         let dx = self.dx[cur];

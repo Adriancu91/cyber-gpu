@@ -18,6 +18,7 @@
 #   sh tools/nak/build.sh mm_train       # C-160 point 4: training matmul, op(A)*op(B) (+bias), NN/NT/TN (session 142)
 #   sh tools/nak/build.sh xent           # C-160 point 4, program 7: softmax + cross-entropy and its gradient (session 143)
 #   sh tools/nak/build.sh ln_back        # C-160 point 4, program 4: LayerNorm backward, dx (session 144)
+#   sh tools/nak/build.sh ln_back_res    # order 20:11 step 3: ln_back + the residual addition in one program (session 192)
 #   sh tools/nak/build.sh colsum         # C-160 point 4, program 2 (+ dγ, dβ of program 4): column sums (session 144)
 #   sh tools/nak/build.sh colsum_part    # C-160 point 7: colsum's first pass split over rows (session 159)
 #   sh tools/nak/build.sh ln_fwd         # C-160 point 4, program 3: LayerNorm forward over rows, keeps μ and rstd (session 146)
@@ -115,6 +116,9 @@ xent)
     ;;
 ln_back)
     exec sh "$0" kernel ln_back 56
+    ;;
+ln_back_res)
+    exec sh "$0" kernel ln_back_res 64
     ;;
 colsum)
     exec sh "$0" kernel colsum 60

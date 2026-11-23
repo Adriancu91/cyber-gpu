@@ -374,6 +374,19 @@ pub fn ln_back_gpu256(
     rs: f32,
     inv_c: f32,
 ) -> Vec<f32> {
+    ln_back_rows256(x, dy, gamma, mu, rs, inv_c, |_, q| mul_ftz(rs, q))
+}
+
+/// [`ln_back_gpu256`]'s two passes; `last(k, q)` makes `dx[k]` from `q = (g − m1) − x̂·m2` (as NAK fused it).
+fn ln_back_rows256(
+    x: &[f32],
+    dy: &[f32],
+    gamma: &[f32],
+    mu: f32,
+    rs: f32,
+    inv_c: f32,
+    last: impl Fn(usize, f32) -> f32,
+) -> Vec<f32> {
     let c = x.len();
     let hat = |k: usize| mul_ftz(add_f32_ftz(x[k], -mu), rs);
     let grad = |k: usize| mul_ftz(dy[k], gamma[k]);
@@ -393,12 +406,47 @@ pub fn ln_back_gpu256(
     let m2 = mul_ftz(block_sum256(&p2), inv_c);
     (0..c)
         .map(|k| {
-            mul_ftz(
-                rs,
+            last(
+                k,
                 fma_f32_ftz(-hat(k), m2, fma_f32_ftz(dy[k], gamma[k], -m1)),
             )
         })
         .collect()
+}
+
+/// The row of `ln_back_res.comp` (order 20:11 step 3, `docs/C-160_P7_LIPIRE_INAPOI.md`): [`ln_back_gpu256`]'s value
+/// `r`, rounded as there, then one `fadd.ftz`(r, dres) — the residual addition fused in, kept apart from the last
+/// multiplication (`add_exact` in the GLSL: NoContraction on that add only). Meant to be the same bits as
+/// `ln_back` followed by `vadd` (not proven on the board).
+pub fn ln_back_res_gpu256(
+    x: &[f32],
+    dy: &[f32],
+    gamma: &[f32],
+    mu: f32,
+    rs: f32,
+    inv_c: f32,
+    dres: &[f32],
+) -> Vec<f32> {
+    ln_back_rows256(x, dy, gamma, mu, rs, inv_c, |k, q| {
+        add_f32_ftz(mul_ftz(rs, q), dres[k])
+    })
+}
+
+/// What `ln_back_res.comp` would compute **without** `add_exact`: NAK free to contract the last multiplication and
+/// the residual addition into one `ffma.ftz`(rs, q, dres) — one rounding instead of two, other bits than `ln_back` +
+/// `vadd`. Not a board program: T200 uses it to show the bit-for-bit comparison notices the difference.
+pub fn ln_back_res_contracted_gpu256(
+    x: &[f32],
+    dy: &[f32],
+    gamma: &[f32],
+    mu: f32,
+    rs: f32,
+    inv_c: f32,
+    dres: &[f32],
+) -> Vec<f32> {
+    ln_back_rows256(x, dy, gamma, mu, rs, inv_c, |k, q| {
+        fma_f32_ftz(rs, q, dres[k])
+    })
 }
 
 /// The row of the board's training LayerNorm-forward program, `ln_fwd.comp` (C-160 point 4, program 3), for one row

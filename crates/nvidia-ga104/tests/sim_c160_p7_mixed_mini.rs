@@ -10,15 +10,18 @@ use std::sync::OnceLock;
 
 use gpu_compute::train::{self, AdamW, Arch, Batch, Recipe};
 use gpu_sim::cmdproc::{
-    CommandProcessor, GNORM_NEEDS, LN_BACK_NEEDS, LN_FWD_NEEDS, MM_TC_NEEDS, MM_TRAIN_NEEDS, Needs,
-    XENT_NEEDS, attn_back_on_cpu, attn_back_tile_on_cpu, attn_back_tile0_on_cpu, attn_fwd_on_cpu,
-    attn_fwd_tile_on_cpu, attn_p_on_cpu, attn_p_tile_on_cpu, colsum_on_cpu, emb_back_on_cpu,
-    emb_fwd_on_cpu, gelu_tr_on_cpu, gnorm_on_cpu, ln_back_on_cpu, ln_fwd_on_cpu, mm_tc_on_cpu,
-    mm_train_on_cpu, opt_step_on_cpu, vadd_on_cpu, xent_on_cpu,
+    CommandProcessor, GNORM_NEEDS, LN_BACK_NEEDS, LN_BACK_RES_NEEDS, LN_FWD_NEEDS, MM_TC_NEEDS,
+    MM_TRAIN_NEEDS, Needs, XENT_NEEDS, attn_back_on_cpu, attn_back_tile_on_cpu,
+    attn_back_tile0_on_cpu, attn_fwd_on_cpu, attn_fwd_tile_on_cpu, attn_p_on_cpu,
+    attn_p_tile_on_cpu, colsum_on_cpu, emb_back_on_cpu, emb_fwd_on_cpu, gelu_tr_on_cpu,
+    gnorm_on_cpu, ln_back_on_cpu, ln_back_res_on_cpu, ln_fwd_on_cpu, mm_tc_on_cpu, mm_train_on_cpu,
+    opt_step_on_cpu, vadd_on_cpu, xent_on_cpu,
 };
 use nvidia_ga104::mm_tc::MM_TC;
 use nvidia_ga104::push::{self, PushBuf};
-use nvidia_ga104::train_step::{self as ts, LOSS_SCALE, MixedLaunch, PROGRAMS_ALL_3, Plan, Prog};
+use nvidia_ga104::train_step::{
+    self as ts, LOSS_SCALE, MixedLaunch, PROGRAMS_ALL_FUSED, Plan, Prog,
+};
 use nvidia_ga104::transfer;
 use nvidia_rm570::regs::clc7c0 as c;
 
@@ -43,8 +46,8 @@ const ZONE: u64 = VA + 0x20_0000;
 const REC: u64 = VA + 0x30_0000;
 const PUSH: u64 = VA + 0x32_0000;
 const PROGS: u64 = VA + 0x40_0000;
-/// `mm_tc` after the 21 programs of `PROGRAMS_ALL_3`.
-const TC: u64 = PROGS + 0x1_0000 * 21;
+/// `mm_tc` after the 22 programs of `PROGRAMS_ALL_FUSED` (T200: `ln_back_res` took slot 21).
+const TC: u64 = PROGS + 0x1_0000 * 22;
 const HEAP: u64 = VA + 0x100_0000;
 
 fn prog_va(p: Prog) -> u64 {
@@ -173,6 +176,8 @@ fn oracle() -> &'static Run {
 enum Layout {
     Simple,
     Tiles3,
+    /// T200: [`Plan::new_tiles3`] + [`Plan::with_fused_back`].
+    Tiles3Fused,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -186,7 +191,7 @@ enum Mode {
 fn board() -> CommandProcessor {
     ts::check_programs().expect("SHA-256 programe");
     let mut cp = CommandProcessor::new();
-    for p in PROGRAMS_ALL_3 {
+    for p in PROGRAMS_ALL_FUSED {
         let code = p.code();
         let sh = || needs(p.shared().unwrap());
         match p {
@@ -214,6 +219,10 @@ fn board() -> CommandProcessor {
                 cp.register_program_with_needs(code, attn_back_tile_on_cpu, sh())
             }
             Prog::AttnPTile => cp.register_program_with_needs(code, attn_p_tile_on_cpu, sh()),
+            // T200: `ln_back_res` (`Plan::with_fused_back`).
+            Prog::LnBackRes => {
+                cp.register_program_with_needs(code, ln_back_res_on_cpu, LN_BACK_RES_NEEDS)
+            }
         };
         cp.mem.write(prog_va(p), code);
     }
@@ -255,6 +264,9 @@ fn on_board(layout: Layout, mode: Mode) -> (Run, usize) {
     let plan = match layout {
         Layout::Simple => Plan::new(MINI, B, T, &inputs, HEAP),
         Layout::Tiles3 => Plan::new_tiles3(MINI, B, T, &inputs, HEAP),
+        Layout::Tiles3Fused => {
+            Plan::new_tiles3(MINI, B, T, &inputs, HEAP).map(Plan::with_fused_back)
+        }
     }
     .unwrap();
     let mut cp = board();
@@ -529,5 +541,51 @@ fn t199_planted_norm_not_scaled_is_caught() {
         f.move_worst.0 > 5e-2,
         "greseala nu a fost prinsa: {:e}",
         f.move_worst.0
+    );
+}
+
+/// T200 prediction 1 on `antrenare mini`'s shape (vocabulary 16 384): the mixed step (`mm_tc`, S = 1 024) and the
+/// F32 step with `ln_back_res` give the same bits as without it, 5 AdamW steps, 4 launches fewer (SIMULARE).
+#[test]
+fn t200_mixed_mini_fused_is_bit_for_bit() {
+    let bits = |r: &Run| {
+        (
+            r.losses.iter().map(|x| x.to_bits()).collect::<Vec<u64>>(),
+            r.grad1
+                .iter()
+                .flatten()
+                .map(|x| x.to_bits())
+                .collect::<Vec<u32>>(),
+            r.after_last
+                .iter()
+                .flatten()
+                .map(|x| x.to_bits())
+                .collect::<Vec<u32>>(),
+        )
+    };
+    for mode in [Mode::Mixed(LOSS_SCALE), Mode::F32] {
+        let (old, tc_old) = on_board(Layout::Tiles3, mode);
+        let (new, tc_new) = on_board(Layout::Tiles3Fused, mode);
+        assert_eq!(tc_old, tc_new);
+        let same = bits(&old) == bits(&new);
+        println!(
+            "kt c200 antrenare mini {mode:?}: ln_back_res = nelipit bit cu bit {} (5 pasi AdamW, SIMULARE)",
+            if same { "DA" } else { "NU" }
+        );
+        assert!(same, "{mode:?}: lipit != nelipit");
+    }
+    let (inputs, _) = batch();
+    let p = Plan::new_tiles3(MINI, B, T, &inputs, HEAP).unwrap();
+    let opt = AdamW::new(&initial(), LR, 0.9, 0.999, 1e-8, 0.1);
+    let fused = p.clone().with_fused_back();
+    assert_eq!(
+        p.step_mixed(Recipe::AdamW513, &opt, 1, LOSS_SCALE)
+            .unwrap()
+            .len(),
+        fused
+            .step_mixed(Recipe::AdamW513, &opt, 1, LOSS_SCALE)
+            .unwrap()
+            .len()
+            + 2 * MINI.layers
     );
 }

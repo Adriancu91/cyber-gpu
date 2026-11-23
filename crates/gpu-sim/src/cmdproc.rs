@@ -1311,6 +1311,72 @@ pub fn ln_back_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// Order 20:11 step 3: what `tools/nak/out/ln_back_res.sm86.sass` needs — the same as [`LN_BACK_NEEDS`].
+pub const LN_BACK_RES_NEEDS: Needs = LN_BACK_NEEDS;
+
+/// The CPU stand-in for `ln_back_res.sm86.sass` (order 20:11 step 3, `docs/C-160_P7_LIPIRE_INAPOI.md`): as
+/// [`ln_back_on_cpu`], with `dres` at 0x58, c at 0x60, 1/c at 0x64 (NAK dump); each row is
+/// `gpu_compute::layer::ln_back_res_gpu256`. All the rows' `dres` are read before any row is written: a launch whose
+/// `dx` overlaps `dres` is refused (the board's threads would race), as is one where `dx` overlaps `dy`.
+pub fn ln_back_res_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    ln_back_res_rows(l, gpu_compute::layer::ln_back_res_gpu256)
+}
+
+/// [`ln_back_res_on_cpu`] with `gpu_compute::layer::ln_back_res_contracted_gpu256` (the last multiplication and the
+/// residual addition as one FFMA): what the program would do without `add_exact`. Not a model of our program —
+/// T200 registers it to show the bit-for-bit comparison catches that contraction.
+pub fn ln_back_res_contracted_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    ln_back_res_rows(l, gpu_compute::layer::ln_back_res_contracted_gpu256)
+}
+
+type LnBackResRow = fn(&[f32], &[f32], &[f32], f32, f32, f32, &[f32]) -> Vec<f32>;
+
+fn ln_back_res_rows(l: &mut Launch<'_>, row_fn: LnBackResRow) -> GpuResult<()> {
+    if l.block != [256, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 {
+        return Err(bad(
+            "SIM: ln_back_res cere blocuri de 256x1x1, grila = randuri",
+        ));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let r = |l: &Launch<'_>, o: u64| l.mem.read_u64(l.cbuf0 + o);
+    let (x, dy, gm, mu, rs, dx, dres) = (
+        r(l, 0x28)?,
+        r(l, 0x30)?,
+        r(l, 0x38)?,
+        r(l, 0x40)?,
+        r(l, 0x48)?,
+        r(l, 0x50)?,
+        r(l, 0x58)?,
+    );
+    let c = l.mem.read_u32(l.cbuf0 + 0x60)? as usize;
+    let inv_c = f32::from_bits(l.mem.read_u32(l.cbuf0 + 0x64)?);
+    if c == 0 {
+        return Ok(()); // the program returns at once
+    }
+    let rows = l.grid[0] as usize;
+    let bytes = 4 * (rows * c) as u64;
+    let overlap = |a: u64, b: u64| a < b + bytes && b < a + bytes;
+    if overlap(dx, dres) || overlap(dx, dy) {
+        return Err(bad("SIM: ln_back_res: dx se suprapune cu dres sau dy"));
+    }
+    let gamma = l.mem.read_f32s(gm, c)?;
+    for row in 0..rows {
+        let off = 4 * (row * c) as u64;
+        let xr = l.mem.read_f32s(x + off, c)?;
+        let dyr = l.mem.read_f32s(dy + off, c)?;
+        let dr = l.mem.read_f32s(dres + off, c)?;
+        let m = f32::from_bits(l.mem.read_u32(mu + 4 * row as u64)?);
+        let s = f32::from_bits(l.mem.read_u32(rs + 4 * row as u64)?);
+        let out = row_fn(&xr, &dyr, &gamma, m, s, inv_c, &dr);
+        l.mem.write_f32s(dx + off, &out);
+    }
+    Ok(())
+}
+
 /// C-160 point 4, program 3: what `tools/nak/out/ln_fwd.sm86.sass` needs — 32 bytes of shared memory (the 8 warp
 /// results, reused by both sums) and one barrier.
 pub const LN_FWD_NEEDS: Needs = Needs {

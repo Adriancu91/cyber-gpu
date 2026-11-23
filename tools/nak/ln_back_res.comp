@@ -1,0 +1,95 @@
+// Ordinea 20:11, pasul 3 (docs/C-160_P7_LIPIRE_INAPOI.md): ln_back.comp with the residual addition fused in.
+// The same program as ln_back.comp (read its header), plus one argument dres: the gradient arriving on the residual
+// path, so the last pass writes dx[k] = r + dres[k], with r = rstd * ((g - m1) - x̂ * m2) exactly as ln_back.comp
+// rounds it. `add_exact` keeps the product and the sum as two roundings (no FFMA): the same bits as ln_back followed by
+// vadd.comp (FADD.FTZ; IEEE addition is commutative). dx must not alias dres or dy (the launcher checks).
+// C-160 point 4, training program 4 (docs/C-160_MOTOR_STUDIU.md, table "Programele de placă", #4), first half:
+// LayerNorm backward for dx, over rows of C numbers. dγ and dβ are column sums over the rows (Σ_r dy·x̂ and Σ_r dy)
+// and are left to the column-sum program (#2), so that no row has to add into a shared column (no atomics: the
+// result is the same at every run).
+//   for row r (one workgroup per row, grid x = rows), with μ_r and rstd_r kept by the forward pass:
+//     x̂[k]  = (x[k] - μ_r) * rstd_r
+//     g[k]  = dy[k] * γ[k]                                   (the gradient of x̂)
+//     m1    = (Σ_k g[k]) * inv_c                             (inv_c = 1/C, given by the caller as f32)
+//     m2    = (Σ_k g[k] * x̂[k]) * inv_c
+//     dx[k] = rstd_r * (g[k] - m1 - x̂[k] * m2)
+// The formula is the usual one (PyTorch native_layer_norm_backward / llm.c layernorm_backward, BSD / MIT: idea only).
+// Shape: 256 threads (8 warps), as layernorm256.comp and xent.comp. Thread t takes k = t, t+256, ... in that order.
+// Both sums: each thread adds in order from 0.0, butterfly add inside the warp (shuffle xor 16..1: every lane gets
+// the same bits), lane 0 of each warp writes, barrier, every thread adds the 8 warp sums in order w = 0..7.
+// x̂ and g are recomputed in the last pass (nothing kept between passes). No division, no MUFU: only add / mul / fma,
+// so the CPU model (gpu_compute::layer::ln_back_gpu256) follows the code NAK made bit for bit; both are judged
+// against the f64 training oracle (gpu_compute::train::layernorm_back_rows) within a margin written before the
+// measurement.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args { In x; In dy; In gamma; In mean; In rstd; Out dx; In dres; uint c; float inv_c; } args;
+shared float parts[16];
+
+// Two block sums at once (one barrier pair): parts[0..8] for a, parts[8..16] for b.
+vec2 block_sum2(float a, float b, uint t) {
+    a = a + subgroupShuffleXor(a, 16u);
+    b = b + subgroupShuffleXor(b, 16u);
+    a = a + subgroupShuffleXor(a, 8u);
+    b = b + subgroupShuffleXor(b, 8u);
+    a = a + subgroupShuffleXor(a, 4u);
+    b = b + subgroupShuffleXor(b, 4u);
+    a = a + subgroupShuffleXor(a, 2u);
+    b = b + subgroupShuffleXor(b, 2u);
+    a = a + subgroupShuffleXor(a, 1u);
+    b = b + subgroupShuffleXor(b, 1u);
+    if ((t & 31u) == 0u) {
+        parts[t >> 5u] = a;
+        parts[8u + (t >> 5u)] = b;
+    }
+    barrier();
+    float ra = parts[0];
+    float rb = parts[8];
+    for (uint w = 1u; w < 8u; w++) {
+        ra = ra + parts[w];
+        rb = rb + parts[8u + w];
+    }
+    return vec2(ra, rb);
+}
+
+// The residual addition alone as one rounding: `precise` here marks only this FAdd (glslang does not carry it back
+// through the call into the caller's expression), so NAK may not fuse the caller's rstd * (...) into an FFMA with it.
+float add_exact(float a, float b) {
+    precise float s = a + b;
+    return s;
+}
+
+void main() {
+    uint t = gl_LocalInvocationID.x;
+    uint row = gl_WorkGroupID.x;
+    uint c = args.c;
+    if (c == 0u) {
+        return; // the same for every thread, before any barrier; the launcher never sends c = 0
+    }
+    uint base = row * c;
+    float mu = args.mean.v[row];
+    float rs = args.rstd.v[row];
+    float s1 = 0.0;
+    float s2 = 0.0;
+    for (uint k = t; k < c; k += 256u) {
+        float h = (args.x.v[base + k] - mu) * rs;
+        float g = args.dy.v[base + k] * args.gamma.v[k];
+        s1 = s1 + g;
+        s2 = s2 + g * h;
+    }
+    vec2 s = block_sum2(s1, s2, t);
+    float m1 = s.x * args.inv_c;
+    float m2 = s.y * args.inv_c;
+    for (uint k = t; k < c; k += 256u) {
+        float h = (args.x.v[base + k] - mu) * rs;
+        float g = args.dy.v[base + k] * args.gamma.v[k];
+        float r = rs * ((g - m1) - h * m2);
+        args.dx.v[base + k] = add_exact(r, args.dres.v[base + k]);
+    }
+}
