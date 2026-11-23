@@ -18,6 +18,11 @@
 //! - [`Probe`]: the run, `kt atentie …` journal rows ([`Probe::rows`]), report lines, [`parse_attn_tile`].
 //!
 //! Tested **only in SIMULARE** (T176, `tests/sim_c160_p7_attn_tile_probe.rs`); nothing here has run on a board.
+//!
+//! C-157 point 2 adds, beside all of the above (unchanged), the probe **"old beside new"**: [`Prog2`] / [`PROGS2`] (the
+//! second generation `attn_*_2`, same operations, same order), [`launch_bytes2`], [`judge_pair`] (the new chain judged
+//! with the same margins and compared word for word with the old one on the same set), [`Probe2`] (`kt atentie2 …` rows)
+//! and [`parse_attn_tile2`]. Plan: `docs/C-157_P2_ATTN_TILE2.md`; tested only in SIMULARE (T184).
 
 use alloc::format;
 use alloc::string::String;
@@ -31,6 +36,7 @@ use crate::attn_back::{self as ab, Mode};
 use crate::attn_fwd as af;
 use crate::qmd::{ComputeQmd, SharedMemory};
 use crate::{attn_back_tile as b1, attn_back_tile0 as b0, attn_fwd_tile as ft};
+use crate::{attn_back_tile_2 as b12, attn_back_tile0_2 as b02, attn_fwd_tile2 as ft2};
 
 /// Words after each output, filled with [`FILL`], that must stay untouched.
 pub const GUARD: usize = 256;
@@ -110,6 +116,59 @@ impl Prog {
             Prog::Fwd => ft::SHARED,
             Prog::Rows => b0::SHARED,
             Prog::Cols => b1::SHARED,
+        }
+    }
+}
+
+/// C-157 point 2 (the second part for os-358): the **second generation** of the three programs —
+/// [`crate::attn_fwd_tile2`], [`crate::attn_back_tile0_2`], [`crate::attn_back_tile_2`]: the same operations in the
+/// same order as the first (the same bits predicted), faster loops. Wraps the role ([`Prog`]); the first generation and
+/// [`PROGS`] are unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Prog2(pub Prog);
+
+/// The second generation in launch order.
+pub const PROGS2: [Prog2; 3] = [Prog2(Prog::Fwd), Prog2(Prog::Rows), Prog2(Prog::Cols)];
+
+impl Prog2 {
+    pub fn name(self) -> &'static str {
+        match self.0 {
+            Prog::Fwd => "attn_fwd_tile2",
+            Prog::Rows => "attn_back_tile0_2",
+            Prog::Cols => "attn_back_tile_2",
+        }
+    }
+    /// The first-generation program it sits beside.
+    pub fn old(self) -> Prog {
+        self.0
+    }
+    /// The program bytes the OS loads.
+    pub fn binary(self) -> &'static [u8] {
+        match self.0 {
+            Prog::Fwd => ft2::ATTN_FWD_TILE2,
+            Prog::Rows => b02::ATTN_BACK_TILE0_2,
+            Prog::Cols => b12::ATTN_BACK_TILE_2,
+        }
+    }
+    pub fn sha256(self) -> &'static str {
+        match self.0 {
+            Prog::Fwd => ft2::ATTN_FWD_TILE2_SHA256,
+            Prog::Rows => b02::ATTN_BACK_TILE0_2_SHA256,
+            Prog::Cols => b12::ATTN_BACK_TILE_2_SHA256,
+        }
+    }
+    pub fn registers(self) -> u32 {
+        match self.0 {
+            Prog::Fwd => ft2::REGISTERS,
+            Prog::Rows => b02::REGISTERS,
+            Prog::Cols => b12::REGISTERS,
+        }
+    }
+    pub fn shared(self) -> SharedMemory {
+        match self.0 {
+            Prog::Fwd => ft2::SHARED,
+            Prog::Rows => b02::SHARED,
+            Prog::Cols => b12::SHARED,
         }
     }
 }
@@ -514,6 +573,29 @@ pub fn launch_bytes(
     cbuf_va: u64,
     buf_va: u64,
 ) -> GpuResult<([u8; CBUF_SIZE], [u8; nvidia_rm570::QMD_SIZE])> {
+    launch_common(set, prog, false, prog_va, cbuf_va, buf_va)
+}
+
+/// [`launch_bytes`] for the second generation ([`Prog2`]): the same cbuf and grid, the QMD with the new program's
+/// registers and shared memory.
+pub fn launch_bytes2(
+    set: &ProbeSet,
+    prog: Prog2,
+    prog_va: u64,
+    cbuf_va: u64,
+    buf_va: u64,
+) -> GpuResult<([u8; CBUF_SIZE], [u8; nvidia_rm570::QMD_SIZE])> {
+    launch_common(set, prog.0, true, prog_va, cbuf_va, buf_va)
+}
+
+fn launch_common(
+    set: &ProbeSet,
+    prog: Prog,
+    second: bool,
+    prog_va: u64,
+    cbuf_va: u64,
+    buf_va: u64,
+) -> GpuResult<([u8; CBUF_SIZE], [u8; nvidia_rm570::QMD_SIZE])> {
     if !buf_va.is_multiple_of(4096) || !cbuf_va.is_multiple_of(256) || !prog_va.is_multiple_of(256)
     {
         return Err(bad(
@@ -528,30 +610,47 @@ pub fn launch_bytes(
         Prog::Fwd => {
             let a = set.fwd_args(buf_va);
             let c = a.cbuf().ok_or(bad("atentie proba: argumente"))?;
-            (c.to_vec(), ft::grid(&a), ft::BLOCK)
+            if second {
+                (c.to_vec(), ft2::grid(&a), ft2::BLOCK)
+            } else {
+                (c.to_vec(), ft::grid(&a), ft::BLOCK)
+            }
         }
         Prog::Rows => {
             let a = set.back_args(buf_va, Mode::Rows);
             let c = a.cbuf().ok_or(bad("atentie proba: argumente"))?;
-            (c.to_vec(), b0::grid(&a), b0::BLOCK)
+            if second {
+                (c.to_vec(), b02::grid(&a), b02::BLOCK)
+            } else {
+                (c.to_vec(), b0::grid(&a), b0::BLOCK)
+            }
         }
         Prog::Cols => {
             let a = set.back_args(buf_va, Mode::Columns);
             let c = a.cbuf().ok_or(bad("atentie proba: argumente"))?;
-            (c.to_vec(), b1::grid(&a), b1::BLOCK)
+            if second {
+                (c.to_vec(), b12::grid(&a), b12::BLOCK)
+            } else {
+                (c.to_vec(), b1::grid(&a), b1::BLOCK)
+            }
         }
+    };
+    let (registers, shared) = if second {
+        (Prog2(prog).registers(), Prog2(prog).shared())
+    } else {
+        (prog.registers(), prog.shared())
     };
     cb[..bytes.len()].copy_from_slice(&bytes);
     let q = ComputeQmd {
         program_va: prog_va,
-        registers: prog.registers(),
+        registers,
         cbuf0_va: cbuf_va,
         cbuf0_size: CBUF_SIZE as u32,
         grid,
         block,
         release: None,
     }
-    .to_bytes_with_shared(&prog.shared())?;
+    .to_bytes_with_shared(&shared)?;
     Ok((cb, q))
 }
 
@@ -1027,6 +1126,418 @@ impl Probe {
         }
         out
     }
+}
+
+/// The read-back of one set split into its four pieces (P, att, dS, dqkv rows; guards stripped), or `None` for a
+/// wrong length.
+fn pieces_of(s: &ProbeSet, out: &[u8]) -> Option<[Vec<u32>; 4]> {
+    if out.len() != s.read_len() {
+        return None;
+    }
+    let (_, t, c, h, _) = s.dims();
+    let (nt, nr, nd) = (s.texts().len(), s.rows().len(), s.dq_rows().len());
+    let lens = [
+        nt * h * nr * t,
+        nt * nr * c,
+        nt * h * nr * t,
+        nt * nd * 3 * c,
+    ];
+    let w = words(out);
+    let mut pieces: [Vec<u32>; 4] = Default::default();
+    let mut at = 0;
+    for k in 0..4 {
+        pieces[k] = w[at..at + lens[k]].to_vec();
+        at += lens[k] + GUARD;
+    }
+    Some(pieces)
+}
+
+/// The pieces each program writes (Fwd = P + att; Rows = dS; Cols = dqkv).
+const GROUPS: [&[usize]; 3] = [&[0, 1], &[2], &[3]];
+
+/// What the second-generation chain gave on one set, beside the first.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PairResult {
+    /// The new chain judged exactly as the old one ([`judge`]: the same margins, the same models).
+    pub new: SetResult,
+    /// Per program (launch order): words of its read-back equal to the old chain's, words compared (guards excluded).
+    /// A wrong length on either side: (0, words of the expected read-back).
+    pub same: [(u32, u32); 3],
+}
+
+impl PairResult {
+    /// Every compared word of every program equal to the old chain's.
+    pub fn identical(&self) -> bool {
+        self.same.iter().all(|&(a, b)| a == b)
+    }
+}
+
+/// C-157 point 2: judges the second-generation chain on set `s` (`new_out`, read back as [`ProbeSet::read_ranges`], with
+/// its launch times) and compares it word for word with the first-generation chain's read-back `old_out` on the same
+/// set. `set` is only recorded.
+pub fn judge_pair(
+    s: &ProbeSet,
+    set: usize,
+    old_out: &[u8],
+    new_out: &[u8],
+    ns_new: [&[u64]; 3],
+) -> GpuResult<PairResult> {
+    let new = judge(s, set, new_out, ns_new)?;
+    let (_, t, c, h, _) = s.dims();
+    let (nt, nr, nd) = (s.texts().len(), s.rows().len(), s.dq_rows().len());
+    let lens = [
+        nt * h * nr * t,
+        nt * nr * c,
+        nt * h * nr * t,
+        nt * nd * 3 * c,
+    ];
+    let mut same = [(0u32, 0u32); 3];
+    let (po, pn) = (pieces_of(s, old_out), pieces_of(s, new_out));
+    for (k, g) in GROUPS.iter().enumerate() {
+        let total: usize = g.iter().map(|&i| lens[i]).sum();
+        same[k].1 = total as u32;
+        if let (Some(a), Some(b)) = (&po, &pn) {
+            same[k].0 = g
+                .iter()
+                .map(|&i| a[i].iter().zip(&b[i]).filter(|(x, y)| x == y).count() as u32)
+                .sum();
+        }
+    }
+    Ok(PairResult { new, same })
+}
+
+/// [`judge_pair`] for set `set` of [`SETS`].
+pub fn judge_pair_set(
+    set: usize,
+    old_out: &[u8],
+    new_out: &[u8],
+    ns_new: [&[u64]; 3],
+) -> GpuResult<PairResult> {
+    let s = SETS.get(set).ok_or(bad("atentie proba: set necunoscut"))?;
+    judge_pair(s, set, old_out, new_out, ns_new)
+}
+
+/// The probe of the second generation beside the first (one [`PairResult`] per set run, in order).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Probe2 {
+    pub sets: Vec<PairResult>,
+}
+
+/// Measured medians of the first generation on `atentie-513-b4` (os-358, 23 nov 2026, ns): the reference when the old
+/// chain's own times are not given.
+pub const OS358_NS: [u64; 3] = [2_490_000, 1_810_000, 3_990_000];
+
+impl Probe2 {
+    pub fn add(&mut self, r: PairResult) {
+        self.sets.push(r);
+    }
+    /// The timing set was not run.
+    pub fn timing_skipped(&self) -> bool {
+        !self.sets.iter().any(|r| r.new.set == TIMING_SET)
+    }
+    /// Sets 0–4 all judged and every program of the new chain within its margin on every set run.
+    pub fn passes(&self) -> bool {
+        (0..TIMING_SET).all(|i| self.sets.iter().any(|r| r.new.set == i))
+            && self.sets.iter().all(|r| r.new.passes())
+    }
+    /// Sets in which the new chain is within its margins.
+    pub fn in_margin(&self) -> usize {
+        self.sets.iter().filter(|r| r.new.passes()).count()
+    }
+    /// Sets in which every word read back equals the old chain's.
+    pub fn identical_sets(&self) -> usize {
+        self.sets.iter().filter(|r| r.identical()).count()
+    }
+    /// Every set run identical to the old chain (prediction 2) — false when nothing was run.
+    pub fn identical(&self) -> bool {
+        !self.sets.is_empty() && self.identical_sets() == self.sets.len()
+    }
+    /// Per program: exact elements, judged elements, worst ‰ (as [`Probe::per_prog`]).
+    pub fn per_prog(&self) -> [(u32, u32, u32); 3] {
+        Probe {
+            sets: self.sets.iter().map(|r| r.new.clone()).collect(),
+        }
+        .per_prog()
+    }
+    /// Per program: words equal to the old chain's, words compared (all sets).
+    pub fn same_per_prog(&self) -> [(u32, u32); 3] {
+        let mut out = [(0u32, 0u32); 3];
+        for r in &self.sets {
+            for (o, s) in out.iter_mut().zip(&r.same) {
+                o.0 += s.0;
+                o.1 += s.1;
+            }
+        }
+        out
+    }
+    fn timing(&self) -> Option<&PairResult> {
+        self.sets.iter().find(|r| r.new.set == TIMING_SET)
+    }
+
+    /// The `kt atentie2 …` rows (read back by [`parse_attn_tile2`]; [`parse_attn_tile`] does not see them).
+    pub fn rows(&self) -> Vec<(&'static str, u32)> {
+        let cl = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
+        let pp = self.per_prog();
+        let sp = self.same_per_prog();
+        let mut out = alloc::vec![
+            ("kt atentie2 seturi", self.sets.len() as u32),
+            ("kt atentie2 seturi in margine", self.in_margin() as u32),
+            (
+                "kt atentie2 seturi identice cu vechi",
+                self.identical_sets() as u32
+            ),
+        ];
+        const N: [[&str; 5]; 3] = [
+            [
+                "kt atentie2 fwd exacte (model)",
+                "kt atentie2 fwd elemente",
+                "kt atentie2 fwd promile",
+                "kt atentie2 fwd identice",
+                "kt atentie2 fwd cuvinte",
+            ],
+            [
+                "kt atentie2 back0 exacte (model)",
+                "kt atentie2 back0 elemente",
+                "kt atentie2 back0 promile",
+                "kt atentie2 back0 identice",
+                "kt atentie2 back0 cuvinte",
+            ],
+            [
+                "kt atentie2 back1 exacte (model)",
+                "kt atentie2 back1 elemente",
+                "kt atentie2 back1 promile",
+                "kt atentie2 back1 identice",
+                "kt atentie2 back1 cuvinte",
+            ],
+        ];
+        for k in 0..3 {
+            out.extend([
+                (N[k][0], pp[k].0),
+                (N[k][1], pp[k].1),
+                (N[k][2], pp[k].2),
+                (N[k][3], sp[k].0),
+                (N[k][4], sp[k].1),
+            ]);
+        }
+        out.push(("kt atentie2 timp omis", u32::from(self.timing_skipped())));
+        if let Some(r) = self.timing() {
+            const T: [&str; 3] = [
+                "kt atentie2 timp fwd (ns)",
+                "kt atentie2 timp back0 (ns)",
+                "kt atentie2 timp back1 (ns)",
+            ];
+            for (k, p) in r.new.progs.iter().enumerate() {
+                if let Some(ns) = p.median_ns() {
+                    out.push((T[k], cl(ns)));
+                }
+            }
+        }
+        for r in &self.sets {
+            out.push(("kt atentie2 set: index", r.new.set as u32));
+            out.push((
+                "kt atentie2 set: intrari (fnv)",
+                SETS.get(r.new.set).map_or(0, ProbeSet::inputs_fnv),
+            ));
+            for (k, p) in r.new.progs.iter().enumerate() {
+                out.extend([
+                    ("kt atentie2 set: verdict", p.code()),
+                    ("kt atentie2 set: exacte (model)", p.exact),
+                    (
+                        "kt atentie2 set: promile",
+                        p.worst_permille.unwrap_or(u32::MAX),
+                    ),
+                    ("kt atentie2 set: garzi", u32::from(p.guards_ok)),
+                    ("kt atentie2 set: iesire (fnv)", p.out_fnv),
+                    ("kt atentie2 set: identice", r.same[k].0),
+                ]);
+            }
+        }
+        out
+    }
+
+    pub fn journal(&self, j: &mut Journal) {
+        for (what, value) in self.rows() {
+            j.push(Event::Value { what, value });
+        }
+    }
+
+    /// Report lines (`label`: "SIMULARE" or "placa"). `old`: the first generation's probe from the same run (its
+    /// timing-set medians are the reference); without it, the os-358 medians ([`OS358_NS`]).
+    pub fn lines(&self, label: &str, old: Option<&Probe>) -> Vec<String> {
+        let pp = self.per_prog();
+        let sp = self.same_per_prog();
+        let mut out = alloc::vec![format!(
+            "atentie2 vechi langa nou ({label}): {} / {} seturi in margine, {} / {} seturi identice bit cu bit cu programele vechi",
+            self.in_margin(),
+            self.sets.len(),
+            self.identical_sets(),
+            self.sets.len()
+        )];
+        for (k, prog) in PROGS2.iter().enumerate() {
+            let w = if pp[k].2 == u32::MAX {
+                String::from("-")
+            } else {
+                format!("{}", pp[k].2)
+            };
+            out.push(format!(
+                "atentie2 {} ({label}): {} / {} elemente exacte fata de model, cel mai rau {w} promile; {} / {} cuvinte identice cu {}",
+                prog.name(),
+                pp[k].0,
+                pp[k].1,
+                sp[k].0,
+                sp[k].1,
+                prog.old().name()
+            ));
+        }
+        let old_ns: [Option<u64>; 3] = match old.and_then(|p| p.timing()) {
+            Some(r) => [0, 1, 2].map(|k| r.progs[k].median_ns()),
+            None => OS358_NS.map(Some),
+        };
+        let src = if old.and_then(|p| p.timing()).is_some() {
+            "aceeasi rulare"
+        } else {
+            "os-358"
+        };
+        match self.timing() {
+            None => out.push(format!(
+                "atentie2 {} ({label}): omis",
+                SETS[TIMING_SET].name
+            )),
+            Some(r) => {
+                const EST: [&str; 3] = ["~0,6-1,2", "~0,7-1,1", "~1,2-2,0"];
+                for (k, p) in r.new.progs.iter().enumerate() {
+                    if let Some(ns) = p.median_ns() {
+                        let vs = match old_ns[k] {
+                            Some(o) if ns > 0 => format!(
+                                "; vechiul {o} ns ({src}), de {},{:02} ori mai rapid",
+                                o / ns,
+                                (o % ns) * 100 / ns
+                            ),
+                            _ => String::new(),
+                        };
+                        out.push(format!(
+                            "atentie2 {} {} ({label}): mediana {ns} ns pe {} lansari (estimat {} ms){vs}",
+                            SETS[TIMING_SET].name,
+                            PROGS2[k].name(),
+                            p.ns.len(),
+                            EST[k],
+                        ));
+                    }
+                }
+            }
+        }
+        for r in &self.sets {
+            let name = SETS.get(r.new.set).map_or("?", |s| s.name);
+            for (k, p) in r.new.progs.iter().enumerate() {
+                let w = p
+                    .worst_permille
+                    .map(|v| format!("{v}"))
+                    .unwrap_or_else(|| String::from("-"));
+                out.push(format!(
+                    "atentie2 set {name} {} ({label}): {}, exacte {}/{}, {w} promile, garzi {}, identice {}/{}",
+                    PROGS2[k].name(),
+                    ["NU TRECE", "in margine", "INVALID"][p.code() as usize],
+                    p.exact,
+                    p.elements,
+                    if p.guards_ok { "neatinse" } else { "ATINSE" },
+                    r.same[k].0,
+                    r.same[k].1,
+                ));
+            }
+        }
+        out
+    }
+}
+
+/// What [`parse_attn_tile2`] reads back.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ParsedAttnTile2 {
+    pub sets: Option<u32>,
+    pub in_margin: Option<u32>,
+    pub identical_sets: Option<u32>,
+    /// Per program: (exact, elements, ‰, identical words, words).
+    pub per_prog: [[Option<u32>; 5]; 3],
+    pub timing_skipped: Option<u32>,
+    /// Median ns per program on the timing set.
+    pub timing_ns: [Option<u32>; 3],
+    /// Per set: (index, inputs fnv, then for each program: verdict, exact, ‰, guards, output fnv, identical words).
+    pub per_set: Vec<[u32; 20]>,
+}
+
+/// Reads the rows of [`Probe2::rows`] (`gpu: valoare kt atentie2 … = 0x…`). A new `kt atentie2 seturi` row starts over.
+pub fn parse_attn_tile2(text: &str) -> ParsedAttnTile2 {
+    let mut p = ParsedAttnTile2::default();
+    let mut slot = 0usize;
+    for line in text.lines() {
+        let Some(rest) = line.split("valoare kt atentie2 ").nth(1) else {
+            continue;
+        };
+        let Some((name, val)) = rest.rsplit_once(" = 0x") else {
+            continue;
+        };
+        let Ok(v) = u32::from_str_radix(val.trim(), 16) else {
+            continue;
+        };
+        let pr = |name: &str| match name {
+            "fwd" => Some(0),
+            "back0" => Some(1),
+            "back1" => Some(2),
+            _ => None,
+        };
+        match name {
+            "seturi" => {
+                p = ParsedAttnTile2 {
+                    sets: Some(v),
+                    ..ParsedAttnTile2::default()
+                }
+            }
+            "seturi in margine" => p.in_margin = Some(v),
+            "seturi identice cu vechi" => p.identical_sets = Some(v),
+            "timp omis" => p.timing_skipped = Some(v),
+            "set: index" => {
+                let mut row = [0u32; 20];
+                row[0] = v;
+                p.per_set.push(row);
+                slot = 1;
+            }
+            "set: intrari (fnv)"
+            | "set: verdict"
+            | "set: exacte (model)"
+            | "set: promile"
+            | "set: garzi"
+            | "set: iesire (fnv)"
+            | "set: identice" => {
+                if let Some(row) = p.per_set.last_mut()
+                    && slot < 20
+                {
+                    row[slot] = v;
+                    slot += 1;
+                }
+            }
+            _ => {
+                if let Some(t) = name
+                    .strip_prefix("timp ")
+                    .and_then(|r| r.strip_suffix(" (ns)"))
+                    .and_then(pr)
+                {
+                    p.timing_ns[t] = Some(v);
+                } else if let Some((prog, what)) = name.split_once(' ')
+                    && let Some(k) = pr(prog)
+                {
+                    let i = match what {
+                        "exacte (model)" => 0,
+                        "elemente" => 1,
+                        "promile" => 2,
+                        "identice" => 3,
+                        "cuvinte" => 4,
+                        _ => continue,
+                    };
+                    p.per_prog[k][i] = Some(v);
+                }
+            }
+        }
+    }
+    p
 }
 
 /// What [`parse_attn_tile`] reads back.
