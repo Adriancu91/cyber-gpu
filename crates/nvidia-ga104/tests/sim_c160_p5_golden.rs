@@ -19,12 +19,12 @@ use std::path::{Path, PathBuf};
 use gpu_compute::train::{self, AdamW, Arch, Batch, Recipe};
 use gpu_sim::cmdproc::{
     CommandProcessor, Event, GNORM_NEEDS, LN_BACK_NEEDS, LN_FWD_NEEDS, MM_TRAIN_NEEDS, XENT_NEEDS,
-    attn_back_on_cpu, attn_fwd_on_cpu, colsum_on_cpu, emb_back_on_cpu, emb_fwd_on_cpu,
-    gelu_tr_on_cpu, gnorm_on_cpu, ln_back_on_cpu, ln_fwd_on_cpu, mm_train_on_cpu, opt_step_on_cpu,
-    vadd_on_cpu, xent_on_cpu,
+    attn_back_on_cpu, attn_fwd_on_cpu, attn_p_on_cpu, colsum_on_cpu, emb_back_on_cpu,
+    emb_fwd_on_cpu, gelu_tr_on_cpu, gnorm_on_cpu, ln_back_on_cpu, ln_fwd_on_cpu, mm_train_on_cpu,
+    opt_step_on_cpu, vadd_on_cpu, xent_on_cpu,
 };
 use nvidia_ga104::push::{self, PushBuf};
-use nvidia_ga104::train_step::{self as ts, Launch, Outcome, PROGRAMS, Plan, Prog, Refs};
+use nvidia_ga104::train_step::{self as ts, Launch, Outcome, PROGRAMS_P_ONLY, Plan, Prog, Refs};
 use nvidia_ga104::{transfer, xent as xe};
 use nvidia_rm570::regs::clc7c0 as c;
 
@@ -64,7 +64,8 @@ impl Board {
     fn new() -> Self {
         ts::check_programs().expect("SHA-256 programe");
         let mut cp = CommandProcessor::new();
-        for p in PROGRAMS {
+        // All 14 (the 13 of every plan + `attn_p`, used only by `Plan::new_p_only`).
+        for p in PROGRAMS_P_ONLY {
             let code = p.code();
             match p {
                 Prog::MmTrain => {
@@ -82,6 +83,7 @@ impl Board {
                 Prog::Gnorm => cp.register_program_with_needs(code, gnorm_on_cpu, GNORM_NEEDS),
                 Prog::OptStep => cp.register_program(code, opt_step_on_cpu),
                 Prog::Vadd => cp.register_program(code, vadd_on_cpu),
+                Prog::AttnP => cp.register_program(code, attn_p_on_cpu),
             };
             cp.mem.write(prog_va(p), code);
         }
@@ -149,6 +151,17 @@ enum Fault {
     /// C-160 point 7 (T177): the shared-P plan without its `attn_fwd` re-launches (every layer but the last then
     /// uses the last layer's P).
     NoPRebuild,
+    /// C-160 point 7 (`docs/C-160_P7_ATTN_P_IN_PAS.md`): layer 0's P re-launch reads layer 1's `qkv`.
+    PWrongQkv,
+}
+
+/// Which arena: P kept per layer ([`Plan::new`]), one shared P rebuilt with `attn_fwd` ([`Plan::new_p_recalc`]) or
+/// with `attn_p` ([`Plan::new_p_only`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Kind {
+    Kept,
+    Recalc,
+    POnly,
 }
 
 fn plant(plan: &Plan, list: &mut Vec<Launch>, f: Fault) {
@@ -186,6 +199,18 @@ fn plant(plan: &Plan, list: &mut Vec<Launch>, f: Fault) {
             list.insert(at, head);
         }
         Fault::NoPRebuild => list.retain(|l| l.tag != "inapoi:atentia-P"),
+        Fault::PWrongQkv => {
+            let l = list
+                .iter_mut()
+                .find(|l| l.tag == "inapoi:atentia-P" && l.layer == Some(0))
+                .unwrap();
+            let (from, to) = (
+                plan.layers[0].qkv.to_le_bytes(),
+                plan.layers[1].qkv.to_le_bytes(),
+            );
+            let at = l.cbuf.windows(8).position(|w| w == from).unwrap();
+            l.cbuf[at..at + 8].copy_from_slice(&to);
+        }
     }
 }
 
@@ -209,14 +234,14 @@ fn run_with(
     steps: u32,
     fault: Fault,
 ) -> Run {
-    run_plan(false, ar, shape, params, data, recipe, steps, fault)
+    run_plan(Kind::Kept, ar, shape, params, data, recipe, steps, fault)
 }
 
 /// `recalc`: [`Plan::new_p_recalc`] (one P shared by all layers, rebuilt in the backward pass) instead of
 /// [`Plan::new`].
 #[allow(clippy::too_many_arguments)]
 fn run_plan(
-    recalc: bool,
+    kind: Kind,
     ar: Arch,
     (bsz, tl): (usize, usize),
     params: &[Vec<f32>],
@@ -225,10 +250,10 @@ fn run_plan(
     steps: u32,
     fault: Fault,
 ) -> Run {
-    let plan = if recalc {
-        Plan::new_p_recalc(ar, bsz, tl, inputs, HEAP).unwrap()
-    } else {
-        Plan::new(ar, bsz, tl, inputs, HEAP).unwrap()
+    let plan = match kind {
+        Kind::Kept => Plan::new(ar, bsz, tl, inputs, HEAP).unwrap(),
+        Kind::Recalc => Plan::new_p_recalc(ar, bsz, tl, inputs, HEAP).unwrap(),
+        Kind::POnly => Plan::new_p_only(ar, bsz, tl, inputs, HEAP).unwrap(),
     };
     let mut b = Board::new();
     for (va, bytes) in plan.uploads(params, inputs, targets).unwrap() {
@@ -289,14 +314,14 @@ fn run_plan(
 }
 
 fn run_mic(recipe: Recipe, steps: u32, fault: Fault) -> Run {
-    run_mic_plan(false, recipe, steps, fault)
+    run_mic_plan(Kind::Kept, recipe, steps, fault)
 }
 
-fn run_mic_plan(recalc: bool, recipe: Recipe, steps: u32, fault: Fault) -> Run {
+fn run_mic_plan(kind: Kind, recipe: Recipe, steps: u32, fault: Fault) -> Run {
     let inputs = read_i32(&dir().join("intrari.i32"));
     let targets = read_i32(&dir().join("tinte.i32"));
     run_plan(
-        recalc,
+        kind,
         MIC,
         (B, T),
         &tensors("initiale"),
@@ -698,8 +723,8 @@ fn t177_p_rebuilt_small_golden_step_is_bit_for_bit_the_kept_p_step() {
         (Recipe::Sgd, "sgd", 73usize),
         (Recipe::AdamW513, "adamw_513", 75),
     ] {
-        let kept = run_mic_plan(false, recipe, 10, Fault::None);
-        let rec = run_mic_plan(true, recipe, 10, Fault::None);
+        let kept = run_mic_plan(Kind::Kept, recipe, 10, Fault::None);
+        let rec = run_mic_plan(Kind::Recalc, recipe, 10, Fault::None);
         assert_eq!(kept.total_per_step, n);
         assert_eq!(rec.total_per_step, n + 1);
         let p_bytes = (4 * (B * MIC.heads * T * T) as u64).div_ceil(256) * 256 + 256;
@@ -741,9 +766,9 @@ fn t177_p_rebuilt_four_layers_bit_for_bit() {
         .collect();
     let inputs = read_i32(&dir().join("intrari.i32"));
     let targets = read_i32(&dir().join("tinte.i32"));
-    let run = |recalc: bool, fault: Fault| {
+    let run = |kind: Kind, fault: Fault| {
         run_plan(
-            recalc,
+            kind,
             ar,
             (B, T),
             &params,
@@ -753,12 +778,12 @@ fn t177_p_rebuilt_four_layers_bit_for_bit() {
             fault,
         )
     };
-    let kept = run(false, Fault::None);
-    let rec = run(true, Fault::None);
+    let kept = run(Kind::Kept, Fault::None);
+    let rec = run(Kind::Recalc, Fault::None);
     assert_eq!(rec.total_per_step, kept.total_per_step + 3);
     assert!(same_bits(&kept.out, &rec.out), "4 straturi: alti biti");
     // Prediction 4, here: without the re-launches layers 0..2 use layer 3's P.
-    let bad = run(true, Fault::NoPRebuild);
+    let bad = run(Kind::Recalc, Fault::NoPRebuild);
     assert_eq!(bad.total_per_step, kept.total_per_step);
     assert!(
         !same_bits(&kept.out, &bad.out),
@@ -774,7 +799,7 @@ fn t177_p_rebuilt_four_layers_bit_for_bit() {
 #[test]
 fn t177_missing_p_rebuild_is_caught() {
     let rf = refs("sgd");
-    let r = run_mic_plan(true, Recipe::Sgd, 1, Fault::NoPRebuild);
+    let r = run_mic_plan(Kind::Recalc, Recipe::Sgd, 1, Fault::NoPRebuild);
     let g = worst(&r.out.grad1, &rf.grad1);
     let w1 = worst(&r.out.after1, &rf.after1);
     let caught = g.abs > train::TOL_GRAD_ABS
@@ -828,4 +853,109 @@ fn t177_arena_memory_at_513_and_651() {
         assert!((k / want_kept - 1.0).abs() <= 0.03, "{name}: {k}");
         assert!((r / want_rec - 1.0).abs() <= 0.03, "{name}: {r}");
     }
+}
+
+// ------------------------------------------------------------------ C-160 point 7: `attn_p` in the step (T185)
+
+/// Predictions 2 (`docs/C-160_P7_ATTN_P_IN_PAS.md`): the small golden step with one shared P rebuilt by `attn_p` gives
+/// the kept-P numbers (and the `attn_fwd`-rebuilt numbers) bit for bit, 10 steps, both recipes (SIMULARE).
+#[test]
+fn t185_attn_p_rebuilt_small_golden_step_is_bit_for_bit() {
+    for (recipe, name, n) in [
+        (Recipe::Sgd, "sgd", 73usize),
+        (Recipe::AdamW513, "adamw_513", 75),
+    ] {
+        let kept = run_mic_plan(Kind::Kept, recipe, 10, Fault::None);
+        let rec = run_mic_plan(Kind::Recalc, recipe, 10, Fault::None);
+        let only = run_mic_plan(Kind::POnly, recipe, 10, Fault::None);
+        assert_eq!(only.total_per_step, n + 1);
+        assert_eq!(only.board_bytes, rec.board_bytes);
+        let count = |r: &Run, p: Prog| {
+            r.launches_per_step
+                .iter()
+                .find(|e| e.0 == p)
+                .map_or(0, |e| e.1)
+        };
+        assert_eq!(count(&only, Prog::AttnP), 1);
+        assert_eq!(count(&only, Prog::AttnFwd), count(&kept, Prog::AttnFwd));
+        assert_eq!(count(&rec, Prog::AttnP), 0);
+        let same_kept = same_bits(&kept.out, &only.out);
+        let same_rec = same_bits(&rec.out, &only.out);
+        let v = ts::judge(recipe, only.total_per_step, &only.out, &refs(name));
+        println!(
+            "kt c185 {name}: attn_p in pas {} lansari (1 attn_p); 10 pasi bit cu bit = P pastrat {} / attn_fwd relansat {}; verdictul fata de PyTorch: {}",
+            only.total_per_step,
+            if same_kept { "DA" } else { "NU" },
+            if same_rec { "DA" } else { "NU" },
+            if v.passes() { "TRECE" } else { "NU TRECE" }
+        );
+        assert!(
+            same_kept && same_rec,
+            "{name}: attn_p in pas nu da aceiasi biti"
+        );
+        assert!(v.passes());
+    }
+}
+
+/// Prediction 3: four layers, three AdamW steps — bit for bit, three `attn_p` re-launches; prediction 4: without
+/// them, or on another layer's `qkv`, other bits.
+#[test]
+fn t185_attn_p_four_layers_and_planted_mistakes() {
+    let ar = Arch { layers: 4, ..MIC };
+    let mut r = rng(185);
+    let params: Vec<Vec<f32>> = ar
+        .tensors()
+        .iter()
+        .map(|s| {
+            let n = s.elements();
+            if s.name.ends_with("ln1.weight")
+                || s.name.ends_with("ln2.weight")
+                || s.name == "ln.weight"
+            {
+                (0..n).map(|_| 1.0 + 0.1 * r()).collect()
+            } else {
+                (0..n).map(|_| 0.3 * r()).collect()
+            }
+        })
+        .collect();
+    let inputs = read_i32(&dir().join("intrari.i32"));
+    let targets = read_i32(&dir().join("tinte.i32"));
+    let run = |kind: Kind, fault: Fault| {
+        run_plan(
+            kind,
+            ar,
+            (B, T),
+            &params,
+            (&inputs, &targets),
+            Recipe::AdamW513,
+            3,
+            fault,
+        )
+    };
+    let kept = run(Kind::Kept, Fault::None);
+    let only = run(Kind::POnly, Fault::None);
+    assert_eq!(only.total_per_step, kept.total_per_step + 3);
+    assert_eq!(
+        only.launches_per_step
+            .iter()
+            .find(|e| e.0 == Prog::AttnP)
+            .map(|e| e.1),
+        Some(3)
+    );
+    assert!(same_bits(&kept.out, &only.out), "4 straturi: alti biti");
+    let none = run(Kind::POnly, Fault::NoPRebuild);
+    assert!(
+        !same_bits(&kept.out, &none.out),
+        "fara attn_p: aceiasi biti?"
+    );
+    let wrong = run(Kind::POnly, Fault::PWrongQkv);
+    assert_eq!(wrong.total_per_step, only.total_per_step);
+    assert!(
+        !same_bits(&kept.out, &wrong.out),
+        "qkv gresit: aceiasi biti?"
+    );
+    println!(
+        "kt c185 4 straturi: {} lansari (3 attn_p), 3 pasi AdamW bit cu bit = DA; fara relansari: PRINSA; qkv-ul altui strat: PRINSA",
+        only.total_per_step
+    );
 }

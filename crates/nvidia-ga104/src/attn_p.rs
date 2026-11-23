@@ -3,7 +3,8 @@
 //! [`crate::attn_fwd`] without its last loop: the same constant buffer ([`Args`] = [`crate::attn_fwd::Args`]; `att` is
 //! read by nobody and nothing is written there), the same blocks of 32 and grid [⌈T/32⌉, H, B], and every operation that
 //! leads to P is `attn_fwd`'s, in the same order — so it rebuilds a layer's P bit for bit when the training step does
-//! not keep it (`train_step::Plan::new_p_recalc`). Tested **only in SIMULARE** (T178); not yet in the step's program list.
+//! not keep it (`train_step::Plan::new_p_recalc`). Tested **only in SIMULARE** (T178); in the step
+//! since session 175 as `train_step::Prog::AttnP`, used only by `train_step::Plan::new_p_only` (T185).
 
 /// `tools/nak/out/attn_p.sm86.sass` (Mesa NAK 25.0.7, SM 8.6).
 pub const ATTN_P: &[u8] = include_bytes!("../../../tools/nak/out/attn_p.sm86.sass");

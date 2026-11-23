@@ -68,6 +68,8 @@ impl Board {
                 Prog::Gnorm => cp.register_program_with_needs(code, gnorm_on_cpu, GNORM_NEEDS),
                 Prog::OptStep => cp.register_program(code, opt_step_on_cpu),
                 Prog::Vadd => cp.register_program(code, vadd_on_cpu),
+                // Only in `PROGRAMS_P_ONLY` (`Plan::new_p_only`); this file runs `Plan::new`.
+                Prog::AttnP => unreachable!("attn_p nu e in PROGRAMS"),
             };
             cp.mem.write(prog_va(p), code);
         }

@@ -33,5 +33,18 @@ OS-ul a anunțat (în `stare/cyber-universe.md`, 23 nov 04:38) că `T::AttnP` nu
    pas ≈ 11 × 0,49 ≈ 5,4 lansări `attn_fwd`. Pe placă nu e nimic nou de cerut acum: `attn_p` n-a rulat pe placă; o probă pe
    placă vine doar odată cu pasul de aur pe placă (o comandă nouă).
 
-## Rezultatul
-(se completează după cod)
+## Rezultatul (după cod, sesiunea 175)
+| Predicția | Ieșit | |
+|---|---|---|
+| 1. aceeași arenă, aceleași lansări, relansarea = `attn_p` cu argumentele lansării înainte | `new_p_only.bytes() = new_p_recalc.bytes()`; 74 `sgd` / 76 `adamw_513` (+1 la mixt); fiecare lansare are același cbuf, grilă, etichetă și strat ca la `new_p_recalc`, doar relansarea stratului 0 e `attn_p`; `PROGRAMS` tot 13, `PROGRAMS_P_ONLY[13] = AttnP`, indicii vechi aceiași | PASS (T185, listă) |
+| 2. pasul de aur mic, 10 pași, bit cu bit | `sgd` și `adamw_513`: **bit cu bit** = P păstrat și = `attn_fwd` relansat; verdictul față de PyTorch **TRECE** la ambele | PASS (SIMULARE) |
+| 3. 4 straturi, 3 pași AdamW | 140 de lansări pe pas (3 `attn_p`), bit cu bit = P păstrat | PASS (SIMULARE) |
+| 4. greșeli plantate | relansarea scoasă: alți biți (PRINSĂ); relansarea pe `qkv`-ul stratului 1: alți biți (PRINSĂ) | PASS (SIMULARE) |
+| 5. costul | ≈ 0,51 din `attn_fwd` pe relansare → la #513 ~5,4 lansări `attn_fwd` câștigate pe pas | DEDUS, nemăsurat |
+
+Testele: T185 — `t185_the_list_with_attn_p` (`sim_c160_p6_train_step.rs`), `t185_attn_p_rebuilt_small_golden_step_is_bit_for_bit`
+și `t185_attn_p_four_layers_and_planted_mistakes` (`sim_c160_p5_golden.rs`).
+
+**Ce nu e dovedit:** pe placă `attn_p` n-a rulat niciodată; „aceiași biți ca `attn_fwd`” se sprijină pe aceleași instrucțiuni (T178,
+verificat static). Nimic nou de trimis la placă acum; planul `new_p_only` e pentru pașii mari (#513), când OS-ul va rula pasul pe placă
+cu un singur P.

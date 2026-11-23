@@ -1,5 +1,24 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 175 — 23 noiembrie 2026, ~05:10–05:23 (ora României), în cloud, FĂRĂ placă — **C-160 p.7: `attn_p` legat în pas (`Plan::new_p_only`)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-358 (proba `attn_*_2` încă nerulată).
+OS-ul a anunțat (stare, 04:38) că `T::AttnP` nu-i cere nimic înainte → legat acum. Planul și predicțiile urcate **înainte** de cod
+(`d9e8bae`, `docs/C-160_P7_ATTN_P_IN_PAS.md`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `train_step` (adăugare) | `Prog::AttnP`, `PROGRAMS_P_ONLY` (13 + `attn_p`, indicii vechi aceiași), `Plan::new_p_only` / `programs` / `p_program`; `PROGRAMS` tot 13, `new` / `new_p_recalc` trimit exact ce trimiteau; `check_programs` verifică 14 SHA-256 | PASS (compilat) |
+| T185 (3 teste) | lista = `new_p_recalc` cu relansarea pe `attn_p` (aceleași cbuf / grilă); pasul de aur mic `sgd` / `adamw_513` 10 pași **bit cu bit** = P păstrat, verdictul față de PyTorch trece; 4 straturi bit cu bit (3 `attn_p`); relansarea scoasă / pe `qkv`-ul altui strat prinse | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy, **884 de teste** (+7 ignorate), build no_std | PASS |
+| Nota pentru OS | `integration/cyber-universe/C-160_P7_attn_p-in-pas.md` (nimic nou pentru placă; un rând în `gpu_i10.rs` + `plan.programs()` doar dacă vor planul nou) | gata |
+| `attn_p` pe RTX 3070 Ti | — | NOT TESTED |
+
+**Următorul pas:** C-157 p.2 — comparația probei „vechi lângă nou” (`attn_*_2`) când rulează pe placă; până atunci varianta „doar P”
+pe plăci (`attn_p_tile`, pentru pasul #513 cu P recalculat) sau C-157 p.8 (fișa de model / pachetele de calcul).
+
+---
+
 ## Sesiunea 174 — 23 noiembrie 2026, ~04:11–04:35 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: proba „vechi lângă nou” pentru `attn_*_2`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-358. Planul și predicțiile urcate

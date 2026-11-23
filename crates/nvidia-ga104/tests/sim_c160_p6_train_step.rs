@@ -275,3 +275,64 @@ fn t177_the_list_with_p_rebuilt() {
         assert_eq!(k.len() + 1, l.len());
     }
 }
+
+/// C-160 point 7 (T185, `docs/C-160_P7_ATTN_P_IN_PAS.md`, prediction 1): the shared-P list rebuilt by `attn_p` — the
+/// same arena and the same launches as `Plan::new_p_recalc`, except the re-launch's program (`attn_p`, with the forward
+/// launch's cbuf and grid); `PROGRAMS` unchanged (13), `PROGRAMS_P_ONLY` = them + `attn_p`, indices kept.
+#[test]
+fn t185_the_list_with_attn_p() {
+    use nvidia_ga104::train_step::PROGRAMS_P_ONLY;
+    check_programs().unwrap();
+    assert_eq!(PROGRAMS.len(), 13);
+    assert_eq!(&PROGRAMS_P_ONLY[..13], &PROGRAMS[..]);
+    assert_eq!(PROGRAMS_P_ONLY[13], Prog::AttnP);
+    assert_eq!(Prog::AttnP.index(), 13);
+    assert_eq!(Prog::AttnP.name(), "attn_p");
+    assert_eq!(Prog::AttnP.sha256(), nvidia_ga104::attn_p::ATTN_P_SHA256);
+    assert_eq!(Prog::AttnP.registers(), 22);
+    assert_eq!(Prog::AttnP.block(), Prog::AttnFwd.block());
+    assert!(Prog::AttnP.shared().is_none());
+    let (inp, _) = batch();
+    let base = VA_BASE + 0x100_0000;
+    let kept = Plan::new(train::MIC, MIC_B, MIC_T, &inp, base).unwrap();
+    let rec = Plan::new_p_recalc(train::MIC, MIC_B, MIC_T, &inp, base).unwrap();
+    let only = Plan::new_p_only(train::MIC, MIC_B, MIC_T, &inp, base).unwrap();
+    assert_eq!(kept.programs(), &PROGRAMS[..]);
+    assert_eq!(rec.programs(), &PROGRAMS[..]);
+    assert_eq!(only.programs(), &PROGRAMS_P_ONLY[..]);
+    assert_eq!(rec.p_program(), Prog::AttnFwd);
+    assert_eq!(only.p_program(), Prog::AttnP);
+    assert_eq!(only.bytes(), rec.bytes());
+    assert_eq!(only.p_relaunches(), 1);
+    let opt = AdamW::recipe_513(&params());
+    for (recipe, n) in [(Recipe::AdamW513, 76), (Recipe::Sgd, 74)] {
+        let l = only.step(recipe, &opt, 1).unwrap();
+        let r = rec.step(recipe, &opt, 1).unwrap();
+        assert_eq!(l.len(), n);
+        assert_eq!(only.launches_per_step(recipe), n);
+        assert_eq!(only.launches_per_step_mixed(recipe), n + 1);
+        assert_eq!(
+            only.step_mixed(recipe, &opt, 1, 1024.0).unwrap().len(),
+            n + 1
+        );
+        for (a, b) in l.iter().zip(&r) {
+            assert_eq!(
+                (a.cbuf, a.grid, a.tag, a.layer),
+                (b.cbuf, b.grid, b.tag, b.layer)
+            );
+            if a.tag == "inapoi:atentia-P" {
+                assert_eq!((a.prog, b.prog), (Prog::AttnP, Prog::AttnFwd));
+            } else {
+                assert_eq!(a.prog, b.prog);
+            }
+        }
+        assert_eq!(l.iter().filter(|x| x.prog == Prog::AttnP).count(), 1);
+        // Every launch's program is among the plan's programs (what the OS loads).
+        assert!(l.iter().all(|x| only.programs().contains(&x.prog)));
+        assert!(k_has_no_attn_p(&kept.step(recipe, &opt, 1).unwrap()));
+    }
+}
+
+fn k_has_no_attn_p(l: &[ts::Launch]) -> bool {
+    l.iter().all(|x| x.prog != Prog::AttnP)
+}

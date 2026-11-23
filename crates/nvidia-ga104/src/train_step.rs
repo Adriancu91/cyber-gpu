@@ -30,9 +30,9 @@ use gpu_core::error::{GpuError, GpuResult};
 
 use crate::qmd::{ComputeQmd, SharedMemory};
 use crate::{
-    attn_back as ab, attn_fwd as af, colsum as cs, emb_back as eb, emb_fwd as ef, gelu_tr as gt,
-    gnorm as gn, kronos_layer, ln_back as lb, ln_fwd as lf, mm_train as mm, opt_step as os,
-    xent as xe,
+    attn_back as ab, attn_fwd as af, attn_p as ap, colsum as cs, emb_back as eb, emb_fwd as ef,
+    gelu_tr as gt, gnorm as gn, kronos_layer, ln_back as lb, ln_fwd as lf, mm_train as mm,
+    opt_step as os, xent as xe,
 };
 
 fn bad(why: &'static str) -> GpuError {
@@ -68,6 +68,9 @@ pub enum Prog {
     Gnorm,
     OptStep,
     Vadd,
+    /// C-160 point 7 (`docs/C-160_P7_ATTN_P_IN_PAS.md`): `attn_p`, P without P·V — only in [`PROGRAMS_P_ONLY`], for
+    /// the re-launches of [`Plan::new_p_only`]. Not in [`PROGRAMS`] (what the OS loads for the other plans is unchanged).
+    AttnP,
 }
 
 /// Every program a step uses (the OS loads all 13 once; `Gnorm` only runs at `adamw_513`).
@@ -87,6 +90,25 @@ pub const PROGRAMS: [Prog; 13] = [
     Prog::Vadd,
 ];
 
+/// [`PROGRAMS`] + [`Prog::AttnP`] at the end (so every old program keeps its [`Prog::index`]): what a
+/// [`Plan::new_p_only`] step uses (`Plan::programs`).
+pub const PROGRAMS_P_ONLY: [Prog; 14] = [
+    Prog::MmTrain,
+    Prog::Xent,
+    Prog::LnFwd,
+    Prog::LnBack,
+    Prog::Colsum,
+    Prog::GeluTr,
+    Prog::AttnFwd,
+    Prog::AttnBack,
+    Prog::EmbFwd,
+    Prog::EmbBack,
+    Prog::Gnorm,
+    Prog::OptStep,
+    Prog::Vadd,
+    Prog::AttnP,
+];
+
 impl Prog {
     pub fn code(self) -> &'static [u8] {
         match self {
@@ -103,6 +125,7 @@ impl Prog {
             Prog::Gnorm => gn::GNORM,
             Prog::OptStep => os::OPT_STEP,
             Prog::Vadd => kronos_layer::VADD,
+            Prog::AttnP => ap::ATTN_P,
         }
     }
 
@@ -122,6 +145,7 @@ impl Prog {
             Prog::Gnorm => gn::GNORM_SHA256,
             Prog::OptStep => os::OPT_STEP_SHA256,
             Prog::Vadd => VADD_SHA256,
+            Prog::AttnP => ap::ATTN_P_SHA256,
         }
     }
 
@@ -140,6 +164,7 @@ impl Prog {
             Prog::Gnorm => gn::REGISTERS,
             Prog::OptStep => os::REGISTERS,
             Prog::Vadd => kronos_layer::Prog::Vadd.registers(),
+            Prog::AttnP => ap::REGISTERS,
         }
     }
 
@@ -158,6 +183,7 @@ impl Prog {
             Prog::Gnorm => gn::BLOCK,
             Prog::OptStep => os::BLOCK,
             Prog::Vadd => [kronos_layer::Prog::Vadd.block(), 1, 1],
+            Prog::AttnP => ap::BLOCK,
         }
     }
 
@@ -188,18 +214,19 @@ impl Prog {
             Prog::Gnorm => "gnorm",
             Prog::OptStep => "opt_step",
             Prog::Vadd => "vadd",
+            Prog::AttnP => "attn_p",
         }
     }
 
-    /// Index in [`PROGRAMS`].
+    /// Index in [`PROGRAMS_P_ONLY`] (= the index in [`PROGRAMS`] for its 13 programs).
     pub fn index(self) -> usize {
-        PROGRAMS.iter().position(|&p| p == self).unwrap_or(0)
+        PROGRAMS_P_ONLY.iter().position(|&p| p == self).unwrap_or(0)
     }
 }
 
 /// Checks every program's bytes against its SHA-256 (what the OS does before loading; refuse on a mismatch).
 pub fn check_programs() -> GpuResult<()> {
-    for p in PROGRAMS {
+    for p in PROGRAMS_P_ONLY {
         if hex(&crate::sha256::digest(p.code())) != p.sha256() {
             return Err(bad("pas-aur: SHA-256 al unui program nu se potriveste"));
         }
@@ -370,6 +397,9 @@ pub struct Plan {
     pub res: u64,
     /// The segment lists themselves (written by [`Plan::uploads`]).
     segs: [EmbSegments; 2],
+    /// The program of the backward pass's P re-launches: `attn_fwd` ([`Plan::new_p_recalc`]) or `attn_p`
+    /// ([`Plan::new_p_only`]); never launched by [`Plan::new`].
+    p_prog: Prog,
     /// End of the arena (exclusive).
     pub end: u64,
 }
@@ -404,6 +434,37 @@ impl Plan {
         base: u64,
     ) -> GpuResult<Self> {
         Self::build(arch, batch, len, inputs, base, true)
+    }
+
+    /// The arena of [`Plan::new_p_recalc`] (one shared P), but the backward pass rebuilds a lost P with **`attn_p`**
+    /// (P without P·V, ≈ 0,51 of `attn_fwd`, DEDUS) on exactly the forward launch's arguments — the same operations in
+    /// the same order, so the same bits (`docs/C-160_P7_ATTN_P_IN_PAS.md`); `att` is not rewritten. Its programs are
+    /// [`PROGRAMS_P_ONLY`] (`Plan::programs`).
+    pub fn new_p_only(
+        arch: Arch,
+        batch: usize,
+        len: usize,
+        inputs: &[u32],
+        base: u64,
+    ) -> GpuResult<Self> {
+        let mut plan = Self::build(arch, batch, len, inputs, base, true)?;
+        plan.p_prog = Prog::AttnP;
+        Ok(plan)
+    }
+
+    /// The programs this plan's steps launch (load these): [`PROGRAMS_P_ONLY`] for [`Plan::new_p_only`],
+    /// [`PROGRAMS`] otherwise.
+    pub fn programs(&self) -> &'static [Prog] {
+        if self.p_prog == Prog::AttnP {
+            &PROGRAMS_P_ONLY
+        } else {
+            &PROGRAMS
+        }
+    }
+
+    /// The program of the P re-launches (`attn_fwd` or `attn_p`).
+    pub fn p_program(&self) -> Prog {
+        self.p_prog
     }
 
     /// True when the P buffer of layer `l` is overwritten by a later layer's forward pass (then the backward pass
@@ -546,6 +607,7 @@ impl Plan {
             part,
             res,
             segs: [st, sp],
+            p_prog: Prog::AttnFwd,
             end: b.0,
         })
     }
@@ -1077,8 +1139,9 @@ impl Plan {
                     heads: h as u32,
                     scale,
                 };
+                // `attn_p::Args` = `attn_fwd::Args`: the same cbuf and grid either way.
                 out.push(launch(
-                    Prog::AttnFwd,
+                    self.p_prog,
                     a.cbuf().as_ref().map(|b| &b[..]),
                     a.grid(),
                     "inapoi:atentia-P",
