@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 179 — 23 noiembrie 2026, ~09:11–09:55 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: `attn_back_tile0_3` (citiri fără ramură)**
+## Sesiunea 179 — 23 noiembrie 2026, ~09:11–09:30 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: `attn_back_tile0_3` (citiri fără ramură)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-364. Planul și predicțiile urcate
 **înainte** de cod (`c266ba2`, `docs/C-157_P2_ATTN_TILE3.md`). Mesa NAK 25.0.7 reconstruit în cloud (`attn_back_tile0_2` identic).
