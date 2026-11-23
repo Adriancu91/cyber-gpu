@@ -73,7 +73,10 @@ impl Board {
                 | Prog::AttnFwdTile2
                 | Prog::AttnBackTile0_2
                 | Prog::AttnBackTile2
-                | Prog::AttnPTile => unreachable!("nu e in PROGRAMS"),
+                | Prog::AttnPTile
+                | Prog::AttnFwdTile3
+                | Prog::AttnBackTile0_3
+                | Prog::AttnBackTile3 => unreachable!("nu e in PROGRAMS"),
             };
             cp.mem.write(prog_va(p), code);
         }

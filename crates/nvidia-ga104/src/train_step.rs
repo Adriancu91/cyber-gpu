@@ -30,8 +30,9 @@ use gpu_core::error::{GpuError, GpuResult};
 
 use crate::qmd::{ComputeQmd, SharedMemory};
 use crate::{
-    attn_back as ab, attn_back_tile_2 as abt2, attn_back_tile0_2 as abt02, attn_fwd as af,
-    attn_fwd_tile2 as aft2, attn_p as ap, attn_p_tile as apt, colsum as cs, emb_back as eb,
+    attn_back as ab, attn_back_tile_2 as abt2, attn_back_tile_3 as abt3,
+    attn_back_tile0_2 as abt02, attn_back_tile0_3 as abt03, attn_fwd as af, attn_fwd_tile2 as aft2,
+    attn_fwd_tile3 as aft3, attn_p as ap, attn_p_tile as apt, colsum as cs, emb_back as eb,
     emb_fwd as ef, gelu_tr as gt, gnorm as gn, kronos_layer, ln_back as lb, ln_fwd as lf,
     mm_train as mm, opt_step as os, xent as xe,
 };
@@ -81,6 +82,14 @@ pub enum Prog {
     AttnBackTile2,
     /// P without P·V on tiles (`attn_p_tile`), the re-launches of [`Plan::new_p_only_tiles`] only.
     AttnPTile,
+    /// C-157 point 2 after os-375 (`docs/C-157_P2_ATTN3_IN_PAS.md`): the forward attention on tiles, third generation
+    /// (`attn_fwd_tile3`, branch-free loads, the same bits as `attn_fwd_tile2`), only in the plans of
+    /// [`Plan::new_tiles3`] / [`Plan::new_p_only_tiles3`]. In [`PROGRAMS_ALL_3`], not in [`PROGRAMS_ALL`].
+    AttnFwdTile3,
+    /// The rows of dS (mode 0), third generation (`attn_back_tile0_3`), `_3` plans only.
+    AttnBackTile0_3,
+    /// The columns dQ, dK, dV (mode 1), third generation (`attn_back_tile_3`), `_3` plans only.
+    AttnBackTile3,
 }
 
 /// Every program a step uses (the OS loads all 13 once; `Gnorm` only runs at `adamw_513`).
@@ -120,6 +129,71 @@ pub const PROGRAMS_ALL: [Prog; 18] = [
     Prog::AttnFwdTile2,
     Prog::AttnBackTile0_2,
     Prog::AttnBackTile2,
+    Prog::AttnPTile,
+];
+
+/// [`PROGRAMS_ALL`] + the three `_3` programs at the end (so all 18 keep their [`Prog::index`]): every program any plan
+/// may launch. `PROGRAMS_ALL` itself stays at 18 — the OS's simulated board refuses a program it has no CPU model for
+/// (`docs/C-157_P2_ATTN3_IN_PAS.md`). `check_programs` checks all 21.
+pub const PROGRAMS_ALL_3: [Prog; 21] = [
+    Prog::MmTrain,
+    Prog::Xent,
+    Prog::LnFwd,
+    Prog::LnBack,
+    Prog::Colsum,
+    Prog::GeluTr,
+    Prog::AttnFwd,
+    Prog::AttnBack,
+    Prog::EmbFwd,
+    Prog::EmbBack,
+    Prog::Gnorm,
+    Prog::OptStep,
+    Prog::Vadd,
+    Prog::AttnP,
+    Prog::AttnFwdTile2,
+    Prog::AttnBackTile0_2,
+    Prog::AttnBackTile2,
+    Prog::AttnPTile,
+    Prog::AttnFwdTile3,
+    Prog::AttnBackTile0_3,
+    Prog::AttnBackTile3,
+];
+
+/// What a [`Plan::new_tiles3`] step launches: the 11 programs without attention + the three `_3` attention programs.
+pub const PROGRAMS_TILES3: [Prog; 14] = [
+    Prog::MmTrain,
+    Prog::Xent,
+    Prog::LnFwd,
+    Prog::LnBack,
+    Prog::Colsum,
+    Prog::GeluTr,
+    Prog::EmbFwd,
+    Prog::EmbBack,
+    Prog::Gnorm,
+    Prog::OptStep,
+    Prog::Vadd,
+    Prog::AttnFwdTile3,
+    Prog::AttnBackTile0_3,
+    Prog::AttnBackTile3,
+];
+
+/// [`PROGRAMS_TILES3`] + [`Prog::AttnPTile`] (P rebuilt as for `_2`: the same P bits, T186 / T190): what a
+/// [`Plan::new_p_only_tiles3`] step launches.
+pub const PROGRAMS_TILES3_P_ONLY: [Prog; 15] = [
+    Prog::MmTrain,
+    Prog::Xent,
+    Prog::LnFwd,
+    Prog::LnBack,
+    Prog::Colsum,
+    Prog::GeluTr,
+    Prog::EmbFwd,
+    Prog::EmbBack,
+    Prog::Gnorm,
+    Prog::OptStep,
+    Prog::Vadd,
+    Prog::AttnFwdTile3,
+    Prog::AttnBackTile0_3,
+    Prog::AttnBackTile3,
     Prog::AttnPTile,
 ];
 
@@ -200,6 +274,9 @@ impl Prog {
             Prog::AttnBackTile0_2 => abt02::ATTN_BACK_TILE0_2,
             Prog::AttnBackTile2 => abt2::ATTN_BACK_TILE_2,
             Prog::AttnPTile => apt::ATTN_P_TILE,
+            Prog::AttnFwdTile3 => aft3::ATTN_FWD_TILE3,
+            Prog::AttnBackTile0_3 => abt03::ATTN_BACK_TILE0_3,
+            Prog::AttnBackTile3 => abt3::ATTN_BACK_TILE_3,
         }
     }
 
@@ -224,6 +301,9 @@ impl Prog {
             Prog::AttnBackTile0_2 => abt02::ATTN_BACK_TILE0_2_SHA256,
             Prog::AttnBackTile2 => abt2::ATTN_BACK_TILE_2_SHA256,
             Prog::AttnPTile => apt::ATTN_P_TILE_SHA256,
+            Prog::AttnFwdTile3 => aft3::ATTN_FWD_TILE3_SHA256,
+            Prog::AttnBackTile0_3 => abt03::ATTN_BACK_TILE0_3_SHA256,
+            Prog::AttnBackTile3 => abt3::ATTN_BACK_TILE_3_SHA256,
         }
     }
 
@@ -247,6 +327,9 @@ impl Prog {
             Prog::AttnBackTile0_2 => abt02::REGISTERS,
             Prog::AttnBackTile2 => abt2::REGISTERS,
             Prog::AttnPTile => apt::REGISTERS,
+            Prog::AttnFwdTile3 => aft3::REGISTERS,
+            Prog::AttnBackTile0_3 => abt03::REGISTERS,
+            Prog::AttnBackTile3 => abt3::REGISTERS,
         }
     }
 
@@ -270,6 +353,9 @@ impl Prog {
             Prog::AttnBackTile0_2 => abt02::BLOCK,
             Prog::AttnBackTile2 => abt2::BLOCK,
             Prog::AttnPTile => apt::BLOCK,
+            Prog::AttnFwdTile3 => aft3::BLOCK,
+            Prog::AttnBackTile0_3 => abt03::BLOCK,
+            Prog::AttnBackTile3 => abt3::BLOCK,
         }
     }
 
@@ -284,6 +370,9 @@ impl Prog {
             Prog::AttnBackTile0_2 => Some(abt02::SHARED),
             Prog::AttnBackTile2 => Some(abt2::SHARED),
             Prog::AttnPTile => Some(apt::SHARED),
+            Prog::AttnFwdTile3 => Some(aft3::SHARED),
+            Prog::AttnBackTile0_3 => Some(abt03::SHARED),
+            Prog::AttnBackTile3 => Some(abt3::SHARED),
             _ => None,
         }
     }
@@ -309,18 +398,22 @@ impl Prog {
             Prog::AttnBackTile0_2 => "attn_back_tile0_2",
             Prog::AttnBackTile2 => "attn_back_tile_2",
             Prog::AttnPTile => "attn_p_tile",
+            Prog::AttnFwdTile3 => "attn_fwd_tile3",
+            Prog::AttnBackTile0_3 => "attn_back_tile0_3",
+            Prog::AttnBackTile3 => "attn_back_tile_3",
         }
     }
 
-    /// Index in [`PROGRAMS_ALL`] (= the index in [`PROGRAMS`] / [`PROGRAMS_P_ONLY`] for their programs).
+    /// Index in [`PROGRAMS_ALL_3`] (= the index in [`PROGRAMS_ALL`], [`PROGRAMS`] / [`PROGRAMS_P_ONLY`] for their
+    /// programs).
     pub fn index(self) -> usize {
-        PROGRAMS_ALL.iter().position(|&p| p == self).unwrap_or(0)
+        PROGRAMS_ALL_3.iter().position(|&p| p == self).unwrap_or(0)
     }
 }
 
 /// Checks every program's bytes against its SHA-256 (what the OS does before loading; refuse on a mismatch).
 pub fn check_programs() -> GpuResult<()> {
-    for p in PROGRAMS_ALL {
+    for p in PROGRAMS_ALL_3 {
         if hex(&crate::sha256::digest(p.code())) != p.sha256() {
             return Err(bad("pas-aur: SHA-256 al unui program nu se potriveste"));
         }
@@ -438,6 +531,7 @@ fn attn_fwd_grid(prog: Prog, a: &af::Args) -> [u32; 3] {
     match prog {
         Prog::AttnFwdTile2 => aft2::grid(a),
         Prog::AttnPTile => apt::grid(a),
+        Prog::AttnFwdTile3 => aft3::grid(a),
         _ => a.grid(),
     }
 }
@@ -518,6 +612,9 @@ pub struct Plan {
     p_prog: Prog,
     /// True for [`Plan::new_tiles`] / [`Plan::new_p_only_tiles`]: the attention launches use the tiled programs.
     tiles: bool,
+    /// True for the `_3` plans ([`Plan::new_tiles3`], …): the tiled attention launches use the third generation
+    /// (`attn_*_3`); the P re-launches stay on `attn_p_tile`. Implies `tiles`.
+    tiles3: bool,
     /// True for the `_mv_ram` plans (C-157): AdamW's m and v live in host RAM ([`crate::adam_ram`]); [`Plan::m`] and
     /// [`Plan::v`] are 0 and the arena has no room for them.
     mv_ram: bool,
@@ -637,6 +734,67 @@ impl Plan {
         Ok(plan)
     }
 
+    /// C-157 point 2 after os-375 (`docs/C-157_P2_ATTN3_IN_PAS.md`): the arena of [`Plan::new_tiles`], every attention
+    /// launch on the **third** tiled generation — `attn_fwd_tile3`, `attn_back_tile0_3` (mode 0), `attn_back_tile_3`
+    /// (mode 1): the same cbufs and grids, the same bits as `_2` on the board (os-375). Its programs are
+    /// [`PROGRAMS_TILES3`].
+    pub fn new_tiles3(
+        arch: Arch,
+        batch: usize,
+        len: usize,
+        inputs: &[u32],
+        base: u64,
+    ) -> GpuResult<Self> {
+        let mut plan = Self::new_tiles(arch, batch, len, inputs, base)?;
+        plan.tiles3 = true;
+        Ok(plan)
+    }
+
+    /// The arena of [`Plan::new_p_only_tiles`] (one shared P, rebuilt with `attn_p_tile`) with the attention of
+    /// [`Plan::new_tiles3`]. Its programs are [`PROGRAMS_TILES3_P_ONLY`].
+    pub fn new_p_only_tiles3(
+        arch: Arch,
+        batch: usize,
+        len: usize,
+        inputs: &[u32],
+        base: u64,
+    ) -> GpuResult<Self> {
+        let mut plan = Self::new_p_only_tiles(arch, batch, len, inputs, base)?;
+        plan.tiles3 = true;
+        Ok(plan)
+    }
+
+    /// [`Plan::new_tiles3`] without AdamW's m and v on the board (as [`Plan::new_tiles_mv_ram`]).
+    pub fn new_tiles3_mv_ram(
+        arch: Arch,
+        batch: usize,
+        len: usize,
+        inputs: &[u32],
+        base: u64,
+    ) -> GpuResult<Self> {
+        let mut plan = Self::new_tiles_mv_ram(arch, batch, len, inputs, base)?;
+        plan.tiles3 = true;
+        Ok(plan)
+    }
+
+    /// [`Plan::new_p_only_tiles3`] without AdamW's m and v on the board (as [`Plan::new_p_only_tiles_mv_ram`]).
+    pub fn new_p_only_tiles3_mv_ram(
+        arch: Arch,
+        batch: usize,
+        len: usize,
+        inputs: &[u32],
+        base: u64,
+    ) -> GpuResult<Self> {
+        let mut plan = Self::new_p_only_tiles_mv_ram(arch, batch, len, inputs, base)?;
+        plan.tiles3 = true;
+        Ok(plan)
+    }
+
+    /// True for the `_3` plans ([`Plan::new_tiles3`], [`Plan::new_p_only_tiles3`] and their `_mv_ram` forms).
+    pub fn tiles3(&self) -> bool {
+        self.tiles3
+    }
+
     fn set_tiles(&mut self, p_prog: Prog) -> GpuResult<()> {
         let (cc, h) = (self.arch.n_emb, self.arch.heads);
         if cc / h > aft2::MAX_D as usize {
@@ -656,6 +814,8 @@ impl Plan {
     /// [`PROGRAMS_TILES`] / [`PROGRAMS_TILES_P_ONLY`] for the tiled plans, [`PROGRAMS`] otherwise.
     pub fn programs(&self) -> &'static [Prog] {
         match (self.tiles, self.p_prog) {
+            (true, Prog::AttnPTile) if self.tiles3 => &PROGRAMS_TILES3_P_ONLY,
+            (true, _) if self.tiles3 => &PROGRAMS_TILES3,
             (true, Prog::AttnPTile) => &PROGRAMS_TILES_P_ONLY,
             (true, _) => &PROGRAMS_TILES,
             (false, Prog::AttnP) => &PROGRAMS_P_ONLY,
@@ -816,6 +976,7 @@ impl Plan {
             segs: [st, sp],
             p_prog: Prog::AttnFwd,
             tiles: false,
+            tiles3: false,
             mv_ram,
             end: b.0,
         })
@@ -1156,7 +1317,9 @@ impl Plan {
                 heads: h as u32,
                 scale,
             };
-            let fwd = if self.tiles {
+            let fwd = if self.tiles3 {
+                Prog::AttnFwdTile3
+            } else if self.tiles {
                 Prog::AttnFwdTile2
             } else {
                 Prog::AttnFwd
@@ -1404,6 +1567,12 @@ impl Plan {
                 };
                 let (prog, grid) = match (self.tiles, mode) {
                     (false, _) => (Prog::AttnBack, a.grid()),
+                    (true, ab::Mode::Rows) if self.tiles3 => {
+                        (Prog::AttnBackTile0_3, abt03::grid(&a))
+                    }
+                    (true, ab::Mode::Columns) if self.tiles3 => {
+                        (Prog::AttnBackTile3, abt3::grid(&a))
+                    }
                     (true, ab::Mode::Rows) => (Prog::AttnBackTile0_2, abt02::grid(&a)),
                     (true, ab::Mode::Columns) => (Prog::AttnBackTile2, abt2::grid(&a)),
                 };

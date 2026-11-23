@@ -25,7 +25,9 @@ use gpu_sim::cmdproc::{
     opt_step_on_cpu, vadd_on_cpu, xent_on_cpu,
 };
 use nvidia_ga104::push::{self, PushBuf};
-use nvidia_ga104::train_step::{self as ts, Launch, Outcome, PROGRAMS_ALL, Plan, Prog, Refs};
+use nvidia_ga104::train_step::{
+    self as ts, Launch, Outcome, PROGRAMS_ALL, PROGRAMS_ALL_3, Plan, Prog, Refs,
+};
 use nvidia_ga104::{transfer, xent as xe};
 use nvidia_rm570::regs::clc7c0 as c;
 
@@ -75,7 +77,8 @@ impl Board {
         let mut cp = CommandProcessor::new();
         // All 18 (the 13 of every plan + `attn_p`, used only by `Plan::new_p_only`, + the four tiled ones of
         // `Plan::new_tiles` / `new_p_only_tiles`).
-        for p in PROGRAMS_ALL {
+        // T195: + the three `_3` programs (`PROGRAMS_ALL_3`), on the same CPU models as the first tiled ones.
+        for p in PROGRAMS_ALL_3 {
             let code = p.code();
             match p {
                 Prog::MmTrain => {
@@ -112,6 +115,21 @@ impl Board {
                 Prog::AttnPTile => cp.register_program_with_needs(
                     code,
                     attn_p_tile_on_cpu,
+                    needs(p.shared().unwrap()),
+                ),
+                Prog::AttnFwdTile3 => cp.register_program_with_needs(
+                    code,
+                    attn_fwd_tile_on_cpu,
+                    needs(p.shared().unwrap()),
+                ),
+                Prog::AttnBackTile0_3 => cp.register_program_with_needs(
+                    code,
+                    attn_back_tile0_on_cpu,
+                    needs(p.shared().unwrap()),
+                ),
+                Prog::AttnBackTile3 => cp.register_program_with_needs(
+                    code,
+                    attn_back_tile_on_cpu,
                     needs(p.shared().unwrap()),
                 ),
             };
@@ -197,6 +215,13 @@ enum Fault {
     OldBackward,
     /// T187: mode 0 (the rows of dS) launched on `attn_back_tile_2` (which exits writing nothing for mode 0).
     TileRowsOnCols,
+    /// T195: mode 0 launched on `attn_back_tile_3`.
+    Tile3RowsOnCols,
+    /// T195 (prediction 4 — not a mistake): every `_3` launch swapped for its `_2` partner, one kind at a time.
+    Swap3To2Fwd,
+    Swap3To2Back,
+    /// T195 (prediction 4): the backward `_2` launches of a `_2` plan swapped for their `_3` partners.
+    Swap2To3Back,
 }
 
 /// Which arena: P kept per layer ([`Plan::new`]), one shared P rebuilt with `attn_fwd` ([`Plan::new_p_recalc`]) or
@@ -210,6 +235,10 @@ enum Kind {
     Tiles,
     /// [`Plan::new_p_only_tiles`] (one P rebuilt with `attn_p_tile`).
     POnlyTiles,
+    /// T195: [`Plan::new_tiles3`] (P kept, attention on the `_3` tiles).
+    Tiles3,
+    /// T195: [`Plan::new_p_only_tiles3`].
+    POnlyTiles3,
 }
 
 fn plant(plan: &Plan, list: &mut Vec<Launch>, f: Fault) {
@@ -248,6 +277,36 @@ fn plant(plan: &Plan, list: &mut Vec<Launch>, f: Fault) {
         }
         Fault::NoPRebuild => list.retain(|l| l.tag != "inapoi:atentia-P"),
         Fault::OldBackward => {}
+        Fault::Tile3RowsOnCols => {
+            for l in list.iter_mut() {
+                if l.prog == Prog::AttnBackTile0_3 {
+                    l.prog = Prog::AttnBackTile3;
+                }
+            }
+        }
+        Fault::Swap3To2Fwd => {
+            for l in list.iter_mut().filter(|l| l.prog == Prog::AttnFwdTile3) {
+                l.prog = Prog::AttnFwdTile2;
+            }
+        }
+        Fault::Swap3To2Back => {
+            for l in list.iter_mut() {
+                l.prog = match l.prog {
+                    Prog::AttnBackTile0_3 => Prog::AttnBackTile0_2,
+                    Prog::AttnBackTile3 => Prog::AttnBackTile2,
+                    p => p,
+                };
+            }
+        }
+        Fault::Swap2To3Back => {
+            for l in list.iter_mut() {
+                l.prog = match l.prog {
+                    Prog::AttnBackTile0_2 => Prog::AttnBackTile0_3,
+                    Prog::AttnBackTile2 => Prog::AttnBackTile3,
+                    p => p,
+                };
+            }
+        }
         Fault::TileRowsOnCols => {
             for l in list.iter_mut() {
                 if l.prog == Prog::AttnBackTile0_2 {
@@ -312,6 +371,8 @@ fn run_plan(
         Kind::POnly => Plan::new_p_only(ar, bsz, tl, inputs, HEAP).unwrap(),
         Kind::Tiles => Plan::new_tiles(ar, bsz, tl, inputs, HEAP).unwrap(),
         Kind::POnlyTiles => Plan::new_p_only_tiles(ar, bsz, tl, inputs, HEAP).unwrap(),
+        Kind::Tiles3 => Plan::new_tiles3(ar, bsz, tl, inputs, HEAP).unwrap(),
+        Kind::POnlyTiles3 => Plan::new_p_only_tiles3(ar, bsz, tl, inputs, HEAP).unwrap(),
     };
     // T187: the arena of `Plan::new` (the same addresses as `new_tiles`), for `Fault::OldBackward`.
     let old = Plan::new(ar, bsz, tl, inputs, HEAP).unwrap();
@@ -1299,5 +1360,257 @@ fn t187_tiled_four_layers_and_planted_mistakes() {
     println!(
         "kt c187 4 straturi: {} lansari (3 attn_p_tile), 3 pasi AdamW bit cu bit = P pastrat DA, = inapoi vechi DA; fara relansari / qkv-ul altui strat / modul 0 pe attn_back_tile_2 ({rows_caught}) / QMD fara memoria partajata: PRINSE",
         only.total_per_step
+    );
+}
+
+// ------------------------------------------------------------------ T195: the `_3` attention in the step (C-157 p.2)
+
+/// Prediction 1 (`docs/C-157_P2_ATTN3_IN_PAS.md`): the `_3` plans have the arenas of `new_tiles` /
+/// `new_p_only_tiles`, the same launches with the same tags, layers, cbufs and grids; only the program of the 3·L
+/// attention launches changes (the P re-launches stay on `attn_p_tile`). Prediction 6: `PROGRAMS_ALL` unchanged.
+#[test]
+fn t195_the_tiles3_list() {
+    let inputs = read_i32(&dir().join("intrari.i32"));
+    let params = tensors("initiale");
+    let opt = AdamW::recipe_513(&params);
+    for recipe in [Recipe::Sgd, Recipe::AdamW513] {
+        for (old, new, programs) in [
+            (
+                Plan::new_tiles(MIC, B, T, &inputs, HEAP).unwrap(),
+                Plan::new_tiles3(MIC, B, T, &inputs, HEAP).unwrap(),
+                &ts::PROGRAMS_TILES3[..],
+            ),
+            (
+                Plan::new_p_only_tiles(MIC, B, T, &inputs, HEAP).unwrap(),
+                Plan::new_p_only_tiles3(MIC, B, T, &inputs, HEAP).unwrap(),
+                &ts::PROGRAMS_TILES3_P_ONLY[..],
+            ),
+        ] {
+            assert_eq!(old.bytes(), new.bytes());
+            assert!(new.tiles() && new.tiles3() && !old.tiles3());
+            assert_eq!(new.programs(), programs);
+            assert_eq!(new.p_relaunches(), old.p_relaunches());
+            let (lo, ln) = (
+                old.step(recipe, &opt, 1).unwrap(),
+                new.step(recipe, &opt, 1).unwrap(),
+            );
+            assert_eq!(lo.len(), ln.len());
+            let mut swapped = 0;
+            for (o, n) in lo.iter().zip(&ln) {
+                assert_eq!(
+                    (o.tag, o.layer, o.cbuf, o.grid),
+                    (n.tag, n.layer, n.cbuf, n.grid)
+                );
+                assert!(
+                    programs.contains(&n.prog),
+                    "{} nu e in lista",
+                    n.prog.name()
+                );
+                let want = match o.prog {
+                    Prog::AttnFwdTile2 => Prog::AttnFwdTile3,
+                    Prog::AttnBackTile0_2 => Prog::AttnBackTile0_3,
+                    Prog::AttnBackTile2 => Prog::AttnBackTile3,
+                    p => p,
+                };
+                assert_eq!(n.prog, want, "{}", o.tag);
+                if want != o.prog {
+                    swapped += 1;
+                    assert!(n.prog.shared().unwrap().bytes >= o.prog.shared().unwrap().bytes);
+                }
+            }
+            assert_eq!(swapped, 3 * MIC.layers);
+        }
+    }
+    // d > 64 refused, as `new_tiles`.
+    let wide = Arch {
+        heads: 1,
+        n_emb: 128,
+        ..MIC
+    };
+    assert!(Plan::new_tiles3(wide, B, T, &inputs, HEAP).is_err());
+    assert!(Plan::new_p_only_tiles3(wide, B, T, &inputs, HEAP).is_err());
+    // Prediction 6: `PROGRAMS_ALL` unchanged (18, the same indices; the OS's simulated board walks it), the three `_3`
+    // programs after it in `PROGRAMS_ALL_3`, all 21 SHA-256 checked.
+    assert_eq!(PROGRAMS_ALL.len(), 18);
+    assert_eq!(PROGRAMS_ALL_3[..18], PROGRAMS_ALL[..]);
+    for (k, p) in PROGRAMS_ALL_3.iter().enumerate() {
+        assert_eq!(p.index(), k);
+    }
+    ts::check_programs().unwrap();
+    println!(
+        "kt c195 lista: aceleasi lansari, etichete, cbuf-uri si grile ca new_tiles / new_p_only_tiles; schimbate doar {} lansari de atentie pe pas (relansarile P raman pe attn_p_tile); PROGRAMS_ALL neschimbat (18)",
+        3 * MIC.layers
+    );
+}
+
+/// Predictions 2 and 4: the small golden step, 10 steps, both recipes — the `_3` plan = the `_2` plan bit for bit
+/// (SIMULARE: the same CPU models, so this checks the wiring), PyTorch's verdict passes; `_3` forward with `_2`
+/// backward and the other way round give the same bits.
+#[test]
+fn t195_tiles3_small_golden_step() {
+    for (recipe, name) in [(Recipe::Sgd, "sgd"), (Recipe::AdamW513, "adamw_513")] {
+        let two = run_mic_plan(Kind::Tiles, recipe, 10, Fault::None);
+        let three = run_mic_plan(Kind::Tiles3, recipe, 10, Fault::None);
+        let only3 = run_mic_plan(Kind::POnlyTiles3, recipe, 10, Fault::None);
+        let mix_f = run_mic_plan(Kind::Tiles3, recipe, 10, Fault::Swap3To2Fwd);
+        let mix_b = run_mic_plan(Kind::Tiles3, recipe, 10, Fault::Swap3To2Back);
+        let mix_23 = run_mic_plan(Kind::Tiles, recipe, 10, Fault::Swap2To3Back);
+        assert_eq!(three.total_per_step, two.total_per_step);
+        assert_eq!(only3.total_per_step, two.total_per_step + 1);
+        assert_eq!(
+            three
+                .launches_per_step
+                .iter()
+                .filter(|e| matches!(
+                    e.0,
+                    Prog::AttnFwdTile3 | Prog::AttnBackTile0_3 | Prog::AttnBackTile3
+                ))
+                .map(|e| e.1)
+                .sum::<usize>(),
+            3 * MIC.layers
+        );
+        let v = ts::judge(recipe, three.total_per_step, &three.out, &refs(name));
+        let vo = ts::judge(recipe, only3.total_per_step, &only3.out, &refs(name));
+        let s32 = same_bits(&three.out, &two.out);
+        let so = same_bits(&three.out, &only3.out);
+        let sm = [
+            same_bits(&three.out, &mix_f.out),
+            same_bits(&three.out, &mix_b.out),
+            same_bits(&three.out, &mix_23.out),
+        ];
+        let yn = |b: bool| if b { "DA" } else { "NU" };
+        println!(
+            "kt c195 {name}: _3 {} lansari; verdictul fata de PyTorch: {} (P refacut: {}); _3 = _2 bit cu bit {}; P refacut = P pastrat {}; amestec (fwd _2 / inapoi _2 / inapoi _3 in planul _2) {} / {} / {} (SIMULARE)",
+            three.total_per_step,
+            if v.passes() { "TRECE" } else { "NU TRECE" },
+            if vo.passes() { "TRECE" } else { "NU TRECE" },
+            yn(s32),
+            yn(so),
+            yn(sm[0]),
+            yn(sm[1]),
+            yn(sm[2]),
+        );
+        assert!(v.passes() && vo.passes(), "{name}: verdictul");
+        assert!(s32, "{name}: _3 != _2");
+        assert!(so, "{name}: P refacut != P pastrat");
+        assert!(sm.iter().all(|&b| b), "{name}: amestecul");
+    }
+}
+
+/// Predictions 3 and 5 on four layers (3 `attn_p_tile` re-launches): bit for bit, and the planted mistakes caught.
+#[test]
+fn t195_tiles3_four_layers_and_planted_mistakes() {
+    let ar = Arch { layers: 4, ..MIC };
+    let mut r = rng(195);
+    let params: Vec<Vec<f32>> = ar
+        .tensors()
+        .iter()
+        .map(|s| {
+            let n = s.elements();
+            if s.name.ends_with("ln1.weight")
+                || s.name.ends_with("ln2.weight")
+                || s.name == "ln.weight"
+            {
+                (0..n).map(|_| 1.0 + 0.1 * r()).collect()
+            } else {
+                (0..n).map(|_| 0.3 * r()).collect()
+            }
+        })
+        .collect();
+    let inputs = read_i32(&dir().join("intrari.i32"));
+    let targets = read_i32(&dir().join("tinte.i32"));
+    let run = |kind: Kind, fault: Fault| {
+        run_plan(
+            kind,
+            ar,
+            (B, T),
+            &params,
+            (&inputs, &targets),
+            Recipe::AdamW513,
+            3,
+            fault,
+        )
+    };
+    let two = run(Kind::Tiles, Fault::None);
+    let three = run(Kind::Tiles3, Fault::None);
+    let only3 = run(Kind::POnlyTiles3, Fault::None);
+    assert_eq!(only3.total_per_step, three.total_per_step + 3);
+    assert_eq!(
+        only3
+            .launches_per_step
+            .iter()
+            .find(|e| e.0 == Prog::AttnPTile)
+            .map(|e| e.1),
+        Some(3)
+    );
+    assert!(same_bits(&three.out, &two.out), "4 straturi: _3 != _2");
+    assert!(same_bits(&three.out, &only3.out), "4 straturi: P refacut");
+    let none = run(Kind::POnlyTiles3, Fault::NoPRebuild);
+    assert!(
+        !same_bits(&three.out, &none.out),
+        "fara attn_p_tile: aceiasi biti?"
+    );
+    let wrong = run(Kind::POnlyTiles3, Fault::PWrongQkv);
+    assert!(
+        !same_bits(&three.out, &wrong.out),
+        "qkv gresit: aceiasi biti?"
+    );
+    // Mode 0 on `attn_back_tile_3`: dS never written → refused (unmapped) or other bits.
+    let rows = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run(Kind::Tiles3, Fault::Tile3RowsOnCols)
+    }));
+    let rows_caught = match &rows {
+        Err(_) => "pasul refuzat",
+        Ok(r) if !same_bits(&three.out, &r.out) => "alti biti",
+        Ok(_) => "NEPRINSA",
+    };
+    assert_ne!(
+        rows_caught, "NEPRINSA",
+        "modul 0 pe attn_back_tile_3: aceiasi biti?"
+    );
+
+    // Every `_3` launch whose QMD lacks the program's shared memory: refused by the command processor.
+    let plan = Plan::new_tiles3(MIC, B, T, &inputs, HEAP).unwrap();
+    let mic_params = tensors("initiale");
+    let list = plan
+        .step(Recipe::Sgd, &AdamW::recipe_513(&mic_params), 1)
+        .unwrap();
+    let mut refused_all = 0;
+    for prog in [
+        Prog::AttnFwdTile3,
+        Prog::AttnBackTile0_3,
+        Prog::AttnBackTile3,
+    ] {
+        let mut b = Board::new();
+        for (va, bytes) in plan.uploads(&mic_params, &inputs, &targets).unwrap() {
+            b.cp.mem.write(va, &bytes);
+        }
+        let k = list.iter().position(|l| l.prog == prog).unwrap();
+        let l = list[k].clone();
+        let refused = b.try_submit(&list, |zone| {
+            let at = k * ts::SLOT as usize;
+            let q = nvidia_ga104::qmd::ComputeQmd {
+                program_va: prog_va(l.prog),
+                registers: l.prog.registers(),
+                cbuf0_va: ZONE + at as u64,
+                cbuf0_size: 0x100,
+                grid: l.grid,
+                block: l.prog.block(),
+                release: None,
+            }
+            .to_bytes()
+            .unwrap();
+            zone[at + 0x100..at + 0x100 + q.len()].copy_from_slice(&q);
+        });
+        assert!(
+            refused.is_err(),
+            "{}: QMD fara memoria partajata acceptat?",
+            prog.name()
+        );
+        refused_all += 1;
+    }
+    println!(
+        "kt c195 4 straturi: {} lansari (3 attn_p_tile), 3 pasi AdamW: _3 = _2 bit cu bit DA, P refacut = P pastrat DA; fara relansari / qkv-ul altui strat / modul 0 pe attn_back_tile_3 ({rows_caught}) / QMD fara memoria partajata ({refused_all} din 3): PRINSE (SIMULARE)",
+        only3.total_per_step
     );
 }

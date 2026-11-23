@@ -15,7 +15,7 @@ use gpu_sim::cmdproc::{
 };
 use nvidia_ga104::adam_ram::{self as ar, RamMv};
 use nvidia_ga104::push::{self, PushBuf};
-use nvidia_ga104::train_step::{self as ts, Launch, PROGRAMS_ALL, Plan, Prog};
+use nvidia_ga104::train_step::{self as ts, Launch, PROGRAMS_ALL_3, Plan, Prog};
 use nvidia_ga104::transfer;
 use nvidia_rm570::regs::clc7c0 as c;
 
@@ -45,7 +45,7 @@ fn needs(s: nvidia_ga104::qmd::SharedMemory) -> Needs {
 fn board() -> CommandProcessor {
     ts::check_programs().expect("SHA-256 programe");
     let mut cp = CommandProcessor::new();
-    for p in PROGRAMS_ALL {
+    for p in PROGRAMS_ALL_3 {
         let code = p.code();
         let sh = || needs(p.shared().unwrap());
         match p {
@@ -71,6 +71,15 @@ fn board() -> CommandProcessor {
                 cp.register_program_with_needs(code, attn_back_tile_on_cpu, sh())
             }
             Prog::AttnPTile => cp.register_program_with_needs(code, attn_p_tile_on_cpu, sh()),
+            // The `_3` programs: the same operations in the same order as the first tiled ones (T188–T190), the
+            // same CPU models.
+            Prog::AttnFwdTile3 => cp.register_program_with_needs(code, attn_fwd_tile_on_cpu, sh()),
+            Prog::AttnBackTile0_3 => {
+                cp.register_program_with_needs(code, attn_back_tile0_on_cpu, sh())
+            }
+            Prog::AttnBackTile3 => {
+                cp.register_program_with_needs(code, attn_back_tile_on_cpu, sh())
+            }
         };
         cp.mem.write(prog_va(p), code);
     }
@@ -541,5 +550,45 @@ fn t193_board_memory_at_513_and_651() {
             gib(rm.ram_bytes())
         );
         assert!((saved / want - 1.0).abs() <= 0.03, "{name}: {saved}");
+    }
+}
+
+// ------------------------------------------------------------------ T195: the `_3` plans with m, v in RAM
+
+/// T195 (`docs/C-157_P2_ATTN3_IN_PAS.md`): the `_3` plans with m, v in RAM — 5 steps of `adamw_513` on the small
+/// golden step, bit for bit = the `_3` plan with m, v on the board = the `_2` plan (SIMULARE: the `_3` programs run on
+/// the same CPU models as `_2`, so this checks the wiring, not the board's arithmetic).
+#[test]
+fn t195_tiles3_mv_ram_bit_for_bit() {
+    let (params, inp, tgt) = golden();
+    let (bsz, tl) = (2, 32);
+    for only in [false, true] {
+        let (old2, board3, ram3) = if only {
+            (
+                Plan::new_p_only_tiles(MIC, bsz, tl, &inp, HEAP).unwrap(),
+                Plan::new_p_only_tiles3(MIC, bsz, tl, &inp, HEAP).unwrap(),
+                Plan::new_p_only_tiles3_mv_ram(MIC, bsz, tl, &inp, HEAP).unwrap(),
+            )
+        } else {
+            (
+                Plan::new_tiles(MIC, bsz, tl, &inp, HEAP).unwrap(),
+                Plan::new_tiles3(MIC, bsz, tl, &inp, HEAP).unwrap(),
+                Plan::new_tiles3_mv_ram(MIC, bsz, tl, &inp, HEAP).unwrap(),
+            )
+        };
+        assert!(ram3.tiles3() && ram3.mv_in_ram() && board3.tiles3() && !old2.tiles3());
+        assert_eq!(ram3.programs(), board3.programs());
+        let a = run_board(&old2, &params, (&inp, &tgt), 5);
+        let b = run_board(&board3, &params, (&inp, &tgt), 5);
+        let c = run_ram(&ram3, &params, (&inp, &tgt), 5, Fault::None);
+        let (ab, bc) = (same(&a, &b), same(&b, &c));
+        println!(
+            "kt c195 adam-ram _3 {}: _3 = _2 bit cu bit {}, _3 m,v in RAM = _3 m,v pe placa bit cu bit {} (SIMULARE)",
+            if only { "P refacut" } else { "P pastrat" },
+            if ab { "DA" } else { "NU" },
+            if bc { "DA" } else { "NU" },
+        );
+        assert!(ab, "_3 != _2");
+        assert!(bc, "_3: m, v in RAM != pe placa");
     }
 }

@@ -58,5 +58,17 @@ Doar cele 3 programe `_3` **în pas** (pe placă au rulat deja în proba `--aten
 Codul nostru (T186, T188–T191, os-375 `rezultate/2026-11-23-workstation-os375-atentie3/`); `docs/C-160_P7_PLACI_IN_PAS.md`;
 `docs/C-157_P2_ATTN_TILE3.md`.
 
-## Rezultat
-(se completează după cod)
+## Rezultat (sesiunea 187, SIMULARE)
+| Predicție | Ce a ieșit | Verdict |
+|---|---|---|
+| 1. Lista | aceiași octeți de arenă, aceleași lansări / etichete / straturi / cbuf-uri / grile; schimbate exact 3·L = 6 lansări pe pas (pasul mic), relansările P rămân pe `attn_p_tile`; d > 64 refuzat | DA |
+| 2. Pasul mic, 10 pași, ambele rețete | `_3` = `_2` **bit cu bit**; verdictul față de PyTorch TRECE (și cu P refăcut); 73 / 75 de lansări | DA (legătura; nu calculul plăcii) |
+| 3. P refăcut, 4 straturi | `new_p_only_tiles3` = `new_tiles3` = `new_tiles` bit cu bit, 3 relansări `attn_p_tile`, 140 de lansări | DA |
+| 4. Amestecul | fwd `_2` în planul `_3`, înapoi `_2` în planul `_3`, înapoi `_3` în planul `_2`: aceiași biți | DA |
+| 5. Greșeli plantate | relansarea scoasă, `qkv`-ul altui strat: alți biți; modul 0 pe `attn_back_tile_3`: pasul refuzat (dS necitit/nemapat); QMD fără memorie partajată: refuzat pentru **toate 3** programele `_3` | PRINSE |
+| 5'. Memoria partajată a lui `_2` pe `_3` | n-are sens: `attn_back_tile_2` și `_3` au **aceeași** mărime (33 024 octeți) — am greșit în plan („mai mică cu 256”: aceea e diferența față de `attn_back_tile`, generația 1) | predicție greșită, fără efect |
+| 6. Compatibilitate | `PROGRAMS_ALL` = 18, aceiași indici; `PROGRAMS_ALL_3` = 21; `check_programs` verifică 21 | DA |
+| `_mv_ram` (T195 în `sim_c157_adam_ram.rs`) | `new_tiles3_mv_ram` / `new_p_only_tiles3_mv_ram`, 5 pași AdamW: = `_3` cu m, v pe placă = `_2`, bit cu bit | DA |
+| 7. Costul pe #513 | ~191 → ~123 ms atenția pe pas | DEDUS, nemăsurat |
+
+`tools/check.sh`: format, clippy, **935 de teste** (+4; 7 ignorate), build no_std — PASS. Nimic n-a rulat pe RTX 3070 Ti.
