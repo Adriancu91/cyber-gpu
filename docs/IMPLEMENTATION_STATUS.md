@@ -1,5 +1,32 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 190 — 23 noiembrie 2026, ~20:13–20:35 (ora României), în cloud, FĂRĂ placă — **de ce RAM ↔ VRAM merge cu ~6 GB/s (decizia lui Adrian, 23 nov 20:11)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Decizia nouă din hub (DECIZII 23 nov 20:11): nimic din antrenare în
+RAM pe placa reală până nu e explicată și reparată viteza PCIe; prioritate: citirea legăturii și cauza. Clona veche de pe disc
+păstrată în ramura locală `vechi-local-g0-g2-fundatie`; lucrat pe `origin/g0-g2-fundatie`. Plan + predicții urcate **înainte** de cod
+(`b144292`, `docs/C-157_PCIE_LEGATURA.md`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Cauza (citit + DEDUS) | turul: placa poate gen4 x16, merge gen3 x8; `lspci` din rapoarte: placa la b3 sub porturile procesorului b2:00.0 / 02.0 / 03.0 (8086:2030 / 2032 / 2033 = porturile A, C, D) → grupul de 16 linii împărțit x8 + x4 + x4; manualul Dell 5820: slotul 1 = x8, sloturile 2 și 4 = x16, toate Gen3 → **placa e (foarte probabil) în slotul 1** | DEDUS |
+| `gpu_pci::link` (adăugare, `408c69c`) | `link_bandwidth_gbps`, `diagnose(placa, port)` → `SlotNarrow` / `TrainedNarrow` / `SlotSlow` / `Idle` / `TrainedSlow` / `Full` / `NoPort` cu text în română, `find_upstream_port`, `secondary_bus`, `is_downstream_port`; doar citire | PASS (compilat) |
+| T198 (7 teste) | cazul workstation-ului → `SlotNarrow`; port x16 + legătură x8 → `TrainedNarrow`; repausul gen1 nu ascunde lățimea; plafoanele (x8 7,88 / x16 15,75 GB/s; os-376 = 79 % / 86 %); găsirea portului pe 3 punți simulate; **nicio scriere** | PASS (SIMULARE) |
+| Nota pentru OS | `integration/cyber-universe/C-157_P2r_legatura-port.md`: rândurile `pci.legatura.port` și `pci.legatura.cauza` în tur | — |
+| `tools/check.sh` | format, clippy, **952 de teste**, build no_std | PASS |
+| Pe workstation: citirea portului b2:00.0 (prezis max gen3 x8 → `SlotNarrow`) | — | NOT TESTED |
+| Mutarea plăcii în slotul 2 sau 4 (prezis gen3 x16, ~11,5–13 GB/s) | fizic, Adrian | NOT TESTED |
+
+**Corectură la sesiunea 188:** „~94 % din plafon” era față de un plafon practic; față de plafonul brut x8 (7,88 GB/s) os-376 e 79 % sus /
+86 % jos — tot normal pentru PCIe. Viteza (gen3) nu se poate repara pe Dell 5820; lățimea da, prin mutarea plăcii.
+
+**Ce e nou pentru placă:** nimic (doar citiri de configurație PCI ale portului, ca `lspci`).
+
+**Următorul pas:** comparația rândurilor `pci.legatura.port` / `.cauza` când rulează; după mutarea plăcii, os-376 din nou; probele gen 4
+și „lot” au întâietate când rulează; altfel C-157 p.8 (fișa de model), plan întâi. Nimic din antrenare în RAM pe placa reală până atunci.
+
+---
+
 ## Sesiunea 189 — 23 noiembrie 2026, ~19:11–19:30 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: proba „vechi lângă nou” cu `attn_back_tile_4`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-376 → pasul scris: `_4` în proba
