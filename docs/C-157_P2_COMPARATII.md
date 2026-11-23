@@ -2,6 +2,25 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## Ciclul automat 15:57 `test-placa --i9 c135 --atentie-placi --atentie2 --atentie3` (a treia generație „vechi lângă nou”, 23 nov 2026) — sesiunea 186
+Surse: `Cyber-hub/rezultate/os-automat/2026-11-23/ciclu-auto-20261123-1557.txt`, jurnalul brut `gpu-jurnal-060.txt` (rândurile `kt atentie3 …`).
+Nucleul: cyber-universe 0.1.0 cu cyber-gpu `d885efd`. Predicțiile scrise înainte: `docs/C-157_P2_ATTN_TILE3.md` (sesiunea 182, `b6e3b5b`),
+nota `integration/cyber-universe/C-157_P2n_atentie3-vechi-langa-nou.md`.
+
+### Planul analizei (scris ÎNAINTE de socoteli, sesiunea 186)
+Cifrele brute citite deja (deci **nu** sunt predicții): 6 / 6 în margine, 6 / 6 identice cu vechii; timpii `_3` (mediana a 5) 1,000 / 0,830 /
+1,597 ms, `_2` în aceeași rulare 1,524 / 1,547 / 2,258, gen 1 2,488 / 1,814 / 3,995.
+Plan: în `tools/buget-antrenare/nak_bucle.py`, funcția nouă `att3()`: (1) raportul măsurat / model pentru toate 9 programe (3 generații),
+cu modelul de până acum (`waits` la gen 1 / `_2`, `waits_fresh` la `_3`, 500 de cicluri); (2) aceeași socoteală cu latența memoriei
+`lw` de la 100 la 3 000 de cicluri, căutând `lw` la care cele 9 rapoarte sunt cel mai strânse.
+Predicții (scrise acum):
+- A1: la 500 de cicluri, rapoartele `_3` ies **mai mari** decât ale `_2` la fwd și back0 (programele scurtate pe partea de memorie, deci
+  ce rămâne e partea pe care modelul o subestimează), iar la back1 (limitat de emisie în model) **la fel** (±10 %).
+- A2: cel mai strâns `lw` e **sub** 500 de cicluri (adică partea lipsă din model nu e latența memoriei, ci altceva: emisia reală,
+  barierele, ocuparea), iar împrăștierea acolo rămâne > ×1,3 (un singur factor comun nu explică totul).
+- A3: tăietura următoare, dacă A1–A2 țin: la `attn_back_tile_3` (cel mai lung, limitat de emisie) — mai puține instrucțiuni pe
+  buclă; la fwd3 / back0_3 — barierele și ocuparea, nu memoria.
+
 ## os-364 `test-placa --atentie-placi --atentie2` (atenția pe plăci „vechi lângă nou”, 23 nov 2026, 07:42) — sesiunea 178
 Surse: `Cyber-hub/rezultate/2026-11-23-workstation-os364-atentie2/REZULTAT.md`, `rezultate/os-automat/2026-11-23/ciclu-auto-20261123-0742.txt`.
 Predicțiile scrise înainte: `docs/C-157_P2_ATTN_TILE2.md`, nota `integration/cyber-universe/C-157_P2m_atentie2-vechi-langa-nou.md` (§5).
