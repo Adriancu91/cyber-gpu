@@ -46,3 +46,27 @@ vine ca adăugare, după ce sunt gata toate trei, sau numai cu `fwd2` dacă OS-u
 ## Surse
 Ideile (rânduri cu un element în plus contra conflictelor de bancă, citiri emise deodată, bucle desfăcute): ghidul public CUDA
 („shared memory bank conflicts”, capacitatea 8.6) și siboehm SGEMM_CUDA (MIT, doar ideea). Codul e al nostru, din `attn_fwd_tile.comp`.
+
+## Rezultatul pentru `attn_fwd_tile2` (sesiunea 172, SIMULARE, T181 `crates/nvidia-ga104/tests/sim_attn_tile2.rs`)
+- **Binarul** (Mesa NAK 25.0.7 reconstruit în cloud; `attn_fwd_tile` a ieșit **identic**, `4ef8dca3…`): `attn_fwd_tile2.sm86.sass`
+  SHA-256 **`2e8cda57ead70edf8b72b7960f34acbe2f3e32fd4ed617eec53c5922c8a3dc08`**, 3 815 instrucțiuni, **117 registre**, 37 888 de
+  octeți partajați.
+- **Predicția 1: DA** — aceleași 16 `mufu.exp2` + 1 `mufu.rcp`, nicio atomică, nicio memorie locală, `bar.sync` cu o singură barieră.
+- **Predicția 2: DA, cu notă** — 117 ≤ 128, dar peste 96: cele trei tablouri de câte 16 citiri (F3) și buclele desfăcute țin multe
+  valori deodată. Ocuparea nu scade: 2 blocuri pe SM tot din cauza memoriei partajate (117 → 120 rotunjit × 32 × 16 warp-uri = 61 440
+  ≤ 65 536 de registre pe SM).
+- **Predicția 3: DA după o reparație.** Prima compilare: faza A 173 de instrucțiuni la 64 `ffma` (= 43 la 16, **peste** pragul 28),
+  faza C 145 (36 la 16, peste 30) — NAK refăcea adresa fiecărei citiri partajate (`(ty + 16a)·65 + e`: înmulțire / deplasare +
+  adunare la fiecare). Cu o bază pe operand și iterație și restul constant (`qs[qb + (1040a + u)]`, aritmetica neschimbată), constanta
+  intră în adresa citirii: **faza A 109 la 64 = 27,3 la 16** (vechi 38), **faza C sub diagonală 106 = 26,5 la 16** (vechi 68), **0
+  `bssy`** în ambele (vechi 4 la C). Întârzierile scrise de NAK pe iterație: A 178 / 4 = 44,5 la 16 `ffma` (vechi 107), C 263 / 4 = 66
+  (vechi 217). Urcarea plăcilor Q / K / V: 16 citiri globale, apoi 16 scrieri partajate (vechi: citire–scriere de 16 ori). Placa P din
+  faza C (P = x · inv, scris și în memoria partajată) a rămas citire–scriere pe element — candidat pentru pasul următor.
+- **Predicția 4: DA** — pe cele 10 forme, P și att = `attn_fwd_tile` bit cu bit (același model pe procesor: arată doar partea
+  driverului); QMD cu memoria partajată veche (37 376) refuzat, grila cu un bloc lipsă lasă exact rândurile 128–129 nescrise, bloc 128
+  sau grilă peste ⌈T/64⌉ refuzate, d = 65 refuzat.
+- **Predicția 5 (pe placă): NEMĂSURATĂ.** Rămâne ~0,6–1,2 ms pe setul mare față de 2,49 (DEDUS).
+- `tools/check.sh`: **868 de teste** (+7 ignorate), format, clippy, build no_std — PASS.
+
+**Următorul pas:** `attn_back_tile0_2` și `attn_back_tile_2` cu aceleași patru schimbări (plan scurt + predicții întâi), apoi proba
+„vechi lângă nou” (adăugare în `attn_tile_probe`, fără să schimb lista `PROGS` de azi) și nota pentru OS.
