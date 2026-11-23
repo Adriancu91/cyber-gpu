@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 185 — 23 noiembrie 2026, ~15:11–15:45 (ora României), în cloud, FĂRĂ placă — **C-157 p.7 partea a doua: lotul următor scris cât placa lucrează**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-364 (proba cu `_3` și proba
+`ram_vram` încă nerulate; suprapunerea la AdamW în RAM așteaptă cifra legăturii) → C-157 p.7 partea a doua. Clonele vechi de pe disc
+lăsate neatinse; lucrat în clone noi. Planul și predicțiile urcate **înainte** de cod (`2e9eefb`, `docs/C-157_P7_LOT_URMATOR.md`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `kronos_batch` (adăugare) | `TwoZones` (zona k = k mod 2, refuz pentru zonă ocupată / lot prea mare), trăsătura `BatchIo` (`send` fără așteptare, `wait`), `run_pipelined` (cel mult 2 loturi la placă; după oprire nu mai trimite, așteaptă lotul trimis și îl aruncă; erorile de după oprire în `drain_error`), `PipelineRun` | PASS (compilat; T180 neschimbat) |
+| `Generation::batch_ahead` (adăugare) | lotul de la o poziție, fără rezultatele de dinainte (textul → procesor, restul → placă) | PASS |
+| T194 (6 teste + 1 în modul) | loturi de 1 / 4 / 5, cu și fără citirea veche = o poziție pe sonerie **bit cu bit** (simboluri, cuvinte argmax, cache-uri); EOS la mijlocul lotului (loturi de 3) → lotul de după așteptat și aruncat; greșeli plantate prinse (o singură zonă, indice rău la 6, trimitere refuzată, zonă prea mică) | PASS (SIMULARE) |
+| Aflat | modelul plăcii rulează tot ce s-a trimis la o așteptare, deci în el doar ⌊loturi / 2⌋ trimiteri găsesc lotul de dinainte nerulat (driverul: loturi − 1 suprapuse) | scris în plan |
+| CI | roșu pe `aba9aeb` / `4581d34` (clippy 1.100 pe CI: `needless_range_loop` în test; local 1.97 nu-l vede) → reparat în `92e0358` | PASS după reparație (vezi mai jos) |
+| `tools/check.sh` | format, clippy, **931 de teste** (+7 ignorate), build no_std | PASS |
+| Pe RTX 3070 Ti (~870–910 simb/s DEDUS) | — | NOT TESTED |
+
+**Ce e nou pentru placă:** două trimiteri la placă în același timp (aceleași liste, `EachLaunch`, `embed_dev`); nimic în registre,
+niciun program nou. Se leagă după proba „lot pe o sonerie”. Nota: `integration/cyber-universe/C-157_P7b_lotul-urmator.md`.
+
+**Următorul pas:** comparațiile când OS-ul rulează pe placă proba cu `_3`, proba `ram_vram` sau proba „lot” (au întâietate); altfel
+C-157 p.8 (fișa de model și pachetele de calcul: documentul de proiectare, apoi primul pas de cod).
+
+---
+
 ## Sesiunea 184 — 23 noiembrie 2026, ~14:11–14:35 (ora României), în cloud, FĂRĂ placă — **C-157: AdamW cu m, v în RAM, strat cu strat**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-364 (proba cu `_3` și proba

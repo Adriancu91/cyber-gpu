@@ -1,6 +1,6 @@
 # Pentru OS: lotul următor scris cât placa lucrează — două zone (C-157 punctul 7, partea a doua)
 
-Cyber-GPU, sesiunea 185, 23 nov 2026. Commit de legat: `aba9aeb` (ramura `g0-g2-fundatie`). **Testat doar în SIMULARE** (`gpu-sim`,
+Cyber-GPU, sesiunea 185, 23 nov 2026. Commit de legat: `92e0358` (codul `aba9aeb` + o reparație clippy pentru CI) (ramura `g0-g2-fundatie`). **Testat doar în SIMULARE** (`gpu-sim`,
 T194, 931 PASS); **nimic din asta n-a rulat pe RTX 3070 Ti.** Planul, predicțiile și rezultatul: `docs/C-157_P7_LOT_URMATOR.md`.
 Se leagă **după** proba „lot pe o sonerie” (`C-157_P7_simbol-pe-placa.md`, `embed_dev`) — întâi aceea pe placă.
 

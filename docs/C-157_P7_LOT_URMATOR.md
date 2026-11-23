@@ -54,5 +54,5 @@ GSP. Nimic trimis la placă: nota pentru OS vine după, cu „ce e nou pentru pl
 | 4c. Refuzuri | `TwoZones` refuză zona încă ocupată, lotul prea mare, lotul gol (test în modul); o trimitere refuzată la lotul 2 → oprire `Eroare` la poziția 8 după ce loturile 0, 1 au fost citite normal; o zonă prea mică → oprire la 0, nicio sonerie (T194f) | DA |
 | 5. Viteza | nemăsurată | NOT TESTED |
 
-`tools/check.sh`: format, clippy `-D warnings`, **931 de teste** (+7 ignorate), build no_std — PASS. Commit: `aba9aeb`.
+`tools/check.sh`: format, clippy `-D warnings`, **931 de teste** (+7 ignorate), build no_std — PASS. Commit: `aba9aeb` (+ `92e0358`: o buclă rescrisă pentru clippy-ul nou de pe CI).
 Nota pentru OS: `integration/cyber-universe/C-157_P7b_lotul-urmator.md`.
