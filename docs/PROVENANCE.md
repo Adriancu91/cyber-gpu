@@ -509,3 +509,7 @@ niciun octet de firmware NVIDIA.
   deasupra diagonalei. Mesa NAK 25.0.7 (MIT) doar folosit pe gazdă. Comparația os-376 (sesiunea 188): plafonul PCIe 3.0 x8 socotit din
   specificația publică PCIe (128b/130b, antetele pachetelor), sloturile Dell 5820 din fișa tehnică publică Dell. Nimic GPL, niciun octet
   de firmware NVIDIA.
+- **C-157 punctul 2 — proba „vechi lângă nou” cu `attn_back_tile_4` (sesiunea 189):** adăugările din
+  `crates/nvidia-ga104/src/attn_tile_probe.rs` (`Prog4`, `launch_bytes4`, `Probe4`, `parse_attn_tile4`), testul
+  `crates/nvidia-ga104/tests/sim_c157_p2_attn_tile4_probe.rs`, nota `integration/cyber-universe/C-157_P2q_atentie4-vechi-langa-nou.md`:
+  scrise de noi, după modelul probelor `_2` / `_3` (tot ale noastre). Nicio sursă externă nouă; nimic GPL, niciun octet de firmware NVIDIA.

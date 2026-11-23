@@ -96,3 +96,12 @@ buffer). Totul e **adăugare** în `nvidia_ga104::attn_tile_probe`: `Prog`…`Pr
 - Q4: nicio lansare neterminată; gărzile neatinse; aceeași memorie VRAM (bufferul refolosit; încă 1 program nou + 3 pagini cbuf / QMD).
 
 **Ce NU face:** nu leagă `_4` în `train_step` (după ce placa confirmă Q2); nu schimbă nimic din probele os-358 / os-364 / os-375.
+
+### Rezultat în SIMULARE (sesiunea 189, după plan)
+- Cod (`c5645e9`): `Prog4` / `PROGS4` (`is_new()` doar la back1), `launch_bytes4`, `Probe4` (rânduri `kt atentie4 …`), `OS375_NS`,
+  `parse_attn_tile4`. Totul adăugare; `Probe3` dă aceleași rânduri ca înainte.
+- T197 (4 teste): QMD-ul gen 4 = QMD-ul `_3` octet cu octet la toate trei programele (aceleași registre, memorie, grilă); lanțul gen 4 =
+  gen 1 = `_3` pe cele 5 seturi mici; greșelile plantate prinse; cele patru parsere nu se amestecă. Limita: în simulator toate generațiile
+  au același model pe procesor (egalitate prin construcție) — Q1–Q4 rămân de văzut pe placă.
+- `tools/check.sh`: **945 PASS**, 0 eșecuri; build no_std. Pe placă: NOT TESTED. Nota PREDARE:
+  `integration/cyber-universe/C-157_P2q_atentie4-vechi-langa-nou.md`.

@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 189 — 23 noiembrie 2026, ~19:11–19:30 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: proba „vechi lângă nou” cu `attn_back_tile_4`**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă după os-376 → pasul scris: `_4` în proba
+„vechi lângă nou”. Clona veche de pe disc lăsată neatinsă; lucrat într-o clonă nouă a `origin/g0-g2-fundatie`. Planul și predicțiile
+urcate **înainte** de cod (`50e8e1f`, `docs/C-157_P2_ATTN_TILE4.md`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `attn_tile_probe` (adăugare, `c5645e9`) | `Prog4` / `PROGS4` (fwd / back0 = fișierele `_3`, back1 = `attn_back_tile_4`), `launch_bytes4`, `Probe4` (rânduri `kt atentie4 …`), `OS375_NS` (1,000 / 0,830 / 1,597 ms), `parse_attn_tile4` | PASS (compilat) |
+| T197 (4 teste) | QMD gen 4 = QMD `_3`; lanțul gen 4 = gen 1 = `_3` pe 5 seturi mici prin procesorul de comenzi; greșeli plantate prinse (memoria partajată gen 1 în QMD, un ulp, citire scurtă, set lipsă); parserele nu se amestecă | PASS (SIMULARE) |
+| Nota pentru OS | `integration/cyber-universe/C-157_P2q_atentie4-vechi-langa-nou.md` | — |
+| `tools/check.sh` | format, clippy, **945 de teste**, build no_std | PASS |
+| Pe RTX 3070 Ti | proba gen 4 (prezis: 6 / 6 identice, back1 ~1,2–1,35 ms față de 1,60) | NOT TESTED |
+
+**Ce e nou pentru placă:** un singur program, `attn_back_tile_4` (80 de registre), în proba `--atentie-placi` după `_3`.
+
+**Următorul pas:** comparația probei gen 4 când rulează pe placă (are întâietate); până atunci C-157 p.8 (fișa de model și „pachetele
+de calcul”: documentul de proiectare), plan întâi. `_4` în `train_step` doar după ce placa confirmă „identice”.
+
+---
+
 ## Sesiunea 188 — 23 noiembrie 2026, ~18:12–18:55 (ora României), în cloud, FĂRĂ placă — **comparația os-376 (RAM ↔ VRAM) + `attn_back_tile_4`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Clona veche de pe disc (sesiunea 110) păstrată în ramura locală

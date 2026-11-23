@@ -1,5 +1,11 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 189 (23 nov 2026, ~19:11–20:00, cloud, fără placă) — C-157 p.2: proba „vechi lângă nou” cu `attn_back_tile_4`, SIMULARE
+
+| ID | Ce | Comanda | Așteptat | Observat | Rezultat |
+|---|---|---|---|---|---|
+| T197 | Proba „vechi lângă nou” gen 4 (`attn_fwd_tile3` → `attn_back_tile0_3` → `attn_back_tile_4`; plan + predicții înainte `50e8e1f`): SHA / registre (120 / 68 / 80) / memorie; doar back1 e fișier nou; cbuf și QMD identice cu `launch_bytes3`; lanțul gen 4 pe cele 5 seturi mici prin procesorul de comenzi = gen 1 cuvânt cu cuvânt și în margine; greșeli plantate (QMD-ul lui `_4` cu memoria partajată gen 1 → refuzat; un ulp în dqkv → „identice” back1 −1; citire scurtă → INVALID; set lipsă → nu trece); rândurile `kt atentie4` ↔ `parse_attn_tile4`, cele patru prefixe nu se amestecă; `Probe3` neschimbat | `cargo test -p nvidia-ga104 --release --test sim_c157_p2_attn_tile4_probe` | toate | toate; 945 PASS în `tools/check.sh` | PASS (SIMULARE) |
+
 ## Rezultate — sesiunea 188 (23 nov 2026, ~18:12–18:55, cloud, fără placă) — C-157 p.2: `attn_back_tile_4`, SIMULARE
 
 | ID | Ce | Comanda | Așteptat | Observat | Rezultat |
