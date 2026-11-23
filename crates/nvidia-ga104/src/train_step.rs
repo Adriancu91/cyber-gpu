@@ -352,6 +352,18 @@ pub struct Launch {
 }
 
 impl Launch {
+    /// One launch of `prog` with the constant buffer `cb` (≤ 0x100 bytes; `None` = arguments the program refused) —
+    /// the same checks as the step's own launches (C-157, `adam_ram`).
+    pub fn new(
+        prog: Prog,
+        cb: Option<&[u8]>,
+        grid: [u32; 3],
+        tag: &'static str,
+        layer: Option<usize>,
+    ) -> GpuResult<Self> {
+        launch(prog, cb, grid, tag, layer)
+    }
+
     /// The QMD bytes with the program at `prog_va` and this launch's cbuf at `cbuf_va` (both 256-byte aligned).
     pub fn qmd(&self, prog_va: u64, cbuf_va: u64) -> GpuResult<[u8; nvidia_rm570::QMD_SIZE]> {
         let q = ComputeQmd {
@@ -506,6 +518,9 @@ pub struct Plan {
     p_prog: Prog,
     /// True for [`Plan::new_tiles`] / [`Plan::new_p_only_tiles`]: the attention launches use the tiled programs.
     tiles: bool,
+    /// True for the `_mv_ram` plans (C-157): AdamW's m and v live in host RAM ([`crate::adam_ram`]); [`Plan::m`] and
+    /// [`Plan::v`] are 0 and the arena has no room for them.
+    mv_ram: bool,
     /// End of the arena (exclusive).
     pub end: u64,
 }
@@ -525,7 +540,7 @@ impl Plan {
     /// The arena for `arch` with a batch of `batch` texts of `len` tokens (`inputs` = the batch's tokens, for the
     /// `emb_back` segment lists), from `base` (256-byte aligned) on.
     pub fn new(arch: Arch, batch: usize, len: usize, inputs: &[u32], base: u64) -> GpuResult<Self> {
-        Self::build(arch, batch, len, inputs, base, false)
+        Self::build(arch, batch, len, inputs, base, false, false)
     }
 
     /// The same arena as [`Plan::new`] but with **one** attention-probability buffer P shared by all layers (C-160
@@ -539,7 +554,7 @@ impl Plan {
         inputs: &[u32],
         base: u64,
     ) -> GpuResult<Self> {
-        Self::build(arch, batch, len, inputs, base, true)
+        Self::build(arch, batch, len, inputs, base, true, false)
     }
 
     /// The arena of [`Plan::new_p_recalc`] (one shared P), but the backward pass rebuilds a lost P with **`attn_p`**
@@ -553,7 +568,7 @@ impl Plan {
         inputs: &[u32],
         base: u64,
     ) -> GpuResult<Self> {
-        let mut plan = Self::build(arch, batch, len, inputs, base, true)?;
+        let mut plan = Self::build(arch, batch, len, inputs, base, true, false)?;
         plan.p_prog = Prog::AttnP;
         Ok(plan)
     }
@@ -568,9 +583,43 @@ impl Plan {
         inputs: &[u32],
         base: u64,
     ) -> GpuResult<Self> {
-        let mut plan = Self::build(arch, batch, len, inputs, base, false)?;
+        let mut plan = Self::build(arch, batch, len, inputs, base, false, false)?;
         plan.set_tiles(Prog::AttnFwdTile2)?;
         Ok(plan)
+    }
+
+    /// C-157 (`docs/C-157_ADAM_RAM.md`): [`Plan::new_tiles`] **without** AdamW's m and v on the board (8 bytes per
+    /// parameter less): they live in host RAM and come up layer by layer ([`crate::adam_ram::RamMv`]). The AdamW step
+    /// of such a plan is [`Plan::step_until_opt`] + [`crate::adam_ram::RamMv::opt_launches`]; [`Plan::step`] refuses it
+    /// (the `sgd` recipe, which never touches m and v, still works).
+    pub fn new_tiles_mv_ram(
+        arch: Arch,
+        batch: usize,
+        len: usize,
+        inputs: &[u32],
+        base: u64,
+    ) -> GpuResult<Self> {
+        let mut plan = Self::build(arch, batch, len, inputs, base, false, true)?;
+        plan.set_tiles(Prog::AttnFwdTile2)?;
+        Ok(plan)
+    }
+
+    /// C-157: [`Plan::new_p_only_tiles`] without m and v on the board (as [`Plan::new_tiles_mv_ram`]).
+    pub fn new_p_only_tiles_mv_ram(
+        arch: Arch,
+        batch: usize,
+        len: usize,
+        inputs: &[u32],
+        base: u64,
+    ) -> GpuResult<Self> {
+        let mut plan = Self::build(arch, batch, len, inputs, base, true, true)?;
+        plan.set_tiles(Prog::AttnPTile)?;
+        Ok(plan)
+    }
+
+    /// True for the `_mv_ram` plans: m and v are in host RAM, not in the arena.
+    pub fn mv_in_ram(&self) -> bool {
+        self.mv_ram
     }
 
     /// The arena of [`Plan::new_p_only`] (one shared P) with the tiled attention of [`Plan::new_tiles`]; a lost P is
@@ -583,7 +632,7 @@ impl Plan {
         inputs: &[u32],
         base: u64,
     ) -> GpuResult<Self> {
-        let mut plan = Self::build(arch, batch, len, inputs, base, true)?;
+        let mut plan = Self::build(arch, batch, len, inputs, base, true, false)?;
         plan.set_tiles(Prog::AttnPTile)?;
         Ok(plan)
     }
@@ -641,6 +690,7 @@ impl Plan {
         inputs: &[u32],
         base: u64,
         shared_p: bool,
+        mv_ram: bool,
     ) -> GpuResult<Self> {
         let (cc, v, h) = (arch.n_emb, arch.vocab, arch.heads);
         let n = batch * len;
@@ -668,7 +718,12 @@ impl Plan {
             at += t.elements();
         }
         let mut b = Bump(base);
-        let (w, g, m, vv) = (b.alloc(at), b.alloc(at), b.alloc(at), b.alloc(at));
+        let (w, g) = (b.alloc(at), b.alloc(at));
+        let (m, vv) = if mv_ram {
+            (0, 0)
+        } else {
+            (b.alloc(at), b.alloc(at))
+        };
         let (tok, tgt) = (b.alloc(n), b.alloc(n));
         let seg = |b: &mut Bump, s: &EmbSegments| SegVas {
             off: b.alloc(s.off.len()),
@@ -761,6 +816,7 @@ impl Plan {
             segs: [st, sp],
             p_prog: Prog::AttnFwd,
             tiles: false,
+            mv_ram,
             end: b.0,
         })
     }
@@ -807,11 +863,14 @@ impl Plan {
         let mut out = alloc::vec![
             (self.w, f(&mut params.iter().flatten().copied())),
             (self.g, zeros.clone()),
-            (self.m, zeros.clone()),
-            (self.v, zeros),
-            (self.tok, u(inputs)),
-            (self.tgt, u(targets)),
         ];
+        // C-157: a `_mv_ram` plan has no m, v on the board (`adam_ram::RamMv::uploads` zeroes them in RAM).
+        if !self.mv_ram {
+            out.push((self.m, zeros.clone()));
+            out.push((self.v, zeros));
+        }
+        out.push((self.tok, u(inputs)));
+        out.push((self.tgt, u(targets)));
         for (s, vas) in self.segs.iter().zip([self.seg_tok, self.seg_pos]) {
             out.push((vas.off, u(&s.off)));
             out.push((vas.dst, u(&s.dst)));
@@ -827,10 +886,30 @@ impl Plan {
         if step == 0 {
             return Err(bad("pas-aur: pasii incep de la 1"));
         }
+        if self.mv_ram && recipe == Recipe::AdamW513 {
+            return Err(bad("pas-aur: m, v sunt in RAM (step_until_opt + adam_ram)"));
+        }
         let mut out = Vec::with_capacity(32 * self.arch.layers + 16);
         self.forward_backward(&mut out, 1.0)?;
         self.optimize(&mut out, recipe, opt, step, None)?;
         Ok(out)
+    }
+
+    /// C-157 (`docs/C-157_ADAM_RAM.md`): the launches of step `step` of `adamw_513` **up to** the optimizer step (the
+    /// forward and backward passes and the two norm launches: every launch of [`Plan::step`] but the last), and the
+    /// optimizer step's arguments over the whole flat buffers with `m`, `v` left 0 — [`crate::adam_ram::RamMv`] splits
+    /// them into one launch per layer on its staging buffers. Works on every plan (on one with m, v on the board it is
+    /// exactly [`Plan::step`] without its last launch).
+    pub fn step_until_opt(&self, opt: &AdamW, step: u32) -> GpuResult<(Vec<Launch>, os::Args)> {
+        if step == 0 {
+            return Err(bad("pas-aur: pasii incep de la 1"));
+        }
+        let mut out = Vec::with_capacity(32 * self.arch.layers + 16);
+        self.forward_backward(&mut out, 1.0)?;
+        let mut a = self.opt_args(&mut out, Recipe::AdamW513, opt, step, None)?;
+        a.m = 0;
+        a.v = 0;
+        Ok((out, a))
     }
 
     /// Launches per step: 31 per layer + 13 at `adamw_513` (11 at `sgd`).
@@ -1410,6 +1489,27 @@ impl Plan {
         step: u32,
         loss_scale: Option<f32>,
     ) -> GpuResult<()> {
+        let a = self.opt_args(out, recipe, opt, step, loss_scale)?;
+        out.push(launch(
+            Prog::OptStep,
+            a.cbuf().as_ref().map(|b| &b[..]),
+            a.grid(),
+            "opt:pas",
+            None,
+        )?);
+        Ok(())
+    }
+
+    /// The launches of the optimizer before its step (the norm, the mixed step's 1/S) pushed to `out`; returns the
+    /// step's arguments.
+    fn opt_args(
+        &self,
+        out: &mut Vec<Launch>,
+        recipe: Recipe,
+        opt: &AdamW,
+        step: u32,
+        loss_scale: Option<f32>,
+    ) -> GpuResult<os::Args> {
         let n = self.n_params as u32;
         // At the mixed step the gradients are S times too big: the norm is compared with S·MAX_NORM (the same factor
         // c, up to the 1e-6 in the denominator) and c is divided by S (one exact 1×1×1 F32 product) before the step.
@@ -1491,14 +1591,7 @@ impl Plan {
                 sc.eps,
             ],
         };
-        out.push(launch(
-            Prog::OptStep,
-            a.cbuf().as_ref().map(|b| &b[..]),
-            a.grid(),
-            "opt:pas",
-            None,
-        )?);
-        Ok(())
+        Ok(a)
     }
 
     /// The flat f32 of the weights or the gradients (read back from [`Plan::w`] / [`Plan::g`], `4·n_params` bytes)
@@ -1990,6 +2083,9 @@ impl Plan {
         check_scale(loss_scale)?;
         if step == 0 {
             return Err(bad("pas-aur: pasii incep de la 1"));
+        }
+        if self.mv_ram && recipe == Recipe::AdamW513 {
+            return Err(bad("pas-aur: pasul mixt cu m, v in RAM nu e facut"));
         }
         let mut list = Vec::with_capacity(32 * self.arch.layers + 16);
         self.forward_backward(&mut list, loss_scale)?;

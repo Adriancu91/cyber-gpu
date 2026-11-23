@@ -54,6 +54,7 @@
 
 extern crate alloc;
 
+pub mod adam_ram;
 pub mod argmax;
 pub mod attn_back;
 pub mod attn_back128;

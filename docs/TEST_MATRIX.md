@@ -4,6 +4,7 @@
 
 | ID | Ce | Comanda | Așteptat | Observat | Rezultat |
 |---|---|---|---|---|---|
+| T193 | `adam_ram`: AdamW cu m, v în RAM, strat cu strat (C-157): pasul de aur mic 5 pași `adamw_513` pe ambele planuri pe plăci și 4 straturi = planul de azi bit cu bit (pierderi, norme, greutăți, m, v); ordinea metodelor pe bucată (copii, înregistrare, așteptare, lansare); greșeli plantate (bucată repetată, m ↔ v inversate, copiere înapoi pierdută); refuzuri; memoria la #513 / #651 | `cargo test -p nvidia-ga104 --test sim_c157_adam_ram` | trec; greșelile prinse; economie 0,63 / 1,27 GiB | conform | PASS (SIMULARE) |
 | T192 | `ram_vram`: obiectul de copiere alocat pe canalul de lucru (FakeRm); proba întreagă (M = 256 KiB și 1 MiB) prin procesorul de comenzi cu modelul motorului de copiere: 31 de înregistrări, 48 de copii (18 `PIPELINED`), B bit cu bit = modelul, A neatins, timpii = ceasul modelului; rândurile `kt ramvram` ↔ parser; greșeli plantate (sfertul paralel mutat cu 16 B, trimitere tăiată, bit necunoscut în `LAUNCH_DMA`) | `cargo test -p nvidia-ga104 --test sim_c157_ram_vram` + `--lib ram_vram` | trec; greșelile prinse | conform | PASS (SIMULARE) |
 
 ## Rezultate — sesiunea 134 (21 nov 2026, ~12:10–13:10, cloud, fără placă) — C-155 punctul 3: argmax pe placă, SIMULARE

@@ -45,3 +45,15 @@ motorul de copiere să citească locul: **DEDUS** (aceeași memorie L2; tinygrad
 
 ZeRO-Offload (Ren et al., 2021, arXiv 2101.06840) — ideea mutării stărilor optimizatorului; `clc7b5.h` / `clc56f.h` (NVIDIA, MIT) —
 metodele; tinygrad `ops_nv.py` (MIT) citit ca specificație pentru așteptarea pe semafor.
+
+## Rezultat (sesiunea 184, după cod) — SIMULARE
+
+| Predicție | Ce a ieșit | |
+|---|---|---|
+| 1. bit cu bit (MIC 5 pași, ambele planuri pe plăci; 4 straturi 3 pași) | identice: pierderi, norme, greutăți după pasul 1 și ultimul, m, v | DA |
+| 2. lansări pe pas L + 2 în loc de 1 | 75 → 78 (P păstrat), 76 → 79 (P refăcut) | DA |
+| 3. greșeli plantate prinse | bucată repetată, m ↔ v la pasul 2, copiere înapoi pierdută: prinse. **Aflat:** m ↔ v inversate la fiecare pas lasă greutățile identice (inversarea se anulează); se vede doar în m, v din RAM — testul o verifică așa | DA, cu o observație |
+| 4. economie pe placă 0,63 / 1,26 GiB | 0,63 / 1,27 GiB (#513 1,98 → 1,25 GiB + 0,10 locul; #651 3,67 → 2,31 + 0,10) | DA |
+| 5. timpul de legătură pe placă | — | NOT TESTED |
+
+Nota pentru OS: `integration/cyber-universe/C-157_ADAM_RAM_m-v-in-RAM.md`. `tools/check.sh`: 924 de teste (+7 ignorate), PASS.

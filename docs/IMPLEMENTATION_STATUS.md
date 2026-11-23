@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 184 — 23 noiembrie 2026, ~14:11–14:55 (ora României), în cloud, FĂRĂ placă — **C-157: AdamW cu m, v în RAM, strat cu strat**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-364 (proba cu `_3` și proba
+`ram_vram` încă nerulate). Clona veche de pe disc (ramura locală din sesiunea 110) lăsată neatinsă; am lucrat într-o clonă nouă.
+Planul și predicțiile urcate **înainte** de cod (`8c8091e`, `docs/C-157_ADAM_RAM.md`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `train_step` (adăugare) | `Plan::new_tiles_mv_ram` / `new_p_only_tiles_mv_ram` (arena fără m, v), `mv_in_ram`, `step_until_opt` (lansările până la pasul optimizatorului + argumentele lui), `Launch::new`; `step` / `step_mixed` refuză AdamW pe planul `_mv_ram`; `uploads` fără m, v acolo | PASS (compilat; T165–T187 neschimbate) |
+| `nvidia_ga104::adam_ram` (nou) | bucățile (tabele, fiecare strat, LN final), `RamMv` (m, v în RAM, locul pe placă, înregistrările), `opt_launches` (un `opt_step` pe bucată), `encode_step` (copii sus → așteptare `ACQ_STRICT_GEQ` → lansare + WFI → copii jos; la sfârșit așteptarea ultimei copii), `check_sync` | PASS (compilat) |
+| T193 (6 teste) | pasul de aur mic 5 pași + 4 straturi = planul de azi **bit cu bit** (și m, v); ordinea metodelor pe bucată; 3 greșeli plantate prinse (+ aflat: m ↔ v inversate la fiecare pas nu se văd în greutăți); refuzuri; memoria | PASS (SIMULARE) |
+| Memoria plăcii | #513: −0,63 GiB, #651: −1,27 GiB (predicție 0,63 / 1,26) | DEDUS (calculat din arenă) |
+| `tools/check.sh` | format, clippy, **924 de teste** (+7 ignorate), build no_std | PASS |
+| Pe RTX 3070 Ti (aceiași biți; ~0,25 s / ~0,45 s în plus pe pas la #513 / #651) | — | NOT TESTED |
+
+**Ce e nou pentru placă:** motorul de copiere în pasul de antrenare (după ce trece proba `ram_vram`) și **așteptarea pe semafor**
+(`SEM_EXECUTE` `ACQ_STRICT_GEQ`, prima dată pe placă); niciun registru, niciun program nou. Nota:
+`integration/cyber-universe/C-157_ADAM_RAM_m-v-in-RAM.md`.
+
+**Următorul pas:** comparațiile când OS-ul rulează pe placă proba cu `_3` și proba `ram_vram` (au întâietate); altfel C-157:
+suprapunerea (bucata următoare urcă în timp ce calculul lucrează) — doar după cifra reală a legăturii; sau punctele 7 / 8.
+
+---
+
 ## Sesiunea 183 — 23 noiembrie 2026, ~13:10–13:45 (ora României), în cloud, FĂRĂ placă — **C-157: punctul RAM ↔ VRAM (a + b)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-364 (proba cu `_3` încă nerulată).
