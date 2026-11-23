@@ -1,5 +1,11 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 185 (23 nov 2026, ~15:10–15:50, cloud, fără placă) — C-157 p.7 partea a doua: lotul următor scris cât placa lucrează, SIMULARE
+
+| ID | Ce | Comanda | Așteptat | Observat | Rezultat |
+|---|---|---|---|---|---|
+| T194 | `run_pipelined` + `TwoZones` + `Generation::batch_ahead` (C-157 p.7b): loturi de 1 / 4 / 5 cu două zone, cu și fără citirea veche = o poziție pe sonerie (simboluri, cuvinte argmax, cache-uri bit cu bit), ⌈14 / lot⌉ sonerii, loturi − 1 suprapuse; EOS la mijlocul lotului → lotul de după așteptat și aruncat; greșeli plantate (o singură zonă, indice rău la 6, trimitere refuzată, zonă prea mică) | `cargo test -p nvidia-ga104 --test sim_c157_p7_pipelined` | identic; greșelile prinse | conform (EOS cu loturi de 3: modelul mic face 75 la poziția 4) | PASS (SIMULARE) |
+
 ## Rezultate — sesiunea 183 (23 nov 2026, ~13:10–14:10, cloud, fără placă) — C-157: proba RAM ↔ VRAM cu motorul de copiere, SIMULARE
 
 | ID | Ce | Comanda | Așteptat | Observat | Rezultat |

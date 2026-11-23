@@ -42,3 +42,17 @@ adresele din cache-uri și lungimea atenției le știe driverul dinainte. Deci d
 ## Ce NU face
 Nu schimbă niciun program, nicio listă, nici `next_batch` / `accept_batch` / `batch_launches`. Nimic nou în registre sau prin
 GSP. Nimic trimis la placă: nota pentru OS vine după, cu „ce e nou pentru placă: două trimiteri la placă în același timp”.
+
+## Rezultatul (după cod, sesiunea 185)
+| Predicția | Ieșit | |
+|---|---|---|
+| 1. Aceleași rezultate | loturi de 4 / 5 / 1, cu și fără citirea veche (128) + `EachLaunch`: aceleași 15 simboluri, aceleași 4 cuvinte argmax la toate 14 pozițiile, cache-urile K/V bit cu bit; 0 octeți vechi serviți; sonerii = ⌈14 / lot⌉ (T194a) | DA (SIMULARE) |
+| 2. Suprapunerea | în ochii driverului: loturi − 1 scrise cât cel de dinainte era la placă, cel mult 2 la placă, zona k = k mod 2 (T194a). **Aflat:** modelul plăcii rulează tot ce s-a trimis când driverul așteaptă, deci acolo doar fiecare al doilea lot găsește lotul de dinainte încă nerulat (⌊loturi / 2⌋) — e o limită a simulării, nu a buclei | DA |
+| 3. EOS la mijlocul unui lot | modelul mic generează [17, 17, 75, 75, …]: EOS = 75 apare la poziția 4 → am luat loturi de **3** (nu 4, cum scria planul) ca 4 să fie la mijlocul lotului 3..6; aceeași secvență și aceeași oprire `Sfarsit` ca o poziție pe sonerie; lotul 6..9 trimis, așteptat, aruncat (3 poziții), nicio eroare (T194c) | DA |
+| 4a. O singură zonă pentru ambele loturi | lotul 0 rulează lansările lotului 1 → locurile lui argmax rămân 0xEE → oprire `Eroare` la poziția 0, alte cache-uri; a doua așteptare nu mai găsește nimic → raportată în `drain_error`, nu ascunsă (T194d) | prins |
+| 4b. Indice rău la poziția 6 | aceeași oprire `Eroare` la 6 ca T180e, aceeași secvență până acolo; lotul 8..12 așteptat și aruncat; după 6 placa spune „niciun simbol” (T194e) | prins |
+| 4c. Refuzuri | `TwoZones` refuză zona încă ocupată, lotul prea mare, lotul gol (test în modul); o trimitere refuzată la lotul 2 → oprire `Eroare` la poziția 8 după ce loturile 0, 1 au fost citite normal; o zonă prea mică → oprire la 0, nicio sonerie (T194f) | DA |
+| 5. Viteza | nemăsurată | NOT TESTED |
+
+`tools/check.sh`: format, clippy `-D warnings`, **931 de teste** (+7 ignorate), build no_std — PASS. Commit: `aba9aeb`.
+Nota pentru OS: `integration/cyber-universe/C-157_P7b_lotul-urmator.md`.
