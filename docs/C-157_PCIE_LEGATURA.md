@@ -55,7 +55,15 @@ os-376 = 79 % (sus) / 86 % (jos) din plafonul brut x8 — normal pentru PCIe (an
 
 ## 5. Rezultat
 
-(se completează după cod și după citirea de pe placă)
+Sesiunea 190: codul `gpu_pci::link` (`408c69c`), T198 7 teste PASS (SIMULARE), `tools/check.sh` 952 PASS; nota pentru OS
+`integration/cyber-universe/C-157_P2r_legatura-port.md`. **Citirea portului pe placă: NOT TESTED** (P1–P3 așteaptă un ciclu OS
+cu rândurile `pci.legatura.port` / `pci.legatura.cauza`). P5 (mutarea plăcii) așteaptă pe Adrian.
+
+**Pentru Adrian (fizic, fără cod, când vrea):** calculatorul oprit și scos din priză; placa video mutată din slotul 1 (cel mai
+aproape de procesor) într-unul din sloturile **x16 întregi: 2 sau 4** (manualul Dell îi numerotează; sunt cele de 300 W), cu
+ambele cabluri de alimentare puse la loc. Înainte, în Windows, GPU-Z → „Bus Interface” arată azi `PCIe x16 3.0 @ x8 3.0`;
+după mutare trebuie să arate `@ x16 3.0`. Apoi un os-376 din nou (așteptat ~11,5–13 GB/s).
+Atenție: slotul 4 poate fi acoperit de o placă dublă din slotul 2 sau de răcitor — se alege slotul liber în care încape placa.
 
 ## Surse
 - PCI Express Base Specification: Link Capabilities (offset 0x0c al capabilității PCIe), Link Status (0x12), tipul portului

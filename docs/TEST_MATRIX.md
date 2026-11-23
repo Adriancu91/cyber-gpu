@@ -1,5 +1,12 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 190 (23 nov 2026, ~20:13–21:00, cloud, fără placă) — C-157 (decizia 23 nov 20:11): de ce legătura PCIe e x8, SIMULARE
+
+| ID | Ce | Comanda | Așteptat | Observat | Rezultat |
+|---|---|---|---|---|---|
+| T198 | `gpu_pci::link` (plan + predicții înainte `b144292`): plafonul brut (gen3 x8 7,88 / x16 15,75 GB/s; os-376 = 79 % / 86 %); verdictul pe cazul workstation-ului (placă gen4 x16, legătură gen3 x8, port gen3 x8 → `SlotNarrow`; mutată în x16 → `SlotSlow`, ×2); port x16 cu legătură x8 → `TrainedNarrow`; repausul gen1 nu ascunde lățimea; fără port → `NoPort`; găsirea portului după magistrala secundară pe 3 punți simulate (forma b2 din `lspci`), portul de comutator în sus refuzat; **nicio scriere** | `cargo test -p gpu-pci` | 7 teste trec | 7 trec; `tools/check.sh` 952 PASS | PASS (SIMULARE) |
+| — | Citirea portului b2:00.0 pe workstation (P1: max gen3 x8) | turul OS, nota `C-157_P2r_legatura-port.md` | `SlotNarrow` | — | NOT TESTED |
+
 ## Rezultate — sesiunea 189 (23 nov 2026, ~19:11–20:00, cloud, fără placă) — C-157 p.2: proba „vechi lângă nou” cu `attn_back_tile_4`, SIMULARE
 
 | ID | Ce | Comanda | Așteptat | Observat | Rezultat |

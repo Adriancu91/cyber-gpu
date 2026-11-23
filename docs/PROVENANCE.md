@@ -513,3 +513,7 @@ niciun octet de firmware NVIDIA.
   `crates/nvidia-ga104/src/attn_tile_probe.rs` (`Prog4`, `launch_bytes4`, `Probe4`, `parse_attn_tile4`), testul
   `crates/nvidia-ga104/tests/sim_c157_p2_attn_tile4_probe.rs`, nota `integration/cyber-universe/C-157_P2q_atentie4-vechi-langa-nou.md`:
   scrise de noi, după modelul probelor `_2` / `_3` (tot ale noastre). Nicio sursă externă nouă; nimic GPL, niciun octet de firmware NVIDIA.
+- **C-157 — diagnosticul legăturii PCIe (sesiunea 190):** `crates/gpu-pci/src/link.rs`, nota
+  `integration/cyber-universe/C-157_P2r_legatura-port.md`, documentul `docs/C-157_PCIE_LEGATURA.md`: scrise de noi din
+  specificația PCI Express (Link Capabilities / Link Status, tipul portului, magistrala secundară a punții) și din manualul public
+  Dell Precision 5820 (tabelul sloturilor). Nicio sursă de cod externă; nimic GPL, niciun octet de firmware NVIDIA.
