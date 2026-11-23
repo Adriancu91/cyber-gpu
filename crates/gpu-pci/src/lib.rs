@@ -6,7 +6,8 @@
 //!
 //! Two levels of access:
 //! - **read-only** ([`header`], [`bar::decode_bars`], [`caps`], [`report`]):
-//!   safe on any device, including the primary display GPU;
+//!   safe on any device, including the primary display GPU; [`link`]
+//!   diagnoses a slow link from the board's and the port's link registers;
 //! - **BAR sizing** ([`bar::size_bars`]): writes to configuration space with
 //!   memory decode disabled. It requires an explicit [`bar::SizingPermit`]
 //!   and restores and verifies every register it touches;
@@ -24,6 +25,7 @@ pub mod bus_master;
 pub mod caps;
 pub mod flr;
 pub mod header;
+pub mod link;
 pub mod mem_space;
 pub mod report;
 
