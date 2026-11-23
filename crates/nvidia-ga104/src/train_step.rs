@@ -712,8 +712,29 @@ pub struct Plan {
     /// Order 20:11 step 3, second part ([`Plan::with_fused_gelu`]): "inapoi:proj-dX" writes GELU's backward itself
     /// (`mm_train_gelu`), no backward `gelu_tr`.
     fused_gelu: bool,
+    /// C-160 P8 ([`Plan::resident`]): room (in distinct tokens) of the token segment lists; 0 = the plan is not
+    /// resident (its lists are exactly its batch's).
+    tok_cap: usize,
     /// End of the arena (exclusive).
     pub end: u64,
+}
+
+/// C-160 P8 ([`Plan::traffic`]): bytes over the PCIe link (worst batch of the shape for the token lists).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Traffic {
+    /// Resident arena, once before step 1: [`Plan::uploads`].
+    pub once_up: u64,
+    /// Resident arena, before every later step: [`Plan::batch_uploads`].
+    pub step_up: u64,
+    /// Resident arena, after every step: [`Plan::step_reads`].
+    pub step_down: u64,
+    /// Resident arena, once at the end (or at a save): weights, m and v (weights only for `_mv_ram`).
+    pub final_down: u64,
+    /// The path of os-380, every step: at least everything in [`Plan::uploads`] again (os-380 then also wrote m and
+    /// v over the zeros: 8 bytes per parameter more).
+    pub today_step_up: u64,
+    /// The path of os-380, every step: weights, m and v read back, plus the losses and the norm.
+    pub today_step_down: u64,
 }
 
 struct Bump(u64);
@@ -946,6 +967,22 @@ impl Plan {
         shared_p: bool,
         mv_ram: bool,
     ) -> GpuResult<Self> {
+        Self::build_cap(arch, batch, len, inputs, base, shared_p, mv_ram, false)
+    }
+
+    /// [`Plan::build`]; `resident` = the token segment lists get room for the worst batch of this shape
+    /// (`min(batch·len, vocab)` distinct tokens), so no address depends on the batch ([`Plan::resident`]).
+    #[allow(clippy::too_many_arguments)]
+    fn build_cap(
+        arch: Arch,
+        batch: usize,
+        len: usize,
+        inputs: &[u32],
+        base: u64,
+        shared_p: bool,
+        mv_ram: bool,
+        resident: bool,
+    ) -> GpuResult<Self> {
         let (cc, v, h) = (arch.n_emb, arch.vocab, arch.heads);
         let n = batch * len;
         if !base.is_multiple_of(256)
@@ -985,7 +1022,14 @@ impl Plan {
             rows: b.alloc(s.rows.len()),
             count: s.len(),
         };
-        let seg_tok = seg(&mut b, &st);
+        // C-160 P8: a resident plan sizes the token lists for the worst batch (every token distinct).
+        let tok_cap = if resident { n.min(v) } else { st.len() };
+        let seg_tok = SegVas {
+            off: b.alloc(tok_cap + 1),
+            dst: b.alloc(tok_cap),
+            rows: b.alloc(st.rows.len()),
+            count: st.len(),
+        };
         let seg_pos = seg(&mut b, &sp);
         let mut xs = alloc::vec![b.alloc(n * cc)];
         let mut layers: Vec<LayerBufs> = Vec::new();
@@ -1074,6 +1118,7 @@ impl Plan {
             mv_ram,
             fused_back: false,
             fused_gelu: false,
+            tok_cap: if resident { tok_cap } else { 0 },
             end: b.0,
         })
     }
@@ -1116,6 +1161,141 @@ impl Plan {
             (true, false) => &PROGRAMS_FUSED_EXTRA,
             (false, true) => &PROGRAMS_FUSED_GELU_EXTRA,
             (false, false) => &[],
+        }
+    }
+
+    /// C-160 P8 (`docs/C-160_P8_ARENA_VRAM.md`): the same plan (programs, fusions, attention, m/v placement, base)
+    /// laid out so that **no address depends on the batch**: the token segment lists get room for the worst batch of
+    /// this shape (`min(batch·len, vocab)` distinct tokens). Its arena can be made once (in VRAM) and kept for the
+    /// whole run: weights, gradient, m and v stay on the board; between steps the CPU writes only
+    /// [`Plan::batch_uploads`] (for the plan [`Plan::rebatch`] gives) and reads only [`Plan::step_reads`]. A plan that
+    /// is already resident comes back unchanged.
+    pub fn resident(self) -> GpuResult<Self> {
+        if self.tok_cap > 0 {
+            return Ok(self);
+        }
+        let n = self.batch * self.len;
+        let s = &self.segs[0];
+        let mut inputs = alloc::vec![0u32; n];
+        for (k, &d) in s.dst.iter().enumerate() {
+            let (a, b) = (s.off[k] as usize, s.off[k + 1] as usize);
+            for &r in s.rows.get(a..b).ok_or(bad("pas-aur: segmentele"))? {
+                *inputs
+                    .get_mut(r as usize)
+                    .ok_or(bad("pas-aur: segmentele"))? = d;
+            }
+        }
+        let shared_p = self.layers.len() > 1 && self.layers[1].p == self.layers[0].p;
+        let mut p = Self::build_cap(
+            self.arch,
+            self.batch,
+            self.len,
+            &inputs,
+            self.base,
+            shared_p,
+            self.mv_ram,
+            true,
+        )?;
+        p.p_prog = self.p_prog;
+        p.tiles = self.tiles;
+        p.tiles3 = self.tiles3;
+        p.fused_back = self.fused_back;
+        p.fused_gelu = self.fused_gelu;
+        Ok(p)
+    }
+
+    /// True for the plans [`Plan::resident`] gives.
+    pub fn is_resident(&self) -> bool {
+        self.tok_cap > 0
+    }
+
+    /// C-160 P8: the plan of a resident arena for the next batch `inputs` (same shape): **every address the same**,
+    /// only the token segment lists (and their count) new. Refuses a plan that is not resident.
+    pub fn rebatch(&self, inputs: &[u32]) -> GpuResult<Self> {
+        if self.tok_cap == 0 {
+            return Err(bad(
+                "pas-aur: lotul nou cere un plan rezident (Plan::resident)",
+            ));
+        }
+        let n = self.batch * self.len;
+        if inputs.len() != n {
+            return Err(bad("pas-aur: lotul nou are alta forma"));
+        }
+        let st = EmbSegments::tokens(inputs, self.arch.vocab)
+            .ok_or(bad("pas-aur: simbol in afara vocabularului"))?;
+        if !st.check(n, self.arch.vocab) || st.len() > self.tok_cap {
+            return Err(bad("pas-aur: segmentele lotului nou"));
+        }
+        let mut p = self.clone();
+        p.seg_tok.count = st.len();
+        p.segs[0] = st;
+        Ok(p)
+    }
+
+    /// C-160 P8: what the CPU writes between the steps of a resident arena — the batch's inputs and targets and the
+    /// three token segment lists (the position lists do not depend on the batch; [`Plan::uploads`] wrote them once).
+    /// `inputs` must be this plan's batch ([`Plan::rebatch`]).
+    pub fn batch_uploads(&self, inputs: &[u32], targets: &[u32]) -> GpuResult<Vec<(u64, Vec<u8>)>> {
+        if self.tok_cap == 0 {
+            return Err(bad(
+                "pas-aur: urcarile lotului cer un plan rezident (Plan::resident)",
+            ));
+        }
+        let n = self.batch * self.len;
+        if inputs.len() != n
+            || targets.len() != n
+            || targets.iter().any(|&t| t as usize >= self.arch.vocab)
+        {
+            return Err(bad("pas-aur: intrarile sau tintele"));
+        }
+        if EmbSegments::tokens(inputs, self.arch.vocab).as_ref() != Some(&self.segs[0]) {
+            return Err(bad("pas-aur: alt lot decat cel al planului"));
+        }
+        let u = |v: &[u32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+        let s = &self.segs[0];
+        Ok(alloc::vec![
+            (self.tok, u(inputs)),
+            (self.tgt, u(targets)),
+            (self.seg_tok.off, u(&s.off)),
+            (self.seg_tok.dst, u(&s.dst)),
+            (self.seg_tok.rows, u(&s.rows)),
+        ])
+    }
+
+    /// C-160 P8: what the CPU reads after every step — (address, bytes): the per-row losses and the gradient norm
+    /// (`res[0]`). Weights, m and v stay on the board until the run ends (or a save).
+    pub fn step_reads(&self) -> [(u64, u64); 2] {
+        [
+            (self.loss_rows, 4 * (self.batch * self.len) as u64),
+            (self.res, 4),
+        ]
+    }
+
+    /// C-160 P8: bytes over the PCIe link, for the report — the resident arena against the path of os-380 (a new
+    /// plan every step, everything uploaded, weights and m, v read back every step).
+    pub fn traffic(&self) -> Traffic {
+        let n = (self.batch * self.len) as u64;
+        let p = 4 * self.n_params as u64;
+        let tensors = if self.mv_ram { 2 } else { 4 };
+        let cap = if self.tok_cap > 0 {
+            self.tok_cap
+        } else {
+            self.segs[0].len()
+        } as u64;
+        let tok_lists = 4 * (cap + 1 + cap + n);
+        let pos = &self.segs[1];
+        let pos_lists = 4 * (pos.off.len() + pos.dst.len() + pos.rows.len()) as u64;
+        let once_up = tensors * p + 8 * n + tok_lists + pos_lists + 8;
+        let step_up = 8 * n + tok_lists;
+        let step_down = 4 * n + 4;
+        let read_state = if self.mv_ram { p } else { 3 * p };
+        Traffic {
+            once_up,
+            step_up,
+            step_down,
+            final_down: read_state,
+            today_step_up: once_up,
+            today_step_down: read_state + step_down,
         }
     }
 

@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 194 — 24 noiembrie 2026, ~00:11–01:00 (ora României), în cloud, FĂRĂ placă — **comparația os-380 + arena antrenării în VRAM („planul rezident”)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 193 terminată 23:30), l-am pus `ocupat`. Rezultat nou pe placă: **os-380** (23:12,
+primul pas întreg de antrenare pe placa reală, TRECE). Nota centrului de comandă 23:36: pe placă (1) `--mixt` + gen 4, (2) **arena în
+VRAM**, (3) #513. Plan + predicții urcate **înainte** de cod (`c9733d6`, `docs/C-160_P8_ARENA_VRAM.md`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Comparația os-380 (C-157 p.2) | pe placă: 10 pași, pierderea 9,9e-8, greutățile 8,8e-6 față de oracol — cum arătau `--placa-sim` și T199 (F32 = oracolul); placa 25,6 ms, pasul întreg 286 ms. Cauza celor 286 ms (citită în `train_mini_probe`): plan nou la fiecare pas, tot urcat (~27,6 MB), w, m, v citite (13,8 MB) | PASS (placă, OS); explicat |
+| Planul rezident (doar adăugări) | `Plan::resident` (listele de segmente ale simbolurilor cu loc pentru cel mai rău lot → nicio adresă nu depinde de lot), `rebatch`, `is_resident`, `batch_uploads` (tok, tgt, 3 liste: 1 284 B), `step_reads` (pierderi + normă: 260 B), `traffic` + `Traffic`; planurile vechi neschimbate (aceleași adrese) | — |
+| T202 (5 teste) | R1: adrese identice pe 10 loturi + lotul cu 64 de simboluri distincte, +0 octeți; programele, lipirile, `_mv_ram`, numărul de lansări păstrate. R2: 10 pași pe 10 loturi diferite — drumul rezident = drumul os-380 **bit cu bit**, oracolul 9,8e-8 / 3,1e-6; 11 092 B sus / 2 600 B jos față de 276 MB / 138 MB. R3: fără `batch_uploads` 9/9 pierderi diferite; refuzurile | PASS (SIMULARE), R1–R3 ieșite |
+| Nota pentru OS | `integration/cyber-universe/C-160_P8_arena-rezidenta.md` | — |
+| `tools/check.sh` | format, clippy, **971 de teste** (+7 ignorate), build no_std | PASS |
+| Pe placă: arena în VRAM | predicția R4 (DEDUS): placa 1–5 ms pe pas în loc de 25,6 ms, pasul întreg câțiva ms peste placă | NOT TESTED |
+
+**Ce e nou pentru placă:** nimic în registre, niciun program; doar locul arenei (VRAM) și copiile la pornire / la sfârșit (OS-ul).
+
+**Următorul pas:** comparațiile când rulează pe placă (`--antrenare-mini --mixt`, gen 4, arena în VRAM cu predicția R4, os-352, „lot”);
+altfel ordinea 20:11 pasul 4 — recalcularea activărilor (plan + predicții întâi).
+
+---
+
 ## Sesiunea 193 — 23 noiembrie 2026, ~23:12–23:30 (ora României), în cloud, FĂRĂ placă — **ordinea 20:11, pasul 3, partea a doua: GELU' lipit în „proj-dX” (`mm_train_gelu`)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 192 terminată 22:36), l-am pus `ocupat`. Niciun rezultat nou de pe placă de comparat
