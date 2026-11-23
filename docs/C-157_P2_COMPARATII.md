@@ -2,6 +2,39 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-376 `test-placa --i9 c135 --ram-vram` (viteza RAM ↔ VRAM cu motorul de copiere, 23 nov 2026 17:36) — sesiunea 188
+Surse: `Cyber-hub/rezultate/2026-11-23-workstation-os376-ram-vram/REZULTAT.md`, `rezultate/os-automat/2026-11-23/ciclu-auto-20261123-1736.txt`
+(rândurile `ram-vram …`). Nucleul: cyber-universe cu cyber-gpu `9359f21`. Predicțiile scrise înainte: `docs/C-157_RAM_VRAM_PROBA.md` (`477455c`).
+
+### Ce a ieșit
+- **Corectitudinea = predicțiile:** motorul de copiere pe canalul de lucru primește metodele (riscul 1 nu s-a întâmplat), toate cele
+  31 de înregistrări, toți octeții corecți în ambele sensuri. Generarea neatinsă: 16 / 16 identice, amprenta `0x6c8501f0`.
+- **Viteza ratată de 2 ori, în același fel în ambele sensuri:** sus (RAM → VRAM) 64 MiB **5,97 GB/s** mediana (cel mai bun 6,26; 16 MiB
+  6,25), jos (VRAM → RAM) **6,76 GB/s** (prezis 11–13 / 11–13,5). 1 MiB: sus 5,30, jos 6,69 (prezis 6–11; costul fix ~22 µs sus,
+  ~2 µs jos). 4 copii în paralel: 1 048 / 1 000 ‰ (prezis ±5 % → **în interval**). Față de `copy_b128` (6,2): ×0,96 la sus (prezis ×1,8–2,1 → ratat).
+
+### De ce (FAPT + DEDUS)
+- **Legătura e PCIe 3.0 x8, nu x16.** Nu e o presupunere: turul nostru citește starea legăturii plăcii din spațiul de configurare
+  (`pci.legatura`) și în toate rapoartele de pe workstation (BOOT_0 `0xb74000a1`, `b3:00.0`) scrie **x8**: `gen3 x8 (max gen4 x16)`
+  (de ex. `rezultate/os-automat/2026-11-11/20261103-1.txt`), `gen3 x8 (max gen3 x16)` (os-278), iar în repaus `gen1 x8` (os-275 —
+  placa coboară singură viteza când nu lucrează). Lățimea e **mereu 8**, deși placa poate 16. Predicția mea a pus „x16” fără să citesc
+  acest rând — greșeala mea.
+- Plafonul PCIe 3.0 x8: 7,88 GB/s brut; cu antetele pachetelor ~7,20 GB/s la pachete de 256 B (scrieri, sensul „jos”) și ~6,63 GB/s
+  la răspunsuri de 128 B (citiri, sensul „sus”). Măsurat: **jos 6,76 = 94 %**, **sus 6,26 (cel mai bun) = 94 %** din plafonul lui. Adică
+  motorul de copiere umple legătura; nimic de câștigat în driver (de aceea nici 4 în paralel nu adaugă nimic).
+- Același plafon se vedea deja: `copy_b128` 6,2 GB/s (C-83 I11) și urcarea greutăților la generare 6,15 GB/s (în același raport) —
+  le credeam limitate de program; erau limitate de legătură.
+- **De ce x8 (DEDUS, de verificat de Adrian):** Dell Precision 5820 are, după fișa Dell, două sloturi „PCIe x16” întregi, unul „x16
+  cablat ca x8”, unul ca x4 și unul ca x1, toate Gen 3. Cel mai probabil placa stă în slotul cablat x8 (sau contactele nu sunt bune).
+  În slotul x16 întreg: ~12–13 GB/s (predicția inițială), fără nicio schimbare de cod.
+
+### Ce schimbă
+- Studiul RAM ↔ VRAM refăcut cu cifra reală: `docs/C-157_RAM_OFFLOAD.md` §2–3 (coloana „~6,3 GB/s, azi” lângă „~12,5 GB/s, slot x16”).
+- AdamW cu m, v în RAM (`ab9b537`): ~0,26 s pe pas la #513 (21 % din pas PyTorch) în loc de ~0,13 — tot merită doar cu suprapunere.
+- Generarea: nimic (greutățile se urcă o dată, 18 ms).
+- Propunere pentru OS (nota `integration/cyber-universe/C-157_P2p_os-376_ram-vram.md`): rândul `pci.legatura` scris și **în timpul**
+  probei `--ram-vram` (doar citire), ca să vedem viteza legăturii în timpul copiei, nu doar la tur.
+
 ## Ciclul automat 15:57 `test-placa --i9 c135 --atentie-placi --atentie2 --atentie3` (a treia generație „vechi lângă nou”, 23 nov 2026) — sesiunea 186
 Surse: `Cyber-hub/rezultate/os-automat/2026-11-23/ciclu-auto-20261123-1557.txt`, jurnalul brut `gpu-jurnal-060.txt` (rândurile `kt atentie3 …`).
 Nucleul: cyber-universe 0.1.0 cu cyber-gpu `d885efd`. Predicțiile scrise înainte: `docs/C-157_P2_ATTN_TILE3.md` (sesiunea 182, `b6e3b5b`),

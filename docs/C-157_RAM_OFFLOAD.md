@@ -2,8 +2,7 @@
 
 Sesiunea 183, cloud, fără placă. Planul de rezervă cerut de Adrian: calcule și antrenare cu o parte din memorie mutată în
 RAM (workstation: 8 GB VRAM, 128 GB RAM). Toate cifrele de mai jos sunt **DEDUSE** (socoteală), nu măsurate; legătura
-RAM ↔ VRAM o măsoară proba din `docs/C-157_RAM_VRAM_PROBA.md` (am pus aici **~12 GB/s**, predicția ei — se înlocuiește cu
-cifra de pe placă).
+RAM ↔ VRAM o măsoară proba din `docs/C-157_RAM_VRAM_PROBA.md` (am pus aici **~12 GB/s**, predicția ei; **pe placă a ieșit ~6–6,8 GB/s, legătura e x8 — vezi §5**).
 
 ## 1. Ce fac alții (surse, citite ca idei)
 
@@ -60,7 +59,38 @@ legătura ~12 GB/s; lot mic 6 × 512 = 3 072 simboluri.
 3. Abia apoi greutățile aduse strat cu strat, pentru un model mai mare decât #651 — decizie a lui Adrian (mărimea lui
    Kronos).
 
+## 5. Refăcut cu cifra de pe placă (sesiunea 188, după os-376)
+
+Pe placă: sus 5,97 GB/s (cel mai bun 6,26), jos 6,76 GB/s — **jumătate din ~12** pus mai sus, pentru că legătura plăcii e
+**PCIe 3.0 x8** (citit de turul nostru, `pci.legatura`; analiza în `docs/C-157_P2_COMPARATII.md`, secțiunea os-376). Coloanele:
+„azi” = ~6,3 GB/s (x8), „slot x16” = ~12,5 GB/s (DEDUS: aceeași placă mutată în slotul x16 întreg). Tabelele de mai sus rămân ca
+predicție scrisă înainte.
+
+| Ce mutăm în RAM | Cost azi, x8 (#513 / #651) | Cost în slot x16 (#513 / #651) | Verdict |
+|---|---|---|---|
+| m și v ale AdamW (16 B/param) | ~0,25 s (20 %) / ~0,47 s (15 %) | ~0,13 s (10 %) / ~0,23 s (8 %) | tot primul pas, dar **doar cu suprapunere** (bucata următoare urcă cât lucrează calculul) |
+| ZeRO-Offload (8 B/param) | ~0,12 / ~0,23 s | ~0,06 / ~0,12 s | neschimbat: depinde de AdamW pe procesor |
+| activările de păstrat, #651 | ~1,2 s pe pas (38 %) | ~0,6 s (19 %) | azi nu merită |
+
+Greutățile strat cu strat (tabelul din §3), legătura / calculul pe lot mic de 3 072 simboluri:
+
+| Model | azi, x8 | slot x16 |
+|---|---|---|
+| #651 | 0,23 / 0,26 s | 0,12 / 0,26 s |
+| 24 × 1024 | 0,40 / 0,46 s | 0,20 / 0,46 s |
+| 24 × 1536 | 0,88 / 1,0 s | 0,44 / 1,0 s |
+| 24 × 2048 | 1,55 / 1,8 s | 0,78 / 1,8 s |
+| 32 × 2560 | 3,2 / 3,7 s | 1,6 / 3,7 s |
+| 32 × 4096 | 8,1 / 9,4 s | 4,1 / 9,4 s |
+
+- **Ce se schimbă:** pe x8 legătura ajunge la ~85–90 % din calcul — suprapunerea încă încape, dar fără rezervă (orice pauză în
+  calcul sau o copie în plus o face frână). Pe x16 rezerva e de ~2 ori, ca în §3.
+- **Concluzia rămâne:** #513 / #651 nu au nevoie de RAM ca să încapă; zona 0,3–1,3 B rămâne posibilă, dar **merită mutată placa în
+  slotul x16** înainte de orice lucru serios cu RAM-ul (o schimbare fizică, fără cod; de verificat întâi în Windows, de ex. GPU-Z,
+  „Bus Interface”).
+
 ## Surse
+- [Dell Precision 5820 Tower — fișa tehnică (sloturile: 2 × x16, 1 × x16 cablat x8, 1 × x4, 1 × x1, toate Gen 3)](https://delltechnologies.com/asset/en-vn/products/workstations/technical-support/Precision_5820_Tower_Spec_Sheet.pdf)
 - [ZeRO-Offload: Democratizing Billion-Scale Model Training](https://arxiv.org/pdf/2101.06840v1)
 - [ZeRO-Infinity: Breaking the GPU Memory Wall](https://arxiv.org/pdf/2104.07857)
 - [FlexGen: High-Throughput Generative Inference of LLMs with a Single GPU](https://arxiv.org/abs/2303.06865)

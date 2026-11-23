@@ -88,3 +88,11 @@ formă (de pildă valoarea pe 64 de biți) — analiza citește doar cuvântul d
   modelului; greșeli plantate prinse (ultimul sfert „jos în paralel” mutat cu 16 octeți → văzut în a doua jumătate a lui
   B; trimitere tăiată → înregistrarea 30 lipsește, oprire curată; un bit necunoscut în `LAUNCH_DMA` → refuzat).
 - `tools/check.sh`: 918 teste, 0 eșecuri. **Pe placă: NOT TESTED.**
+
+## Rezultat pe placă (os-376, 23 nov 17:36; comparat în sesiunea 188)
+
+- **PASS corectitudinea**: metodele primite, 31 de înregistrări, toți octeții corecți (sus și jos, simplu și 4 în paralel).
+- **Viteza: predicția ratată de 2 ori** — sus 5,97 GB/s (cel mai bun 6,26), jos 6,76 GB/s; în paralel 1 048 / 1 000 ‰ (în ±5 %).
+- Cauza: legătura plăcii e **PCIe 3.0 x8** (rândul `pci.legatura` din tur, pe workstation mereu x8); am prezis pentru x16 fără să
+  citesc rândul. Măsurat = ~94 % din plafonul x8 în ambele sensuri → motorul umple legătura. Detalii:
+  `docs/C-157_P2_COMPARATII.md`, secțiunea os-376; studiul refăcut: `docs/C-157_RAM_OFFLOAD.md` §5.
