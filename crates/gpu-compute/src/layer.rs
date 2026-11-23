@@ -717,6 +717,33 @@ pub fn gelu_tr_gpu(u: f32, g: Option<f32>) -> f32 {
     }
 }
 
+/// `gelu_tr` mode 1 as `(u, g) -> f32` ([`gelu_tr_gpu`] with `Some(g)`): the epilogue of `mm_train_gelu.comp` (order
+/// 20:11 step 3, second part), with the matmul's sum in place of g.
+pub fn gelu_tr_gpu_back(u: f32, g: f32) -> f32 {
+    gelu_tr_gpu(u, Some(g))
+}
+
+/// [`gelu_tr_gpu_back`] with Φ + u·φ in two roundings (`fadd.ftz`(Φ, `fmul.ftz`(u, φ))) instead of one `ffma.ftz`:
+/// what `mm_train_gelu` would compute if NAK had not contracted its epilogue as in `gelu_tr`. Not a board program:
+/// T201 uses it to show the bit-for-bit comparison notices the difference.
+pub fn gelu_tr_back_unfused_gpu(u: f32, g: f32) -> f32 {
+    use gelu_k::*;
+    let k = f32::from_bits;
+    let z = mul_ftz(u, k(RSQRT2));
+    let a = ftz(z.abs());
+    let t = ftz(1.0 / fma_f32_ftz(a, k(A), 1.0));
+    let mut q = fma_f32_ftz(t, k(C5), k(C4));
+    q = fma_f32_ftz(t, q, k(C3));
+    q = fma_f32_ftz(t, q, k(C2));
+    q = fma_f32_ftz(t, q, k(C1));
+    let p = mul_ftz(t, q);
+    let ex = ex2_ftz(-mul_ftz(mul_ftz(a, k(LOG2E)), a));
+    let e = fma_f32_ftz(-p, ex, 1.0);
+    let erf = if z < 0.0 { -e } else { e };
+    let cdf = mul_ftz(add_f32_ftz(erf, 1.0), 0.5);
+    mul_ftz(g, add_f32_ftz(cdf, mul_ftz(u, mul_ftz(ex, k(RSQRT2PI)))))
+}
+
 /// The shape of one attention backward (C-160 point 4, program 6, `attn_back.comp`): B texts of T positions, C = H·d.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AttnShape {

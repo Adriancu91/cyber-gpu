@@ -1151,6 +1151,45 @@ pub const MM_TRAIN_BIAS: u32 = 4;
 /// Unknown flag bits are refused: the program would ignore them, a caller
 /// that sets them has a bug.
 pub fn mm_train_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    mm_train_blocks(l, MmEpilogue::Bias)
+}
+
+/// Order 20:11 step 3, second part: what `tools/nak/out/mm_train_gelu.sm86.sass` needs — `mm_train`'s two tiles and
+/// one barrier.
+pub const MM_TRAIN_GELU_NEEDS: Needs = MM_TRAIN_NEEDS;
+
+/// The CPU stand-in for `mm_train_gelu.sm86.sass` (order 20:11 step 3, `docs/C-160_P7_LIPIRE_GELU.md`): the loop of
+/// [`mm_train_on_cpu`] unchanged, then, instead of the bias, each element of C is
+/// `gpu_compute::layer::gelu_tr_gpu`(u[row, col], Some(acc)) — `gelu_tr` mode 1 with acc in place of g. cbuf0 as
+/// `mm_train` with `u` in the bias slot (0x40); the BIAS flag is refused (the program has no bias). A launch whose C
+/// overlaps u is refused (other blocks would read u already overwritten).
+pub fn mm_train_gelu_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    mm_train_blocks(
+        l,
+        MmEpilogue::GeluBack(gpu_compute::layer::gelu_tr_gpu_back),
+    )
+}
+
+/// [`mm_train_gelu_on_cpu`] with `gpu_compute::layer::gelu_tr_back_unfused_gpu` (Φ + u·φ with two roundings, no
+/// FFMA): what the program would do if NAK had compiled its epilogue unlike `gelu_tr`'s. Not a model of our program —
+/// T201 registers it to show the bit-for-bit comparison catches that difference.
+pub fn mm_train_gelu_unfused_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    mm_train_blocks(
+        l,
+        MmEpilogue::GeluBack(gpu_compute::layer::gelu_tr_back_unfused_gpu),
+    )
+}
+
+/// What `mm_train` / `mm_train_gelu` do with a finished sum.
+#[derive(Clone, Copy)]
+enum MmEpilogue {
+    /// `mm_train`: `fadd.ftz` of bias[col] with the BIAS flag, nothing otherwise.
+    Bias,
+    /// `mm_train_gelu`: `f(u[row, col], acc)`, u at the bias slot.
+    GeluBack(fn(f32, f32) -> f32),
+}
+
+fn mm_train_blocks(l: &mut Launch<'_>, epi: MmEpilogue) -> GpuResult<()> {
     const T: usize = 16;
     if l.block != [16, 16, 1] || l.grid[2] != 1 {
         return Err(bad("SIM: mm_train cere blocuri de 16x16x1"));
@@ -1174,7 +1213,20 @@ pub fn mm_train_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     let (ta, tb) = (flags & MM_TRAIN_TA != 0, flags & MM_TRAIN_TB != 0);
     let x = l.mem.read_f32s(a, m * k)?;
     let y = l.mem.read_f32s(b, k * n)?;
-    let bias = if flags & MM_TRAIN_BIAS != 0 {
+    let gelu = match epi {
+        MmEpilogue::Bias => None,
+        MmEpilogue::GeluBack(f) => {
+            if flags & MM_TRAIN_BIAS != 0 {
+                return Err(bad("SIM: mm_train_gelu nu are bias"));
+            }
+            let bytes = 4 * (m * n) as u64;
+            if c < bias_va + bytes && bias_va < c + bytes {
+                return Err(bad("SIM: mm_train_gelu: C se suprapune cu u"));
+            }
+            Some((f, l.mem.read_f32s(bias_va, m * n)?))
+        }
+    };
+    let bias = if gelu.is_none() && flags & MM_TRAIN_BIAS != 0 {
         Some(l.mem.read_f32s(bias_va, n)?)
     } else {
         None
@@ -1215,9 +1267,10 @@ pub fn mm_train_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
                 for (tx, &v) in acc_row.iter().enumerate() {
                     let (row, col) = (gy * T + ty, gx * T + tx);
                     if row < m && col < n {
-                        let v = match &bias {
-                            Some(bv) => gpu_compute::math::add_f32_ftz(v, bv[col]),
-                            None => v,
+                        let v = match (&bias, &gelu) {
+                            (Some(bv), _) => gpu_compute::math::add_f32_ftz(v, bv[col]),
+                            (None, Some((f, u))) => f(u[row * n + col], v),
+                            (None, None) => v,
                         };
                         l.mem.write_u32(c + 4 * (row * n + col) as u64, v.to_bits());
                     }

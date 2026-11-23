@@ -31,3 +31,15 @@ dacă **codul NAK al părții GELU din `mm_train_gelu` e același șir de instru
   scrierea `dwide2`), lipit 2 → **~1,8 GB și 12 lansări mai puțin pe bucată, ~4–5 ms** (la ~380–450 GB/s). Împreună cu `ln_back_res`:
   ~2,7 GB, ~6–7 ms pe bucată (~2–3 % din pas).
 - **Pasul mixt:** acolo „proj-dX” merge pe `mm_tc`; lipirea pe `mm_tc` vine separat, după ce G1–G4 trec pe `mm_train`.
+
+## 4. Rezultatul (sesiunea 193, 23 nov 2026, cloud, fără placă) — SIMULARE
+
+| Predicție | Rezultat |
+|---|---|
+| G1 (biți) | **IEȘIT**: bit cu bit cu pasul nelipit — pasul de aur mic 10 pași `sgd` / `adamw_513` (`new`, `new_tiles3`, și cu `ln_back_res`), 4 straturi 3 pași AdamW, `antrenare mini` F32 5 pași; verdictul PyTorch trece |
+| G2 (listarea) | **IEȘIT abia la a treia compilare.** (1) `acc * (cdf + u * pdf)` scris ca în `gelu_tr`: NAK a contopit altfel — `fmul`(u, pdf) apoi `ffma`(1 + erf, 0,5, ·), alți biți. (2) Cu `precise` doar pe 0,5·(1 + erf): `fmul` + `fadd`, fără `ffma` — tot alți biți. (3) Cu `fma(u, pdf, cdf)` scris explicit: **aceeași secvență ca `gelu_tr` mod 1** (23 de operații, aceleași constante, `ffma`(u, pdf, Φ) apoi `fmul`(acc, ·)). Bucla e identică cu `mm_train` (16 `ffma`, aceeași ordine). 274 de instrucțiuni, 19 registre, SHA-256 `ee7e3145…ad0b053`. Cauza: în `gelu_tr` Φ e folosit și de modul 0, deci NAK îl rotunjește separat; aici nu |
+| G3 (lansări) | **IEȘIT**: L lansări mai puține (73 → 71 / 75 → 73 la pasul mic; cu `ln_back_res` 73 → 67 / 75 → 69; 4 straturi 137 → 125), restul listei identic, aceeași arenă |
+| G4 (greșeli plantate) | **IEȘIT**: `u` al stratului următor → alți biți și grad_abs 8,9·10⁻² față de PyTorch; GELU' uitat (lansat ca `mm_train` simplu) → grad_abs 1,1·10⁻¹; epilogul fără `ffma` (riscul de la G2) → 158 622 / 218 496 gradienți alți biți |
+| G5 (câștig) | DEDUS, neschimbat (~1,8 GB și 12 lansări pe bucata #513) — **se vede doar pe placă** |
+
+**Pasul mixt:** `step_mixed` refuză `with_fused_gelu` (lipirea pe `mm_tc` vine separat).

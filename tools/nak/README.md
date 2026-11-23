@@ -359,3 +359,14 @@ Oracolul: `gpu_compute::train::{embed_rows, embed_back_rows}`. Testul T161. Nota
 | Argumente în bufferul constant 0 | x/dy/γ/μ/rstd/dx la 0x28…0x50, **dres la 0x58, c la 0x60, 1/c la 0x64** |
 | Aritmetica | `fmul.ftz` (rstd·q) apoi `fadd.ftz` (+ dres): două rotunjiri, ca `ln_back` + `vadd`. `precise` stă într-o funcție separată (`add_exact`): pus direct pe expresie, glslang l-ar fi întins pe toate operațiile (16 `NoContraction`) și ar fi schimbat biții lui `ln_back` |
 | Nota | `docs/C-160_P7_LIPIRE_INAPOI.md` (T200, SIMULARE) |
+
+## `mm_train_gelu` — `mm_train` cu GELU' lipit la scriere (23 nov 2026, sesiunea 193, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh mm_train_gelu` (Mesa 25.0.7 reconstruit în cloud; `mm_train` și `gelu_tr` au ieșit **identice**, `69d54ef2…` / `52dd5f9a…`).
+
+| Ce | Valoare |
+|---|---|
+| Program | `mm_train_gelu.comp`: bucla lui `mm_train.comp` neschimbată; la scriere `C = acc · fma(u, φ, Φ)` cu operațiile lui `gelu_tr.comp` mod 1; `u` în locul lui `bias` (aceeași așezare a argumentelor, 48 de octeți) |
+| Ieșire | 274 de instrucțiuni, 19 registre, 0 memorie locală, 2 KiB partajată, o barieră |
+| SHA-256 `mm_train_gelu.sm86.sass` | `ee7e3145e1c26dea908f376119ad8f6fef284d392a1428ee8eba5d9b7ad0b053` |
+| Listarea | bucla = `mm_train` (16 `ffma`); epilogul = cele 23 de operații ale lui `gelu_tr` mod 1, aceleași constante, aceeași ordine |
+| Constatare | cu `cdf + u * pdf` NAK contopește altfel decât în `gelu_tr` (acolo Φ e rotunjit separat fiindcă îl folosește și modul 0); `fma(u, pdf, cdf)` scris explicit dă exact secvența lui `gelu_tr` |

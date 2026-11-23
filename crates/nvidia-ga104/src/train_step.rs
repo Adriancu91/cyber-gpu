@@ -34,7 +34,7 @@ use crate::{
     attn_back_tile0_2 as abt02, attn_back_tile0_3 as abt03, attn_fwd as af, attn_fwd_tile2 as aft2,
     attn_fwd_tile3 as aft3, attn_p as ap, attn_p_tile as apt, colsum as cs, emb_back as eb,
     emb_fwd as ef, gelu_tr as gt, gnorm as gn, kronos_layer, ln_back as lb, ln_back_res as lbr,
-    ln_fwd as lf, mm_train as mm, opt_step as os, xent as xe,
+    ln_fwd as lf, mm_train as mm, mm_train_gelu as mg, opt_step as os, xent as xe,
 };
 
 fn bad(why: &'static str) -> GpuError {
@@ -94,6 +94,9 @@ pub enum Prog {
     /// (`ln_back_res`), only in plans with [`Plan::with_fused_back`]. In [`PROGRAMS_ALL_FUSED`], not in
     /// [`PROGRAMS_ALL`] / [`PROGRAMS_ALL_3`].
     LnBackRes,
+    /// Order 20:11 step 3, second part (`docs/C-160_P7_LIPIRE_GELU.md`): `mm_train` with GELU's backward fused into
+    /// the store (`mm_train_gelu`), only in plans with [`Plan::with_fused_gelu`]. In [`PROGRAMS_ALL_FUSED2`] only.
+    MmTrainGelu,
 }
 
 /// Every program a step uses (the OS loads all 13 once; `Gnorm` only runs at `adamw_513`).
@@ -193,6 +196,41 @@ pub const PROGRAMS_ALL_FUSED: [Prog; 22] = [
 
 /// What a [`Plan::with_fused_back`] plan launches on top of [`Plan::programs`] (load both).
 pub const PROGRAMS_FUSED_EXTRA: [Prog; 1] = [Prog::LnBackRes];
+
+/// [`PROGRAMS_ALL_FUSED`] + [`Prog::MmTrainGelu`] at the end (all 22 keep their [`Prog::index`]): every program any
+/// plan may launch, [`Plan::with_fused_gelu`] included. `check_programs` checks all 23.
+pub const PROGRAMS_ALL_FUSED2: [Prog; 23] = [
+    Prog::MmTrain,
+    Prog::Xent,
+    Prog::LnFwd,
+    Prog::LnBack,
+    Prog::Colsum,
+    Prog::GeluTr,
+    Prog::AttnFwd,
+    Prog::AttnBack,
+    Prog::EmbFwd,
+    Prog::EmbBack,
+    Prog::Gnorm,
+    Prog::OptStep,
+    Prog::Vadd,
+    Prog::AttnP,
+    Prog::AttnFwdTile2,
+    Prog::AttnBackTile0_2,
+    Prog::AttnBackTile2,
+    Prog::AttnPTile,
+    Prog::AttnFwdTile3,
+    Prog::AttnBackTile0_3,
+    Prog::AttnBackTile3,
+    Prog::LnBackRes,
+    Prog::MmTrainGelu,
+];
+
+/// What a [`Plan::with_fused_gelu`] plan launches on top of [`Plan::programs`] (without [`Plan::with_fused_back`]).
+pub const PROGRAMS_FUSED_GELU_EXTRA: [Prog; 1] = [Prog::MmTrainGelu];
+
+/// What a plan with both [`Plan::with_fused_back`] and [`Plan::with_fused_gelu`] launches on top of
+/// [`Plan::programs`].
+pub const PROGRAMS_FUSED_BOTH_EXTRA: [Prog; 2] = [Prog::LnBackRes, Prog::MmTrainGelu];
 
 /// What a [`Plan::new_tiles3`] step launches: the 11 programs without attention + the three `_3` attention programs.
 pub const PROGRAMS_TILES3: [Prog; 14] = [
@@ -313,6 +351,7 @@ impl Prog {
             Prog::AttnBackTile0_3 => abt03::ATTN_BACK_TILE0_3,
             Prog::AttnBackTile3 => abt3::ATTN_BACK_TILE_3,
             Prog::LnBackRes => lbr::LN_BACK_RES,
+            Prog::MmTrainGelu => mg::MM_TRAIN_GELU,
         }
     }
 
@@ -341,6 +380,7 @@ impl Prog {
             Prog::AttnBackTile0_3 => abt03::ATTN_BACK_TILE0_3_SHA256,
             Prog::AttnBackTile3 => abt3::ATTN_BACK_TILE_3_SHA256,
             Prog::LnBackRes => lbr::LN_BACK_RES_SHA256,
+            Prog::MmTrainGelu => mg::MM_TRAIN_GELU_SHA256,
         }
     }
 
@@ -368,6 +408,7 @@ impl Prog {
             Prog::AttnBackTile0_3 => abt03::REGISTERS,
             Prog::AttnBackTile3 => abt3::REGISTERS,
             Prog::LnBackRes => lbr::REGISTERS,
+            Prog::MmTrainGelu => mg::REGISTERS,
         }
     }
 
@@ -395,6 +436,7 @@ impl Prog {
             Prog::AttnBackTile0_3 => abt03::BLOCK,
             Prog::AttnBackTile3 => abt3::BLOCK,
             Prog::LnBackRes => lbr::BLOCK,
+            Prog::MmTrainGelu => mg::BLOCK,
         }
     }
 
@@ -413,6 +455,7 @@ impl Prog {
             Prog::AttnBackTile0_3 => Some(abt03::SHARED),
             Prog::AttnBackTile3 => Some(abt3::SHARED),
             Prog::LnBackRes => Some(lbr::SHARED),
+            Prog::MmTrainGelu => Some(mg::SHARED),
             _ => None,
         }
     }
@@ -442,13 +485,14 @@ impl Prog {
             Prog::AttnBackTile0_3 => "attn_back_tile0_3",
             Prog::AttnBackTile3 => "attn_back_tile_3",
             Prog::LnBackRes => "ln_back_res",
+            Prog::MmTrainGelu => "mm_train_gelu",
         }
     }
 
-    /// Index in [`PROGRAMS_ALL_FUSED`] (= the index in [`PROGRAMS_ALL_3`], [`PROGRAMS_ALL`], [`PROGRAMS`] /
+    /// Index in [`PROGRAMS_ALL_FUSED2`] (= the index in [`PROGRAMS_ALL_FUSED`], [`PROGRAMS_ALL_3`], [`PROGRAMS_ALL`], [`PROGRAMS`] /
     /// [`PROGRAMS_P_ONLY`] for their programs).
     pub fn index(self) -> usize {
-        PROGRAMS_ALL_FUSED
+        PROGRAMS_ALL_FUSED2
             .iter()
             .position(|&p| p == self)
             .unwrap_or(0)
@@ -457,7 +501,7 @@ impl Prog {
 
 /// Checks every program's bytes against its SHA-256 (what the OS does before loading; refuse on a mismatch).
 pub fn check_programs() -> GpuResult<()> {
-    for p in PROGRAMS_ALL_FUSED {
+    for p in PROGRAMS_ALL_FUSED2 {
         if hex(&crate::sha256::digest(p.code())) != p.sha256() {
             return Err(bad("pas-aur: SHA-256 al unui program nu se potriveste"));
         }
@@ -665,6 +709,9 @@ pub struct Plan {
     /// Order 20:11 step 3 ([`Plan::with_fused_back`]): the backward LayerNorms add the residual path themselves
     /// (`ln_back_res`), no backward `vadd`.
     fused_back: bool,
+    /// Order 20:11 step 3, second part ([`Plan::with_fused_gelu`]): "inapoi:proj-dX" writes GELU's backward itself
+    /// (`mm_train_gelu`), no backward `gelu_tr`.
+    fused_gelu: bool,
     /// End of the arena (exclusive).
     pub end: u64,
 }
@@ -1026,6 +1073,7 @@ impl Plan {
             tiles3: false,
             mv_ram,
             fused_back: false,
+            fused_gelu: false,
             end: b.0,
         })
     }
@@ -1044,13 +1092,30 @@ impl Plan {
         self.fused_back
     }
 
+    /// Order 20:11 step 3, second part (`docs/C-160_P7_LIPIRE_GELU.md`): the same plan (same arena, same addresses)
+    /// whose MLP backward writes GELU's backward in the "proj-dX" product itself (`mm_train_gelu`, straight into
+    /// `dwide2`): L launches fewer per step (no backward `gelu_tr`), the rest of the list unchanged; `dwide` is no
+    /// longer written. Off unless asked for; combines with [`Plan::with_fused_back`]. The mixed step refuses it
+    /// (`mm_tc` has no such epilogue yet). Load [`Plan::programs`] + [`Plan::fused_programs`].
+    pub fn with_fused_gelu(mut self) -> Self {
+        self.fused_gelu = true;
+        self
+    }
+
+    /// True after [`Plan::with_fused_gelu`].
+    pub fn fused_gelu(&self) -> bool {
+        self.fused_gelu
+    }
+
     /// The programs this plan launches on top of [`Plan::programs`]: [`PROGRAMS_FUSED_EXTRA`] with
-    /// [`Plan::with_fused_back`], none otherwise.
+    /// [`Plan::with_fused_back`], [`PROGRAMS_FUSED_GELU_EXTRA`] with [`Plan::with_fused_gelu`],
+    /// [`PROGRAMS_FUSED_BOTH_EXTRA`] with both, none otherwise.
     pub fn fused_programs(&self) -> &'static [Prog] {
-        if self.fused_back {
-            &PROGRAMS_FUSED_EXTRA
-        } else {
-            &[]
+        match (self.fused_back, self.fused_gelu) {
+            (true, true) => &PROGRAMS_FUSED_BOTH_EXTRA,
+            (true, false) => &PROGRAMS_FUSED_EXTRA,
+            (false, true) => &PROGRAMS_FUSED_GELU_EXTRA,
+            (false, false) => &[],
         }
     }
 
@@ -1147,8 +1212,10 @@ impl Plan {
 
     /// Launches per step: 31 per layer + 13 at `adamw_513` (11 at `sgd`).
     pub fn launches_per_step(&self, recipe: Recipe) -> usize {
-        // `with_fused_back`: the two backward `vadd` of each layer are gone (29 per layer).
-        (if self.fused_back { 29 } else { 31 }) * self.arch.layers
+        // `with_fused_back`: the two backward `vadd` of each layer are gone; `with_fused_gelu`: the backward
+        // `gelu_tr` too.
+        (31 - if self.fused_back { 2 } else { 0 } - if self.fused_gelu { 1 } else { 0 })
+            * self.arch.layers
             + self.p_relaunches()
             + if recipe == Recipe::AdamW513 { 13 } else { 11 }
     }
@@ -1580,14 +1647,35 @@ impl Plan {
             let dx2 = self.dx[1 - cur];
             let ly = Some(l);
             // MLP: x = x_mid + proj(gelu(fc(LN2(x_mid))))
-            Self::mm(
-                out,
-                (dx, wt(10), dwide, 0),
-                (n, f, cc),
-                0,
-                "inapoi:proj-dX",
-                ly,
-            )?;
+            if self.fused_gelu {
+                // dwide2 = GELU'(u) ⊙ (dx · W_proj), in one launch (`mm_train_gelu`).
+                let a = mg::Args {
+                    a: dx,
+                    b: wt(10),
+                    c: dwide2,
+                    u: wl.u,
+                    m: n as u32,
+                    n: f as u32,
+                    k: cc as u32,
+                    flags: 0,
+                };
+                out.push(launch(
+                    Prog::MmTrainGelu,
+                    a.cbuf().as_ref().map(|b| &b[..]),
+                    a.grid(),
+                    "inapoi:proj-dX+gelu",
+                    ly,
+                )?);
+            } else {
+                Self::mm(
+                    out,
+                    (dx, wt(10), dwide, 0),
+                    (n, f, cc),
+                    0,
+                    "inapoi:proj-dX",
+                    ly,
+                )?;
+            }
             Self::mm(
                 out,
                 (dx, wl.act, gt_(10), 0),
@@ -1597,14 +1685,16 @@ impl Plan {
                 ly,
             )?;
             Self::bias_grad(out, (dx, gt_(11)), n, cc, "inapoi:proj-db", ly)?;
-            Self::gelu(
-                out,
-                (wl.u, dwide, dwide2),
-                n * f,
-                gt::Mode::Backward,
-                "inapoi:gelu",
-                ly,
-            )?;
+            if !self.fused_gelu {
+                Self::gelu(
+                    out,
+                    (wl.u, dwide, dwide2),
+                    n * f,
+                    gt::Mode::Backward,
+                    "inapoi:gelu",
+                    ly,
+                )?;
+            }
             Self::mm(
                 out,
                 (dwide2, wt(8), dtmp, 0),
@@ -2405,6 +2495,9 @@ impl Plan {
         }
         if self.mv_ram && recipe == Recipe::AdamW513 {
             return Err(bad("pas-aur: pasul mixt cu m, v in RAM nu e facut"));
+        }
+        if self.fused_gelu {
+            return Err(bad("pas-mixt: GELU lipit in proj-dX nu e facut pe mm_tc"));
         }
         let mut list = Vec::with_capacity(32 * self.arch.layers + 16);
         self.forward_backward(&mut list, loss_scale)?;

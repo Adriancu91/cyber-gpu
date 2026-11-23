@@ -19,15 +19,17 @@ use std::path::{Path, PathBuf};
 use gpu_compute::train::{self, AdamW, Arch, Batch, Recipe};
 use gpu_sim::cmdproc::{
     CommandProcessor, Event, GNORM_NEEDS, LN_BACK_NEEDS, LN_BACK_RES_NEEDS, LN_FWD_NEEDS,
-    MM_TRAIN_NEEDS, Needs, XENT_NEEDS, attn_back_on_cpu, attn_back_tile_on_cpu,
-    attn_back_tile0_on_cpu, attn_fwd_on_cpu, attn_fwd_tile_on_cpu, attn_p_on_cpu,
-    attn_p_tile_on_cpu, colsum_on_cpu, emb_back_on_cpu, emb_fwd_on_cpu, gelu_tr_on_cpu,
-    gnorm_on_cpu, ln_back_on_cpu, ln_back_res_contracted_on_cpu, ln_back_res_on_cpu, ln_fwd_on_cpu,
+    MM_TRAIN_GELU_NEEDS, MM_TRAIN_NEEDS, Needs, XENT_NEEDS, attn_back_on_cpu,
+    attn_back_tile_on_cpu, attn_back_tile0_on_cpu, attn_fwd_on_cpu, attn_fwd_tile_on_cpu,
+    attn_p_on_cpu, attn_p_tile_on_cpu, colsum_on_cpu, emb_back_on_cpu, emb_fwd_on_cpu,
+    gelu_tr_on_cpu, gnorm_on_cpu, ln_back_on_cpu, ln_back_res_contracted_on_cpu,
+    ln_back_res_on_cpu, ln_fwd_on_cpu, mm_train_gelu_on_cpu, mm_train_gelu_unfused_on_cpu,
     mm_train_on_cpu, opt_step_on_cpu, vadd_on_cpu, xent_on_cpu,
 };
 use nvidia_ga104::push::{self, PushBuf};
 use nvidia_ga104::train_step::{
-    self as ts, Launch, Outcome, PROGRAMS_ALL, PROGRAMS_ALL_3, PROGRAMS_ALL_FUSED, Plan, Prog, Refs,
+    self as ts, Launch, Outcome, PROGRAMS_ALL, PROGRAMS_ALL_3, PROGRAMS_ALL_FUSED,
+    PROGRAMS_ALL_FUSED2, Plan, Prog, Refs,
 };
 use nvidia_ga104::{transfer, xent as xe};
 use nvidia_rm570::regs::clc7c0 as c;
@@ -74,18 +76,22 @@ struct Board {
 
 impl Board {
     fn new() -> Self {
-        Self::with_ln_back_res(ln_back_res_on_cpu)
+        Self::with_models(ln_back_res_on_cpu, mm_train_gelu_on_cpu)
     }
 
-    /// T200: the board with another CPU stand-in for `ln_back_res` (the contracted one, for the planted mistake).
-    fn with_ln_back_res(ln_back_res: gpu_sim::cmdproc::ProgramFn) -> Self {
+    /// T200: the board with another CPU stand-in for `ln_back_res` (the contracted one, for the planted mistake);
+    /// T201: the same for `mm_train_gelu` (the unfused epilogue).
+    fn with_models(
+        ln_back_res: gpu_sim::cmdproc::ProgramFn,
+        mm_gelu: gpu_sim::cmdproc::ProgramFn,
+    ) -> Self {
         ts::check_programs().expect("SHA-256 programe");
         let mut cp = CommandProcessor::new();
         // All 18 (the 13 of every plan + `attn_p`, used only by `Plan::new_p_only`, + the four tiled ones of
         // `Plan::new_tiles` / `new_p_only_tiles`).
         // T195: + the three `_3` programs (`PROGRAMS_ALL_3`), on the same CPU models as the first tiled ones.
-        // T200: + `ln_back_res` (`PROGRAMS_ALL_FUSED`).
-        for p in PROGRAMS_ALL_FUSED {
+        // T200: + `ln_back_res` (`PROGRAMS_ALL_FUSED`). T201: + `mm_train_gelu` (`PROGRAMS_ALL_FUSED2`).
+        for p in PROGRAMS_ALL_FUSED2 {
             let code = p.code();
             match p {
                 Prog::MmTrain => {
@@ -141,6 +147,9 @@ impl Board {
                 ),
                 Prog::LnBackRes => {
                     cp.register_program_with_needs(code, ln_back_res, LN_BACK_RES_NEEDS)
+                }
+                Prog::MmTrainGelu => {
+                    cp.register_program_with_needs(code, mm_gelu, MM_TRAIN_GELU_NEEDS)
                 }
             };
             cp.mem.write(prog_va(p), code);
@@ -237,6 +246,14 @@ enum Fault {
     /// T200: `ln_back_res` run by the contracted model (one FFMA for rstd·q + dres) — what NAK would make without
     /// `add_exact`.
     FusedContracted,
+    /// T201: `mm_train_gelu` run by the unfused model (Φ + u·φ in two roundings) — what NAK would make if it compiled
+    /// the epilogue unlike `gelu_tr`.
+    GeluUnfused,
+    /// T201: every `mm_train_gelu` launch reads the next layer's `u`.
+    GeluWrongU,
+    /// T201: every `mm_train_gelu` launch run as plain `mm_train` (GELU' forgotten; u's address in the bias slot,
+    /// no BIAS flag, so it is not read).
+    GeluForgotten,
 }
 
 /// Which arena: P kept per layer ([`Plan::new`]), one shared P rebuilt with `attn_fwd` ([`Plan::new_p_recalc`]) or
@@ -258,6 +275,12 @@ enum Kind {
     KeptFused,
     /// T200: [`Plan::new_tiles3`] + [`Plan::with_fused_back`].
     Tiles3Fused,
+    /// T201: [`Plan::new`] + [`Plan::with_fused_gelu`].
+    KeptGelu,
+    /// T201: [`Plan::new_tiles3`] + [`Plan::with_fused_gelu`].
+    Tiles3Gelu,
+    /// T201: [`Plan::new_tiles3`] + both fusions.
+    Tiles3Both,
 }
 
 fn plant(plan: &Plan, list: &mut Vec<Launch>, f: Fault) {
@@ -333,7 +356,22 @@ fn plant(plan: &Plan, list: &mut Vec<Launch>, f: Fault) {
                 }
             }
         }
-        Fault::FusedContracted => {}
+        Fault::FusedContracted | Fault::GeluUnfused => {}
+        Fault::GeluWrongU => {
+            let ly = plan.arch.layers;
+            let mut n = 0;
+            for l in list.iter_mut().filter(|l| l.prog == Prog::MmTrainGelu) {
+                let k = l.layer.unwrap() as usize;
+                l.cbuf[0x40..0x48].copy_from_slice(&plan.layers[(k + 1) % ly].u.to_le_bytes());
+                n += 1;
+            }
+            assert_eq!(n, ly);
+        }
+        Fault::GeluForgotten => {
+            for l in list.iter_mut().filter(|l| l.prog == Prog::MmTrainGelu) {
+                l.prog = Prog::MmTrain;
+            }
+        }
         Fault::FusedWrongRes => {
             let mut n = 0;
             for l in list.iter_mut().filter(|l| l.prog == Prog::LnBackRes) {
@@ -407,13 +445,25 @@ fn run_plan(
         Kind::Tiles3Fused => Plan::new_tiles3(ar, bsz, tl, inputs, HEAP)
             .unwrap()
             .with_fused_back(),
+        Kind::KeptGelu => Plan::new(ar, bsz, tl, inputs, HEAP)
+            .unwrap()
+            .with_fused_gelu(),
+        Kind::Tiles3Gelu => Plan::new_tiles3(ar, bsz, tl, inputs, HEAP)
+            .unwrap()
+            .with_fused_gelu(),
+        Kind::Tiles3Both => Plan::new_tiles3(ar, bsz, tl, inputs, HEAP)
+            .unwrap()
+            .with_fused_back()
+            .with_fused_gelu(),
     };
     // T187: the arena of `Plan::new` (the same addresses as `new_tiles`), for `Fault::OldBackward`.
     let old = Plan::new(ar, bsz, tl, inputs, HEAP).unwrap();
-    let mut b = if fault == Fault::FusedContracted {
-        Board::with_ln_back_res(ln_back_res_contracted_on_cpu)
-    } else {
-        Board::new()
+    let mut b = match fault {
+        Fault::FusedContracted => {
+            Board::with_models(ln_back_res_contracted_on_cpu, mm_train_gelu_on_cpu)
+        }
+        Fault::GeluUnfused => Board::with_models(ln_back_res_on_cpu, mm_train_gelu_unfused_on_cpu),
+        _ => Board::new(),
     };
     for (va, bytes) in plan.uploads(params, inputs, targets).unwrap() {
         b.cp.mem.write(va, &bytes);
@@ -1881,5 +1931,239 @@ fn t200_fused_four_layers_and_planted_mistakes() {
     println!(
         "kt c200 4 straturi: {} -> {} lansari, 3 pasi AdamW bit cu bit DA; contractia ffma: {n_diff} din {n_grad} gradienti cu alti biti (PRINSA); dres gresit: alti biti + fata de PyTorch grad_abs={:.2e} (PRINSA) (SIMULARE)",
         old.total_per_step, new.total_per_step, g.abs
+    );
+}
+
+// ------------------------------------------------------------------ T201: GELU's backward fused into proj-dX
+
+/// T201 prediction G3 (`docs/C-160_P7_LIPIRE_GELU.md`): `with_fused_gelu` = the same list without the L backward
+/// `gelu_tr`, each "inapoi:proj-dX" launch now `mm_train_gelu` with the same a / b / shape, C = the `gelu_tr`'s output
+/// (`dwide2`) and u = its u; the same arena; combines with `with_fused_back`.
+#[test]
+fn t201_the_fused_gelu_list() {
+    let inputs = read_i32(&dir().join("intrari.i32"));
+    let params = tensors("initiale");
+    let opt = AdamW::recipe_513(&params);
+    let ly = MIC.layers;
+    for recipe in [Recipe::Sgd, Recipe::AdamW513] {
+        for (old, back) in [
+            (Plan::new(MIC, B, T, &inputs, HEAP).unwrap(), false),
+            (Plan::new_tiles3(MIC, B, T, &inputs, HEAP).unwrap(), false),
+            (
+                Plan::new_tiles3(MIC, B, T, &inputs, HEAP)
+                    .unwrap()
+                    .with_fused_back(),
+                true,
+            ),
+            (
+                Plan::new_p_only_tiles3(MIC, B, T, &inputs, HEAP).unwrap(),
+                false,
+            ),
+        ] {
+            let new = old.clone().with_fused_gelu();
+            assert!(new.fused_gelu() && !old.fused_gelu());
+            assert_eq!(new.bytes(), old.bytes());
+            assert_eq!(new.programs(), old.programs());
+            let want: &[Prog] = if back {
+                &[Prog::LnBackRes, Prog::MmTrainGelu]
+            } else {
+                &[Prog::MmTrainGelu]
+            };
+            assert_eq!(new.fused_programs(), want);
+            let (lo, ln) = (
+                old.step(recipe, &opt, 1).unwrap(),
+                new.step(recipe, &opt, 1).unwrap(),
+            );
+            assert_eq!(ln.len(), lo.len() - ly);
+            assert_eq!(ln.len(), new.launches_per_step(recipe));
+            // The forward `gelu_tr` stay (L), the backward ones are gone.
+            let gelus = |v: &[Launch]| v.iter().filter(|l| l.prog == Prog::GeluTr).count();
+            assert_eq!((gelus(&lo), gelus(&ln)), (2 * ly, ly));
+            let mut it = ln.iter();
+            let mut fused = 0;
+            let mut k = 0;
+            while k < lo.len() {
+                let o = &lo[k];
+                if o.tag == "inapoi:gelu" {
+                    k += 1; // gone
+                    continue;
+                }
+                let n = it.next().unwrap();
+                assert!(
+                    new.programs().contains(&n.prog) || new.fused_programs().contains(&n.prog),
+                    "{} nu e de incarcat",
+                    n.prog.name()
+                );
+                if o.tag == "inapoi:proj-dX" {
+                    // The matching gelu_tr: u, g = this C, y.
+                    let g = lo[k..]
+                        .iter()
+                        .find(|l| l.tag == "inapoi:gelu" && l.layer == o.layer)
+                        .unwrap();
+                    assert_eq!(g.cbuf[0x30..0x38], o.cbuf[0x38..0x40], "gelu citeste C");
+                    assert_eq!(
+                        (n.prog, n.tag, n.layer, n.grid),
+                        (Prog::MmTrainGelu, "inapoi:proj-dX+gelu", o.layer, o.grid)
+                    );
+                    assert_eq!(n.cbuf[0x28..0x38], o.cbuf[0x28..0x38]); // a, b
+                    assert_eq!(n.cbuf[0x38..0x40], g.cbuf[0x38..0x40]); // C = gelu's y
+                    assert_eq!(n.cbuf[0x40..0x48], g.cbuf[0x28..0x30]); // u
+                    assert_eq!(n.cbuf[0x48..0x58], o.cbuf[0x48..0x58]); // m, n, k, flags (0)
+                    fused += 1;
+                } else {
+                    assert_eq!(n, o, "{}", o.tag);
+                }
+                k += 1;
+            }
+            assert!(it.next().is_none());
+            assert_eq!(fused, ly);
+        }
+    }
+    // No bias, no c == u, no missing address.
+    let a = nvidia_ga104::mm_train_gelu::Args {
+        a: HEAP,
+        b: HEAP + 0x1000,
+        c: HEAP + 0x2000,
+        u: HEAP + 0x3000,
+        m: 4,
+        n: 64,
+        k: 16,
+        flags: 0,
+    };
+    assert!(a.cbuf().is_some());
+    use nvidia_ga104::mm_train_gelu::Args as G;
+    assert!(G { u: a.c, ..a }.cbuf().is_none());
+    assert!(G { u: 0, ..a }.cbuf().is_none());
+    assert!(
+        G {
+            flags: nvidia_ga104::mm_train::BIAS,
+            ..a
+        }
+        .cbuf()
+        .is_none()
+    );
+    assert_eq!(PROGRAMS_ALL_FUSED2[..22], PROGRAMS_ALL_FUSED[..]);
+    for (k, p) in PROGRAMS_ALL_FUSED2.iter().enumerate() {
+        assert_eq!(p.index(), k);
+    }
+    ts::check_programs().unwrap();
+    println!(
+        "kt c201 lista: {ly} lansari mai putine pe pas (toate gelu_tr inapoi), proj-dX -> mm_train_gelu cu aceleasi a, b, forma + u, C = dwide2; restul identic"
+    );
+}
+
+/// T201 predictions G1 and G3: the small golden step, 10 steps, both recipes — with `mm_train_gelu` (alone and with
+/// `ln_back_res`) = without bit for bit, PyTorch's verdict passes, L (3L) launches fewer.
+#[test]
+fn t201_fused_gelu_small_golden_step() {
+    for (recipe, name) in [(Recipe::Sgd, "sgd"), (Recipe::AdamW513, "adamw_513")] {
+        let mut lines = Vec::new();
+        for (old_k, new_k, fewer) in [
+            (Kind::Kept, Kind::KeptGelu, MIC.layers),
+            (Kind::Tiles3, Kind::Tiles3Gelu, MIC.layers),
+            (Kind::Tiles3, Kind::Tiles3Both, 3 * MIC.layers),
+        ] {
+            let old = run_mic_plan(old_k, recipe, 10, Fault::None);
+            let new = run_mic_plan(new_k, recipe, 10, Fault::None);
+            assert_eq!(new.total_per_step + fewer, old.total_per_step);
+            assert_eq!(new.board_bytes, old.board_bytes);
+            assert_eq!(
+                new.launches_per_step
+                    .iter()
+                    .find(|e| e.0 == Prog::MmTrainGelu)
+                    .map(|e| e.1),
+                Some(MIC.layers)
+            );
+            let same = same_bits(&new.out, &old.out);
+            let v = ts::judge(recipe, new.total_per_step, &new.out, &refs(name));
+            lines.push(format!(
+                "{new_k:?}: {} -> {} lansari, 10 pasi bit cu bit {}, verdictul {}",
+                old.total_per_step,
+                new.total_per_step,
+                if same { "DA" } else { "NU" },
+                if v.passes() { "TRECE" } else { "NU TRECE" }
+            ));
+            assert!(same, "{name} {new_k:?}: lipit != nelipit");
+            assert!(v.passes(), "{name} {new_k:?}: verdictul");
+        }
+        println!("kt c201 {name}: {} (SIMULARE)", lines.join("; "));
+    }
+}
+
+/// T201 predictions G1 and G4 on four layers: bit for bit; the unfused epilogue, the next layer's u and a forgotten
+/// GELU' caught.
+#[test]
+fn t201_fused_gelu_four_layers_and_planted_mistakes() {
+    let ar = Arch { layers: 4, ..MIC };
+    let mut r = rng(201);
+    let params: Vec<Vec<f32>> = ar
+        .tensors()
+        .iter()
+        .map(|s| {
+            let n = s.elements();
+            if s.name.ends_with("ln1.weight")
+                || s.name.ends_with("ln2.weight")
+                || s.name == "ln.weight"
+            {
+                (0..n).map(|_| 1.0 + 0.1 * r()).collect()
+            } else {
+                (0..n).map(|_| 0.3 * r()).collect()
+            }
+        })
+        .collect();
+    let inputs = read_i32(&dir().join("intrari.i32"));
+    let targets = read_i32(&dir().join("tinte.i32"));
+    let run = |kind: Kind, fault: Fault| {
+        run_plan(
+            kind,
+            ar,
+            (B, T),
+            &params,
+            (&inputs, &targets),
+            Recipe::AdamW513,
+            3,
+            fault,
+        )
+    };
+    let old = run(Kind::Tiles3, Fault::None);
+    let new = run(Kind::Tiles3Both, Fault::None);
+    assert_eq!(new.total_per_step + 12, old.total_per_step);
+    assert!(
+        same_bits(&new.out, &old.out),
+        "4 straturi: lipit != nelipit"
+    );
+    let diff = |o: &Run| {
+        o.out
+            .grad1
+            .iter()
+            .flatten()
+            .zip(old.out.grad1.iter().flatten())
+            .filter(|(a, b)| a.to_bits() != b.to_bits())
+            .count()
+    };
+    // G2's risk: the epilogue compiled without the FFMA of gelu_tr → other bits.
+    let unf = run(Kind::Tiles3Both, Fault::GeluUnfused);
+    let n_unf = diff(&unf);
+    assert!(n_unf > 0, "epilogul fara ffma: aceiasi biti?");
+    // G4: the next layer's u → other bits; GELU' forgotten → other bits and PyTorch's verdict fails.
+    let wu = run(Kind::Tiles3Both, Fault::GeluWrongU);
+    assert!(!same_bits(&wu.out, &old.out), "u gresit: aceiasi biti?");
+    let fg = run(Kind::Tiles3Both, Fault::GeluForgotten);
+    assert!(!same_bits(&fg.out, &old.out), "GELU' uitat: aceiasi biti?");
+    let rf = refs("sgd");
+    let mut worst_abs = Vec::new();
+    for fault in [Fault::GeluWrongU, Fault::GeluForgotten] {
+        let w = run_mic_plan(Kind::Tiles3Gelu, Recipe::Sgd, 1, fault);
+        let g = worst(&w.out.grad1, &rf.grad1);
+        assert!(
+            g.abs > train::TOL_GRAD_ABS || g.rel_norm > train::TOL_GRAD_REL_NORM,
+            "{fault:?} neprins fata de PyTorch"
+        );
+        worst_abs.push(g.abs);
+    }
+    let n_grad = old.out.grad1.iter().map(Vec::len).sum::<usize>();
+    println!(
+        "kt c201 4 straturi: {} -> {} lansari, 3 pasi AdamW bit cu bit DA; epilogul fara ffma: {n_unf} din {n_grad} gradienti cu alti biti (PRINS); u al stratului urmator: grad_abs={:.2e} fata de PyTorch (PRINS); GELU' uitat: grad_abs={:.2e} (PRINS) (SIMULARE)",
+        old.total_per_step, new.total_per_step, worst_abs[0], worst_abs[1]
     );
 }

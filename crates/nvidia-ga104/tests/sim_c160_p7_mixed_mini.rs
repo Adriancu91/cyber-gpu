@@ -11,16 +11,16 @@ use std::sync::OnceLock;
 use gpu_compute::train::{self, AdamW, Arch, Batch, Recipe};
 use gpu_sim::cmdproc::{
     CommandProcessor, GNORM_NEEDS, LN_BACK_NEEDS, LN_BACK_RES_NEEDS, LN_FWD_NEEDS, MM_TC_NEEDS,
-    MM_TRAIN_NEEDS, Needs, XENT_NEEDS, attn_back_on_cpu, attn_back_tile_on_cpu,
-    attn_back_tile0_on_cpu, attn_fwd_on_cpu, attn_fwd_tile_on_cpu, attn_p_on_cpu,
-    attn_p_tile_on_cpu, colsum_on_cpu, emb_back_on_cpu, emb_fwd_on_cpu, gelu_tr_on_cpu,
-    gnorm_on_cpu, ln_back_on_cpu, ln_back_res_on_cpu, ln_fwd_on_cpu, mm_tc_on_cpu, mm_train_on_cpu,
-    opt_step_on_cpu, vadd_on_cpu, xent_on_cpu,
+    MM_TRAIN_GELU_NEEDS, MM_TRAIN_NEEDS, Needs, XENT_NEEDS, attn_back_on_cpu,
+    attn_back_tile_on_cpu, attn_back_tile0_on_cpu, attn_fwd_on_cpu, attn_fwd_tile_on_cpu,
+    attn_p_on_cpu, attn_p_tile_on_cpu, colsum_on_cpu, emb_back_on_cpu, emb_fwd_on_cpu,
+    gelu_tr_on_cpu, gnorm_on_cpu, ln_back_on_cpu, ln_back_res_on_cpu, ln_fwd_on_cpu, mm_tc_on_cpu,
+    mm_train_gelu_on_cpu, mm_train_on_cpu, opt_step_on_cpu, vadd_on_cpu, xent_on_cpu,
 };
 use nvidia_ga104::mm_tc::MM_TC;
 use nvidia_ga104::push::{self, PushBuf};
 use nvidia_ga104::train_step::{
-    self as ts, LOSS_SCALE, MixedLaunch, PROGRAMS_ALL_FUSED, Plan, Prog,
+    self as ts, LOSS_SCALE, MixedLaunch, PROGRAMS_ALL_FUSED2, Plan, Prog,
 };
 use nvidia_ga104::transfer;
 use nvidia_rm570::regs::clc7c0 as c;
@@ -46,8 +46,9 @@ const ZONE: u64 = VA + 0x20_0000;
 const REC: u64 = VA + 0x30_0000;
 const PUSH: u64 = VA + 0x32_0000;
 const PROGS: u64 = VA + 0x40_0000;
-/// `mm_tc` after the 22 programs of `PROGRAMS_ALL_FUSED` (T200: `ln_back_res` took slot 21).
-const TC: u64 = PROGS + 0x1_0000 * 22;
+/// `mm_tc` after the 23 programs of `PROGRAMS_ALL_FUSED2` (T200: `ln_back_res` took slot 21, T201: `mm_train_gelu`
+/// slot 22).
+const TC: u64 = PROGS + 0x1_0000 * 23;
 const HEAP: u64 = VA + 0x100_0000;
 
 fn prog_va(p: Prog) -> u64 {
@@ -178,6 +179,8 @@ enum Layout {
     Tiles3,
     /// T200: [`Plan::new_tiles3`] + [`Plan::with_fused_back`].
     Tiles3Fused,
+    /// T201: [`Plan::new_tiles3`] + both fusions (F32 only: the mixed step refuses `with_fused_gelu`).
+    Tiles3Both,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -191,7 +194,7 @@ enum Mode {
 fn board() -> CommandProcessor {
     ts::check_programs().expect("SHA-256 programe");
     let mut cp = CommandProcessor::new();
-    for p in PROGRAMS_ALL_FUSED {
+    for p in PROGRAMS_ALL_FUSED2 {
         let code = p.code();
         let sh = || needs(p.shared().unwrap());
         match p {
@@ -222,6 +225,10 @@ fn board() -> CommandProcessor {
             // T200: `ln_back_res` (`Plan::with_fused_back`).
             Prog::LnBackRes => {
                 cp.register_program_with_needs(code, ln_back_res_on_cpu, LN_BACK_RES_NEEDS)
+            }
+            // T201: `mm_train_gelu` (`Plan::with_fused_gelu`).
+            Prog::MmTrainGelu => {
+                cp.register_program_with_needs(code, mm_train_gelu_on_cpu, MM_TRAIN_GELU_NEEDS)
             }
         };
         cp.mem.write(prog_va(p), code);
@@ -267,6 +274,8 @@ fn on_board(layout: Layout, mode: Mode) -> (Run, usize) {
         Layout::Tiles3Fused => {
             Plan::new_tiles3(MINI, B, T, &inputs, HEAP).map(Plan::with_fused_back)
         }
+        Layout::Tiles3Both => Plan::new_tiles3(MINI, B, T, &inputs, HEAP)
+            .map(|p| p.with_fused_back().with_fused_gelu()),
     }
     .unwrap();
     let mut cp = board();
@@ -587,5 +596,42 @@ fn t200_mixed_mini_fused_is_bit_for_bit() {
             .unwrap()
             .len()
             + 2 * MINI.layers
+    );
+}
+
+/// T201 prediction G1 on `antrenare mini`'s shape: the F32 step with both fusions (`ln_back_res` + `mm_train_gelu`)
+/// gives the same bits as without them, 5 AdamW steps (SIMULARE); the mixed step refuses `with_fused_gelu`.
+#[test]
+fn t201_mini_f32_both_fusions_bit_for_bit() {
+    let bits = |r: &Run| {
+        (
+            r.losses.iter().map(|x| x.to_bits()).collect::<Vec<u64>>(),
+            r.grad1
+                .iter()
+                .flatten()
+                .map(|x| x.to_bits())
+                .collect::<Vec<u32>>(),
+            r.after_last
+                .iter()
+                .flatten()
+                .map(|x| x.to_bits())
+                .collect::<Vec<u32>>(),
+        )
+    };
+    let (old, _) = on_board(Layout::Tiles3, Mode::F32);
+    let (new, _) = on_board(Layout::Tiles3Both, Mode::F32);
+    let same = bits(&old) == bits(&new);
+    println!(
+        "kt c201 antrenare mini F32: ln_back_res + mm_train_gelu = nelipit bit cu bit {} (5 pasi AdamW, SIMULARE)",
+        if same { "DA" } else { "NU" }
+    );
+    assert!(same, "F32: lipit != nelipit");
+    let (inputs, _) = batch();
+    let p = Plan::new_tiles3(MINI, B, T, &inputs, HEAP).unwrap();
+    let opt = AdamW::new(&initial(), LR, 0.9, 0.999, 1e-8, 0.1);
+    assert!(
+        p.with_fused_gelu()
+            .step_mixed(Recipe::AdamW513, &opt, 1, LOSS_SCALE)
+            .is_err()
     );
 }

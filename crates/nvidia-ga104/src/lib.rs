@@ -117,6 +117,7 @@ pub mod ln_fwd;
 pub mod mm_tc;
 pub mod mm_tc_probe;
 pub mod mm_train;
+pub mod mm_train_gelu;
 pub mod mma16;
 pub mod mma16_probe;
 pub mod mmu;

@@ -528,3 +528,7 @@ niciun octet de firmware NVIDIA.
   `docs/C-160_P7_LIPIRE_INAPOI.md`, nota `integration/cyber-universe/C-160_P7g_ln-back-rezidual.md`: scrise de noi. Ideea lipirii (fusion)
   e generală (llm.c, PyTorch); comportamentul lui `precise` / `NoContraction` citit în specificațiile GLSL 4.60 și SPIR-V 1.6 (Khronos) și
   observat în ieșirea glslang 15.1. Codul compilat de Mesa NAK 25.0.7 (MIT). Nimic GPL, niciun octet de firmware NVIDIA.
+- **Ordinea 20:11 pasul 3, partea a doua — `mm_train_gelu` (sesiunea 193):** `tools/nak/mm_train_gelu.comp` (= `mm_train.comp` al nostru
+  + expresia lui `gelu_tr.comp` al nostru la scriere), `crates/nvidia-ga104/src/mm_train_gelu.rs`, modelele din `gpu-compute::layer` /
+  `gpu-sim::cmdproc`, testele T201, documentul `docs/C-160_P7_LIPIRE_GELU.md`. Scrise de noi; ideea lipirii epilogului e generală
+  (folosită în CUTLASS / tinygrad), fără cod copiat. Compilat cu Mesa NAK 25.0.7 (MIT), pe gazdă.

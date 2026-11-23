@@ -1,0 +1,83 @@
+// Order 20:11, step 3, second part (docs/C-160_P7_LIPIRE_GELU.md): mm_train with the GELU backward fused into the
+// store. Used only for the MLP's "inapoi:proj-dX": instead of writing dwide = dx * W_proj and launching gelu_tr mode 1
+// on it, this program writes dwide2 = acc * (Phi(u) + u*phi(u)) directly, u = the fc output kept by the forward pass,
+// read at [row, col] (the same [M, N] layout as C). The loop, the tiles and the order of the fused multiply-adds are
+// mm_train.comp's, unchanged; the epilogue is gelu_tr.comp's mode-1 expression, with acc in place of g[i]. The bias
+// slot of mm_train's push constants carries u here (no BIAS flag: the launcher refuses it). mm_train and gelu_tr
+// stay as they are (other bytes would need a new board proof). The bit-exact oracle is
+// gpu-compute::layer::gelu_back_f32 applied to gpu-compute::reference::matmul_t_fma_ftz - meant to be the same bits as
+// mm_train followed by gelu_tr mode 1 (checked on the NAK listing, not proven on the board).
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+#define TILE 16u
+#define TA 1u
+#define TB 2u
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+
+layout(push_constant) uniform Args {
+    In a;
+    In b;
+    Out c;
+    In u;
+    uint m;
+    uint n;
+    uint k;
+    uint flags;
+} args;
+
+shared float as_[TILE * TILE];
+shared float bs_[TILE * TILE];
+
+// op(A)[r, p]: A stored [M,K] row-major, or [K,M] when transposed.
+float load_a(uint r, uint p) {
+    return (args.flags & TA) != 0u ? args.a.v[p * args.m + r] : args.a.v[r * args.k + p];
+}
+
+// op(B)[p, col]: B stored [K,N] row-major, or [N,K] when transposed.
+float load_b(uint p, uint col) {
+    return (args.flags & TB) != 0u ? args.b.v[col * args.k + p] : args.b.v[p * args.n + col];
+}
+
+// The epilogue's one FFMA is written out (`fma`): with `cdf + u * pdf` NAK 25.0.7 contracted differently from
+// gelu_tr.comp (session 193, first compile: fmul u*pdf, then ffma((1 + erf), 0.5, u*pdf); with Phi's multiplication
+// kept apart by `precise`: fmul + fadd, no FFMA). gelu_tr rounds Phi first (mode 0 uses it too), then
+// ffma(u, pdf, Phi); `fma(u, pdf, cdf)` gives exactly that sequence (checked on the listing).
+void main() {
+    uint tx = gl_LocalInvocationID.x;
+    uint ty = gl_LocalInvocationID.y;
+    uint row = gl_WorkGroupID.y * TILE + ty;
+    uint col = gl_WorkGroupID.x * TILE + tx;
+    float acc = 0.0;
+    for (uint t = 0; t < args.k; t += TILE) {
+        uint ak = t + tx;
+        uint bk = t + ty;
+        as_[ty * TILE + tx] = (row < args.m && ak < args.k) ? load_a(row, ak) : 0.0;
+        bs_[ty * TILE + tx] = (bk < args.k && col < args.n) ? load_b(bk, col) : 0.0;
+        barrier();
+        uint len = min(TILE, args.k - t);
+        for (uint p = 0; p < len; p++) {
+            acc += as_[ty * TILE + p] * bs_[p * TILE + tx];
+        }
+        barrier();
+    }
+    if (row < args.m && col < args.n) {
+        uint i = row * args.n + col;
+        float u = args.u.v[i];
+        float z = u * 0.70710678118654752;
+        float a = abs(z);
+        float t = 1.0 / (1.0 + 0.3275911 * a);
+        float p = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+        float ex = exp(-a * a);
+        float e = 1.0 - p * ex;
+        float erf = z < 0.0 ? -e : e;
+        float cdf = 0.5 * (1.0 + erf);
+        float pdf = 0.39894228040143268 * ex;
+        args.c.v[i] = acc * fma(u, pdf, cdf);
+    }
+}

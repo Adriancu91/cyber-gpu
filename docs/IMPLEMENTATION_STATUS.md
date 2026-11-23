@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 193 — 23 noiembrie 2026, ~23:12–23:40 (ora României), în cloud, FĂRĂ placă — **ordinea 20:11, pasul 3, partea a doua: GELU' lipit în „proj-dX” (`mm_train_gelu`)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 192 terminată 22:36), l-am pus `ocupat`. Niciun rezultat nou de pe placă de comparat
+(os-380 `--antrenare-mini` aprobat de Adrian la 23:05, încă nerulat). Planul și predicțiile erau urcate **înainte** de cod (`fe05169`,
+`docs/C-160_P7_LIPIRE_GELU.md`). Mesa 25.0.7 reconstruit în cloud (`mm_train` și `gelu_tr` au ieșit identice).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `mm_train_gelu` (program nou, NAK) | bucla lui `mm_train` neschimbată; la scriere `acc · fma(u, φ, Φ)` = operațiile lui `gelu_tr` mod 1; `u` în locul lui `bias`; SHA-256 `ee7e3145…ad0b053`, 274 de instrucțiuni, 19 registre | COMPILAT, NU RULAT |
+| Listarea (predicția G2) | **a ieșit abia la a treia compilare**: scris ca în `gelu_tr`, NAK a contopit altfel (alți biți); cu `precise` doar pe Φ: fără `ffma` (tot alți biți); cu `fma(u, pdf, cdf)` explicit: aceeași secvență de 23 de operații ca `gelu_tr` mod 1, bucla = `mm_train` | PASS (listare) |
+| Biblioteca (doar adăugări) | `Prog::MmTrainGelu`, `PROGRAMS_ALL_FUSED2` (23), `PROGRAMS_FUSED_GELU_EXTRA`, `PROGRAMS_FUSED_BOTH_EXTRA`, `Plan::with_fused_gelu` / `fused_gelu`; `fused_programs` acoperă ambele lipiri; `step_mixed` refuză `with_fused_gelu`; `PROGRAMS_ALL` / `_3` / `_FUSED` neschimbate; `check_programs` verifică 23 | — |
+| T201 (4 teste) | pasul de aur mic 10 pași `sgd` / `adamw_513` (`new`, `new_tiles3`, și cu `ln_back_res`): **bit cu bit**, verdictul PyTorch trece, 73 → 71 / 75 → 73 lansări (amândouă lipirile: 67 / 69); 4 straturi 3 pași AdamW bit cu bit (137 → 125); `antrenare mini` F32 5 pași cu ambele lipiri: bit cu bit | PASS (SIMULARE), G1/G3/G4 ieșite |
+| Greșeli plantate | epilogul fără `ffma`: 158 622 / 218 496 gradienți alți biți; `u` al stratului următor: grad_abs 0,089 față de PyTorch; GELU' uitat: 0,109 | PASS (SIMULARE) |
+| Nota pentru OS | `integration/cyber-universe/C-160_P7h_gelu-in-proj-dx.md` (atenție: `MmTrainGelu.index()` = 22, `mm_tc` la slotul 23) | — |
+| `tools/check.sh` | format, clippy, **966 de teste** (+7 ignorate), build no_std | PASS |
+| Pe placă: `mm_train_gelu` | — | NOT TESTED |
+
+**Ce e nou pentru placă:** doar programul `mm_train_gelu` (după `--antrenare-mini` F32, os-352 și `ln_back_res`).
+
+**Următorul pas:** comparațiile când rulează pe placă (os-380 `--antrenare-mini`, os-352, gen 4, „lot”, `pci.legatura.port`); altfel ordinea
+20:11 pasul 4 — recalcularea activărilor în loc de stocare (plan + predicții întâi); lipirea GELU' pe `mm_tc` (pasul mixt) când pasul 4 așteaptă.
+
+---
+
 ## Sesiunea 192 — 23 noiembrie 2026, ~22:11–22:36 (ora României), în cloud, FĂRĂ placă — **ordinea 20:11, pasul 3: lipirea operațiilor „înapoi”, prima lipire (`ln_back_res`)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 191 terminată 21:28), l-am pus `ocupat`. Niciun rezultat nou de pe placă de comparat.
