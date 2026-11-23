@@ -59,6 +59,8 @@ HEADERS = [
       "NV_VIRTUAL_FUNCTION_DOORBELL")),
     ("clc56f", "ogd", "classes/host/clc56f.h", None),
     ("clc7c0", "ogd", "classes/compute/clc7c0.h", None),
+    # C-157 (RAM <-> VRAM): the copy engine class whose object the golden image already allocates.
+    ("clc7b5", "ogd", "classes/dma-copy/clc7b5.h", None),
     ("qmd_v03_00", "ogd", "classes/compute/clc6c0qmd.h", "NVC6C0_QMDV03_00_"),
 ]
 
