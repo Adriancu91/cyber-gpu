@@ -1,0 +1,312 @@
+// C-157 point 2 after os-364 (docs/C-157_P2_ATTN_TILE3.md, section attn_fwd_tile3, plan written before this code,
+// commit 3bc3308): attn_fwd_tile2 with THE SAME arithmetic in the same order (the same P and att bits, predicted) and
+// branch-free global loads (NAK waits for a load guarded by an if at the end of its bssy zone, os-364):
+//   J1 Q / K / V tile loads: row min(i, T-1), column min(e, d-1), always issued; 8 loads first (two groups: 16 gave
+//      130 registers, over the 128 that keep 2 blocks per SM), then the selects
+//      0 / value and the shared stores (NAK emits in source order);
+//   J2 phase B: the 16 P loads of tile jt at (min(i, T-1), min(j, that)) first; then exp always, the sum and the store
+//      only where i < T && j <= i (the sum by a select, the store under its guard: a store is not waited on);
+//   J3 phase C: P at (min(i, T-1), min(j, that)) without a branch (below the diagonal that is (min(i, T-1), j));
+//      pv = cond ? v * inv : 0.0; the stores keep their guards.
+// Everything else (arguments, grid [ceil(T/64), H, B], blocks of 256, shared tiles, the inner loops, every sum's order)
+// is attn_fwd_tile2.comp's. CPU model: gpu_compute::layer::attn_fwd_tile_gpu (unchanged). Idea (select instead of a
+// branch): the public CUDA guide (predication); no line copied.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Buf { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args {
+    In qkv; Buf p; Out att;
+    uint t; uint c; uint heads; uint d; float scale;
+} args;
+
+shared float qs[64 * 65];   // phase A: Q tile [row][e]; phase C: P tile [row][j]; rows of 65 (F1)
+shared float ks[64 * 65];   // phase A: K tile [j][e];   phase C: V tile [j][e];   rows of 65 (F1)
+shared float red[64 * 16];  // per row: one value per tx (maxima, then partial sums)
+shared float rm[64];
+shared float rinv[64];
+
+void main() {
+    uint T = args.t;
+    uint C = args.c;
+    uint d = args.d;
+    uint b = gl_WorkGroupID.z;
+    uint h = gl_WorkGroupID.y;
+    uint bx = gl_WorkGroupID.x;
+    uint i0 = bx * 64u;
+    uint lid = gl_LocalInvocationID.x;
+    uint tx = lid & 15u;
+    uint ty = lid >> 4u;
+    uint ntiles = (T + 63u) / 64u;
+    uint row3 = 3u * C;
+    uint qrow = ty * 65u;   // first element of row ty in a 65-wide tile (rows ty + 16a: + 1040a)
+    uint krow = tx * 65u;
+
+    // phase A
+    {
+        // two groups of 8 loads (16 at once gave 130 registers, over the 128 that keep 2 blocks per SM)
+        [[unroll]] for (uint g = 0u; g < 16u; g += 8u) {
+            float ld[8];
+            [[unroll]] for (uint n = 0u; n < 8u; n++) {
+                uint idx = lid + 256u * (g + n);
+                uint r = idx >> 6u;
+                uint e = idx & 63u;
+                uint i = i0 + r;
+                ld[n] = args.qkv.v[(b * T + min(i, T - 1u)) * row3 + h * d + min(e, d - 1u)];
+            }
+            [[unroll]] for (uint n = 0u; n < 8u; n++) {
+                uint idx = lid + 256u * (g + n);
+                uint i = i0 + (idx >> 6u);
+                uint e = idx & 63u;
+                qs[(idx >> 6u) * 65u + e] = (i < T && e < d) ? ld[n] : 0.0;
+            }
+        }
+    }
+    float mx[4];
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        mx[a] = -3.402823466e38;
+    }
+    for (uint jt = 0u; jt <= bx; jt++) {
+        barrier();
+        {
+            // two groups of 8 loads (16 at once gave 130 registers, over the 128 that keep 2 blocks per SM)
+            [[unroll]] for (uint g = 0u; g < 16u; g += 8u) {
+                float ld[8];
+                [[unroll]] for (uint n = 0u; n < 8u; n++) {
+                    uint idx = lid + 256u * (g + n);
+                    uint r = idx >> 6u;
+                    uint e = idx & 63u;
+                    uint j = jt * 64u + r;
+                    ld[n] = args.qkv.v[(b * T + min(j, T - 1u)) * row3 + C + h * d + min(e, d - 1u)];
+                }
+                [[unroll]] for (uint n = 0u; n < 8u; n++) {
+                    uint idx = lid + 256u * (g + n);
+                    uint j = jt * 64u + (idx >> 6u);
+                    uint e = idx & 63u;
+                    ks[(idx >> 6u) * 65u + e] = (j < T && e < d) ? ld[n] : 0.0;
+                }
+            }
+        }
+        barrier();
+        float acc[16];
+        [[unroll]] for (uint n = 0u; n < 16u; n++) {
+            acc[n] = 0.0;
+        }
+        uint d4 = d & ~3u;
+        for (uint e0 = 0u; e0 < d4; e0 += 4u) {
+            // One base per operand and iteration; the rest constant (folded into the shared load's offset).
+            uint qb = qrow + e0;
+            uint kb0 = krow + e0;
+            [[unroll]] for (uint u = 0u; u < 4u; u++) {
+                float qa[4];
+                float kb[4];
+                [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                    qa[a] = qs[qb + (1040u * a + u)];
+                    kb[a] = ks[kb0 + (1040u * a + u)];
+                }
+                [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                    [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                        acc[a * 4u + k] = fma(qa[a], kb[k], acc[a * 4u + k]);
+                    }
+                }
+            }
+        }
+        for (uint e = d4; e < d; e++) {
+            float qa[4];
+            float kb[4];
+            [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                qa[a] = qs[(ty + 16u * a) * 65u + e];
+                kb[a] = ks[(tx + 16u * a) * 65u + e];
+            }
+            [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                    acc[a * 4u + k] = fma(qa[a], kb[k], acc[a * 4u + k]);
+                }
+            }
+        }
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint i = i0 + ty + 16u * a;
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                uint j = jt * 64u + tx + 16u * k;
+                if (i < T && j <= i) {
+                    float s = acc[a * 4u + k] * args.scale;
+                    args.p.v[((b * args.heads + h) * T + i) * T + j] = s;
+                    mx[a] = max(mx[a], s);
+                }
+            }
+        }
+    }
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        red[(ty + 16u * a) * 16u + tx] = mx[a];
+    }
+    barrier();
+    if (lid < 64u) {
+        float m = -3.402823466e38;
+        for (uint u = 0u; u < 16u; u++) {
+            m = max(m, red[lid * 16u + u]);
+        }
+        rm[lid] = m;
+    }
+    barrier();
+
+    // phase B
+    float ps[4];
+    float rowm[4];
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        ps[a] = 0.0;
+        rowm[a] = rm[ty + 16u * a];
+    }
+    for (uint jt = 0u; jt <= bx; jt++) {
+        // J2: the 16 loads first (clamped, always issued), then exp, the sums and the guarded stores.
+        float lp[16];
+        [[unroll]] for (uint k = 0u; k < 4u; k++) {
+            uint j = jt * 64u + tx + 16u * k;
+            [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                uint ic = min(i0 + ty + 16u * a, T - 1u);
+                lp[k * 4u + a] = args.p.v[((b * args.heads + h) * T + ic) * T + min(j, ic)];
+            }
+        }
+        [[unroll]] for (uint k = 0u; k < 4u; k++) {
+            uint j = jt * 64u + tx + 16u * k;
+            [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                uint i = i0 + ty + 16u * a;
+                bool live = i < T && j <= i;
+                float x = exp(lp[k * 4u + a] - rowm[a]);
+                ps[a] = live ? ps[a] + x : ps[a];
+                if (live) {
+                    args.p.v[((b * args.heads + h) * T + i) * T + j] = x;
+                }
+            }
+        }
+    }
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        red[(ty + 16u * a) * 16u + tx] = ps[a];
+    }
+    barrier();
+    if (lid < 64u) {
+        float sum = 0.0;
+        for (uint u = 0u; u < 16u; u++) {
+            sum = sum + red[lid * 16u + u];
+        }
+        rinv[lid] = 1.0 / sum;
+    }
+
+    // phase C
+    float acc2[16];
+    [[unroll]] for (uint n = 0u; n < 16u; n++) {
+        acc2[n] = 0.0;
+    }
+    for (uint jt = 0u; jt < ntiles; jt++) {
+        if (jt <= bx) {
+            barrier();
+            {
+                // J3: the 16 P loads first at (min(i, T-1), min(j, that)), then the selects, the guarded stores and
+                // the shared stores.
+                float lp[16];
+                [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                    uint ic = min(i0 + ty + 16u * a, T - 1u);
+                    [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                        uint j = jt * 64u + tx + 16u * k;
+                        // Below the diagonal min(j, ic) = j (j < i0 <= ic): one formula, no select on jt < bx (that
+                        // select became a branch after every load, each waited on).
+                        lp[a * 4u + k] = args.p.v[((b * args.heads + h) * T + ic) * T + min(j, ic)];
+                    }
+                }
+                [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                    uint r = ty + 16u * a;
+                    uint i = i0 + r;
+                    float inv = rinv[r];
+                    [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                        uint cl = tx + 16u * k;
+                        uint j = jt * 64u + cl;
+                        float v = lp[a * 4u + k] * inv;
+                        float pv = (i < T && j <= i) ? v : 0.0;
+                        if (i < T && j < T) {
+                            args.p.v[((b * args.heads + h) * T + i) * T + j] = pv;
+                        }
+                        qs[r * 65u + cl] = pv;
+                    }
+                }
+            }
+            {
+                // two groups of 8 loads (16 at once gave 130 registers, over the 128 that keep 2 blocks per SM)
+                [[unroll]] for (uint g = 0u; g < 16u; g += 8u) {
+                    float ld[8];
+                    [[unroll]] for (uint n = 0u; n < 8u; n++) {
+                        uint idx = lid + 256u * (g + n);
+                        uint r = idx >> 6u;
+                        uint e = idx & 63u;
+                        uint j = jt * 64u + r;
+                        ld[n] = args.qkv.v[(b * T + min(j, T - 1u)) * row3 + 2u * C + h * d + min(e, d - 1u)];
+                    }
+                    [[unroll]] for (uint n = 0u; n < 8u; n++) {
+                        uint idx = lid + 256u * (g + n);
+                        uint j = jt * 64u + (idx >> 6u);
+                        uint e = idx & 63u;
+                        ks[(idx >> 6u) * 65u + e] = (j < T && e < d) ? ld[n] : 0.0;
+                    }
+                }
+            }
+            barrier();
+            if (jt < bx) {
+                // F2: below the diagonal j < i0 <= i for every row of the block: the guard is always true.
+                for (uint j0 = 0u; j0 < 64u; j0 += 4u) {
+                    uint pb = qrow + j0;
+                    uint vb0 = j0 * 65u + tx;
+                    [[unroll]] for (uint u = 0u; u < 4u; u++) {
+                        float vb[4];
+                        [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                            vb[k] = ks[vb0 + (65u * u + 16u * k)];
+                        }
+                        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                            float pa = qs[pb + (1040u * a + u)];
+                            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                                acc2[a * 4u + k] = fma(pa, vb[k], acc2[a * 4u + k]);
+                            }
+                        }
+                    }
+                }
+            } else {
+                for (uint jj = 0u; jj < 64u; jj++) {
+                    uint j = jt * 64u + jj;
+                    float vb[4];
+                    [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                        vb[k] = ks[jj * 65u + tx + 16u * k];
+                    }
+                    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                        uint r = ty + 16u * a;
+                        if (j <= i0 + r) {
+                            float pa = qs[r * 65u + jj];
+                            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                                acc2[a * 4u + k] = fma(pa, vb[k], acc2[a * 4u + k]);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                uint i = i0 + ty + 16u * a;
+                [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                    uint j = jt * 64u + tx + 16u * k;
+                    if (i < T && j < T) {
+                        args.p.v[((b * args.heads + h) * T + i) * T + j] = 0.0;
+                    }
+                }
+            }
+        }
+    }
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        uint i = i0 + ty + 16u * a;
+        [[unroll]] for (uint k = 0u; k < 4u; k++) {
+            uint e = tx + 16u * k;
+            if (i < T && e < d) {
+                args.att.v[(b * T + i) * C + h * d + e] = acc2[a * 4u + k];
+            }
+        }
+    }
+}

@@ -193,3 +193,39 @@ Predicții:
    ~0,76; cifra după compilare o scrie `nak_bucle.py`, funcția `s181`).
 
 Nimic nu rulează pe placă din sesiunea asta; `attn_fwd_tile`, `attn_fwd_tile2`, `train_step` și proba os-364 rămân neschimbate.
+
+## Rezultatul pentru `attn_fwd_tile3` (sesiunea 181, SIMULARE, T190 `crates/nvidia-ga104/tests/sim_attn_fwd_tile3.rs`)
+- **Binarul** (Mesa NAK 25.0.7 reconstruit în cloud; `attn_fwd_tile2` a ieșit **identic**, `2e8cda57…`): `attn_fwd_tile3.sm86.sass`
+  SHA-256 **`4127e5fa49b984894ad038cde8a56d5edfaa5bce38b653ad91d3fc63e59642bc`**, **120 de registre**, 37 888 de octeți partajați.
+- **Predicția 2: DA, după ramura de rezervă din plan.** Cu 16 citiri deodată la plăcile Q / K / V au ieșit **130** de registre (peste
+  128 → un singur bloc pe SM); coborâte la două grupe de 8: **120** (120 × 256 × 2 = 61 440 ≤ 65 536 → 2 blocuri pe SM, ca `_2`).
+- **Am aflat la a doua compilare (deci nu e predicție):** în faza C scrisesem coloana ca `(jt < bx) ? j : min(j, ic)`; NAK a făcut din
+  alegerea pe `jt < bx` o **ramură după fiecare citire**, iar o ramură așteaptă citirile în zbor → 20 de latențe în bucla exterioară a
+  fazei C. Sub diagonală `min(j, ic) = j` oricum (`j < i0 ≤ ic`), deci o singură formulă, `min(j, ic)`, aceeași adresă: **7**.
+- **Predicția 1: DA** — 16 `mufu.exp2` + 1 `mufu.rcp` (= `_2`: exp-urile fazei B calculate mereu, tot 16), **160 `ffma`** (= `_2`), nicio
+  atomică, nicio memorie locală, aceleași bariere; 3 463 de operații față de 3 815; nou: `sel` 109 (44 la `_2`),
+  `imnmx` 135 (31).
+- **Predicția 3: DA** (numărate cu `nak_bucle.py`, coloana `nou`):
+
+  | buclă | `_2` | `_3` | predicție |
+  |---|---|---|---|
+  | faza A, placa K (16 citiri) + S scris | 16 latențe | **4** | ≤ 4 — DA |
+  | faza B (16 citiri ale lui P, exp, sume) | 16 | **4** | ≤ 4 — DA |
+  | faza C exterioară (16 citiri P + placa V) | 32 | **7** | ≤ 8 — DA |
+  | zone `bssy` care încep cu o citire (fără zona buclei) | 16 / 16 / 48 | **0 / 0 / 0** | 0 — DA (cele rămase păzesc doar scrieri) |
+
+  Buclele interioare (din memoria partajată) au aceleași instrucțiuni ca la `_2` (106 / 40 / 106 / 69).
+- **Predicția 5 (DEDUS, `python3 tools/buget-antrenare/nak_bucle.py`, funcția `s181`):** `attn_fwd_tile2` model 0,54 ms (memoria 0,33)
+  → `attn_fwd_tile3` **0,29 ms** (memoria 0,08), ×1,88; cu factorul măsurat la `_2` (×2,82) → **~0,81 ms** pe setul mare față de 1,53
+  (os-364). În intervalul prezis (0,7–1,1).
+- **Predicția 4: DA.** Emularea literală (fiecare citire la adresa ei strânsă — un indice în afara bufferului ar opri testul —, apoi
+  alegerea; blocurile pe rând, barierele ca faze; `exp` = `ex2(x · log2e)` ca în model) = `attn_fwd_tile_gpu` **bit cu bit** (P și att)
+  pe cele 10 forme (inclusiv „very sharp”, în zona FTZ); lansarea = `attn_fwd_tile2` bit cu bit; P umplut înainte cu NaN, ±1e30 sau inf
+  nu schimbă niciun bit. Prinse: alegerea scoasă din suma fazei B, alegerea scoasă pe diagonala fazei C, QMD cu memoria partajată a lui
+  `attn_fwd_tile`, grila cu un bloc lipsă (emularea cu 2 blocuri = lansarea), blocul greșit, d = 65. **Observație (ca la back):**
+  alegerile de la plăcile Q / K / V scoase dau **aceiași biți** — coloanele ≥ d nu intră în bucla fazei A, rândurile ≥ T ale lui K / V
+  sunt doar sub garda `j <= i < T` sau în acumulatorii rândurilor ≥ T, care nu se scriu. Alegerile rămân (planul).
+- Pentru emulare, `gpu_compute::layer::ex2_ftz` a devenit publică (doar vizibilitatea; aceeași funcție).
+
+**Ce e nou pentru placă:** nimic încă (programul nu e legat în probă). **Toate trei `_3` sunt gata în SIMULARE.** Următorul pas: proba
+„vechi lângă nou” cu cele trei `_3` (ca os-364: `_2` lângă `_3`, aceleași seturi) și nota pentru OS.

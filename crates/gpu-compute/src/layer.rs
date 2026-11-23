@@ -600,7 +600,7 @@ pub fn gelu_gpu(x: f32) -> f32 {
 /// 2^w as `MUFU.EX2.FTZ` would give it if it were exact: the input and the result flushed, the power correctly rounded
 /// (f64 range reduction + Taylor). The board's unit is approximate (~2 ulp), so programs using it are compared with
 /// an oracle in a margin, not bit for bit.
-fn ex2_ftz(w: f32) -> f32 {
+pub fn ex2_ftz(w: f32) -> f32 {
     let w = ftz(w);
     if w.is_nan() {
         return w;

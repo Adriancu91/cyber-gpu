@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 181 — 23 noiembrie 2026, ~11:10–11:35 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: `attn_fwd_tile3` (citiri fără ramură)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-364. Ramura locală veche (sesiunea 110)
+adusă la `origin/g0-g2-fundatie`. Planul și predicțiile urcate **înainte** de cod (`3bc3308`, `docs/C-157_P2_ATTN_TILE3.md`). Mesa NAK
+25.0.7 reconstruit în cloud (`attn_fwd_tile2` identic, `2e8cda57…`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Program nou `attn_fwd_tile3` (lângă `_2`, neschimbat) | citirile globale fără ramură: plăcile Q / K / V câte 2 × 8, P în faza B și în faza C câte 16, toate întâi, alegerile după; scrierile păzite; SHA-256 `4127e5fa…e59642bc`, **120 de registre** (cu 16 citiri deodată la plăci: 130 → coborât la 2 × 8, cum scria planul; 2 blocuri pe SM, ca `_2`) | PASS (compilat) |
+| Aflat la compilare | alegerea `(jt < bx) ? j : min(j, ic)` a devenit o ramură după fiecare citire (20 de latențe); sub diagonală `min(j, ic) = j`, deci o singură formulă → 7 | reparat |
+| Buclele (`nak_bucle.py`, `nou`) | faza A 16 → **4**, faza B 16 → **4**, faza C exterioară 32 → **7** latențe; nicio citire într-o zonă `bssy` | PREDICȚIE: DA |
+| Modelul pe bucle (`s181`) | `_2` 0,54 → `_3` 0,29 ms; cu factorul măsurat ×2,82: **~0,81 ms** pe setul mare față de 1,53 (os-364) | DEDUS |
+| T190 (4 teste) | emularea literală a GLSL = `attn_fwd_tile_gpu` **bit cu bit** (P și att) pe 10 forme; lansarea = `attn_fwd_tile2`; gunoi în P înainte (NaN, ±1e30, inf) fără efect; greșeli plantate prinse; alegerile plăcilor scoase = aceiași biți (scris în notă) | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy, **906 teste** (+7 ignorate), build no_std | PASS |
+| `attn_fwd_tile3` pe RTX 3070 Ti | — | NOT TESTED |
+
+**Ce e nou pentru placă:** nimic încă (nelegat în probă; interfața publică doar adăugată: modulul `nvidia_ga104::attn_fwd_tile3`, plus
+`gpu_compute::layer::ex2_ftz` devenită publică).
+
+**Următorul pas:** proba „vechi lângă nou” cu cele trei `_3` (ca os-364: `_2` lângă `_3`) și nota pentru OS; după ea punctul nou al lui
+Adrian (măsurarea RAM ↔ VRAM + studiul `docs/C-157_RAM_OFFLOAD.md`).
+
+---
+
 ## Sesiunea 180 — 23 noiembrie 2026, ~10:11–10:30 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: `attn_back_tile_3` (citiri fără ramură)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-364. Clona veche de pe disc (sesiunea

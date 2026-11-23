@@ -335,6 +335,21 @@ PROGRAMS364.update(PROGRAMS180)
 PROGRAMS179.update(PROGRAMS180)  # kept out of os364()'s list of measured programs
 
 
+# Session 181 (C-157 p.2 after os-364): attn_fwd_tile3 = attn_fwd_tile2 with branch-free loads (DEDUS, unmeasured).
+PROGRAMS181 = {
+    "attn_fwd_tile3": ("tools/nak/out/attn_fwd_tile3.sm86.txt", 4, None, [
+        (1, "pair", 1, 8, False, 16, None),      # K tile load (2 x 8 branch-free loads) + S to P
+        (5, "pair", 16, 8, True, 32, None),      # phase A, unrolled by 4, rows of 65 (as _2)
+        (65, "pair", 1, 8, False, 0, None),      # phase B: 16 P loads first, exp, select, guarded stores
+        (123, "pair", 1, 8, False, 16, None),    # phase C outer: 16 P loads first, P = x * inv, V tile load (2 x 8)
+        (225, "below", 16, 8, True, 32, None),   # phase C under the diagonal (as _2)
+        (232, "diag", 64, 8, True, 8, None),     # phase C on the diagonal, guarded (as _2)
+    ]),
+}
+PROGRAMS364.update(PROGRAMS181)
+PROGRAMS179.update(PROGRAMS181)  # kept out of os364()'s list of measured programs
+
+
 def model364(name, lw=LDG_WAIT, drop_waits=False, fresh=False):
     """(issue, chain, shared, waits per block-pair summary) in seconds for one program; drop_waits=True models the
     branch-free loads (every tile load / pass waited on once per iteration instead of once per load)."""
@@ -413,11 +428,25 @@ def s180():
           f" -> model {lo3*1e3:5.2f} ms; cu factorul x{f:.2f}: ~{lo3*f*1e3:5.2f} ms (castig x{lo2/lo3:.2f})")
 
 
+def s181():
+    print("\nsesiunea 181, attn_fwd_tile3 (citiri fara ramura; asteptarile NUMARATE cu waits_fresh; DEDUS, nemasurat):")
+    i2, l2, sh2, mem2, m2 = model364("attn_fwd_tile2", fresh=True)
+    lo2 = max(i2, l2, sh2)
+    i3, l3, sh3, mem3, _ = model364("attn_fwd_tile3", fresh=True)
+    lo3 = max(i3, l3, sh3)
+    f = m2 / lo2
+    print(f"  attn_fwd_tile2     emisie {i2*1e3:5.2f} lant {l2*1e3:5.2f} (memoria {mem2*1e3:5.2f}) partajata {sh2*1e3:5.2f}"
+          f" -> model {lo2*1e3:5.2f} ms, masurat os-364 {m2*1e3:5.2f} ms (x{f:.2f})")
+    print(f"  attn_fwd_tile3     emisie {i3*1e3:5.2f} lant {l3*1e3:5.2f} (memoria {mem3*1e3:5.2f}) partajata {sh3*1e3:5.2f}"
+          f" -> model {lo3*1e3:5.2f} ms; cu factorul x{f:.2f}: ~{lo3*f*1e3:5.2f} ms (castig x{lo2/lo3:.2f})")
+
+
 if __name__ == "__main__" and len(sys.argv) == 1:
     os358()
     os364()
     s179()
     s180()
+    s181()
 
 
 if __name__ == "__main__" and len(sys.argv) > 1:
