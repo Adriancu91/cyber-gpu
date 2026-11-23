@@ -44,3 +44,26 @@ plăci; până acum nu exista niciun plan care să le lanseze în pas. Pasul ace
 Nu schimbă niciun program, nicio interfață veche, proba `attn_tile_probe`, pasul mixt. **Nimic nou pentru placă:** cele 4
 programe sunt deja predate (`attn_*_2`, os-364) sau vin după os-364 (`attn_p_tile`); planul nou se folosește pe placă doar după
 ce os-364 arată biții lui `attn_*_2`, și doar printr-o comandă nouă.
+
+## Rezultatul (după cod, sesiunea 177; cod `1b9f79d`)
+| Predicția | Ieșit | |
+|---|---|---|
+| 1. aceeași arenă, aceleași lansări / etichete / cbuf-uri; doar programul și grila atenției | `new_tiles.bytes() = new.bytes()`, `new_p_only_tiles.bytes() = new_p_only.bytes()`; 73 / 75 (+1) lansări; pe pasul mic se schimbă exact 6 (7 cu relansarea) lansări, grila [1, 4, 2]; d > 64 refuzat; `Prog::index()` vechi neschimbat, 18 SHA-256 verificate | PASS (T187) |
+| 2. verdictul față de PyTorch trece; față de `Plan::new` erorile ≤ 1·10⁻⁶ rel., greutățile ≤ 1·10⁻⁵ rel. | verdictul **TRECE** la `sgd` și `adamw_513` (și cu P refăcut); nu bit cu bit cu `Plan::new` (cum s-a prezis); erorile: 0 (`sgd`) / 8,8·10⁻⁸ (`adamw_513`); greutățile: `sgd` 1,5·10⁻⁷ — **la `adamw_513` 3,9·10⁻³ pe `in_proj_bias`: predicție RATATĂ** (vezi mai jos); fără partea K a bias-ului: 6,4·10⁻⁶ | PARȚIAL |
+| 3. „înapoi” pe plăci = „înapoi” vechi, bit cu bit, pe același P | DA, 10 pași, ambele rețete; și pe 4 straturi | PASS (SIMULARE) |
+| 4. P refăcut cu `attn_p_tile` = P păstrat, bit cu bit | DA, 10 pași, ambele rețete; 4 straturi, 3 pași AdamW, 3 relansări `attn_p_tile` | PASS (SIMULARE) |
+| 5. greșeli plantate | relansarea scoasă, relansarea pe `qkv`-ul altui strat: alți biți; modul 0 pe `attn_back_tile_2`: dS nescris → simulatorul refuză pasul (citire din memorie nescrisă); QMD fără memoria partajată: refuzat | PASS (SIMULARE) |
+| 6. costul | nemăsurat; după os-364 | — |
+
+**De ce a ratat predicția 2 la `adamw_513` (DEDUS):** partea K a bias-ului `in_proj` (intrările C…2C) are gradientul adevărat **0** —
+softmax nu se schimbă când un rând de scoruri se mută cu o constantă. Gradientul calculat acolo e doar zgomot de rotunjire, iar
+AdamW îl împarte la √v (tot zgomot), deci face pași de mărimea ratei de învățare cu semnul zgomotului. Orice altă ordine a sumei
+(cea pe 16 parțiale) schimbă zgomotul, deci și acești pași: 7,8·10⁻⁶ absolut, mic în valoare, mare relativ la un bias de ~5·10⁻⁴.
+PyTorch are același zgomot (verdictul trece). În test, bias-ul K e judecat separat, absolut (≤ 2·10⁻⁵, prag scris **după** rulare);
+restul în marginea scrisă înainte (1·10⁻⁵). Lecția pentru predicțiile viitoare: un parametru cu gradient adevărat 0 nu se compară
+relativ sub AdamW.
+
+Testele: T187 în `crates/nvidia-ga104/tests/sim_c160_p5_golden.rs` (`t187_the_tiled_list`, `t187_tiled_small_golden_step`,
+`t187_tiled_four_layers_and_planted_mistakes`); 892 PASS.
+
+**Ce nu e dovedit:** pe placă planul n-a rulat; `attn_*_2` așteaptă os-364, `attn_p_tile` n-a rulat niciodată pe placă.

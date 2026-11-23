@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 177 — 23 noiembrie 2026, ~07:10–07:55 (ora României), în cloud, FĂRĂ placă — **C-160 p.7: programele pe plăci legate în pas (`Plan::new_tiles`)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-358 (os-364 încă nerulat). Clonele
+de pe disc erau vechi: ramura locală adusă la `origin/g0-g2-fundatie`. Planul și predicțiile urcate **înainte** de cod (`4311134`,
+`docs/C-160_P7_PLACI_IN_PAS.md`); variantele noi din `Prog` anunțate în hub înainte de cod.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `train_step` (doar adăugări) | `Prog::AttnFwdTile2` / `AttnBackTile0_2` / `AttnBackTile2` / `AttnPTile`; `PROGRAMS_ALL` (18), `PROGRAMS_TILES` (14), `PROGRAMS_TILES_P_ONLY` (15); `Plan::new_tiles`, `new_p_only_tiles`, `tiles()`; `check_programs` pe 18; planurile vechi trimit exact ce trimiteau | PASS (compilat) |
+| T187 (3 teste) | lista: aceleași lansări / etichete / cbuf-uri, doar atenția schimbată; pasul de aur mic 10 pași `sgd` / `adamw_513`: verdictul față de PyTorch trece; „înapoi” pe plăci = „înapoi” vechi bit cu bit; P refăcut cu `attn_p_tile` = P păstrat bit cu bit; 4 straturi la fel; greșeli plantate prinse | PASS (SIMULARE) |
+| Predicția „greutăți ≤ 1e-5 rel. față de `Plan::new`” | ratată doar la `adamw_513` pe partea K a `in_proj_bias` (3,9e-3 rel., 7,8e-6 abs): gradient adevărat 0, AdamW mărește zgomotul de rotunjire; judecat separat (prag scris după rulare) | PARȚIAL (explicat) |
+| `tools/check.sh` | format, clippy, **892 de teste** (+7 ignorate), build no_std | PASS |
+| Nota pentru OS | `integration/cyber-universe/C-160_P7_placi-in-pas.md` (nimic nou pentru placă; OS-ul compilează neschimbat) | gata |
+| Planul pe RTX 3070 Ti | — | NOT TESTED |
+
+**Ce e nou pentru placă:** nimic.
+
+**Următorul pas:** C-157 p.2 — comparația probei „vechi lângă nou” (os-364) când rulează pe placă; până atunci C-157 p.7 partea a
+doua (lotul următor scris cât placa lucrează) sau C-157 p.8 (fișa de model).
+
+---
+
 ## Sesiunea 176 — 23 noiembrie 2026, ~06:11–06:35 (ora României), în cloud, FĂRĂ placă — **C-160 p.7: `attn_p_tile` (doar P, pe plăci)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-358 (os-364 cu proba `attn_*_2`
