@@ -188,3 +188,18 @@ Predicții (pentru placă; în SIMULARE doar drumul):
 3. Timpul (mediana a 5) pe `atentie-513-b4`: **~0,6–1,2 / ~0,7–1,1 / ~1,2–2,0 ms** față de 2,49 / 1,81 / 3,99 (os-358) → raportul
    vechi / nou ~2–4 la fwd, ~1,6–2,6 la back0, ~2–3,3 la back1; pe bucata #513 ~90–155 ms față de ~297 (DEDUS).
 4. Nimic nou în registre sau prin GSP; nou pentru placă doar cele 3 programe (117 / 52 / 79 registre; 37 888 / 33 024 / 33 024 B).
+
+## Rezultatul probei „vechi lângă nou” (sesiunea 174, SIMULARE, T184 `crates/nvidia-ga104/tests/sim_c157_p2_attn_tile2_probe.rs`)
+- Codul (commit `31cfa2a`): `Prog2` / `PROGS2`, `launch_bytes2`, `judge_pair` / `judge_pair_set` (`PairResult`), `Probe2` (rândurile
+  `kt atentie2 …`), `parse_attn_tile2`, `OS358_NS`. Codul vechi doar împărțit intern (`launch_bytes` cheamă `launch_common`), același
+  comportament (T176 trece neschimbat).
+- T184a: SHA-256 al celor 3 binare = cel din module; registre 117 / 52 / 79, memorie partajată 37 888 / 33 024 / 33 024; lista veche
+  neschimbată (55 / 50 / 73); pe toate 6 seturile cbuf-ul nou = cel vechi, QMD-ul diferă.
+- T184b: pe cele 5 seturi mici, lanțul vechi apoi cel nou pe același buffer reumplut, prin modelul procesorului de comenzi: 5/5 în
+  margine, **identice cuvânt cu cuvânt** (în simulare garantat: aceleași programe-model; se verifică doar drumul).
+- T184c: QMD-ul lui fwd2 cu memoria partajată veche → refuzat; un ulp plantat în dS-ul nou → în margine, „identice” = cuvinte − 1 doar la
+  back0; o citire scurtă → invalid, 0 identice; un set lipsă → proba nu trece.
+- T184d: setul mare judecat pe benzi, timpul nou lângă cel vechi („de 2,76 ori mai rapid” pe cifre inventate de test), rândurile ↔
+  parserul nou; parserul vechi nu vede rândurile `kt atentie2` și invers.
+- `tools/check.sh`: **881 de teste** (+7 ignorate), format, clippy, build no_std — PASS.
+- **Predicțiile 1–3 (pe placă): NEMĂSURATE.** Nota pentru OS: `integration/cyber-universe/C-157_P2m_atentie2-vechi-langa-nou.md`.

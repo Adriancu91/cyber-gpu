@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 174 — 23 noiembrie 2026, ~04:11–04:35 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: proba „vechi lângă nou” pentru `attn_*_2`**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-358. Planul și predicțiile urcate
+**înainte** de cod (`b6be099`, `docs/C-157_P2_ATTN_TILE2.md`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `attn_tile_probe` (adăugare) | `Prog2` / `PROGS2`, `launch_bytes2`, `judge_pair(_set)` (lanțul nou judecat cu marginile vechi + comparat cuvânt cu cuvânt cu cel vechi), `Probe2` (rânduri `kt atentie2 …`, timpul nou lângă cel vechi), `parse_attn_tile2`; interfața veche neschimbată | PASS (compilat) |
+| T184 (4 teste) | SHA / registre / memorie partajată ale celor 3 programe noi; cele două lanțuri pe 5 seturi mici prin procesorul de comenzi: identice, în margine; greșeli plantate prinse (memoria partajată veche în QMD, un ulp în dS, citire scurtă, set lipsă); rândurile ↔ parserul, parserele nu se amestecă | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy, **881 de teste** (+7 ignorate), build no_std | PASS |
+| Nota PREDARE pentru OS | `integration/cyber-universe/C-157_P2m_atentie2-vechi-langa-nou.md` | gata |
+| Pe placă: aceiași biți ca vechii, ~0,6–1,2 / ~0,7–1,1 / ~1,2–2,0 ms | — | NOT TESTED |
+
+**Ce e nou pentru placă:** cele 3 programe `attn_fwd_tile2` / `attn_back_tile0_2` / `attn_back_tile_2` (117 / 52 / 79 registre,
+37 888 / 33 024 / 33 024 B partajați); nimic în registre sau prin GSP.
+
+**Următorul pas:** C-157 p.2 — comparația, când OS-ul rulează proba nouă pe placă; până atunci C-160 p.7 (`attn_p`, când OS-ul adaugă
+`T::AttnP`) sau următorul punct nefăcut din C-157.
+
+---
+
 ## Sesiunea 173 — 23 noiembrie 2026, ~03:10–03:45 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: `attn_back_tile0_2` și `attn_back_tile_2`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-358. Clonele vechi de pe disc nu se
