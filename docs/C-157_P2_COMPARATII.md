@@ -28,6 +28,26 @@ Predicții (scrise acum):
 4. Remediul care urmează (dacă 1–3 țin): **citiri fără ramură** — adresa strânsă în marginea bufferului, citirea mereu, apoi `sel`
    0 / valoare (aceiași biți); modelul dă cât ar câștiga fiecare program.
 
+### Rezultatul analizei (sesiunea 178, DEDUS; `python3 tools/buget-antrenare/nak_bucle.py`, funcția `os364`, coloana `sir`)
+- **Predicția 1: DA.** Așteptări în șir pe o pereche de plăci, vechi = nou: `fwd` K 16 = 16, P + V 32 = 32, faza B 16 = 16; `back0`
+  dO + V 32 = 32, P 16 = 16, trecerea a doua 32 = 32 pe iterație; `back1` dQ 32 = 32, dK / dV 32 = 32. **F3 n-a câștigat nimic**: NAK
+  pune fiecare citire păzită în zona ei și așteaptă rezultatul la ieșire (îmbinarea cu 0,0), deci citirile au rămas una după alta.
+  Tot câștigul măsurat vine din F1 (rânduri de 65), F2 (fără gardă sub diagonală) și F4 (bucle desfăcute).
+- **Predicția 2: DA (la limită).** Măsurat / model: vechi ×2,83 / ×3,07 / ×4,14, nou ×2,82 / ×3,12 / ×3,76 → între cel mai mic și cel mai
+  mare ×1,47 (pragul scris ×1,6; la os-358, fără așteptările numărate: ×2,8–×5,2). Factorul comun ~×3 rămâne **NECUNOSCUT**; o latență a
+  memoriei mai mare decât 500 de cicluri nu-l explică uniform (la 1 000–3 000 de cicluri rapoartele se împrăștie mai tare, ×1,75–×2,27),
+  iar `back1` iese mereu cel mai lent față de model (candidat: conflictele de bancă din dK / dV, socotite prea optimist).
+- **Predicția 3: DA.** Câștigul nou / vechi prezis de model: ×1,63 / ×1,19 / ×1,61 față de ×1,63 / ×1,17 / ×1,77 măsurat (în ±10 %).
+  Deci modelul pe bucle ține pentru **diferențe**, chiar dacă nu știe factorul absolut — bun pentru a alege ce tăiem.
+- **Ce tai mai departe (predicția 4, DEDUS cu factorul măsurat al fiecărui program):** citiri fără ramură (adresa strânsă în buffer,
+  citirea mereu, apoi `sel` 0 / valoare; aceleași sume, aceiași biți) → **fwd2 ~1,53 → ~0,76 ms, back0_2 ~1,54 → ~0,63, back1_2
+  ~2,25 → ~1,76**; pe bucata #513 ~191 → **~113 ms** (PyTorch: 156 ms toată bucata). La `back0_2` cea mai mare parte e trecerea a doua
+  (32 de citiri în șir × 8 plăci pe bloc); acolo și citirile de deasupra diagonalei se pot sări (j > i scrie doar 0). Candidat separat,
+  NECUNOSCUT: citirile din bufferele scrise (`p` la fwd, `ds` la back0) ies `ld.global.strong.sys` (fără cache-ul L1), cele doar citite
+  `constant`.
+- **Ce NU s-a schimbat:** corectitudinea și pasul de aur nu sunt atinse; generarea neatinsă. Nimic nou de cerut OS-ului din această
+  comparație; programele `_3` (citiri fără ramură) vin ca adăugare, cu plan și predicții întâi, și o probă „vechi lângă nou” ca os-364.
+
 ## os-358 `test-placa --atentie-placi` (atenția de antrenare „pe plăci”, 23 nov 2026, 00:36) — sesiunea 171
 Surse: `Cyber-hub/rezultate/os-automat/2026-11-23/ciclu-auto-20261123-0036.txt`, `-0038.txt`, `gpu-jurnal-055.txt` (nucleul cu
 `cyber-gpu 44a4d16`). Predicțiile scrise înainte: `docs/C-160_P7_ATENTIA_PROBA.md` (`608f377`).

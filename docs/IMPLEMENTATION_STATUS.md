@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 178 — 23 noiembrie 2026, ~08:11–08:50 (ora României), în cloud, FĂRĂ placă — **C-157 p.2: comparația os-364 (atenția „vechi lângă nou”)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. os-364 a rulat pe placă (07:42): 6/6 în margine, **6/6 identice bit cu
+bit cu programele vechi**, timpii 2,50 → 1,53 / 1,81 → 1,54 / 3,99 → 2,25 ms (mai rapid, peste estimare). Planul și predicțiile analizei
+urcate **înainte** de socoteli (`eb4044f`, `docs/C-157_P2_COMPARATII.md`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Comparația os-364 | corectitudinea = toate predicțiile; timpul peste estimare la toate trei | scris |
+| `nak_bucle.py` | coloana `sir` (așteptările memoriei în șir, numărate din `wr:` / `wt=`); modelul `os364()` pentru cele 6 programe | PASS (rulat) |
+| Predicția 1 (F3 = 0 câștig) | așteptările în șir vechi = nou pe toate plăcile: citirile păzite de `if` așteaptă rezultatul la ieșirea din zonă | DA |
+| Predicția 2 (rapoarte strânse) | măsurat / model ×2,82–×4,14 (×1,47 între ele, prag ×1,6) | DA |
+| Predicția 3 (câștig nou / vechi ±25 %) | model ×1,63 / ×1,19 / ×1,61, măsurat ×1,63 / ×1,17 / ×1,77 | DA |
+| Ce urmează (citiri fără ramură) | DEDUS: ~0,76 / ~0,63 / ~1,76 ms; bucata #513 ~191 → ~113 ms | NOT TESTED |
+| `tools/check.sh` | format, clippy, **892 de teste** (+7 ignorate), build no_std (ținta no_std instalată în clona nouă) | PASS |
+
+**Ce e nou pentru placă:** nimic.
+
+**Următorul pas:** programele `_3` cu citiri fără ramură (plan + predicții întâi, câte unul, începând cu `attn_back_tile0_3`: cea mai
+mare parte e trecerea a doua) și proba „vechi lângă nou”; altfel C-157 p.7 partea a doua sau p.8.
+
+---
+
 ## Sesiunea 177 — 23 noiembrie 2026, ~07:10–07:30 (ora României), în cloud, FĂRĂ placă — **C-160 p.7: programele pe plăci legate în pas (`Plan::new_tiles`)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-358 (os-364 încă nerulat). Clonele

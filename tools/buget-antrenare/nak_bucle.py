@@ -62,6 +62,32 @@ def stats(blocks, ids):
     return s
 
 
+WT = re.compile(r"wt=([01]+)")
+WR = re.compile(r"wr:(\d)")
+
+
+def waits(blocks, ids):
+    """Memory waits in a row (os-364, C-157 p.2): walking the loop's own blocks in listing order, a global load whose
+    scoreboard ("wr:N") is waited on ("wt=" with bit N) before the next load is issued counts one full memory latency.
+    Loads that share a scoreboard and are waited on together count once. Path = every `if` taken (as `stats`)."""
+    pending = set()
+    n = 0
+    for b in sorted(ids):
+        for ins in blocks[b]["ins"]:
+            m = WT.search(ins)
+            if m and pending:
+                bits = m.group(1)[::-1]
+                hit = {sb for sb in pending if sb < len(bits) and bits[sb] == "1"}
+                if hit:
+                    n += 1
+                    pending -= hit
+            if "ld.global" in ins:
+                w = WR.search(ins)
+                if w:
+                    pending.add(int(w.group(1)))
+    return n
+
+
 def loops(blocks):
     """Natural loops: for a back edge tail -> head (head <= tail), the head plus every block that reaches the tail
     walking predecessors without passing the head. Innermost (fewest blocks) first."""
@@ -92,16 +118,17 @@ def main():
     for path in sys.argv[1:]:
         blocks = parse(path)
         print(f"== {path}")
-        print("  bucla (blocuri)   instr  stall  ffma lds32 lds128 ldg stg sts bssy bar")
+        print("  bucla (blocuri)   instr  stall  ffma lds32 lds128 ldg stg sts bssy bar sir")
         found = loops(blocks)
         for head, tail, body in found:
             inner = set()
             for h2, t2, b2 in found:
                 if set(b2) < set(body):
                     inner |= set(b2)
-            s = stats(blocks, [x for x in body if x not in inner])
+            own = [x for x in body if x not in inner]
+            s = stats(blocks, own)
             print(f"  {head:4d}..{tail:<6d} {s['instr']:9d} {s['stall']:6d} {s['ffma']:5d} {s['lds32']:5d} {s['lds128']:6d}"
-                  f" {s['ldg']:3d} {s['stg']:3d} {s['sts']:3d} {s['bssy']:4d} {s['bar']:3d}")
+                  f" {s['ldg']:3d} {s['stg']:3d} {s['sts']:3d} {s['bssy']:4d} {s['bar']:3d} {waits(blocks, own):3d}")
 
 
 
@@ -182,8 +209,120 @@ def os358():
               f"   {m*1e3:6.2f} ms   x{m/lo:.1f}")
 
 
+# ---- os-364 (C-157 p.2, session 178): old and new side by side, memory waits COUNTED from the listing ----
+# Same constants as os358(). Per loop: (head, per, count, warps of 8, waits LDS?, shared wavefronts, waits override).
+# per: "pair" = every lower (row tile, column tile) pair, "below" = pairs under the diagonal, "diag" = diagonal pairs,
+# "pair2" / "below2" / "diag2" = the same twice (dK and dV passes), "block" = once per block.
+# Waits = `waits()` on the listing (the path where every `if` is taken), except where an override says how many of the
+# counted loads really run (attn_back_tile / _2 tile loads: `pass == 0 ? ds : p` -> half of the loads in the listing).
+BELOW = 48 * 28
+DIAG = 48 * 8
+PER = {"pair": PAIRS, "pair2": 2 * PAIRS, "below": BELOW, "below2": 2 * BELOW, "diag": DIAG, "diag2": 2 * DIAG,
+       "block": BLOCKS}
+
+PROGRAMS364 = {
+    # name: (listing, warps per SMSP, measured ns in os-364, loops)
+    "attn_fwd_tile": ("tools/nak/out/attn_fwd_tile.sm86.txt", 4, 2_497_280, [
+        (1, "block", 16, 8, False, 1, None), (11, "pair", 16, 8, False, 1, None), (17, "pair", 64, 8, True, 72, None),
+        (7, "pair", 1, 8, False, 0, None), (74, "pair", 1, 8, False, 0, None), (132, "pair", 1, 8, False, 8, None),
+        (281, "pair", 16, 8, False, 1, None), (287, "pair", 64, 8, True, 12, None),
+    ]),
+    "attn_fwd_tile2": ("tools/nak/out/attn_fwd_tile2.sm86.txt", 4, 1_527_872, [
+        (49, "pair", 1, 8, False, 16, None),     # K tile load (16 guarded loads) + S to P
+        (101, "pair", 16, 8, True, 32, None),    # phase A, unrolled by 4, rows of 65
+        (161, "pair", 1, 8, False, 0, None),     # phase B: exp, P re-read and re-written
+        (219, "pair", 1, 8, False, 16, None),    # phase C outer: P = x * inv, V tile load
+        (417, "below", 16, 8, True, 32, None),   # phase C under the diagonal, no guard
+        (424, "diag", 64, 8, True, 8, None),     # phase C on the diagonal, guarded
+    ]),
+    "attn_back_tile0": ("tools/nak/out/attn_back_tile0.sm86.txt", 6, 1_814_272, [
+        (6, "pair", 16, 8, False, 1, None), (15, "pair", 64, 8, True, 12, None), (2, "pair", 1, 8, False, 4, None),
+        (66, "pair", 16, 8, False, 1, None), (73, "pair", 64, 2, True, 2, None), (90, "block", 8, 8, False, 0, None),
+    ]),
+    "attn_back_tile0_2": ("tools/nak/out/attn_back_tile0_2.sm86.txt", 6, 1_544_416, [
+        (2, "pair", 1, 8, False, 4, None),       # dS store, dP tile to shared
+        (6, "pair", 2, 8, False, 8, None),       # dO tile load, 8 at a time
+        (33, "pair", 2, 8, False, 8, None),      # V tile load
+        (162, "pair", 2, 8, False, 8, None),     # P tile load
+        (60, "pair", 16, 8, True, 48, None),     # dP = dO . V^T, unrolled by 4
+        (191, "below", 16, 2, True, 8, None),    # dot chain under the diagonal (2 warps of 8)
+        (198, "diag", 16, 2, True, 8, None),     # dot chain on the diagonal
+        (225, "block", 8, 8, False, 0, None),    # pass 2: dS = P (dP - dot) scale over the whole row
+    ]),
+    "attn_back_tile": ("tools/nak/out/attn_back_tile.sm86.txt", 6, 3_994_080, [
+        (6, "pair", 16, 8, False, 1, None), (15, "pair", 64, 8, True, 12, None), (2, "pair", 1, 8, False, 0, None),
+        (86, "pair2", 16, 8, False, 1, 2), (104, "pair2", 64, 8, True, 5, None), (82, "pair2", 1, 8, False, 0, None),
+        (81, "block", 2, 8, False, 0, None),
+    ]),
+    "attn_back_tile_2": ("tools/nak/out/attn_back_tile_2.sm86.txt", 6, 2_250_880, [
+        (2, "pair", 1, 8, False, 0, None),       # dQ outer
+        (6, "pair", 8, 8, False, 4, None),       # dQ: dS + K tile load, 2 + 2 at a time
+        (22, "below", 16, 8, True, 32, None),    # dQ inner under the diagonal
+        (29, "diag", 16, 8, True, 32, None),     # dQ inner on the diagonal, guarded
+        (132, "block", 2, 8, False, 0, None),    # pass (dK, dV)
+        (133, "pair2", 1, 8, False, 0, None),    # it loop
+        (137, "pair2", 4, 8, False, 8, 8),       # tile load, 4 + 4 at a time (16 in the listing, 8 run)
+        (204, "below2", 16, 8, True, 32, None),  # dK / dV inner under the diagonal
+        (211, "diag2", 16, 8, True, 32, None),   # dK / dV inner on the diagonal, guarded
+    ]),
+}
+
+
+def model364(name, lw=LDG_WAIT, drop_waits=False):
+    """(issue, chain, shared, waits per block-pair summary) in seconds for one program; drop_waits=True models the
+    branch-free loads (every tile load / pass waited on once per iteration instead of once per load)."""
+    path, w, measured, items = PROGRAMS364[name]
+    blocks = parse(path)
+    found = {h: (h, t, b) for h, t, b in loops(blocks)}
+    issue = lat = shared = 0.0
+    mem_lat = 0.0
+    for head, per, count, warps, lds, wf, override in items:
+        h, t, body = found[head]
+        inner = set()
+        for h2, t2, b2 in found.values():
+            if set(b2) < set(body):
+                inner |= set(b2)
+        own = [x for x in body if x not in inner]
+        s = stats(blocks, own)
+        nw = waits(blocks, own) if override is None else override
+        if drop_waits and nw > 1:
+            nw = 1
+        times = PER[per] * count
+        issue += times * warps * s["instr"]
+        chain = s["stall"] + (LDS_WAIT if lds else 0) + nw * lw
+        lat += times * 8 * chain
+        mem_lat += times * 8 * nw * lw
+        shared += times * warps * wf
+    k = SMSPS * CLOCK_HZ
+    return issue / k, lat / (k * w), shared / 48 / CLOCK_HZ, mem_lat / (k * w), measured / 1e9
+
+
+def os364():
+    print("\nos-364, setul atentie-513-b4, vechi langa nou (DEDUS din listari; asteptarile memoriei NUMARATE; 1,77 GHz):")
+    print("  program             emisie  lant-bloc (din el memoria)  partajata   model max   masurat   masurat/max")
+    ratios = {}
+    for name in PROGRAMS364:
+        i, l, sh, mem, m = model364(name)
+        lo = max(i, l, sh)
+        ratios[name] = (lo, m)
+        print(f"  {name:18s} {i*1e3:6.2f} {l*1e3:9.2f}  ({mem*1e3:5.2f})        {sh*1e3:8.2f}    {lo*1e3:6.2f} ms"
+              f"   {m*1e3:6.2f} ms   x{m/lo:.2f}")
+    print("  castigul nou / vechi:   model      masurat")
+    for old, new in (("attn_fwd_tile", "attn_fwd_tile2"), ("attn_back_tile0", "attn_back_tile0_2"),
+                     ("attn_back_tile", "attn_back_tile_2")):
+        print(f"  {new:18s}      x{ratios[old][0]/ratios[new][0]:.2f}      x{ratios[old][1]/ratios[new][1]:.2f}")
+    print("  citiri fara ramura (o asteptare pe iteratie de incarcare), programele noi, model max x factorul masurat:")
+    for name in ("attn_fwd_tile2", "attn_back_tile0_2", "attn_back_tile_2"):
+        lo, m = ratios[name]
+        i, l, sh, mem, _ = model364(name, drop_waits=True)
+        lo2 = max(i, l, sh)
+        print(f"  {name:18s}  model {lo*1e3:5.2f} -> {lo2*1e3:5.2f} ms; cu factorul x{m/lo:.2f}: {m*1e3:5.2f} -> "
+              f"~{lo2*m/lo*1e3:5.2f} ms")
+
+
 if __name__ == "__main__" and len(sys.argv) == 1:
     os358()
+    os364()
 
 
 if __name__ == "__main__" and len(sys.argv) > 1:
