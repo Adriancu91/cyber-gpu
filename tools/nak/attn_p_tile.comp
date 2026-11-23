@@ -1,0 +1,201 @@
+// C-160 point 7 (docs/C-160_P7_ATTN_P_TILE.md, plan written before this code, commit e80ffbe): attn_fwd_tile2 WITHOUT
+// P.V — only the softmax probabilities P, to rebuild a layer's P in the backward pass. Phases A and B are copied
+// literally from attn_fwd_tile2.comp (the same operations in the same order, so the same P bits, predicted); phase C
+// keeps only what attn_fwd_tile2's phase C writes into P: p * (1/sum) for j <= i, +0 for j > i (every tile jt < ceil(T/64)).
+// No V tile, no P.V, att (cbuf 0x38) never read or written. The same arguments, grid [ceil(T/64), H, B], blocks of 256,
+// shared size (phase A still needs the Q / K tiles) and one barrier. CPU model: gpu_compute::layer::attn_p_tile_row_gpu
+// (the P part of attn_fwd_tile_row_gpu).
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_control_flow_attributes : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Buf { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args {
+    In qkv; Buf p; Out att;
+    uint t; uint c; uint heads; uint d; float scale;
+} args;
+
+shared float qs[64 * 65];   // phase A: Q tile [row][e]; phase C: P tile [row][j]; rows of 65 (F1)
+shared float ks[64 * 65];   // phase A: K tile [j][e];   phase C: V tile [j][e];   rows of 65 (F1)
+shared float red[64 * 16];  // per row: one value per tx (maxima, then partial sums)
+shared float rm[64];
+shared float rinv[64];
+
+void main() {
+    uint T = args.t;
+    uint C = args.c;
+    uint d = args.d;
+    uint b = gl_WorkGroupID.z;
+    uint h = gl_WorkGroupID.y;
+    uint bx = gl_WorkGroupID.x;
+    uint i0 = bx * 64u;
+    uint lid = gl_LocalInvocationID.x;
+    uint tx = lid & 15u;
+    uint ty = lid >> 4u;
+    uint ntiles = (T + 63u) / 64u;
+    uint row3 = 3u * C;
+    uint qrow = ty * 65u;   // first element of row ty in a 65-wide tile (rows ty + 16a: + 1040a)
+    uint krow = tx * 65u;
+
+    // phase A
+    {
+        float ld[16];
+        [[unroll]] for (uint n = 0u; n < 16u; n++) {
+            uint idx = lid + 256u * n;
+            uint r = idx >> 6u;
+            uint e = idx & 63u;
+            uint i = i0 + r;
+            ld[n] = 0.0;
+            if (i < T && e < d) {
+                ld[n] = args.qkv.v[(b * T + i) * row3 + h * d + e];
+            }
+        }
+        [[unroll]] for (uint n = 0u; n < 16u; n++) {
+            uint idx = lid + 256u * n;
+            qs[(idx >> 6u) * 65u + (idx & 63u)] = ld[n];
+        }
+    }
+    float mx[4];
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        mx[a] = -3.402823466e38;
+    }
+    for (uint jt = 0u; jt <= bx; jt++) {
+        barrier();
+        {
+            float ld[16];
+            [[unroll]] for (uint n = 0u; n < 16u; n++) {
+                uint idx = lid + 256u * n;
+                uint r = idx >> 6u;
+                uint e = idx & 63u;
+                uint j = jt * 64u + r;
+                ld[n] = 0.0;
+                if (j < T && e < d) {
+                    ld[n] = args.qkv.v[(b * T + j) * row3 + C + h * d + e];
+                }
+            }
+            [[unroll]] for (uint n = 0u; n < 16u; n++) {
+                uint idx = lid + 256u * n;
+                ks[(idx >> 6u) * 65u + (idx & 63u)] = ld[n];
+            }
+        }
+        barrier();
+        float acc[16];
+        [[unroll]] for (uint n = 0u; n < 16u; n++) {
+            acc[n] = 0.0;
+        }
+        uint d4 = d & ~3u;
+        for (uint e0 = 0u; e0 < d4; e0 += 4u) {
+            // One base per operand and iteration; the rest constant (folded into the shared load's offset).
+            uint qb = qrow + e0;
+            uint kb0 = krow + e0;
+            [[unroll]] for (uint u = 0u; u < 4u; u++) {
+                float qa[4];
+                float kb[4];
+                [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                    qa[a] = qs[qb + (1040u * a + u)];
+                    kb[a] = ks[kb0 + (1040u * a + u)];
+                }
+                [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                    [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                        acc[a * 4u + k] = fma(qa[a], kb[k], acc[a * 4u + k]);
+                    }
+                }
+            }
+        }
+        for (uint e = d4; e < d; e++) {
+            float qa[4];
+            float kb[4];
+            [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                qa[a] = qs[(ty + 16u * a) * 65u + e];
+                kb[a] = ks[(tx + 16u * a) * 65u + e];
+            }
+            [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                    acc[a * 4u + k] = fma(qa[a], kb[k], acc[a * 4u + k]);
+                }
+            }
+        }
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint i = i0 + ty + 16u * a;
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                uint j = jt * 64u + tx + 16u * k;
+                if (i < T && j <= i) {
+                    float s = acc[a * 4u + k] * args.scale;
+                    args.p.v[((b * args.heads + h) * T + i) * T + j] = s;
+                    mx[a] = max(mx[a], s);
+                }
+            }
+        }
+    }
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        red[(ty + 16u * a) * 16u + tx] = mx[a];
+    }
+    barrier();
+    if (lid < 64u) {
+        float m = -3.402823466e38;
+        for (uint u = 0u; u < 16u; u++) {
+            m = max(m, red[lid * 16u + u]);
+        }
+        rm[lid] = m;
+    }
+    barrier();
+
+    // phase B
+    float ps[4];
+    float rowm[4];
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        ps[a] = 0.0;
+        rowm[a] = rm[ty + 16u * a];
+    }
+    for (uint jt = 0u; jt <= bx; jt++) {
+        [[unroll]] for (uint k = 0u; k < 4u; k++) {
+            uint j = jt * 64u + tx + 16u * k;
+            [[unroll]] for (uint a = 0u; a < 4u; a++) {
+                uint i = i0 + ty + 16u * a;
+                if (i < T && j <= i) {
+                    uint at = ((b * args.heads + h) * T + i) * T + j;
+                    float x = exp(args.p.v[at] - rowm[a]);
+                    args.p.v[at] = x;
+                    ps[a] = ps[a] + x;
+                }
+            }
+        }
+    }
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        red[(ty + 16u * a) * 16u + tx] = ps[a];
+    }
+    barrier();
+    if (lid < 64u) {
+        float sum = 0.0;
+        for (uint u = 0u; u < 16u; u++) {
+            sum = sum + red[lid * 16u + u];
+        }
+        rinv[lid] = 1.0 / sum;
+    }
+
+    // phase C (P only): each thread normalizes the very entries it exponentiated in phase B (same (a, k) -> (i, j)).
+    barrier();
+    float inv[4];
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        inv[a] = rinv[ty + 16u * a];
+    }
+    for (uint jt = 0u; jt < ntiles; jt++) {
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint i = i0 + ty + 16u * a;
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                uint j = jt * 64u + tx + 16u * k;
+                if (i < T && j < T) {
+                    uint at = ((b * args.heads + h) * T + i) * T + j;
+                    float pv = 0.0;
+                    if (j <= i) {
+                        pv = args.p.v[at] * inv[a];
+                    }
+                    args.p.v[at] = pv;
+                }
+            }
+        }
+    }
+}

@@ -1607,6 +1607,68 @@ pub fn attn_fwd_tile_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// The CPU stand-in for C-160 point 7's `attn_p_tile.sm86.sass` (`docs/C-160_P7_ATTN_P_TILE.md`): `attn_fwd_tile2`
+/// without P·V — the cbuf0, blocks and grid of [`attn_fwd_tile_on_cpu`], but only P is written: every row
+/// (b, h, i < min(T, 64·x)) is `gpu_compute::layer::attn_p_tile_row_gpu`; `att` (0x38) is never touched. d > 64, a grid
+/// past H or past ⌈T/64⌉, or d ≠ C / H are refused as not modelled.
+pub fn attn_p_tile_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    use gpu_compute::layer::{ATTN_TILE_MAX_D, AttnShape, attn_p_tile_row_gpu};
+    if l.block != [256, 1, 1] {
+        return Err(bad("SIM: attn_p_tile cere blocuri de 256x1x1"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 || l.mem.read_u32(l.cbuf0 + 0x8)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0..0x8) diferita de 0, nemodelata",
+        ));
+    }
+    let r64 = |l: &Launch<'_>, o: u64| l.mem.read_u64(l.cbuf0 + o);
+    let r32 = |l: &Launch<'_>, o: u64| l.mem.read_u32(l.cbuf0 + o);
+    let (qkv, p) = (r64(l, 0x28)?, r64(l, 0x30)?);
+    let (t, c, heads, d) = (
+        r32(l, 0x40)? as usize,
+        r32(l, 0x44)? as usize,
+        r32(l, 0x48)? as usize,
+        r32(l, 0x4c)? as usize,
+    );
+    let scale = f32::from_bits(r32(l, 0x50)?);
+    let [gx, gy, gz] = l.grid.map(|g| g as usize);
+    if heads == 0 || d == 0 || d * heads != c || t == 0 {
+        return Err(bad("SIM: attn_p_tile: d != C/H sau forma goala, nemodelat"));
+    }
+    if d > ATTN_TILE_MAX_D {
+        return Err(bad(
+            "SIM: attn_p_tile: d > 64 (placile partajate), nemodelat",
+        ));
+    }
+    if gy > heads || gx > t.div_ceil(64) {
+        return Err(bad("SIM: attn_p_tile: grila trece de H / T, nemodelata"));
+    }
+    if gz == 0 || gy == 0 || gx == 0 {
+        return Ok(());
+    }
+    let s = AttnShape {
+        batch: gz,
+        t,
+        c,
+        heads,
+    };
+    let (nq, _, _) = s
+        .sizes()
+        .ok_or_else(|| bad("SIM: attn_p_tile: forma prea mare"))?;
+    let qkv_v = l.mem.read_f32s(qkv, nq)?;
+    let rows = t.min(64 * gx);
+    for b in 0..gz {
+        for h in 0..gy {
+            for i in 0..rows {
+                let row = attn_p_tile_row_gpu(&s, &qkv_v, scale, b, h, i);
+                let at = (((b * heads + h) * t + i) * t) as u64;
+                l.mem.write_f32s(p + 4 * at, &row);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn attn_fwd_blocks(l: &mut Launch<'_>, block: u32) -> GpuResult<()> {
     attn_fwd_blocks_with(l, block, true)
 }

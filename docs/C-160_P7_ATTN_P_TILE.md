@@ -42,5 +42,27 @@ Program nou `tools/nak/attn_p_tile.comp`, **lângă** cele vechi (nimic schimbat
 Nu schimbă niciun program existent, nici `train_step` (`Prog`, `PROGRAMS*`, `Plan::*`), nici proba `attn_tile_probe`. Nimic nou
 predat pe placă în această sesiune (vine după ce os-364 arată că `attn_fwd_tile2` dă biții lui `attn_fwd_tile` pe placă).
 
-## Rezultatul (după cod)
-(se completează după cod)
+## Rezultatul (după cod, sesiunea 176)
+Mesa NAK 25.0.7 reconstruit în cloud: `attn_fwd_tile2` (`2e8cda57…`) și `attn_p` (`786ae995…`) au ieșit **identice**.
+
+| Predicția | Ieșit | |
+|---|---|---|
+| 1. ≤ 117 registre, mai puține instrucțiuni, 37 888 B, 1 barieră, fără locală / `atom` | **116 registre**, **2 484** de instrucțiuni (`attn_fwd_tile2`: 3 815), 39 744 de octeți; SHA-256 `3da85d6b8ec647c0641b2e9b4f8d92fd29a05cd7296b716b28eaedc8dbc96b71`; nicio memorie locală, nicio `atom` / `red`, `bar.sync` prezent | PASS |
+| 2. aceleași `mufu`, aceleași feluri de operații, `att` necitit | 16 × `mufu.exp2` + 1 × `mufu.rcp` (= `attn_fwd_tile2`); felurile: `fadd.ftz`, `ffma.ftz`, `fmnmx.ftz`, `fmul.ftz` — toate și în `attn_fwd_tile2`; `c[0x0][0x38]` / `0x3c` nu apar în cod | PASS |
+| 3. P bit cu bit = `attn_fwd_tile` și `attn_fwd_tile2`, `att` neatins | 10 forme (T173 / T181): **bit cu bit** cu ambele și cu modelul; `att` rămâne santinelă; nimic după P; P suprascris cu NaN și refăcut de `attn_p_tile` = P-ul lăsat de `attn_fwd_tile`, `att` neschimbat | PASS (SIMULARE) |
+| 4. greșeli plantate | QMD cu 37 376 B refuzat, grila cu un bloc lipsă lasă exact 2 × 2 × 2 × 130 valori nescrise, bloc 128 refuzat, grilă peste ⌈T/64⌉ refuzată, d > 64 refuzat, scale greșit schimbă P | PASS (SIMULARE) |
+| 5. costul 0,45–0,80 din `attn_fwd_tile2` | din listare, pe o placă de sub diagonală (d = 64), instrucțiunile emise de un fir: `attn_fwd_tile2` ≈ 1 744 (bucla A, 16 × 109) + 828 (urcarea K + s) + 427 (faza B) + 1 343 (normalizarea + urcarea V) + 1 696 (P·V, 16 × 106) ≈ 6 040; `attn_p_tile` ≈ 1 744 + 810 + 403 + 541 ≈ 3 500 → **≈ 0,58** (DEDUS) | PASS (DEDUS), nemăsurat |
+
+Testele: T186 în `crates/nvidia-ga104/tests/sim_attn_p_tile.rs` (5 teste). Modelul: `gpu_sim::cmdproc::attn_p_tile_on_cpu` →
+`gpu_compute::layer::attn_p_tile_row_gpu` (partea P a lui `attn_fwd_tile_row_gpu`, care acum o apelează — aceeași funcție).
+Bucla interioară a fazei A e identică în ambele listări (109 instrucțiuni la 64 `ffma`, 0 `bssy`).
+
+**Observație (DEDUS):** faza C nouă (scrierea lui P) are 541 de instrucțiuni pe placă cu 32 de zone `bssy` — gărzile `i < T`,
+`j < T`, `j <= i` pe fiecare valoare. Pe plăcile de sub diagonală gărzile `j` sunt mereu adevărate; o variantă fără ele (ca F2)
+ar scurta faza C, dar câștigul real depinde de cât e memorie pe placă — de văzut după os-364 (idee, nefăcut).
+
+**Ce nu e dovedit:** pe placă, „același P” se sprijină pe aceleași instrucțiuni pe aceleași numere (fazele A și B copiate literal,
+verificat static) — de măsurat o dată pe placă. Timpul (≈ 0,58) e nemăsurat.
+
+**Ce e nou pentru placă când va fi predat:** doar programul `attn_p_tile` (116 registre, 37 888 B partajați, o barieră); nimic în
+registre sau prin GSP. Predarea vine după ce os-364 arată `attn_fwd_tile2` pe placă (același cod în fazele A și B).

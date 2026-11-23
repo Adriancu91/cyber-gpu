@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 176 — 23 noiembrie 2026, ~06:11–06:35 (ora României), în cloud, FĂRĂ placă — **C-160 p.7: `attn_p_tile` (doar P, pe plăci)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-358 (os-364 cu proba `attn_*_2`
+încă în CI la OS). Clonele vechi de pe disc erau pe un HEAD detașat: lucrat din clone noi. Mesa NAK 25.0.7 reconstruit în cloud
+(`attn_fwd_tile2` și `attn_p` identice). Planul și predicțiile urcate **înainte** de cod (`e80ffbe`, `docs/C-160_P7_ATTN_P_TILE.md`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Program nou `attn_p_tile` (lângă cele vechi) | fazele A și B copiate literal din `attn_fwd_tile2`, faza C doar scrie P (p · 1/sum, +0 deasupra diagonalei); fără placa V, fără P·V, `att` necitit; SHA-256 `3da85d6b…bc96b71`, **116 registre**, 2 484 de instrucțiuni (`attn_fwd_tile2`: 3 815), 37 888 B partajați | PASS (compilat) |
+| Rust (doar adăugări) | `nvidia_ga104::attn_p_tile`, `gpu_compute::layer::attn_p_tile_row_gpu` / `attn_p_tile_gpu` (`attn_fwd_tile_row_gpu` o apelează acum — aceiași biți), `gpu_sim::cmdproc::attn_p_tile_on_cpu`; `train_step` neschimbat | PASS |
+| T186 (5 teste) | listarea: aceleași `mufu`, felurile de operații ⊂ `attn_fwd_tile2`, `att` necitit; 10 forme: P **bit cu bit** = `attn_fwd_tile` = `attn_fwd_tile2`, `att` neatins; P suprascris refăcut exact; greșeli plantate prinse | PASS (SIMULARE) |
+| `tools/check.sh` | format, clippy, **889 de teste** (+7 ignorate), build no_std | PASS |
+| Costul față de `attn_fwd_tile2` | din listare, pe o placă de sub diagonală: ≈ 0,58 din instrucțiuni | DEDUS |
+| `attn_p_tile` pe RTX 3070 Ti | — | NOT TESTED |
+
+**Ce e nou pentru placă:** nimic predat încă (vine după ce os-364 arată `attn_fwd_tile2` pe placă — fazele A și B sunt același cod).
+
+**Următorul pas:** C-157 p.2 — comparația probei „vechi lângă nou” (`attn_*_2`, os-364) când rulează pe placă; până atunci C-157 p.8
+(fișa de model / pachetele de calcul) sau, în C-160 p.7, legarea programelor pe plăci în pas (un `Prog` nou = un rând în OS, anunțat
+întâi în hub).
+
+---
+
 ## Sesiunea 175 — 23 noiembrie 2026, ~05:10–05:23 (ora României), în cloud, FĂRĂ placă — **C-160 p.7: `attn_p` legat în pas (`Plan::new_p_only`)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Niciun test nou pe placă de la os-358 (proba `attn_*_2` încă nerulată).

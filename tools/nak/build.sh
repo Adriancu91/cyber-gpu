@@ -38,6 +38,7 @@
 #   sh tools/nak/build.sh attn_fwd_tile2 # C-157 point 2: attn_fwd_tile, same bits, shorter loops (session 172)
 #   sh tools/nak/build.sh attn_back_tile0_2 # C-157 point 2: attn_back_tile0, same bits, shorter loops (session 173)
 #   sh tools/nak/build.sh attn_back_tile_2 # C-157 point 2: attn_back_tile, same bits, shorter loops (session 173)
+#   sh tools/nak/build.sh attn_p_tile    # C-160 point 7: attn_fwd_tile2 without P·V, only P (session 176)
 #   sh tools/nak/build.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): apt install glslang-tools spirv-tools libvulkan-dev libdrm-dev
@@ -140,6 +141,9 @@ attn_p)
     ;;
 attn_fwd_tile2)
     exec sh "$0" kernel attn_fwd_tile2 44
+    ;;
+attn_p_tile)
+    exec sh "$0" kernel attn_p_tile 44
     ;;
 embed_dev)
     exec sh "$0" kernel embed_dev 44

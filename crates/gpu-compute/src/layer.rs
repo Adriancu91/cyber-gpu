@@ -918,19 +918,19 @@ pub fn attn_fwd_gpu(s: &AttnShape, qkv: &[f32], scale: f32) -> Option<(Vec<f32>,
 /// The largest head width `attn_fwd_tile.comp` takes (its shared tiles are 64 wide).
 pub const ATTN_TILE_MAX_D: usize = 64;
 
-/// One row (b, h, i) of C-160 point 7's attention forward "on tiles", `attn_fwd_tile.comp`
-/// (`docs/C-160_P7_ATENTIA_PE_PLACI.md`): s_j, m, x_j and att in exactly the operations and order of
-/// [`attn_fwd_row_gpu`]; only the row sum differs — 16 partial `fadd.ftz` chains from 0 (partial u over j ≡ u mod 16,
-/// j ascending, j ≤ i), then one `fadd.ftz` chain from 0 over u = 0 … 15. For i ≤ 15 every partial holds at most one
-/// x, so the sum (and the row) is [`attn_fwd_row_gpu`]'s bit for bit. Returns (row i of P [T values], att row [d values]).
-pub fn attn_fwd_tile_row_gpu(
+/// Row i of P (all T values, +0 above the diagonal) as C-160 point 7's attention "on tiles" computes it
+/// (`attn_fwd_tile.comp`, `attn_fwd_tile2.comp`, and `attn_p_tile.comp`, which stops there): s_j, m and x_j in exactly
+/// the operations and order of [`attn_p_row_gpu`]; only the row sum differs — 16 partial `fadd.ftz` chains from 0
+/// (partial u over j ≡ u mod 16, j ascending, j ≤ i), then one `fadd.ftz` chain from 0 over u = 0 … 15. For i ≤ 15 every
+/// partial holds at most one x, so the row is [`attn_p_row_gpu`]'s bit for bit. [`attn_fwd_tile_row_gpu`] uses it.
+pub fn attn_p_tile_row_gpu(
     s: &AttnShape,
     qkv: &[f32],
     scale: f32,
     b: usize,
     h: usize,
     i: usize,
-) -> (Vec<f32>, Vec<f32>) {
+) -> Vec<f32> {
     let (t, c, d) = (s.t, s.c, s.d());
     let qrow = (b * t + i) * 3 * c + h * d;
     let mut row = alloc::vec![0.0f32; t];
@@ -960,6 +960,23 @@ pub fn attn_fwd_tile_row_gpu(
     for rj in row.iter_mut().take(i + 1) {
         *rj = mul_ftz(*rj, inv);
     }
+    row
+}
+
+/// One row (b, h, i) of C-160 point 7's attention forward "on tiles", `attn_fwd_tile.comp`
+/// (`docs/C-160_P7_ATENTIA_PE_PLACI.md`): P's row is [`attn_p_tile_row_gpu`] (s_j, m, x_j in exactly the operations and
+/// order of [`attn_fwd_row_gpu`]; only the row sum is split in 16 partial chains), then att in [`attn_fwd_row_gpu`]'s
+/// order. Returns (row i of P [T values], att row [d values]).
+pub fn attn_fwd_tile_row_gpu(
+    s: &AttnShape,
+    qkv: &[f32],
+    scale: f32,
+    b: usize,
+    h: usize,
+    i: usize,
+) -> (Vec<f32>, Vec<f32>) {
+    let (t, c, d) = (s.t, s.c, s.d());
+    let row = attn_p_tile_row_gpu(s, qkv, scale, b, h, i);
     let att = (0..d)
         .map(|e| {
             let mut acc = 0.0f32;
@@ -994,6 +1011,26 @@ pub fn attn_fwd_tile_gpu(s: &AttnShape, qkv: &[f32], scale: f32) -> Option<(Vec<
         }
     }
     Some((p, att))
+}
+
+/// The whole launch of `attn_p_tile.comp` on the CPU (C-160 point 7, `docs/C-160_P7_ATTN_P_TILE.md`): P [B, H, T, T]
+/// only, every row [`attn_p_tile_row_gpu`] — the P of [`attn_fwd_tile_gpu`] bit for bit. `None` for a bad shape,
+/// d > [`ATTN_TILE_MAX_D`] or a wrong `qkv` length.
+pub fn attn_p_tile_gpu(s: &AttnShape, qkv: &[f32], scale: f32) -> Option<Vec<f32>> {
+    let (nq, _, np) = s.sizes()?;
+    if qkv.len() != nq || s.d() > ATTN_TILE_MAX_D {
+        return None;
+    }
+    let mut p = alloc::vec![0.0f32; np];
+    for b in 0..s.batch {
+        for h in 0..s.heads {
+            for i in 0..s.t {
+                let at = ((b * s.heads + h) * s.t + i) * s.t;
+                p[at..at + s.t].copy_from_slice(&attn_p_tile_row_gpu(s, qkv, scale, b, h, i));
+            }
+        }
+    }
+    Some(p)
 }
 
 /// C-160 point 4, program 8 (forward): the board's `emb_fwd.comp` on the CPU — x [N, C] with
