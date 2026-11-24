@@ -84,7 +84,8 @@ impl Board {
                 | Prog::MmTv128x64
                 | Prog::MmTv64x128
                 | Prog::MmTv128x128
-                | Prog::MmTv64x64K8 => unreachable!("nu e in PROGRAMS"),
+                | Prog::MmTv64x64K8
+                | Prog::MmTrainTileGelu => unreachable!("nu e in PROGRAMS"),
             };
             cp.mem.write(prog_va(p), code);
         }

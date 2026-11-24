@@ -1,0 +1,109 @@
+// C-165 follow-up (docs/C-165_MM_TILE_GELU.md): mm_train_tile with GELU's backward fused into the store - the
+// "inapoi:proj-dX" product of a plan with both Plan::with_mm_tile and Plan::with_fused_gelu, which until now stayed on
+// mm_train_gelu's 16x16 tiles. The loads, the 64x64 tiles, the 4x4 per thread and the order of the fused
+// multiply-adds are mm_train_tile.comp's, unchanged (so each sum is the ffma.ftz chain p = 0..K-1 from +0.0, the very
+// sum of mm_train / mm_train_gelu); the epilogue is mm_train_gelu.comp's, character for character (gelu_tr mode 1
+// with acc in place of g, u read at [row, col] from the bias slot of the push constants; no BIAS flag). The
+// bit-exact oracle stays gpu-compute::layer::gelu_back_f32 over gpu-compute::reference::matmul_t_fma_ftz, i.e. the
+// bits of mm_train_gelu (the epilogue's NAK listing is compared with mm_train_gelu's, not proven on the board).
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_control_flow_attributes : require
+
+#define BM 64u
+#define BN 64u
+#define BK 16u
+#define TM 4u
+#define TN 4u
+#define THREADS 256u
+#define TA 1u
+#define TB 2u
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+
+layout(push_constant) uniform Args {
+    In a;
+    In b;
+    Out c;
+    In bias;   // u: [M, N], the forward GELU input (no bias in this program)
+    uint m;
+    uint n;
+    uint k;
+    uint flags;
+} args;
+
+shared float as_[BK * BM];   // as_[p * BM + r] = op(A)[row0 + r, t + p]
+shared float bs_[BK * BN];   // bs_[p * BN + c] = op(B)[t + p, col0 + c]
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint tx = tid % 16u;
+    uint ty = tid / 16u;
+    uint row0 = gl_WorkGroupID.y * BM;
+    uint col0 = gl_WorkGroupID.x * BN;
+    bool ta = (args.flags & TA) != 0u;
+    bool tb = (args.flags & TB) != 0u;
+    float acc[TM * TN];
+    [[unroll]] for (uint i = 0; i < TM * TN; i++) acc[i] = 0.0;
+    float reg_m[TM];
+    float reg_n[TN];
+    for (uint t = 0; t < args.k; t += BK) {
+        [[unroll]] for (uint e = 0; e < 4u; e++) {
+            // op(A) tile: element (r, p). A stored [M,K]: p fastest across threads; [K,M] (TA): r fastest.
+            uint r = ta ? tid % BM : tid / BK + 16u * e;
+            uint p = ta ? tid / BM + 4u * e : tid % BK;
+            uint ar = row0 + r, ak = t + p;
+            float va = 0.0;
+            if (ar < args.m && ak < args.k) {
+                va = ta ? args.a.v[ak * args.m + ar] : args.a.v[ar * args.k + ak];
+            }
+            as_[p * BM + r] = va;
+            // op(B) tile: element (p, c). B stored [K,N]: c fastest; [N,K] (TB): p fastest.
+            uint q = tb ? tid % BK : tid / BN + 4u * e;
+            uint cc = tb ? tid / BK + 16u * e : tid % BN;
+            uint bk = t + q, bc = col0 + cc;
+            float vb = 0.0;
+            if (bk < args.k && bc < args.n) {
+                vb = tb ? args.b.v[bc * args.k + bk] : args.b.v[bk * args.n + bc];
+            }
+            bs_[q * BN + cc] = vb;
+        }
+        barrier();
+        uint len = min(BK, args.k - t);
+        for (uint p = 0; p < len; p++) {
+            [[unroll]] for (uint i = 0; i < TM; i++) reg_m[i] = as_[p * BM + ty + 16u * i];
+            [[unroll]] for (uint j = 0; j < TN; j++) reg_n[j] = bs_[p * BN + tx + 16u * j];
+            [[unroll]] for (uint i = 0; i < TM; i++) {
+                [[unroll]] for (uint j = 0; j < TN; j++) {
+                    acc[i * TN + j] += reg_m[i] * reg_n[j];
+                }
+            }
+        }
+        barrier();
+    }
+    [[unroll]] for (uint i = 0; i < TM; i++) {
+        uint row = row0 + ty + 16u * i;
+        [[unroll]] for (uint j = 0; j < TN; j++) {
+            uint col = col0 + tx + 16u * j;
+            if (row < args.m && col < args.n) {
+                uint ix = row * args.n + col;
+                float u = args.bias.v[ix];
+                float z = u * 0.70710678118654752;
+                float a = abs(z);
+                float t = 1.0 / (1.0 + 0.3275911 * a);
+                float p = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+                float ex = exp(-a * a);
+                float e = 1.0 - p * ex;
+                float erf = z < 0.0 ? -e : e;
+                float cdf = 0.5 * (1.0 + erf);
+                float pdf = 0.39894228040143268 * ex;
+                // fma(u, pdf, cdf) written out, as in mm_train_gelu.comp (session 193: NAK contracts it like gelu_tr).
+                args.c.v[ix] = acc[i * TN + j] * fma(u, pdf, cdf);
+            }
+        }
+    }
+}

@@ -46,6 +46,7 @@
 #   sh tools/nak/build.sh attn_back_tile_3 # C-157 point 2: attn_back_tile_2, same bits, branch-free loads (session 180)
 #   sh tools/nak/build.sh attn_back_tile_4 # C-157 point 2: attn_back_tile_3, full diagonal tile of dK / dV unguarded (session 188)
 #   sh tools/nak/build.sh attn_p_tile    # C-160 point 7: attn_fwd_tile2 without P·V, only P (session 176)
+#   sh tools/nak/build.sh mm_train_tile_gelu # C-165 follow-up: mm_train_tile with gelu_tr mode 1 in the store (session 214)
 #   sh tools/nak/build.sh mm_tv          # C-165: the race variants of mm_train_tile (mm_tv_*.comp over mm_train_tv.glsl) (session 211)
 #   sh tools/nak/build.sh kernel <name> <push-constant bytes>
 #
@@ -119,6 +120,9 @@ mm_train_gelu)
     ;;
 mm_train_tile)
     exec sh "$0" kernel mm_train_tile 48
+    ;;
+mm_train_tile_gelu)
+    exec sh "$0" kernel mm_train_tile_gelu 48
     ;;
 mm_tv)
     for v in 128x64 64x128 128x128 64x64k8; do sh "$0" kernel mm_tv_$v 48; done

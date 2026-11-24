@@ -1,5 +1,30 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 214 — 24 noiembrie 2026, ~21:12–22:10 (ora României), în cloud, FĂRĂ placă — **C-165: `mm_train_tile_gelu`**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 213 terminată 20:40), l-am pus `ocupat`. Cursa C-165 (os-412) încă n-a rulat
+pe placă (e pentru noapte) → nimic de comparat. Am luat punctul următor scris de sesiunea 213: „variantele pentru `mm_train_gelu`”.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Mesa NAK 25.0.7 | reconstruit în sesiune; martorul `mm_train_tile` recompilat = **identic** (SHA-256 `f8acce21…`) | — |
+| Programul | `tools/nak/mm_train_tile_gelu.comp` = corpul lui `mm_train_tile` + finalul lui `mm_train_gelu`; SHA-256 `0c4f96ba…72ccb11af`, 34 registre, 0 memorie locală | COMPILAT, NU RULAT |
+| Finalul | `tools/nak/compara_epilog.py`: cele 16 finaluri = finalul lui `mm_train_gelu`, instrucțiune cu instrucțiune (prinde și o greșeală plantată) | identic |
+| Modelul | `gpu_sim::cmdproc::mm_train_tile_gelu_on_cpu` (+ `MM_TRAIN_TILE_GELU_NEEDS`); `mm_train_tile_on_cpu` neschimbat ca rezultat | doar adăugări |
+| Driverul | `nvidia_ga104::mm_train_tile_gelu`, `Prog::MmTrainTileGelu` (indicele 29), `PROGRAMS_ALL_TILE_GELU` (30), `Plan::with_mm_tile_gelu` / `mm_tile_gelu` / `mm_tile_gelu_programs` | doar adăugări |
+| T220 | programul singur = oracolul = `mm_train_gelu` (24 cazuri + formele „proj-dX”), greșelile prinse; #513: doar cele 12 lansări mutate (blocuri ×16 mai puține; prezisesem greșit ×4); pasul de aur mic bit cu bit în 10 pași, verdictul TRECE | PASS (SIMULARE, 6/6) |
+| Nota pentru OS | `integration/cyber-universe/C-165_mm-tile-gelu.md` | — |
+| `tools/check.sh` | format, clippy, teste (pe gazdă), build no_std | PASS (**1 053 de teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** nimic trimis. Dacă OS-ul îl leagă: doar programul `mm_train_tile_gelu` (aceeași cale QMD + pushbuffer).
+**Câștig (DEDUS):** ~−40 ms pe pas față de „lipit + plăci” de până acum; ~2–4 ms față de „plăci nelipit” (rândul OS-ului de azi).
+**Nicio schimbare incompatibilă** (o valoare nouă în `Prog`: un `match` fără `_` are nevoie de un braț în plus; OS-ul are `_ =>`).
+
+**Următorul pas:** raportul cursei C-165 + A4 (os-412) → comparația; tabelul cursei → `MmChoice::from_race` → OS leagă
+`with_mm_choice` (și, dacă vrea, `with_mm_tile_gelu`). Apoi variantele pentru atenție.
+
+---
+
 ## Sesiunea 213 — 24 noiembrie 2026, ~20:11–20:40 (ora României), în cloud, FĂRĂ placă — **C-165 pasul 2: `Plan::with_mm_choice`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 212 terminată 20:00), l-am pus `ocupat`. Nicio probă nouă pe placă de comparat (os-411,

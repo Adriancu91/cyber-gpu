@@ -256,7 +256,8 @@ fn board_with(gelu: ProgramFn) -> CommandProcessor {
             | Prog::MmTv128x64
             | Prog::MmTv64x128
             | Prog::MmTv128x128
-            | Prog::MmTv64x64K8 => unreachable!("nu e in PROGRAMS_ALL_FUSED2"),
+            | Prog::MmTv64x64K8
+            | Prog::MmTrainTileGelu => unreachable!("nu e in PROGRAMS_ALL_FUSED2"),
         };
         cp.mem.write(prog_va(p), code);
     }

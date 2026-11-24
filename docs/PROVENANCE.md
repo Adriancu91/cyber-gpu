@@ -550,6 +550,11 @@ niciun octet de firmware NVIDIA.
   (`tests/sim_mm_train_variants.rs`), documentul `docs/C-165_CURSA_MM.md`. Scrise de noi, pornind de la `mm_train_tile.comp` al nostru;
   ideea plăcilor 128 × 128 cu 8 × 8 pe fir: siboehm SGEMM_CUDA kernel 5 (MIT, doar ideea). Compilat cu Mesa NAK 25.0.7 (MIT), pe gazdă.
   Nimic copiat, nimic GPL, niciun octet de firmware NVIDIA.
+- **C-165, pasul următor — `mm_train_tile_gelu` (sesiunea 214):** `tools/nak/mm_train_tile_gelu.comp`,
+  `crates/nvidia-ga104/src/mm_train_tile_gelu.rs`, `Plan::with_mm_tile_gelu` în `train_step.rs`, modelul
+  `gpu_sim::cmdproc::mm_train_tile_gelu_on_cpu`, unealta `tools/nak/compara_epilog.py`, testele T220, documentul
+  `docs/C-165_MM_TILE_GELU.md`. Scrise de noi: corpul lui `mm_train_tile.comp` + finalul lui `mm_train_gelu.comp` (ambele ale noastre).
+  Compilat cu Mesa NAK 25.0.7 (MIT), pe gazdă. Nimic copiat, nimic GPL, niciun octet de firmware NVIDIA.
 - **C-157 p.2x pasul 2 — `Plan::with_mm_tile` (sesiunea 209):** `crates/nvidia-ga104/src/train_step.rs` (opțiunea, `Prog::MmTrainTile`,
   `PROGRAMS_ALL_TILE`), testele T215 (`tests/sim_c160_p5_golden.rs`). Cod al nostru, fără surse noi.
 - **C-157 p.2y — `Plan::with_colsum_split` (sesiunea 210):** `crates/nvidia-ga104/src/train_step.rs` (opțiunea, `Prog::ColsumPart`,

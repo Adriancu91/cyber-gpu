@@ -19,19 +19,21 @@ use std::path::{Path, PathBuf};
 use gpu_compute::train::{self, AdamW, Arch, Batch, Recipe};
 use gpu_sim::cmdproc::{
     CommandProcessor, Event, GNORM_NEEDS, LN_BACK_NEEDS, LN_BACK_RES_NEEDS, LN_FWD_NEEDS,
-    MM_TRAIN_GELU_NEEDS, MM_TRAIN_NEEDS, MM_TRAIN_TILE_NEEDS, Needs, XENT_NEEDS, attn_back_on_cpu,
-    attn_back_tile_on_cpu, attn_back_tile0_on_cpu, attn_fwd_on_cpu, attn_fwd_tile_on_cpu,
-    attn_p_on_cpu, attn_p_tile_on_cpu, colsum_on_cpu, colsum_part_on_cpu, emb_back_on_cpu,
-    emb_fwd_on_cpu, gelu_tr_on_cpu, gnorm_on_cpu, ln_back_on_cpu, ln_back_res_contracted_on_cpu,
-    ln_back_res_on_cpu, ln_fwd_on_cpu, mm_train_gelu_on_cpu, mm_train_gelu_unfused_on_cpu,
-    mm_train_on_cpu, mm_train_tile_on_cpu, mm_tv_64x64k8_on_cpu, mm_tv_64x128_on_cpu,
-    mm_tv_128x64_on_cpu, mm_tv_128x128_on_cpu, opt_step_on_cpu, vadd_on_cpu, xent_on_cpu,
+    MM_TRAIN_GELU_NEEDS, MM_TRAIN_NEEDS, MM_TRAIN_TILE_GELU_NEEDS, MM_TRAIN_TILE_NEEDS, Needs,
+    XENT_NEEDS, attn_back_on_cpu, attn_back_tile_on_cpu, attn_back_tile0_on_cpu, attn_fwd_on_cpu,
+    attn_fwd_tile_on_cpu, attn_p_on_cpu, attn_p_tile_on_cpu, colsum_on_cpu, colsum_part_on_cpu,
+    emb_back_on_cpu, emb_fwd_on_cpu, gelu_tr_on_cpu, gnorm_on_cpu, ln_back_on_cpu,
+    ln_back_res_contracted_on_cpu, ln_back_res_on_cpu, ln_fwd_on_cpu, mm_train_gelu_on_cpu,
+    mm_train_gelu_unfused_on_cpu, mm_train_on_cpu, mm_train_tile_gelu_on_cpu, mm_train_tile_on_cpu,
+    mm_tv_64x64k8_on_cpu, mm_tv_64x128_on_cpu, mm_tv_128x64_on_cpu, mm_tv_128x128_on_cpu,
+    opt_step_on_cpu, vadd_on_cpu, xent_on_cpu,
 };
 use nvidia_ga104::mm_train_variants::{self as mv, MmChoice, RaceRow, VARIANTS};
 use nvidia_ga104::push::{self, PushBuf};
 use nvidia_ga104::train_step::{
     self as ts, Launch, Outcome, PROGRAMS_ALL, PROGRAMS_ALL_3, PROGRAMS_ALL_CHOICE,
-    PROGRAMS_ALL_FUSED, PROGRAMS_ALL_FUSED2, PROGRAMS_ALL_SPLIT, Plan, Prog, Refs,
+    PROGRAMS_ALL_FUSED, PROGRAMS_ALL_FUSED2, PROGRAMS_ALL_SPLIT, PROGRAMS_ALL_TILE_GELU, Plan,
+    Prog, Refs,
 };
 use nvidia_ga104::{transfer, xent as xe};
 use nvidia_rm570::regs::clc7c0 as c;
@@ -95,7 +97,8 @@ impl Board {
         // T200: + `ln_back_res` (`PROGRAMS_ALL_FUSED`). T201: + `mm_train_gelu` (`PROGRAMS_ALL_FUSED2`).
         // T215: + `mm_train_tile` (`PROGRAMS_ALL_TILE`). T216: + `colsum_part` (`PROGRAMS_ALL_SPLIT`).
         // T219: + the four race variants (`PROGRAMS_ALL_CHOICE`), each on its own CPU model and its own shared memory.
-        for p in PROGRAMS_ALL_CHOICE {
+        // T220: + `mm_train_tile_gelu` (`PROGRAMS_ALL_TILE_GELU`).
+        for p in PROGRAMS_ALL_TILE_GELU {
             let code = p.code();
             match p {
                 Prog::MmTrain => {
@@ -178,6 +181,11 @@ impl Board {
                     code,
                     mm_tv_64x64k8_on_cpu,
                     needs(p.shared().unwrap()),
+                ),
+                Prog::MmTrainTileGelu => cp.register_program_with_needs(
+                    code,
+                    mm_train_tile_gelu_on_cpu,
+                    MM_TRAIN_TILE_GELU_NEEDS,
                 ),
             };
             cp.mem.write(prog_va(p), code);
@@ -343,6 +351,14 @@ enum Kind {
     Tiles3BothChoice,
     /// T219: [`Plan::new`] + [`Plan::with_mm_choice`] with the empty choice (= [`Plan::with_mm_tile`]).
     KeptChoiceEmpty,
+    /// T220: [`Plan::new_tiles3`] + both fusions + [`Plan::with_mm_tile_gelu`].
+    Tiles3BothTileGelu,
+    /// T220: [`Plan::new`] + [`Plan::with_fused_gelu`] + [`Plan::with_mm_tile_gelu`].
+    KeptGeluTileGelu,
+    /// T220: [`Plan::new_tiles3`] + [`Plan::with_mm_tile_gelu`] without [`Plan::with_fused_gelu`] (= `Tiles3Tile`).
+    Tiles3TileGeluAlone,
+    /// T220: [`Plan::new_tiles3`] + both fusions + [`Plan::with_mm_choice`] + [`Plan::with_mm_tile_gelu`].
+    Tiles3BothChoiceTileGelu,
 }
 
 impl Kind {
@@ -593,6 +609,26 @@ fn run_plan(
         Kind::KeptChoiceEmpty => Plan::new(ar, bsz, tl, inputs, HEAP)
             .unwrap()
             .with_mm_choice(MmChoice::new()),
+        Kind::Tiles3BothTileGelu => Plan::new_tiles3(ar, bsz, tl, inputs, HEAP)
+            .unwrap()
+            .with_fused_back()
+            .with_fused_gelu()
+            .with_mm_tile_gelu(),
+        Kind::KeptGeluTileGelu => Plan::new(ar, bsz, tl, inputs, HEAP)
+            .unwrap()
+            .with_fused_gelu()
+            .with_mm_tile_gelu(),
+        Kind::Tiles3TileGeluAlone => Plan::new_tiles3(ar, bsz, tl, inputs, HEAP)
+            .unwrap()
+            .with_mm_tile_gelu(),
+        Kind::Tiles3BothChoiceTileGelu => {
+            let p = Plan::new_tiles3(ar, bsz, tl, inputs, HEAP)
+                .unwrap()
+                .with_fused_back()
+                .with_fused_gelu();
+            let c = turn_choice(&p, params);
+            p.with_mm_choice(c).with_mm_tile_gelu()
+        }
     };
     // T187: the arena of `Plan::new` (the same addresses as `new_tiles`), for `Fault::OldBackward`.
     let old = Plan::new(ar, bsz, tl, inputs, HEAP).unwrap();
@@ -3251,5 +3287,129 @@ fn t219_the_pick_rules() {
     assert_eq!(Prog::of_race_index(VARIANTS.len()), None);
     for (k, p) in PROGRAMS_ALL_SPLIT.iter().enumerate() {
         assert_eq!(p.index(), k, "the old indices stay");
+    }
+}
+
+// ------------------------------------------------------------------ T220: `mm_train_tile_gelu` in the step
+
+/// Prediction 3 (`docs/C-165_MM_TILE_GELU.md`): the #513 step (`new_tiles3`, resident, 2 × 512, both fusions,
+/// `--mm-placi`) with [`Plan::with_mm_tile_gelu`] is the `with_mm_tile` list with only the 12 "proj-dX+gelu" launches
+/// on `mm_train_tile_gelu` and its grid (blocks 3 072 → 768 each); same arena, same tags, layers, cbufs, order.
+/// Without `with_fused_gelu` the option changes nothing.
+#[test]
+fn t220_the_513_step_with_tile_gelu_swaps_only_proj_dx() {
+    let (bsz, tl) = (2usize, 512usize);
+    let ar = train::M513;
+    let inputs: Vec<u32> = (0..bsz * tl)
+        .map(|i| ((i * 7_919) % 16_384) as u32)
+        .collect();
+    let base = || {
+        Plan::new_tiles3(ar, bsz, tl, &inputs, HEAP)
+            .unwrap()
+            .with_fused_back()
+            .with_fused_gelu()
+    };
+    let old = base().with_mm_tile().resident().unwrap();
+    let new = base().with_mm_tile_gelu().resident().unwrap();
+    assert!(new.mm_tile_gelu() && new.mm_tile() && !old.mm_tile_gelu());
+    assert!(new.clone().with_recompute().unwrap().mm_tile_gelu());
+    assert_eq!(old.bytes(), new.bytes(), "arena");
+    assert_eq!(
+        new.mm_tile_gelu_programs(),
+        &ts::PROGRAMS_MM_TILE_GELU_EXTRA[..]
+    );
+    assert!(old.mm_tile_gelu_programs().is_empty());
+    let params: Vec<Vec<f32>> = ar
+        .tensors()
+        .iter()
+        .map(|t| vec![0.0; t.elements()])
+        .collect();
+    let opt = AdamW::recipe_513(&params);
+    drop(params);
+    let (lo, ln) = (
+        old.step(Recipe::AdamW513, &opt, 1).unwrap(),
+        new.step(Recipe::AdamW513, &opt, 1).unwrap(),
+    );
+    assert_eq!(lo.len(), ln.len());
+    let (mut swapped, mut blocks_old, mut blocks_new) = (0usize, 0u64, 0u64);
+    for (o, n) in lo.iter().zip(&ln) {
+        assert_eq!(
+            (o.tag, o.layer, o.cbuf),
+            (n.tag, n.layer, n.cbuf),
+            "{}",
+            o.tag
+        );
+        if (o.prog, n.prog) == (Prog::MmTrainGelu, Prog::MmTrainTileGelu) {
+            let a = mm_args(n);
+            assert_eq!(n.grid, [a.n.div_ceil(64), a.m.div_ceil(64), 1], "{}", n.tag);
+            blocks_old += o.grid.iter().map(|&g| g as u64).product::<u64>();
+            blocks_new += n.grid.iter().map(|&g| g as u64).product::<u64>();
+            swapped += 1;
+        } else {
+            assert_eq!((o.prog, o.grid), (n.prog, n.grid), "{}", o.tag);
+        }
+    }
+    assert!(ln.iter().all(|l| l.prog != Prog::MmTrainGelu));
+    let (lu, _) = new.step_until_opt(&opt, 1).unwrap();
+    assert_eq!(&lu[..], &ln[..ln.len() - 1]);
+    println!(
+        "kt t220 pasul #513 2 x 512 (_3, ambele lipiri, rezident): {} lansari, {swapped} mm_train_gelu -> mm_train_tile_gelu; blocuri {blocks_old} -> {blocks_new}",
+        ln.len()
+    );
+    assert_eq!(swapped, ar.layers);
+    // 16×16 pieces of C per block before, 64×64 now (256 threads either way): 16 times fewer blocks.
+    assert_eq!(blocks_old, 16 * blocks_new);
+    // Without the GELU fusion: exactly `with_mm_tile`.
+    let plain_old = Plan::new_tiles3(ar, bsz, tl, &inputs, HEAP)
+        .unwrap()
+        .with_mm_tile();
+    let plain_new = Plan::new_tiles3(ar, bsz, tl, &inputs, HEAP)
+        .unwrap()
+        .with_mm_tile_gelu();
+    assert!(plain_new.mm_tile_gelu_programs().is_empty());
+    assert_eq!(
+        plain_old.step(Recipe::AdamW513, &opt, 1).unwrap(),
+        plain_new.step(Recipe::AdamW513, &opt, 1).unwrap()
+    );
+}
+
+/// Prediction 4: the small golden step, 10 steps, both recipes — with `mm_train_tile_gelu` = without, **bit for bit**
+/// (on `_3` + both fusions, on `Plan::new` + the GELU fusion, with the race pick, and alone = `with_mm_tile`); the
+/// verdict against PyTorch passes; the launch count is unchanged; no `mm_train_gelu` launch is left.
+#[test]
+fn t220_tile_gelu_small_golden_step_is_bit_for_bit() {
+    for (recipe, name) in [(Recipe::Sgd, "sgd"), (Recipe::AdamW513, "adamw_513")] {
+        for (base, new_k, on_tile_gelu) in [
+            (Kind::Tiles3BothTile, Kind::Tiles3BothTileGelu, MIC.layers),
+            (Kind::KeptGelu, Kind::KeptGeluTileGelu, MIC.layers),
+            (
+                Kind::Tiles3BothChoice,
+                Kind::Tiles3BothChoiceTileGelu,
+                MIC.layers,
+            ),
+            (Kind::Tiles3Tile, Kind::Tiles3TileGeluAlone, 0),
+        ] {
+            let a = run_mic_plan(base, recipe, 10, Fault::None);
+            let b = run_mic_plan(new_k, recipe, 10, Fault::None);
+            assert_eq!(a.total_per_step, b.total_per_step);
+            let n_tg = b
+                .launches_per_step
+                .iter()
+                .filter(|e| e.0 == Prog::MmTrainTileGelu)
+                .map(|e| e.1)
+                .sum::<usize>();
+            assert_eq!(n_tg, on_tile_gelu, "{name} {new_k:?}");
+            assert!(b.launches_per_step.iter().all(|e| e.0 != Prog::MmTrainGelu));
+            let v = ts::judge(recipe, b.total_per_step, &b.out, &refs(name));
+            let s = same_bits(&a.out, &b.out);
+            println!(
+                "kt t220 {name} {new_k:?}: {} lansari ({n_tg} pe mm_train_tile_gelu); fata de PyTorch {}; = {base:?} bit cu bit {} (SIMULARE)",
+                b.total_per_step,
+                if v.passes() { "TRECE" } else { "NU TRECE" },
+                if s { "DA" } else { "NU" }
+            );
+            assert!(v.passes(), "{name} {new_k:?}: verdictul");
+            assert!(s, "{name} {new_k:?}: nu e bit cu bit");
+        }
     }
 }

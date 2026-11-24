@@ -1194,6 +1194,25 @@ pub const MM_TRAIN_TILE_NEEDS: Needs = Needs {
 /// values to "registers" and does its 16 `ffma.ftz`; finally `fadd.ftz` of `bias[col]` with BIAS. Same chains as
 /// [`mm_train_on_cpu`], so the same bits; oracle `reference::matmul_t_fma_ftz`.
 pub fn mm_train_tile_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    mm_train_tile_blocks(l, MmEpilogue::Bias)
+}
+
+/// C-165 follow-up (`docs/C-165_MM_TILE_GELU.md`): what `tools/nak/out/mm_train_tile_gelu.sm86.sass` needs — as
+/// `mm_train_tile` (the two 16×64 tiles, 8 KiB, one barrier).
+pub const MM_TRAIN_TILE_GELU_NEEDS: Needs = MM_TRAIN_TILE_NEEDS;
+
+/// The CPU stand-in for `mm_train_tile_gelu.sm86.sass`: the loads, tiles and `ffma.ftz` chains of
+/// [`mm_train_tile_on_cpu`] unchanged, then each element of C is `gpu_compute::layer::gelu_tr_gpu_back`(u[row, col],
+/// acc) — the epilogue of [`mm_train_gelu_on_cpu`]. cbuf0 as `mm_train` with `u` at the bias slot (0x40); the BIAS
+/// flag is refused, and so is a C overlapping u. Same bits as [`mm_train_gelu_on_cpu`].
+pub fn mm_train_tile_gelu_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    mm_train_tile_blocks(
+        l,
+        MmEpilogue::GeluBack(gpu_compute::layer::gelu_tr_gpu_back),
+    )
+}
+
+fn mm_train_tile_blocks(l: &mut Launch<'_>, epi: MmEpilogue) -> GpuResult<()> {
     const B: usize = 64;
     const BK: usize = 16;
     const TM: usize = 4;
@@ -1220,7 +1239,20 @@ pub fn mm_train_tile_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     let (ta, tb) = (flags & MM_TRAIN_TA != 0, flags & MM_TRAIN_TB != 0);
     let x = l.mem.read_f32s(a, m * k)?;
     let y = l.mem.read_f32s(b, k * n)?;
-    let bias = if flags & MM_TRAIN_BIAS != 0 {
+    let gelu = match epi {
+        MmEpilogue::Bias => None,
+        MmEpilogue::GeluBack(f) => {
+            if flags & MM_TRAIN_BIAS != 0 {
+                return Err(bad("SIM: mm_train_tile_gelu nu are bias"));
+            }
+            let bytes = 4 * (m * n) as u64;
+            if c < bias_va + bytes && bias_va < c + bytes {
+                return Err(bad("SIM: mm_train_tile_gelu: C se suprapune cu u"));
+            }
+            Some((f, l.mem.read_f32s(bias_va, m * n)?))
+        }
+    };
+    let bias = if gelu.is_none() && flags & MM_TRAIN_BIAS != 0 {
         Some(l.mem.read_f32s(bias_va, n)?)
     } else {
         None
@@ -1269,10 +1301,12 @@ pub fn mm_train_tile_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
                     for j in 0..TM {
                         let (row, col) = (row0 + ty + 16 * i, col0 + tx + 16 * j);
                         if row < m && col < n {
-                            let mut v = acc_t[i * TM + j];
-                            if let Some(bv) = &bias {
-                                v = gpu_compute::math::add_f32_ftz(v, bv[col]);
-                            }
+                            let v = acc_t[i * TM + j];
+                            let v = match (&bias, &gelu) {
+                                (Some(bv), _) => gpu_compute::math::add_f32_ftz(v, bv[col]),
+                                (None, Some((f, u))) => f(u[row * n + col], v),
+                                (None, None) => v,
+                            };
                             l.mem.write_u32(c + 4 * (row * n + col) as u64, v.to_bits());
                         }
                     }

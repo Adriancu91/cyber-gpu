@@ -17,7 +17,7 @@ fn kind(l: &Launch) -> Kind {
         | Prog::MmTv64x128
         | Prog::MmTv128x128
         | Prog::MmTv64x64K8 => Kind::Mm,
-        Prog::MmTrainGelu => Kind::MmActBack,
+        Prog::MmTrainGelu | Prog::MmTrainTileGelu => Kind::MmActBack,
         Prog::AttnFwd | Prog::AttnFwdTile2 | Prog::AttnFwdTile3 => Kind::AttnFwd,
         Prog::AttnBack
         | Prog::AttnP

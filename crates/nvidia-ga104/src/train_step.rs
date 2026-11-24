@@ -35,7 +35,7 @@ use crate::{
     attn_fwd_tile3 as aft3, attn_p as ap, attn_p_tile as apt, colsum as cs, colsum_part as csp,
     emb_back as eb, emb_fwd as ef, gelu_tr as gt, gnorm as gn, kronos_layer, ln_back as lb,
     ln_back_res as lbr, ln_fwd as lf, mm_train as mm, mm_train_gelu as mg, mm_train_tile as mtt,
-    mm_train_variants as mtv, opt_step as os, xent as xe,
+    mm_train_tile_gelu as mttg, mm_train_variants as mtv, opt_step as os, xent as xe,
 };
 
 fn bad(why: &'static str) -> GpuError {
@@ -113,6 +113,10 @@ pub enum Prog {
     MmTv64x128,
     MmTv128x128,
     MmTv64x64K8,
+    /// C-165 follow-up (`docs/C-165_MM_TILE_GELU.md`): `mm_train_gelu` on `mm_train_tile`'s 64×64 tiles
+    /// (`mm_train_tile_gelu`, the same cbuf and the same bits as `mm_train_gelu`), only in plans with
+    /// [`Plan::with_mm_tile_gelu`] and [`Plan::with_fused_gelu`]. In [`PROGRAMS_ALL_TILE_GELU`] only.
+    MmTrainTileGelu,
 }
 
 /// Every program a step uses (the OS loads all 13 once; `Gnorm` only runs at `adamw_513`).
@@ -299,6 +303,23 @@ pub const PROGRAMS_ALL_CHOICE: [Prog; 29] = {
     all
 };
 
+/// [`PROGRAMS_ALL_CHOICE`] + [`Prog::MmTrainTileGelu`] at the end (all 29 keep their [`Prog::index`]): every program
+/// any plan may launch, [`Plan::with_mm_tile_gelu`] included. `check_programs` checks all 30. The older lists stay as
+/// they were.
+pub const PROGRAMS_ALL_TILE_GELU: [Prog; 30] = {
+    let mut all = [Prog::MmTrainTileGelu; 30];
+    let mut i = 0;
+    while i < 29 {
+        all[i] = PROGRAMS_ALL_CHOICE[i];
+        i += 1;
+    }
+    all
+};
+
+/// What a [`Plan::with_mm_tile_gelu`] plan with [`Plan::with_fused_gelu`] launches on top of the other lists (its
+/// "proj-dX+gelu" products, in place of `mm_train_gelu`).
+pub const PROGRAMS_MM_TILE_GELU_EXTRA: [Prog; 1] = [Prog::MmTrainTileGelu];
+
 /// What a [`Plan::with_colsum_split`] plan launches on top of [`Plan::programs`], [`Plan::fused_programs`] and
 /// [`Plan::mm_tile_programs`].
 pub const PROGRAMS_COLSUM_SPLIT_EXTRA: [Prog; 1] = [Prog::ColsumPart];
@@ -435,6 +456,7 @@ impl Prog {
             Prog::MmTrainGelu => mg::MM_TRAIN_GELU,
             Prog::MmTrainTile => mtt::MM_TRAIN_TILE,
             Prog::ColsumPart => csp::COLSUM_PART,
+            Prog::MmTrainTileGelu => mttg::MM_TRAIN_TILE_GELU,
             p => p.race_variant().code,
         }
     }
@@ -467,6 +489,7 @@ impl Prog {
             Prog::MmTrainGelu => mg::MM_TRAIN_GELU_SHA256,
             Prog::MmTrainTile => mtt::MM_TRAIN_TILE_SHA256,
             Prog::ColsumPart => csp::COLSUM_PART_SHA256,
+            Prog::MmTrainTileGelu => mttg::MM_TRAIN_TILE_GELU_SHA256,
             p => p.race_variant().sha256,
         }
     }
@@ -498,6 +521,7 @@ impl Prog {
             Prog::MmTrainGelu => mg::REGISTERS,
             Prog::MmTrainTile => mtt::REGISTERS,
             Prog::ColsumPart => csp::REGISTERS,
+            Prog::MmTrainTileGelu => mttg::REGISTERS,
             p => p.race_variant().registers,
         }
     }
@@ -529,6 +553,7 @@ impl Prog {
             Prog::MmTrainGelu => mg::BLOCK,
             Prog::MmTrainTile => mtt::BLOCK,
             Prog::ColsumPart => csp::BLOCK,
+            Prog::MmTrainTileGelu => mttg::BLOCK,
             p => p.race_variant().block(),
         }
     }
@@ -550,6 +575,7 @@ impl Prog {
             Prog::LnBackRes => Some(lbr::SHARED),
             Prog::MmTrainGelu => Some(mg::SHARED),
             Prog::MmTrainTile => Some(mtt::SHARED),
+            Prog::MmTrainTileGelu => Some(mttg::SHARED),
             Prog::MmTv128x64 | Prog::MmTv64x128 | Prog::MmTv128x128 | Prog::MmTv64x64K8 => {
                 Some(self.race_variant().shared())
             }
@@ -585,6 +611,7 @@ impl Prog {
             Prog::MmTrainGelu => "mm_train_gelu",
             Prog::MmTrainTile => "mm_train_tile",
             Prog::ColsumPart => "colsum_part",
+            Prog::MmTrainTileGelu => "mm_train_tile_gelu",
             p => p.race_variant().name,
         }
     }
@@ -620,10 +647,10 @@ impl Prog {
         &mtv::VARIANTS[self.race_index().unwrap_or(0)]
     }
 
-    /// Index in [`PROGRAMS_ALL_CHOICE`] (= the index in [`PROGRAMS_ALL_SPLIT`] = the index in [`PROGRAMS_ALL_TILE`], the index in [`PROGRAMS_ALL_FUSED2`], the index in [`PROGRAMS_ALL_FUSED`], [`PROGRAMS_ALL_3`], [`PROGRAMS_ALL`], [`PROGRAMS`] /
+    /// Index in [`PROGRAMS_ALL_TILE_GELU`] (= the index in [`PROGRAMS_ALL_CHOICE`] = the index in [`PROGRAMS_ALL_SPLIT`] = the index in [`PROGRAMS_ALL_TILE`], the index in [`PROGRAMS_ALL_FUSED2`], the index in [`PROGRAMS_ALL_FUSED`], [`PROGRAMS_ALL_3`], [`PROGRAMS_ALL`], [`PROGRAMS`] /
     /// [`PROGRAMS_P_ONLY`] for their programs).
     pub fn index(self) -> usize {
-        PROGRAMS_ALL_CHOICE
+        PROGRAMS_ALL_TILE_GELU
             .iter()
             .position(|&p| p == self)
             .unwrap_or(0)
@@ -632,7 +659,7 @@ impl Prog {
 
 /// Checks every program's bytes against its SHA-256 (what the OS does before loading; refuse on a mismatch).
 pub fn check_programs() -> GpuResult<()> {
-    for p in PROGRAMS_ALL_CHOICE {
+    for p in PROGRAMS_ALL_TILE_GELU {
         if hex(&crate::sha256::digest(p.code())) != p.sha256() {
             return Err(bad("pas-aur: SHA-256 al unui program nu se potriveste"));
         }
@@ -859,6 +886,8 @@ pub struct Plan {
     mm_tile: bool,
     /// C-165 ([`Plan::with_mm_choice`]): the race's pick per `mm_train` shape (the others stay on `mm_train_tile`).
     mm_choice: Option<mtv::MmChoice>,
+    /// C-165 follow-up ([`Plan::with_mm_tile_gelu`]): the `mm_train_gelu` launches go on `mm_train_tile_gelu`.
+    mm_tile_gelu: bool,
     /// C-157 p.2y ([`Plan::with_colsum_split`]): every `colsum` launch is split over rows (`colsum_part` + `colsum`),
     /// with the partial sums in [`Plan::colsum_scratch`] after `end`.
     colsum_split: bool,
@@ -1150,6 +1179,7 @@ impl Plan {
         p.fused_gelu = self.fused_gelu;
         p.mm_tile = self.mm_tile;
         p.mm_choice = self.mm_choice;
+        p.mm_tile_gelu = self.mm_tile_gelu;
         p.colsum_split = self.colsum_split;
         // Order 20:11 step 5: keep the two batch slots (slot 0's view).
         if self.slots.is_some() {
@@ -1372,6 +1402,7 @@ impl Plan {
             fused_gelu: false,
             mm_tile: false,
             mm_choice: None,
+            mm_tile_gelu: false,
             colsum_split: false,
             tok_cap: if resident { tok_cap } else { 0 },
             recompute,
@@ -1446,6 +1477,33 @@ impl Plan {
         self.mm_tile = true;
         self.mm_choice = Some(choice);
         self
+    }
+
+    /// C-165 follow-up (`docs/C-165_MM_TILE_GELU.md`): [`Plan::with_mm_tile`] plus the "proj-dX+gelu" products of a
+    /// [`Plan::with_fused_gelu`] plan on `mm_train_tile_gelu` (64×64 pieces, blocks of 256, the grid of
+    /// [`mm_train_tile_gelu::grid`](crate::mm_train_tile_gelu::grid)) instead of `mm_train_gelu`. Same arena, same
+    /// launches in the same order with the same cbufs: **the same bits** (T220, SIMULARE). Without
+    /// [`Plan::with_fused_gelu`] it is [`Plan::with_mm_tile`] exactly. Combines with every other option
+    /// ([`Plan::with_mm_choice`] included). Load the lists of [`Plan::with_mm_choice`] + [`Plan::mm_tile_gelu_programs`].
+    pub fn with_mm_tile_gelu(mut self) -> Self {
+        self.mm_tile = true;
+        self.mm_tile_gelu = true;
+        self
+    }
+
+    /// True after [`Plan::with_mm_tile_gelu`].
+    pub fn mm_tile_gelu(&self) -> bool {
+        self.mm_tile_gelu
+    }
+
+    /// [`PROGRAMS_MM_TILE_GELU_EXTRA`] after [`Plan::with_mm_tile_gelu`] in a [`Plan::with_fused_gelu`] plan, none
+    /// otherwise. (`mm_train_gelu` stays in [`Plan::fused_programs`]; such a plan no longer launches it.)
+    pub fn mm_tile_gelu_programs(&self) -> &'static [Prog] {
+        if self.mm_tile_gelu && self.fused_gelu {
+            &PROGRAMS_MM_TILE_GELU_EXTRA
+        } else {
+            &[]
+        }
     }
 
     /// The pick of [`Plan::with_mm_choice`], if any.
@@ -1606,6 +1664,22 @@ impl Plan {
                 }
             }
         }
+        if self.mm_tile_gelu {
+            for l in list.iter_mut().filter(|l| l.prog == Prog::MmTrainGelu) {
+                let a = mm_args_of(l);
+                l.grid = mttg::grid(&mg::Args {
+                    a: a.a,
+                    b: a.b,
+                    c: a.c,
+                    u: a.bias,
+                    m: a.m,
+                    n: a.n,
+                    k: a.k,
+                    flags: a.flags,
+                });
+                l.prog = Prog::MmTrainTileGelu;
+            }
+        }
     }
 
     /// The programs this plan launches on top of [`Plan::programs`]: [`PROGRAMS_FUSED_EXTRA`] with
@@ -1660,6 +1734,7 @@ impl Plan {
         p.fused_gelu = self.fused_gelu;
         p.mm_tile = self.mm_tile;
         p.mm_choice = self.mm_choice;
+        p.mm_tile_gelu = self.mm_tile_gelu;
         p.colsum_split = self.colsum_split;
         Ok(p)
     }

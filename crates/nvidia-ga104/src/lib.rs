@@ -121,6 +121,7 @@ pub mod mm_tc_probe;
 pub mod mm_train;
 pub mod mm_train_gelu;
 pub mod mm_train_tile;
+pub mod mm_train_tile_gelu;
 pub mod mm_train_variants;
 pub mod mma16;
 pub mod mma16_probe;
