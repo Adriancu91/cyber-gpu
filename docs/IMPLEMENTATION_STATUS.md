@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 214 — 24 noiembrie 2026, ~21:12–22:10 (ora României), în cloud, FĂRĂ placă — **C-165: `mm_train_tile_gelu`**
+## Sesiunea 214 — 24 noiembrie 2026, ~21:12–21:48 (ora României), în cloud, FĂRĂ placă — **C-165: `mm_train_tile_gelu`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 213 terminată 20:40), l-am pus `ocupat`. Cursa C-165 (os-412) încă n-a rulat
 pe placă (e pentru noapte) → nimic de comparat. Am luat punctul următor scris de sesiunea 213: „variantele pentru `mm_train_gelu`”.

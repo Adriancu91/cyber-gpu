@@ -1,6 +1,6 @@
 # C-165, pasul următor: `mm_train_tile_gelu` — GELU' lipit pe plăcile de 64 × 64
 
-**Sesiunea 214, 24 noiembrie 2026, ~21:12–22:10 (ora României), în cloud, FĂRĂ placă.** Totul de aici e verificat **doar în
+**Sesiunea 214, 24 noiembrie 2026, ~21:12–21:48 (ora României), în cloud, FĂRĂ placă.** Totul de aici e verificat **doar în
 SIMULARE** (pe procesor). Nimic nu a rulat pe RTX 3070 Ti.
 
 ## De ce
