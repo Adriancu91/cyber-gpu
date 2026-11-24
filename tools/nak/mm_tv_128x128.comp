@@ -1,0 +1,10 @@
+// C-165 race variant of mm_train_tile (docs/C-165_CURSA_MM.md): BM x BN = 128 x 128 block of C, BK = 8, TM x TN = 8 x 8
+// per thread. Same job, push constants and bits as mm_train; the body is mm_train_tv.glsl.
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#define BM 128u
+#define BN 128u
+#define BK 8u
+#define TM 8u
+#define TN 8u
+#include "mm_train_tv.glsl"

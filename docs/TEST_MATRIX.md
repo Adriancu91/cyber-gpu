@@ -1,5 +1,11 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 211 (24 nov 2026, ~18:10, cloud, fără placă) — C-165: variantele cursei de noapte pentru `mm_train_tile`
+
+| ID | Ce | Comanda | Așteptat | Observat | Rezultat |
+|---|---|---|---|---|---|
+| T217 | 4 variante noi (`mm_tv_128x64`, `mm_tv_64x128`, `mm_tv_128x128`, `mm_tv_64x64k8`) + martorul `mm_train_tile`, prin pushbuffer + QMD în modelul procesorului de comenzi; SHA-256, registre, buclă; formele #513 | `cargo test --release -p nvidia-ga104 --test sim_mm_train_variants` | bit cu bit = `mm_train` = oracolul; formele #513 ÷ 128; refuzuri; grila greșită prinsă | 6/6; 15 forme, 147 lansări, 599,1 GFLOP; registre 54 / 54 / 90 / 34, 0 memorie locală | PASS (SIMULARE) |
+
 ## Rezultate — sesiunea 210 (24 nov 2026, ~17:13, cloud, fără placă) — C-157 p.2y: `colsum` împărțit în pasul de antrenare
 
 | ID | Ce | Comanda | Așteptat | Observat | Rezultat |

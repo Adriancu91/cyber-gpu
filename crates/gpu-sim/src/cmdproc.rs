@@ -1283,6 +1283,202 @@ pub fn mm_train_tile_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// C-165 (`docs/C-165_CURSA_MM.md`): the tile geometry of one race variant of `mm_train_tile`
+/// (`tools/nak/mm_tv_<name>.comp` over `tools/nak/mm_train_tv.glsl`). A block of `(bm/tm)·(bn/tn)` threads computes a
+/// `bm × bn` piece of C, `tm × tn` results per thread, K in slices of `bk`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MmTileGeometry {
+    pub bm: u32,
+    pub bn: u32,
+    pub bk: u32,
+    pub tm: u32,
+    pub tn: u32,
+}
+
+impl MmTileGeometry {
+    /// Threads per block (x only).
+    pub const fn threads(&self) -> u32 {
+        (self.bm / self.tm) * (self.bn / self.tn)
+    }
+    /// What the program needs from its QMD: the two shared tiles and one barrier.
+    pub const fn needs(&self) -> Needs {
+        Needs {
+            shared_bytes: 4 * self.bk * (self.bm + self.bn),
+            barriers: 1,
+        }
+    }
+}
+
+/// C-165: `mm_tv_128x64` — 128 × 64 of C per block, BK 16, 8 × 4 per thread.
+pub const MM_TV_128X64: MmTileGeometry = MmTileGeometry {
+    bm: 128,
+    bn: 64,
+    bk: 16,
+    tm: 8,
+    tn: 4,
+};
+/// C-165: `mm_tv_64x128` — 64 × 128 of C per block, BK 16, 4 × 8 per thread.
+pub const MM_TV_64X128: MmTileGeometry = MmTileGeometry {
+    bm: 64,
+    bn: 128,
+    bk: 16,
+    tm: 4,
+    tn: 8,
+};
+/// C-165: `mm_tv_128x128` — 128 × 128 of C per block, BK 8, 8 × 8 per thread.
+pub const MM_TV_128X128: MmTileGeometry = MmTileGeometry {
+    bm: 128,
+    bn: 128,
+    bk: 8,
+    tm: 8,
+    tn: 8,
+};
+/// C-165: `mm_tv_64x64k8` — 64 × 64 of C per block, BK 8, 4 × 4 per thread.
+pub const MM_TV_64X64K8: MmTileGeometry = MmTileGeometry {
+    bm: 64,
+    bn: 64,
+    bk: 8,
+    tm: 4,
+    tn: 4,
+};
+
+/// CPU stand-in for `mm_tv_128x64.sm86.sass` (see [`mm_train_tv_on_cpu`]).
+pub fn mm_tv_128x64_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    mm_train_tv_on_cpu(l, MM_TV_128X64)
+}
+/// CPU stand-in for `mm_tv_64x128.sm86.sass` (see [`mm_train_tv_on_cpu`]).
+pub fn mm_tv_64x128_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    mm_train_tv_on_cpu(l, MM_TV_64X128)
+}
+/// CPU stand-in for `mm_tv_128x128.sm86.sass` (see [`mm_train_tv_on_cpu`]).
+pub fn mm_tv_128x128_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    mm_train_tv_on_cpu(l, MM_TV_128X128)
+}
+/// CPU stand-in for `mm_tv_64x64k8.sm86.sass` (see [`mm_train_tv_on_cpu`]).
+pub fn mm_tv_64x64k8_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    mm_train_tv_on_cpu(l, MM_TV_64X64K8)
+}
+
+/// C-165: the CPU model of `tools/nak/mm_train_tv.glsl` for geometry `g`: `mm_train`'s job and cbuf0 on blocks of
+/// `g.threads()` threads; thread (tx = tid % TX, ty = tid / TX), TX = bn/tn, TY = bm/tm, owns rows `ty + TY·i` and
+/// columns `tx + TX·j`. Per K-slice the "shared" tiles hold op(A) / op(B) (zeros outside C), filled element by element
+/// as the threads do (`idx = tid + threads·e`, the same mapping as the GLSL); then for p < min(bk, K − t) each thread
+/// copies tm + tn values to "registers" and does its tm·tn `ffma.ftz`; finally `fadd.ftz` of `bias[col]` with BIAS.
+/// Same chains as [`mm_train_on_cpu`], so the same bits; oracle `reference::matmul_t_fma_ftz`.
+pub fn mm_train_tv_on_cpu(l: &mut Launch<'_>, g: MmTileGeometry) -> GpuResult<()> {
+    let (bm, bn, bk, tm, tn) = (
+        g.bm as usize,
+        g.bn as usize,
+        g.bk as usize,
+        g.tm as usize,
+        g.tn as usize,
+    );
+    let threads = g.threads() as usize;
+    let (tx_n, ty_n) = (bn / tn, bm / tm);
+    if l.block != [threads as u32, 1, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: mm_train_tv: blocuri gresite pentru varianta"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let a = l.mem.read_u64(l.cbuf0 + 0x28)?;
+    let b = l.mem.read_u64(l.cbuf0 + 0x30)?;
+    let c = l.mem.read_u64(l.cbuf0 + 0x38)?;
+    let bias_va = l.mem.read_u64(l.cbuf0 + 0x40)?;
+    let m = l.mem.read_u32(l.cbuf0 + 0x48)? as usize;
+    let n = l.mem.read_u32(l.cbuf0 + 0x4c)? as usize;
+    let k = l.mem.read_u32(l.cbuf0 + 0x50)? as usize;
+    let flags = l.mem.read_u32(l.cbuf0 + 0x54)?;
+    if flags & !(MM_TRAIN_TA | MM_TRAIN_TB | MM_TRAIN_BIAS) != 0 {
+        return Err(bad("SIM: mm_train_tv: biti de optiuni necunoscuti"));
+    }
+    let (ta, tb) = (flags & MM_TRAIN_TA != 0, flags & MM_TRAIN_TB != 0);
+    let x = l.mem.read_f32s(a, m * k)?;
+    let y = l.mem.read_f32s(b, k * n)?;
+    let bias = if flags & MM_TRAIN_BIAS != 0 {
+        Some(l.mem.read_f32s(bias_va, n)?)
+    } else {
+        None
+    };
+    let fma = gpu_compute::math::fma_f32_ftz;
+    let mut as_ = alloc::vec![0.0f32; bk * bm];
+    let mut bs_ = alloc::vec![0.0f32; bk * bn];
+    for gy in 0..l.grid[1] as usize {
+        for gx in 0..l.grid[0] as usize {
+            let (row0, col0) = (gy * bm, gx * bn);
+            let mut acc = alloc::vec![0.0f32; threads * tm * tn];
+            let mut t = 0;
+            while t < k {
+                // The loads, thread by thread, as in the GLSL (each element written exactly once).
+                for tid in 0..threads {
+                    for e in 0..bk * bm / threads {
+                        let idx = tid + threads * e;
+                        let (r, p) = if ta {
+                            (idx % bm, idx / bm)
+                        } else {
+                            (idx / bk, idx % bk)
+                        };
+                        let (ar, ak) = (row0 + r, t + p);
+                        as_[p * bm + r] = if ar < m && ak < k {
+                            if ta { x[ak * m + ar] } else { x[ar * k + ak] }
+                        } else {
+                            0.0
+                        };
+                    }
+                    for e in 0..bk * bn / threads {
+                        let idx = tid + threads * e;
+                        let (q, cc) = if tb {
+                            (idx % bk, idx / bk)
+                        } else {
+                            (idx / bn, idx % bn)
+                        };
+                        let (bkk, bc) = (t + q, col0 + cc);
+                        bs_[q * bn + cc] = if bkk < k && bc < n {
+                            if tb { y[bc * k + bkk] } else { y[bkk * n + bc] }
+                        } else {
+                            0.0
+                        };
+                    }
+                }
+                // barrier()
+                let len = bk.min(k - t);
+                for (tid, acc_t) in acc.chunks_mut(tm * tn).enumerate() {
+                    let (tx, ty) = (tid % tx_n, tid / tx_n);
+                    for p in 0..len {
+                        for i in 0..tm {
+                            let am = as_[p * bm + ty + ty_n * i];
+                            for j in 0..tn {
+                                let bv = bs_[p * bn + tx + tx_n * j];
+                                acc_t[i * tn + j] = fma(am, bv, acc_t[i * tn + j]);
+                            }
+                        }
+                    }
+                }
+                // barrier()
+                t += bk;
+            }
+            for (tid, acc_t) in acc.chunks(tm * tn).enumerate() {
+                let (tx, ty) = (tid % tx_n, tid / tx_n);
+                for i in 0..tm {
+                    for j in 0..tn {
+                        let (row, col) = (row0 + ty + ty_n * i, col0 + tx + tx_n * j);
+                        if row < m && col < n {
+                            let mut v = acc_t[i * tn + j];
+                            if let Some(bv) = &bias {
+                                v = gpu_compute::math::add_f32_ftz(v, bv[col]);
+                            }
+                            l.mem.write_u32(c + 4 * (row * n + col) as u64, v.to_bits());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// What `mm_train` / `mm_train_gelu` do with a finished sum.
 #[derive(Clone, Copy)]
 enum MmEpilogue {

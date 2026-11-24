@@ -1,0 +1,168 @@
+//! C-165 (`docs/C-165_CURSA_MM.md`): the race variants of [`crate::mm_train_tile`] for the night race on the board
+//! (DECIZII 24 nov 17:35, H3). Every variant is the same program body (`tools/nak/mm_train_tv.glsl`) with another
+//! tile geometry, compiled by Mesa NAK 25.0.7 for SM 8.6: **same job, same constant buffer** ([`mm::Args::cbuf`]) and
+//! **the same bits** as `mm_train` / `mm_train_tile` (every element is the `ffma.ftz` chain p = 0..K from +0.0, then one
+//! `fadd.ftz` of the bias; oracle `gpu_compute::reference::matmul_t_fma_ftz`). Only the launch changes: block size,
+//! grid, shared memory, registers. No register and no command is new — a variant is another program address + QMD.
+//! CPU models: `gpu_sim::cmdproc::mm_train_tv_on_cpu` (one per geometry). Tested **only in SIMULARE** (T217);
+//! which one is fastest on which shape is for the race on the board to say.
+
+use alloc::vec::Vec;
+
+use crate::mm_train as mm;
+use crate::mm_train_tile as mtt;
+use crate::qmd::{MAX_SHARED_BYTES, SharedMemory};
+use crate::train_step::{Launch, Prog};
+
+/// One program of the race: the code, its checksum and how to launch it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Variant {
+    /// Short name (`mm_train_tile`, `mm_tv_128x64`, …) — the program's file name in `tools/nak/out/`.
+    pub name: &'static str,
+    /// The SM 8.6 code.
+    pub code: &'static [u8],
+    /// SHA-256 of [`Variant::code`], lower-case hex (checked by a test and by the OS before the race).
+    pub sha256: &'static str,
+    /// Registers per thread (NAK dump).
+    pub registers: u32,
+    /// Rows × columns of C per block.
+    pub bm: u32,
+    pub bn: u32,
+    /// K slice per shared-memory tile.
+    pub bk: u32,
+    /// Results per thread (rows × columns).
+    pub tm: u32,
+    pub tn: u32,
+}
+
+impl Variant {
+    /// Threads per block: `[(bm/tm)·(bn/tn), 1, 1]`.
+    pub const fn block(&self) -> [u32; 3] {
+        [(self.bm / self.tm) * (self.bn / self.tn), 1, 1]
+    }
+    /// Shared memory: the bk × bm tile of op(A) and the bk × bn tile of op(B); one barrier.
+    pub const fn shared(&self) -> SharedMemory {
+        SharedMemory {
+            bytes: 4 * self.bk * (self.bm + self.bn),
+            max_bytes: MAX_SHARED_BYTES,
+            barriers: 1,
+        }
+    }
+    /// The grid for one product: one block per bm × bn piece of C.
+    pub fn grid(&self, args: &mm::Args) -> [u32; 3] {
+        [args.n.div_ceil(self.bn), args.m.div_ceil(self.bm), 1]
+    }
+    /// Floating-point operations of one product (2·M·N·K), for TFLOP/s in the race report.
+    pub fn flops(args: &mm::Args) -> u64 {
+        2 * args.m as u64 * args.n as u64 * args.k as u64
+    }
+}
+
+/// `tools/nak/out/mm_tv_128x64.sm86.sass`.
+pub const MM_TV_128X64: &[u8] = include_bytes!("../../../tools/nak/out/mm_tv_128x64.sm86.sass");
+/// `tools/nak/out/mm_tv_64x128.sm86.sass`.
+pub const MM_TV_64X128: &[u8] = include_bytes!("../../../tools/nak/out/mm_tv_64x128.sm86.sass");
+/// `tools/nak/out/mm_tv_128x128.sm86.sass`.
+pub const MM_TV_128X128: &[u8] = include_bytes!("../../../tools/nak/out/mm_tv_128x128.sm86.sass");
+/// `tools/nak/out/mm_tv_64x64k8.sm86.sass`.
+pub const MM_TV_64X64K8: &[u8] = include_bytes!("../../../tools/nak/out/mm_tv_64x64k8.sm86.sass");
+
+/// The race list: first the witness (`mm_train_tile`, the program the race compares against), then the variants.
+/// Index 0 is always `mm_train_tile`; new variants are only appended.
+pub const VARIANTS: [Variant; 5] = [
+    Variant {
+        name: "mm_train_tile",
+        code: mtt::MM_TRAIN_TILE,
+        sha256: mtt::MM_TRAIN_TILE_SHA256,
+        registers: mtt::REGISTERS,
+        bm: 64,
+        bn: 64,
+        bk: 16,
+        tm: 4,
+        tn: 4,
+    },
+    Variant {
+        name: "mm_tv_128x64",
+        code: MM_TV_128X64,
+        sha256: "deb06f297f42fedca493d565010511987f7f413b3261d3b1ffb96857709c7a61",
+        registers: 54,
+        bm: 128,
+        bn: 64,
+        bk: 16,
+        tm: 8,
+        tn: 4,
+    },
+    Variant {
+        name: "mm_tv_64x128",
+        code: MM_TV_64X128,
+        sha256: "e5bc59e3ad9af1109c85cd3f895e4f2b26749b460d5bb6740dd12f71df27f582",
+        registers: 54,
+        bm: 64,
+        bn: 128,
+        bk: 16,
+        tm: 4,
+        tn: 8,
+    },
+    Variant {
+        name: "mm_tv_128x128",
+        code: MM_TV_128X128,
+        sha256: "5d3affd4fd8e9e63edd2719fc204cb7ad197f18d9c0c5c453a73cc0cb9e23ebc",
+        registers: 90,
+        bm: 128,
+        bn: 128,
+        bk: 8,
+        tm: 8,
+        tn: 8,
+    },
+    Variant {
+        name: "mm_tv_64x64k8",
+        code: MM_TV_64X64K8,
+        sha256: "880884afec4b4beb8f7dedbd7d2145e9c1981dc1c007c3ef98c0b238fbb8f903",
+        registers: 34,
+        bm: 64,
+        bn: 64,
+        bk: 8,
+        tm: 4,
+        tn: 4,
+    },
+];
+
+/// One shape of `mm_train` product in a step: the arguments without the addresses, and how many launches have it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Form {
+    pub m: u32,
+    pub n: u32,
+    pub k: u32,
+    /// TA / TB / BIAS ([`mm::TA`], [`mm::TB`], [`mm::BIAS`]).
+    pub flags: u32,
+    /// Launches of the step with this shape.
+    pub count: u32,
+}
+
+/// The distinct shapes of the `mm_train` / `mm_train_tile` launches of a step (in first-seen order, with counts) —
+/// the list the race runs on (`test-placa --cursa`). Other programs are ignored.
+pub fn forms(launches: &[Launch]) -> Vec<Form> {
+    let mut out: Vec<Form> = Vec::new();
+    for l in launches {
+        if !matches!(l.prog, Prog::MmTrain | Prog::MmTrainTile) {
+            continue;
+        }
+        let u32_at =
+            |o: usize| u32::from_le_bytes([l.cbuf[o], l.cbuf[o + 1], l.cbuf[o + 2], l.cbuf[o + 3]]);
+        let (m, n, k, flags) = (u32_at(0x48), u32_at(0x4c), u32_at(0x50), u32_at(0x54));
+        match out
+            .iter_mut()
+            .find(|f| (f.m, f.n, f.k, f.flags) == (m, n, k, flags))
+        {
+            Some(f) => f.count += 1,
+            None => out.push(Form {
+                m,
+                n,
+                k,
+                flags,
+                count: 1,
+            }),
+        }
+    }
+    out
+}
