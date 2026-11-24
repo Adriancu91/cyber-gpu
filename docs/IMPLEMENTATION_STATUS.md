@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 210 — 24 noiembrie 2026, ~17:13–18:15 (ora României), în cloud, FĂRĂ placă — **os-407 comparat + C-157 p.2y: `colsum` împărțit în pasul de antrenare**
+## Sesiunea 210 — 24 noiembrie 2026, ~17:13–17:45 (ora României), în cloud, FĂRĂ placă — **os-407 comparat + C-157 p.2y: `colsum` împărțit în pasul de antrenare**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 209 terminată 16:39), l-am pus `ocupat`. Test nou pe placă: **os-407**
 (`--antrenare-513 --placi3`, 16:12) → comparat întâi (punctul 2 al cozii). Apoi am legat în pas `colsum_part` (gata din sesiunea 159, nepredat).
