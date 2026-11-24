@@ -1,5 +1,11 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 197 (24 nov 2026, ~03:15–04:00, cloud, fără placă) — C-157 punctul 2: os-386, de ce pasul întreg e 370 ms
+
+| ID | Ce | Comanda | Așteptat | Observat | Rezultat |
+|---|---|---|---|---|---|
+| T205 | Pasul întreg al antrenării din os-386 (~370 ms, placa 3,65 ms): rândurile jurnalului pe pas și cuvintele driverului; plan + predicții înainte (`b9d0899`, `docs/C-157_P2_OS386_PASUL_INTREG.md`) | `cargo test --release -p nvidia-ga104 --test sim_c157_p2_os386 -- --nocapture --test-threads=1` | J1: 22 de rânduri × 10 pași → 220 `Now` azi, 0 cu `gen_routine` + `flush_live()` pe pas, 3 fără `flush_live()`; J2: ~1 500 de cuvinte scrise + ~370 citite pe pas ≈ 1,2 ms | J1: 220 / 0 (10 goliri) / 3 — exact; J2: 75 de lansări, 1 529–1 533 scrise (pushbuffer 908, înregistrări 304, lotul 321), 369 citite ≈ 1 196 µs; procesorul gazdei 26 µs | PASS (SIMULARE + aritmetică); câștigul pe placă NOT TESTED |
+
 ## Rezultate — sesiunea 191 (23 nov 2026, ~21:15–21:30, cloud, fără placă) — ordinea 20:11 pasul 2: pasul mixt pe forma lui `antrenare mini`, SIMULARE
 
 | ID | Ce | Comanda | Așteptat | Observat | Rezultat |
