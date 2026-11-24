@@ -102,3 +102,8 @@ Predicții (scrise înainte de cod):
 4. `from_race(parse_race(raport))` = `from_race(rândurile adevărate)` atunci când timpii diferă între variante cu mai mult de 0,1 µs
    (rotunjirea OS-ului nu schimbă alegerea), iar `Plan::with_mm_choice` cu ea schimbă exact formele alese (ca T219).
 5. Rânduri stricate (număr lipsă, „x” lipsă, opțiuni ne-numerice, timp cu două puncte) → ignorate, fără panică.
+
+**Rezultat (sesiunea 215, pe procesor, T221 3/3 + 1/1):** toate 5 predicțiile confirmate din prima: 73 de rânduri citite (75 − SARIT −
+NETERMINAT), timpii = cei scriși rotunjiți la 0,1 µs, formele și lansările = ale pasului #513, alegerea = cea din timpii adevărați,
+`with_mm_choice` mută exact formele alese; o a doua cursă înlocuiește prima; rândurile stricate (9 feluri) și străine sunt lăsate
+deoparte fără panică. Nimic nou pentru placă. Nota pentru OS: `integration/cyber-universe/C-165_cursa-mm.md` §„Pasul 3”.

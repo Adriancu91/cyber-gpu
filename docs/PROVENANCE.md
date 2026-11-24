@@ -564,3 +564,6 @@ niciun octet de firmware NVIDIA.
   testele T218 (`crates/nvidia-ga104/tests/c164_kronos_v2.rs`). Cod al nostru. Formule din documentația publică PyTorch (`RMSNorm`,
   `F.rms_norm`, BSD; eps implicit f32 = `finfo.eps`), Zhang & Sennrich 2019 (RMSNorm) și So et al. 2021 (Primer, ReLU²) — doar
   formulele, niciun cod copiat.
+- **C-165 pasul 3 — `parse_race` (sesiunea 215):** cititorul raportului cursei, scris de noi. Formatul rândurilor e al OS-ului nostru
+  (`cyber-universe`, P6-190, `race_row` din `gpu_i14.rs`, proiect propriu); în T221 șabloanele `format!` ale OS-ului sunt copiate ca să
+  verificăm exact formatul real. Nicio sursă străină.

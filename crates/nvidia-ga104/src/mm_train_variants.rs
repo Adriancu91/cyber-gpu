@@ -331,3 +331,179 @@ impl MmChoice {
         Ok(c)
     }
 }
+
+/// What [`parse_race`] reads back from a report: the race rows, and what it left out.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ParsedRace {
+    /// Every timed row of the last race in the text, in report order.
+    pub rows: Vec<RaceRow>,
+    /// The launches per step of each shape (the report's `(xN in pas)`), first-seen order — for the saving of a pick.
+    pub counts: Vec<Form>,
+    /// Rows without a time (`- us`: skipped or unfinished) — never a [`RaceRow`].
+    pub untimed: usize,
+    /// Rows whose variant name is not in [`VARIANTS`] — never a [`RaceRow`].
+    pub unknown: usize,
+}
+
+impl ParsedRace {
+    /// [`MmChoice::from_race`] on the rows read.
+    pub fn choice(&self) -> GpuResult<MmChoice> {
+        MmChoice::from_race(&self.rows)
+    }
+
+    /// How much one step would save with `choice` (Σ over the shapes of (witness − chosen median) × launches), in ns —
+    /// from the isolated race times, so an estimate (DEDUS), the same sum the OS prints.
+    pub fn saved_ns(&self, choice: &MmChoice) -> u64 {
+        let mut s = 0u64;
+        for f in &self.counts {
+            let v = choice.of(f.m, f.n, f.k, f.flags);
+            let t = |want: usize| {
+                self.rows
+                    .iter()
+                    .filter(|r| (r.m, r.n, r.k, r.flags) == (f.m, f.n, f.k, f.flags))
+                    .filter(|r| r.variant == want && r.same_bits)
+                    .map(|r| r.median_ns)
+                    .min()
+            };
+            if v > 0
+                && let (Some(w), Some(c)) = (t(0), t(v))
+            {
+                s += w.saturating_sub(c) * u64::from(f.count);
+            }
+        }
+        s
+    }
+}
+
+/// The header the OS writes before a race (`…: cursa mm (C-165, …): …`) — a new one starts the reading over.
+const RACE_HEADER: &str = ": cursa mm (C-165";
+/// The marker of one race row (`…: cursa: <variant> | …`).
+const RACE_ROW: &str = ": cursa: ";
+
+/// `"812.3"` → 812 300 ns (up to 3 decimals; `None` on anything else).
+fn us_to_ns(s: &str) -> Option<u64> {
+    let (whole, frac) = match s.split_once('.') {
+        Some((w, f)) => (w, f),
+        None => (s, ""),
+    };
+    if whole.is_empty() || frac.len() > 3 || !frac.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let w: u64 = whole.parse().ok()?;
+    let mut f = 0u64;
+    for (i, b) in frac.bytes().enumerate() {
+        f += u64::from(b - b'0') * [100, 10, 1][i];
+    }
+    w.checked_mul(1_000)?.checked_add(f)
+}
+
+/// `"1024x2304x768 f2 (x12 in pas)"` → (M, N, K, flags, count).
+fn parse_shape(s: &str) -> Option<(u32, u32, u32, u32, u32)> {
+    let mut it = s.split_whitespace();
+    let mnk = it.next()?;
+    let flags = it.next()?.strip_prefix('f')?.parse().ok()?;
+    let count = it.next()?.strip_prefix("(x")?.parse().ok()?;
+    let mut d = mnk.split('x');
+    let (m, n, k) = (
+        d.next()?.parse().ok()?,
+        d.next()?.parse().ok()?,
+        d.next()?.parse().ok()?,
+    );
+    if d.next().is_some() {
+        return None;
+    }
+    Some((m, n, k, flags, count))
+}
+
+/// C-165 step 3 (`docs/C-165_CURSA_MM.md` §„Pasul 3”): reads the race rows of an OS report (P6-190, `test-placa --cursa-mm`):
+/// `…: cursa: <variant> | MxNxK f<flags> (x<count> in pas) | <µs> us median | <x.yy> TFLOP/s | biti <=|DIFERA|…>`.
+/// Only the last race in the text is kept (a new `cursa mm (C-165, …)` header starts over). Rows with `- us`, unknown
+/// variant names and broken rows never become a [`RaceRow`]; nothing panics. The time is the report's, rounded to 0.1 µs.
+pub fn parse_race(text: &str) -> ParsedRace {
+    let mut p = ParsedRace::default();
+    for line in text.lines() {
+        if line.contains(RACE_HEADER) {
+            p = ParsedRace::default();
+            continue;
+        }
+        let Some((_, rest)) = line.split_once(RACE_ROW) else {
+            continue;
+        };
+        let parts: Vec<&str> = rest.split(" | ").map(str::trim).collect();
+        let [name, shape, time, _tflops, bits] = parts[..] else {
+            continue;
+        };
+        let Some((m, n, k, flags, count)) = parse_shape(shape) else {
+            continue;
+        };
+        let Some(bits) = bits.strip_prefix("biti ") else {
+            continue;
+        };
+        let Some(time) = time.strip_suffix(" us median") else {
+            continue;
+        };
+        if !p
+            .counts
+            .iter()
+            .any(|f| (f.m, f.n, f.k, f.flags) == (m, n, k, flags))
+        {
+            p.counts.push(Form {
+                m,
+                n,
+                k,
+                flags,
+                count,
+            });
+        }
+        if time == "-" {
+            p.untimed += 1;
+            continue;
+        }
+        let Some(median_ns) = us_to_ns(time) else {
+            continue;
+        };
+        let Some(variant) = VARIANTS.iter().position(|v| v.name == name) else {
+            p.unknown += 1;
+            continue;
+        };
+        p.rows.push(RaceRow {
+            m,
+            n,
+            k,
+            flags,
+            variant,
+            median_ns,
+            same_bits: bits == "=",
+        });
+    }
+    p
+}
+
+#[cfg(test)]
+mod race_report_tests {
+    use super::*;
+
+    #[test]
+    fn microseconds_and_shapes() {
+        assert_eq!(us_to_ns("812.3"), Some(812_300));
+        assert_eq!(us_to_ns("0.0"), Some(0));
+        assert_eq!(us_to_ns("12"), Some(12_000));
+        assert_eq!(us_to_ns("1.234"), Some(1_234));
+        for bad in ["", ".5", "1.2345", "1.2.3", "a.1", "1.a", "-"] {
+            assert_eq!(us_to_ns(bad), None, "{bad}");
+        }
+        assert_eq!(
+            parse_shape("1024x2304x768 f2 (x12 in pas)"),
+            Some((1024, 2304, 768, 2, 12))
+        );
+        for bad in [
+            "1024x2304 f2 (x12 in pas)",
+            "1024x2304x768x1 f2 (x12 in pas)",
+            "1024x2304x768 2 (x12 in pas)",
+            "1024x2304x768 fA (x12 in pas)",
+            "1024x2304x768 f2",
+        ] {
+            assert_eq!(parse_shape(bad), None, "{bad}");
+        }
+    }
+}

@@ -61,3 +61,22 @@ alegerii (biți diferiți, sub 3 %, fără martor, egalitate → indicele mic, t
 **Propunere pentru OS (după cursă, decide sesiunea OS):** opțiunea `--mm-alegere` după `--mm-placi`, cu tabelul cursei (din raport
 sau din fișierul cursei de pe stick) → `MmChoice::from_race` → `with_mm_choice`; în raport, rândul alegerii (formă → variantă).
 Nou pentru placă: doar programele variantelor deja rulate în cursă; niciun registru, nicio comandă nouă.
+
+## Pasul 3 — cititorul raportului: `parse_race` (sesiunea 215, 24 nov 22:15–23:20; pe procesor) — PREDARE
+Ca alegerea să iasă **direct din textul raportului cursei** (fără rânduri copiate de mână). Doar adăugări în `mm_train_variants`:
+- `parse_race(text) -> ParsedRace` citește rândurile voastre (P6-190, `race_row` din `gpu_i14.rs`, formatul de azi, neschimbat):
+  `…: cursa: <varianta> | MxNxK f<opțiuni> (x<N> in pas) | <µs> us median | … TFLOP/s | biti <=|DIFERA|…>`.
+  Se păstrează doar **ultima** cursă din text (antetul `cursa mm (C-165, …)` o ia de la capăt). Rândurile „- us”, numele necunoscute și
+  rândurile stricate nu devin `RaceRow` (numărate în `untimed` / `unknown`); nimic nu se blochează.
+- `ParsedRace { rows, counts, untimed, unknown }`; `ParsedRace::choice()` = `MmChoice::from_race(&rows)`;
+  `ParsedRace::saved_ns(&alegere)` = cât ar câștiga pasul (Σ (martor − ales) × lansări; aceeași sumă DEDUSĂ ca rândul vostru „pasul ar scadea cu”).
+- Timpul e cel din raport, rotunjit la 0,1 µs; alegerea iese la fel ca din timpii întregi (T221).
+
+**Cum se poate lega (decide sesiunea OS):** după `--cursa-mm`, aceeași pornire poate face `parse_race(&rândurile_raportului)` →
+`choice()` → `Plan::with_mm_choice` pentru un pas de probă `--mm-alegere`; sau, mai simplu, OS-ul păstrează alegerea direct din
+variabilele cursei (`best` pe formă) și ignoră cititorul — rezultatul e același. Pentru noi cititorul e unealta de comparație după cursă.
+
+**Teste T221 (pe procesor, nimic simulat pe placă):** raportul #513 făcut cu șabloanele voastre copiate (15 forme × 5 variante, cu un
+rând SARIT, unul NETERMINAT, unul DIFERA, liniile „cea mai rapida”, tabloul A4, rezumatul) → 73 de rânduri, aceleași forme și lansări
+ca pasul, aceeași alegere ca din timpii adevărați, `with_mm_choice` mută exact formele alese; două curse → doar ultima; rânduri stricate
+și străine lăsate deoparte. Nou pentru placă: nimic.
