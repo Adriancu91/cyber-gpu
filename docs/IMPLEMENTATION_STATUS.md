@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 200 — 24 noiembrie 2026, ~06:10–06:50 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația os-389 (pasul întreg pe bucăți)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 199 terminată 05:35), l-am pus `ocupat`. Test nou pe placă: **os-389**
+(`rezultate/2026-11-24-workstation-os389-bucati/`) → are întâietate (C-157 p.2).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Bucățile os-389 față de rândurile din `gpu-jurnal-072.txt` | golirea 6 rânduri = 102 ms, TLB 4 = 67, soneria 2 = 33, așteptarea + înregistrările + restul 4 = 67, pierderile + norma 6 = 100 → 22 × 16,8 ms = 370 ms | MĂSURAT (pe placă, de OS) |
+| „Multiplii de ~33 ms” | unitatea = un rând de jurnal scris pe stick, ~16,7 ms (16,1–19, fără trepte de ceas) = tipărire ~4 ms + scriere golită ~12,5 ms (DEDUS din `gpu_i6::live_line`); așteptarea plăcii nu e cu pauză | explicat |
+| Față de predicția J1 (os-386) | exact; nimic nou de tăiat la noi — P6-174 (în OS, `28a4745`) face tăietura; toate cele 22 de rânduri intră în `GEN_WRITES` / `GEN_NOTES`, 220 < `HELD_MAX` | PASS (verificat în cod) |
+| Comparația | `docs/C-157_P2_COMPARATII.md`, secțiunea os-389 | — |
+| `tools/check.sh` | format, clippy, **987 de teste**, build no_std (fără cod nou; ținta no_std reinstalată în cloud) | PASS |
+| Pasul întreg 4–5 ms pe placă după P6-174 (~13 000–16 000 simb/s) | — | NOT TESTED |
+
+**Ce e nou pentru placă:** nimic.
+
+**Următorul pas:** comparația când OS-ul rulează P6-174 pe placă (pasul întreg după remediu) sau os-384/385; altfel C-157 punctul 8
+(fișa de model, documentul de proiectare).
+
+---
+
 ## Sesiunea 199 — 24 noiembrie 2026, ~05:10–05:35 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: GELU' lipit pe circuitele speciale (`mm_tc_gelu`, pasul mixt)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 198 terminată 04:30), l-am pus `ocupat`. Niciun test nou pe placă după os-386

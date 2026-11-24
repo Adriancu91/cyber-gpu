@@ -2,6 +2,26 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-389 `--antrenare-mini --vram`, pasul întreg pe bucăți (24 nov 2026, 05:22) — sesiunea 200
+Surse: `Cyber-hub/rezultate/2026-11-24-workstation-os389-bucati/REZULTAT.md`, `ciclu-auto-20261124-0522.txt` (rândurile 87–106),
+`gpu-jurnal-072.txt` (rândurile 4250–4485). os-389 = doar măsurarea pe bucăți (P6-173); remediul jurnalului (P6-174) a intrat în OS după.
+- **Corectitudinea și placa = os-386:** ACELEAȘI NUMERE (9,9e-8 / 6,3e-7 / 8,8e-6), placa 3,65 ms pe pas, pasul întreg 370 ms (median).
+- **Bucățile = rândurile de jurnal din ele, ~16,7 ms fiecare (MĂSURAT):** golirea 102,0 ms = 6 rânduri (nota + 5 mutări ale ferestrei),
+  TLB 67,4 = 4 (nota + 3), soneria 33,4 = 2, așteptarea + înregistrările + restul trimiterii 67,1 = 4, pierderile + norma 100,0 = 6.
+  **22 de rânduri × 16,8 ms = 370 ms**, exact diagnosticul J1 din os-386. Pushbuffer-ul (4 µs), planul (33), lotul (49), lista (69) = nimic.
+- **„Multiplii de ~33 ms” (observația centrului):** unitatea e de fapt **un rând = ~16,7 ms**; 33 = 2 rânduri, 17 = 1. Nu e un ceas: în tot
+  `gpu-jurnal-072.txt` pauzele dintre rânduri sunt fie 16–19 ms (3 687 de rânduri „acum”, cele mai multe 16,1–17,5) sau 0–1 ms (rândurile ținute), fără trepte la
+  16,7 / 33,3 → o operație de durată fixă, nu o pauză sau o întrerupere de ceas. Din cod (`gpu_i6::live_line`, DEDUS): tipărirea pe
+  portul serial + ecran (~4 ms, os-308) + o scriere golită pe stick (~12,5 ms). Așteptarea plăcii **nu** e cu pauză: placa (3,65 ms)
+  lucrează ascunsă în timpul celor 2 rânduri de după sonerie, așa că bucla de așteptare o găsește deja gata.
+- **Ce a ieșit altfel:** nimic față de J1; vârful e acum la pasul 7 (678 ms, os-386: pasul 6) — tot o scriere USB lentă, alt loc.
+- **Ce tai mai departe:** nimic nou de la noi — P6-174 (deja în OS, `28a4745`) face exact tăietura: cele 22 de rânduri sunt toate de rutină
+  (`GEN_WRITES` = fereastra, cele 3 registre TLB, soneria; `GEN_NOTES` = cele 2 note), ținute în memorie sub `GenHold`, 220 < `HELD_MAX`
+  1 024 → niciun rând pierdut. **Predicția pentru următoarea rulare (DEDUS):** 0 scrieri pe stick în pași; golirea / TLB / soneria câte
+  zeci de µs; așteptarea ≈ placa (~3,6 ms, acum vizibilă); pierderile + norma < 0,5 ms; **pasul întreg 4–5 ms ≈ 13 000–16 000 simb/s**
+  (azi 172); dacă iese peste 6 ms, următorul de căutat e golirea finală sau citirea înregistrărilor. După: lotul în paralel (P10) → ~4 ms,
+  apoi placa însăși (pasul mixt os-384 + `mm_tc_gelu`).
+
 ## os-386 `--antrenare-mini --vram` + atenția gen 4 (24 nov 2026, 02:37) — sesiunea 197
 Surse: `Cyber-hub/rezultate/2026-11-24-workstation-os386-arena-vram/REZULTAT.md`, `ciclu-auto-20261124-0237.txt`, `gpu-jurnal-069.txt`.
 Predicții scrise înainte: `docs/C-160_P8_ARENA_VRAM.md` (R4), `docs/C-157_P2_OS386_PASUL_INTREG.md` (J1–J3, `b9d0899`).
