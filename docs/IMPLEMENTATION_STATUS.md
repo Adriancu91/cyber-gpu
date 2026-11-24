@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 206 — 24 noiembrie 2026, ~13:11–14:20 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația os-403 (profilul pasului #513)**
+## Sesiunea 206 — 24 noiembrie 2026, ~13:11–13:32 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația os-403 (profilul pasului #513)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 205 terminată 12:16), l-am pus `ocupat`. Test nou pe placă: **os-403**
 (`rezultate/2026-11-24-workstation-os403-profil-513/`: `mm_train` 64 %, atenția 33 %) → are întâietate.

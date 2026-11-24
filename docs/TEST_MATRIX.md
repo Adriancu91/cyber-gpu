@@ -1,6 +1,6 @@
 # Matricea de teste
 
-## Rezultate — sesiunea 206 (24 nov 2026, ~13:11–14:20, cloud, fără placă) — C-157 punctul 2: os-403 comparat, atenția `_3` în pasul #513
+## Rezultate — sesiunea 206 (24 nov 2026, ~13:11–13:32, cloud, fără placă) — C-157 punctul 2: os-403 comparat, atenția `_3` în pasul #513
 
 | ID | Ce | Comanda | Așteptat | Observat | Rezultat |
 |---|---|---|---|---|---|
