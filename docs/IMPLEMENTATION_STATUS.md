@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 201 — 24 noiembrie 2026, ~07:10–08:05 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 8: fișa modelului + pachetele de calcul**
+## Sesiunea 201 — 24 noiembrie 2026, ~07:10–07:40 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 8: fișa modelului + pachetele de calcul**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 200 terminată 06:50), l-am pus `ocupat`. Niciun test nou pe placă după os-389
 (P6-174 nu a rulat încă) → C-157 punctul 8. Documentul de proiectare cu planul și predicțiile urcat **înainte** de cod (`22bad35`).
