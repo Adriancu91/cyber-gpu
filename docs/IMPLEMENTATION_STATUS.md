@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 197 — 24 noiembrie 2026, ~03:11–04:05 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația os-386 (arena în VRAM)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 196 terminată 02:36), l-am pus `ocupat`. Rezultat nou pe placă: **os-386**
+(arena în VRAM + atenția gen 4) → punctul 2 al cozii are întâietate. Plan + predicții urcate **înainte** de cod (`b9d0899`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Comparația os-386 | placa 3,65 ms pe pas (estimat 1–5) — în interval; pasul întreg ~370 ms (estimat „câteva ms”) — ratat; atenția gen 4 1,33 ms (estimat 1,2–1,35) — în interval | MĂSURAT pe placă (de OS) |
+| Cauza celor 370 ms | 22 de rânduri de jurnal pe pas, fiecare scris pe stick (~16,5 ms); fereastra pasului în jurnal = pasul întreg rând cu rând, cu vârful de la pasul 6; bucla antrenării nu pornește rutina jurnalului (generarea da) | MĂSURAT (jurnal) + DEDUS (cod) |
+| T205 J1 | 10 pași × 22 de rânduri prin `Journal`: 220 `Now` azi; 0 cu `gen_routine` + `flush_live()` pe pas; 3 fără `flush_live()` | PASS (SIMULARE) |
+| T205 J2 | planul rezident: 75 de lansări, 1 529–1 533 de cuvinte scrise + 369 citite pe pas ≈ 1,2 ms; procesorul gazdei 26 µs | PASS (aritmetică) |
+| Corectură | nota P8 spunea că os-380 pierdea timpul în urcări; tot rândurile erau | — |
+| Nota pentru OS | `integration/cyber-universe/C-157_P2_os-386_pasul-intreg.md` (3 rânduri în bucla pașilor, ca la generare) | — |
+| `tools/check.sh` | format, clippy, **980 de teste** (+7 ignorate), build no_std | PASS |
+| Pasul întreg ~5 ms (~12 000–13 000 simb/s) după remediu | — | NOT TESTED |
+
+**Ce e nou pentru placă:** nimic — se schimbă doar când ajung rândurile jurnalului pe stick.
+
+**Următorul pas:** comparația când rulează os-384/385 `--mixt` sau remediul jurnalului pe placă; altfel al doilea rând de tăieturi
+pentru pasul întreg (umbra pushbuffer-ului + doar prima/ultima înregistrare) în SIMULARE, sau lipirea GELU' pe `mm_tc`.
+
+---
+
 ## Sesiunea 196 — 24 noiembrie 2026, ~02:10–02:35 (ora României), în cloud, FĂRĂ placă — **ordinea 20:11, pasul 5: lotul următor pregătit în paralel (două locuri de lot)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 195 terminată 01:27), l-am pus `ocupat`. Niciun rezultat nou de pe placă de
