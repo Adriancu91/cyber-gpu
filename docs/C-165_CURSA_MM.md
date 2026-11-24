@@ -86,3 +86,19 @@ arenă; (2) pasul de aur mic cu toate cele 4 variante în același pas = `with_m
 inventată (fiecare formă pe altă variantă): 64 960 → 34 016. Regula alegerii: cea mai rapidă cu biți „=”, doar dacă bate martorul
 cu ≥ 3 %. Nimic rulat pe placă; ce variantă câștigă pe ce formă o spune doar cursa. Nota pentru OS:
 `integration/cyber-universe/C-165_cursa-mm.md` §„Pasul 2”.
+
+## Pasul 3 — cititorul raportului cursei: `parse_race` (sesiunea 215, pe procesor)
+De ce: OS-ul scrie cursa în raport ca text (P6-190, `cyber-universe` `gpu_i14.rs`, `race_row`):
+`…: cursa: <varianta> | MxNxK f<opțiuni> (x<de câte ori> in pas) | <µs cu o zecimală> us median | <x.yy> TFLOP/s | biti <=|DIFERA|NETERMINAT|SARIT>`.
+Ca alegerea (`MmChoice::from_race`) să iasă **direct din raport**, fără rânduri copiate de mână, `nvidia_ga104::mm_train_variants::parse_race`
+citește aceste rânduri în `RaceRow`. Aceeași funcție o poate folosi și OS-ul (nimic de schimbat la el; e doar o adăugare la noi).
+
+Predicții (scrise înainte de cod):
+1. Un raport făcut exact cu formatul OS-ului (aceleași șabloane `format!`, copiate în test) pentru cele **15 forme #513 × 5 variante** dă
+   **75 de rânduri** citite, cu timpul = cel scris rotunjit la 0,1 µs (`ns` = µs·1000 + zecimea·100), biții „=” → `same_bits`.
+2. Rândurile „- us” (SARIT / NETERMINAT), liniile „cea mai rapida cu aceiasi biti”, rezumatul „cursa mm: …”, tabloul de bord și orice alt rând
+   **nu** devin `RaceRow`; un nume de variantă necunoscut nu devine rând (numărat separat).
+3. Două curse în același jurnal: se păstrează **doar ultima** (antetul `cursa mm (C-165, …)` o ia de la capăt).
+4. `from_race(parse_race(raport))` = `from_race(rândurile adevărate)` atunci când timpii diferă între variante cu mai mult de 0,1 µs
+   (rotunjirea OS-ului nu schimbă alegerea), iar `Plan::with_mm_choice` cu ea schimbă exact formele alese (ca T219).
+5. Rânduri stricate (număr lipsă, „x” lipsă, opțiuni ne-numerice, timp cu două puncte) → ignorate, fără panică.
