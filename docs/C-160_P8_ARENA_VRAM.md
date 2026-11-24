@@ -62,3 +62,9 @@ greutățile, gradientul, m și v stau pe placă de la primul pas la ultimul; î
   OS-ului (are deja `map_vram`, copia prin placă `vram_copy` și proba RAM ↔ VRAM).
 - Nu schimbă nicio listă de lansări: aceleași programe, aceleași argumente (doar adresele sunt cele ale planului).
 - Nimic nu rulează pe RTX 3070 Ti în sesiunea asta.
+
+## Rezultatul pe placă (os-386, 24 nov 2026) — adăugat de sesiunea 197
+- R4, placa: **3,65 ms** pe pas — în intervalul 1–5 ms. Corectitudinea: aceleași numere ca oracolul.
+- R4, pasul întreg: **~370 ms, ratat**. Explicația de sus („la fiecare pas OS-ul … urcă tot”) era greșită pentru cea mai mare parte a
+  timpului: și în os-380, și în os-386, ~350 ms pe pas sunt cele 22 de rânduri de jurnal scrise fiecare pe stick. Vezi
+  `docs/C-157_P2_OS386_PASUL_INTREG.md` și T205.

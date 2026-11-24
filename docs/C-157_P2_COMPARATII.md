@@ -2,6 +2,21 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-386 `--antrenare-mini --vram` + atenția gen 4 (24 nov 2026, 02:37) — sesiunea 197
+Surse: `Cyber-hub/rezultate/2026-11-24-workstation-os386-arena-vram/REZULTAT.md`, `ciclu-auto-20261124-0237.txt`, `gpu-jurnal-069.txt`.
+Predicții scrise înainte: `docs/C-160_P8_ARENA_VRAM.md` (R4), `docs/C-157_P2_OS386_PASUL_INTREG.md` (J1–J3, `b9d0899`).
+- **Corectitudinea = predicția:** ACELEAȘI NUMERE (pierdere 9,9e-8, normă 6,3e-7, greutăți 8,8e-6); 1 284 B sus / 260 B jos pe pas, exact T202.
+- **Placa: 3,65 ms pe pas** (estimat 1–5 ms; os-380: 25,6 ms) = 17 534 simb/s doar pe placă. Arena urcată o dată în 4,9 ms.
+- **Ratat de ~100 de ori: pasul întreg ~370 ms** (estimat „câteva ms”). Cauza (MĂSURAT în jurnal + DEDUS din cod): cele **22 de rânduri de
+  jurnal pe pas** merg fiecare pe stick (~16,5 ms unul) — bucla antrenării nu pornește porțiunea de rutină a generării. Fereastra fiecărui
+  pas în jurnal urmează pasul întreg rând cu rând, inclusiv vârful de 664 ms de la pasul 6 (o scriere USB lentă).
+- **Am greșit și în P8:** cele 286 ms din os-380 nu erau urcările de 31 MB, ci tot rândurile (corectat în nota P8).
+- **Ce tai mai departe:** rutina jurnalului + `flush_live()` pe pas în OS (3 rânduri; T205: 0 scrieri pe stick în loc de 220) → **~5 ms pe
+  pas ≈ 12 000–13 000 simb/s** (DEDUS: 1 533 cuvinte scrise + 369 citite pe pas ≈ 1,2 ms; procesorul ~26 µs). Apoi umbra pushbuffer-ului
+  + doar prima/ultima înregistrare + lotul în paralel → ~4 ms. Nota: `integration/cyber-universe/C-157_P2_os-386_pasul-intreg.md`.
+- **Atenția gen 4:** `attn_back_tile_4` 1,33 ms (estimat 1,2–1,35, gen 3: 1,60) — în interval; lanțul atenției ~3,16 ms (gen 1: 8,30).
+  Identică bit cu bit, 6/6. Nimic de tăiat aici înainte de pasul întreg.
+
 ## os-376 `test-placa --i9 c135 --ram-vram` (viteza RAM ↔ VRAM cu motorul de copiere, 23 nov 2026 17:36) — sesiunea 188
 Surse: `Cyber-hub/rezultate/2026-11-23-workstation-os376-ram-vram/REZULTAT.md`, `rezultate/os-automat/2026-11-23/ciclu-auto-20261123-1736.txt`
 (rândurile `ram-vram …`). Nucleul: cyber-universe cu cyber-gpu `9359f21`. Predicțiile scrise înainte: `docs/C-157_RAM_VRAM_PROBA.md` (`477455c`).
