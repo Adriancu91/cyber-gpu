@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 205 — 24 noiembrie 2026, ~11:14–12:30 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația os-395 (#513 pe placă) + oracolul #513**
+## Sesiunea 205 — 24 noiembrie 2026, ~11:14–12:16 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația os-395 (#513 pe placă) + oracolul #513**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 204 terminată 10:45), l-am pus `ocupat`. Test nou pe placă: **os-395**
 (`rezultate/2026-11-24-workstation-os395-antrenare-513/`, P6-172, `--antrenare-513`: rulează, dar „NU TRECE” + 911 simb/s) → are întâietate.
