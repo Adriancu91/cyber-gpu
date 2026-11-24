@@ -107,3 +107,35 @@ Predicții (scrise înainte de cod):
 NETERMINAT), timpii = cei scriși rotunjiți la 0,1 µs, formele și lansările = ale pasului #513, alegerea = cea din timpii adevărați,
 `with_mm_choice` mută exact formele alese; o a doua cursă înlocuiește prima; rândurile stricate (9 feluri) și străine sunt lăsate
 deoparte fără panică. Nimic nou pentru placă. Nota pentru OS: `integration/cyber-universe/C-165_cursa-mm.md` §„Pasul 3”.
+
+## os-413 — de ce `mm_tv_64x64k8` nu a terminat (sesiunea 216, 24 nov 23:12–; în cloud, FĂRĂ placă)
+**Ce s-a văzut (placa reală, prin OS):** pe prima formă (qkv, 1 024 × 2 304 × 768, f6) martorul și 3 variante au mers, cu aceiași
+biți; `mm_tv_64x64k8` **nu a scris nicio înregistrare** (ultima = 0x0, nici măcar lansarea de încălzire), apoi placa și-a revenit și
+generarea de după a fost corectă. Câștigătoarea: `mm_tv_128x128`, 1 889,8 µs față de 2 838,3 (×1,50).
+
+**Ce NU e cauza (verificat în cod):** programul în sine are aceeași structură ca martorul (`mm_train_tile`, trecut pe placă de multe
+ori): aceleași feluri de instrucțiuni, 34 de registre ca martorul, aceeași barieră, bucla lui p desfăcută ca la martor, 0 memorie
+locală, 4 KiB partajată (sub configurația de 8 KiB, ca `mm_train` cu 2 KiB, trecut pe placă). Biții sunt corecți în SIMULARE (T217).
+
+**Cauza cea mai probabilă (DEDUS, nedovedit pe placă):** citirea în avans a instrucțiunilor. Unitatea care aduce instrucțiunile
+citește puțin **după** instrucțiunea pe care o rulează. OS-ul mapează fiecare program rotunjit doar la pagini de 4 KiB
+(`map_vram(cod.len())`), iar programele cursei sunt mapate unul după altul — `mm_tv_64x64k8` **ultimul**. Codul lui are 16 368 de
+octeți: se termină la **16 octeți** de capătul paginilor, iar după el nu mai e nimic mapat. Citirea în avans cade în memorie
+nemapată → greșeală de pagină → canalul se oprește înainte de prima înregistrare. Toate celelalte variante au după cod fie restul
+paginii, fie programul următor (T222: 17–45 KiB mapați după cod). **Singura** cu sub 2 KiB după cod e exact cea care s-a oprit.
+Același lucru l-au pățit alții: Mesa nouveau/nvc0, commit-ul „increase overallocation on shader bo” (2024): „read page faults at
+the end of the shader allocation”, iar comentariul: memoria programelor are nevoie de 2 KiB (cifra NVIDIA) în plus la capăt
+„to avoid prefetch bugs”; NVK lasă o pagină întreagă. (Citit ca idee, MIT; nimic copiat.)
+
+**Ce am adăugat (doar adăugări, nimic schimbat):**
+- `qmd::PROGRAM_TAIL_BYTES` (4 096), `qmd::program_map_bytes(len)` = codul rotunjit la pagini **+ o pagină**,
+  `qmd::program_page_slack(len)`.
+- `mm_train_variants::RACE_HOLD = [4]`, `in_race(i)`, `race_list()` — lista cursei fără `64x64k8`; `VARIANTS` rămâne neschimbat
+  (indicii 0–4, `Prog` 25–28, `parse_race`, `MmChoice` la fel).
+- T222 (pe procesor): mărimile, așezarea din os-413 (doar `64x64k8` sub 2 KiB), lista cursei, și `parse_race` pe rândurile
+  **adevărate** din os-413 → alegerea pe qkv = `mm_tv_128x128`, pasul ar scădea cu ~11,4 ms din cele 12 lansări qkv (DEDUS).
+
+**Cum se lămurește pe placă (un singur lucru nou):** OS-ul mapează programele cu `program_map_bytes` (o pagină în plus după fiecare;
+nicio scriere nouă în registre, nicio comandă nouă), apoi rulează `mm_tv_64x64k8` **singur** pe o formă. Dacă termină cu aceiași
+biți: cauza confirmată și varianta se întoarce în cursă. Dacă tot nu termină: cauza e în program (rămâne scoasă; o recompilăm cu
+altă geometrie). Până atunci, cursa se face cu `race_list()`.

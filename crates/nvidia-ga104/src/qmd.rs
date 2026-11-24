@@ -34,6 +34,29 @@ pub struct SharedMemory {
 /// NVK's limit (`NVK_MAX_SHARED_SIZE`, Mesa 25.0.7).
 pub const MAX_SHARED_BYTES: u32 = 48 * 1024;
 
+/// C-165 (os-413): bytes of mapped GPU memory kept after the end of every program's code. The SM's instruction
+/// fetcher reads ahead of the instruction it runs; when the code ends near the end of its mapping and nothing is
+/// mapped after it, that read-ahead is a page fault on a read the program never asked for. Mesa NVK leaves a whole
+/// page after the code; Mesa nouveau/nvc0 went from 256 bytes to 2 KiB for "read page faults at the end of the shader
+/// allocation" (commit "nouveau/nvc0: increase overallocation on shader bo", MIT; idea only). We take NVK's page.
+/// Status: the cause of the os-413 stop is DEDUS (`docs/C-165_CURSA_MM.md`, „os-413”), not proven on the board.
+pub const PROGRAM_TAIL_BYTES: u64 = 4096;
+
+/// How many bytes to map for a program of `code_len` bytes: the code rounded up to 4 KiB pages, plus
+/// [`PROGRAM_TAIL_BYTES`] (one more page). `0` for an empty program.
+pub const fn program_map_bytes(code_len: u64) -> u64 {
+    if code_len == 0 {
+        return 0;
+    }
+    code_len.div_ceil(4096) * 4096 + PROGRAM_TAIL_BYTES
+}
+
+/// The bytes left after the code in a mapping rounded up to 4 KiB pages only (the way programs were mapped up to
+/// os-413). Below [`PROGRAM_TAIL_BYTES`], the program relies on whatever is mapped after it (C-165, os-413).
+pub const fn program_page_slack(code_len: u64) -> u64 {
+    code_len.div_ceil(4096) * 4096 - code_len
+}
+
 /// The SM's L1/shared split for a size, in QMD units (Mesa NAK `qmd.rs`
 /// `gv100_sm_config_smem_size`, MIT, re-written): 8/16/32/64/96 KiB → n/4 KiB + 1.
 pub fn sm_config_shared_units(bytes: u32) -> u32 {

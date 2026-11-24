@@ -567,3 +567,7 @@ niciun octet de firmware NVIDIA.
 - **C-165 pasul 3 — `parse_race` (sesiunea 215):** cititorul raportului cursei, scris de noi. Formatul rândurilor e al OS-ului nostru
   (`cyber-universe`, P6-190, `race_row` din `gpu_i14.rs`, proiect propriu); în T221 șabloanele `format!` ale OS-ului sunt copiate ca să
   verificăm exact formatul real. Nicio sursă străină.
+- **C-165 / os-413 — `qmd::program_map_bytes`, `RACE_HOLD` (sesiunea 216):** scrise de noi. Ideea paginii lăsate după codul
+  programului: Mesa nouveau/nvc0, commit „nouveau/nvc0: increase overallocation on shader bo” (Dave Airlie, 2024, MIT; comentariul
+  „Shader storage needs a 2K (from NVIDIA) overallocations at the end to avoid prefetch bugs”) și NVK (o pagină întreagă, după
+  același commit). Citite ca idee; nicio linie copiată. Rândurile os-413 din T222 sunt copiate din raportul nostru (OS-ul propriu).

@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 216 — 24 noiembrie 2026, ~23:12–00:20 (ora României), în cloud, FĂRĂ placă — **os-413: de ce `mm_tv_64x64k8` nu a terminat**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 215 terminată 22:48), l-am pus `ocupat`. Venise **os-413** (prima cursă de noapte):
+pasul #513 ca os-412 (474 ms, TRECE); cursa s-a oprit la forma 1, `mm_tv_64x64k8` fără nicio înregistrare; `mm_tv_128x128` ×1,50 pe qkv.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Cauza blocajului | programul comparat cu martorul (instrucțiuni, registre, barieră, partajată): fără diferență care să explice; cauza probabilă = citirea în avans a instrucțiunilor după capătul codului (16 B rămași în pagină, ultimul program mapat, nimic după) — ca la Mesa nouveau („read page faults at the end of the shader allocation”) | DEDUS (nedovedit pe placă) |
+| Paza | `qmd::PROGRAM_TAIL_BYTES`, `program_map_bytes`, `program_page_slack` | doar adăugări |
+| Scoasă din cursă | `mm_train_variants::RACE_HOLD = [4]`, `in_race`, `race_list()`; `VARIANTS` neschimbat | doar adăugări |
+| T222 | mărimile; așezarea os-413: **doar** `64x64k8` are < 2 KiB mapați după cod; lista cursei; `parse_race` pe rândurile **adevărate** os-413 → qkv = `mm_tv_128x128`, ~11,4 ms pe pas (DEDUS) | PASS (pe procesor, 4/4) |
+| Note | `docs/C-165_CURSA_MM.md` §„os-413”, `integration/cyber-universe/C-165_os413_64x64k8.md`, `docs/PROVENANCE.md` | — |
+| `tools/check.sh` | format, clippy, teste (pe gazdă), build no_std | PASS (**1 061 de teste**, 8 ignorate; build no_std PASS) |
+
+**Ce e nou pentru placă:** nimic. Propunere pentru OS: programele mapate cu o pagină în plus (`program_map_bytes`), cursa cu
+`race_list()`, apoi `64x64k8` singur pe qkv ca probă a cauzei. **Nicio schimbare incompatibilă.**
+
+**Următorul pas:** raportul cursei complete (15 forme, fără `64x64k8`) + A4 → comparația + `parse_race` → `MmChoice` → OS leagă
+`with_mm_choice`; apoi `mm_tc` / pasul mixt pe #513; pista B1 (int8 IMMA) după.
+
+---
+
 ## Sesiunea 215 — 24 noiembrie 2026, ~22:13–22:45 (ora României), în cloud, FĂRĂ placă — **os-412 comparat + C-165 pasul 3: `parse_race`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 214 terminată 21:47), l-am pus `ocupat`. Venise un test nou pe placă: **os-412**

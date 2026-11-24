@@ -129,6 +129,25 @@ pub const VARIANTS: [Variant; 5] = [
     },
 ];
 
+/// C-165 (os-413): the variants kept out of the night race until a board run says otherwise (indices in
+/// [`VARIANTS`], which does not change). `mm_tv_64x64k8` (4) did not finish on the board in os-413 (first shape, the
+/// record never came). Its code ends 16 bytes before the end of its 4 KiB pages and it was the last program mapped,
+/// so the instruction fetcher's read-ahead most likely ran into unmapped memory (DEDUS; see
+/// [`crate::qmd::PROGRAM_TAIL_BYTES`], `docs/C-165_CURSA_MM.md` „os-413”). It comes back only after one run alone,
+/// mapped with [`crate::qmd::program_map_bytes`].
+pub const RACE_HOLD: [usize; 1] = [4];
+
+/// True when variant `i` is in the race list (exists and is not in [`RACE_HOLD`]).
+pub fn in_race(i: usize) -> bool {
+    i < VARIANTS.len() && !RACE_HOLD.contains(&i)
+}
+
+/// The race list for `test-placa --cursa`: (index in [`VARIANTS`], variant), the witness first, without
+/// [`RACE_HOLD`]. The indices stay those of [`VARIANTS`] (what [`RaceRow::variant`] and [`MmChoice`] use).
+pub fn race_list() -> impl Iterator<Item = (usize, &'static Variant)> {
+    VARIANTS.iter().enumerate().filter(|(i, _)| in_race(*i))
+}
+
 /// One shape of `mm_train` product in a step: the arguments without the addresses, and how many launches have it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Form {
