@@ -42,3 +42,13 @@ dacă `colsum_part` merge pe placă cum merge `colsum` (aceleași operații; nou
 Nou pentru placă: programul `colsum_part` (121 de instrucțiuni, fără barieră, memorie partajată sau `atom`) și zona de lucru
 din arenă. Niciun registru nou. Pasul rămâne judecat de oracolul procesorului (pașii 1–9 la 1e-3); la o diferență OS-ul se întoarce la
 lista fără opțiune.
+
+## Rezultat (sesiunea 210, SIMULARE, T216)
+
+| # | Predicție | Ieșit | Rezultat |
+|---|---|---|---|
+| 1 | 385 → 483 lansări | **483** (48 de sume de deplasare + 25 LayerNorm; 312 lansări identice, în aceeași ordine); zona de lucru **768 KiB** după arenă; `step_until_opt` = pasul fără ultima lansare; pasul mixt are tot `launches_per_step_mixed` | PASS (pe procesor) |
+| 2 | nu bit cu bit, = oracolul, pierderile ≤ 1e-5 față de fără opțiune | 6 / 6 (sgd, adamw_513 × `new`, `_3` + plăci, `_3` + lipiri + plăci): verdict față de PyTorch **TRECE**; pierderile **identice** pe 10 pași (abaterea 0); biții gradientului diferă | PASS (SIMULARE) |
+| 3 | gradientul nu mai departe de oracolul f64 | **1,19e-7** cu împărțire față de **2,4–3,6e-7** fără (de 2–3 ori mai aproape, ca la T170); un strat #513 (2 × 128): aceleași cifre ca fără | PASS (SIMULARE) |
+| — | greșeală plantată: a doua sumă a LayerNorm (dβ) lipsă | gradientul 9,5e-2 față de 1,2e-7 → prinsă | PASS |
+| 4–5 | `colsum` 24 → ~2,5–5 ms, pasul −19–22 ms | — | DEDUS / NOT TESTED |

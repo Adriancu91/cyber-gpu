@@ -1,5 +1,11 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 210 (24 nov 2026, ~17:13, cloud, fără placă) — C-157 p.2y: `colsum` împărțit în pasul de antrenare
+
+| ID | Ce | Comanda | Așteptat | Observat | Rezultat |
+|---|---|---|---|---|---|
+| T216 | `Plan::with_colsum_split`: fiecare `colsum` din pas → `colsum_part` + `colsum` (+ `colsum` la LayerNorm), zona de lucru după arenă; plan + predicții în `docs/C-157_P2y_COLSUM_IMPARTIT.md` (`885a44b`, înainte de cod) | `cargo test --release -p nvidia-ga104 --test sim_c160_p5_golden t216` | #513 2 × 512 (`_3`, `--mm-placi`, rezident): 385 → 483 lansări, restul identic; pasul mic 10 pași (sgd, adamw_513; `new`, `_3`+plăci, `_3`+lipiri+plăci) verdict TRECE, pierderile ≤ 1e-5 față de fără opțiune, gradientul nu mai departe de oracolul f64; un strat #513 = oracolul; a doua sumă LayerNorm lipsă prinsă | 385 → 483 (48 deplasări, 25 LayerNorm), zona 768 KiB; 6/6 TRECE, pierderile identice (0), gradientul 1,19e-7 față de 2,4–3,6e-7 fără (mai aproape); un strat: aceleași cifre; prinsă (9,5e-2) | **PASS (SIMULARE)** — pe placă NOT TESTED |
+
 ## Rezultate — sesiunea 208 (24 nov 2026, ~15:13, cloud, fără placă) — C-157 p.2x: `mm_train` pe plăci de 64 × 64
 
 | ID | Ce | Comanda | Așteptat | Observat | Rezultat |

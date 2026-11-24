@@ -21,15 +21,15 @@ use gpu_sim::cmdproc::{
     CommandProcessor, Event, GNORM_NEEDS, LN_BACK_NEEDS, LN_BACK_RES_NEEDS, LN_FWD_NEEDS,
     MM_TRAIN_GELU_NEEDS, MM_TRAIN_NEEDS, MM_TRAIN_TILE_NEEDS, Needs, XENT_NEEDS, attn_back_on_cpu,
     attn_back_tile_on_cpu, attn_back_tile0_on_cpu, attn_fwd_on_cpu, attn_fwd_tile_on_cpu,
-    attn_p_on_cpu, attn_p_tile_on_cpu, colsum_on_cpu, emb_back_on_cpu, emb_fwd_on_cpu,
-    gelu_tr_on_cpu, gnorm_on_cpu, ln_back_on_cpu, ln_back_res_contracted_on_cpu,
+    attn_p_on_cpu, attn_p_tile_on_cpu, colsum_on_cpu, colsum_part_on_cpu, emb_back_on_cpu,
+    emb_fwd_on_cpu, gelu_tr_on_cpu, gnorm_on_cpu, ln_back_on_cpu, ln_back_res_contracted_on_cpu,
     ln_back_res_on_cpu, ln_fwd_on_cpu, mm_train_gelu_on_cpu, mm_train_gelu_unfused_on_cpu,
     mm_train_on_cpu, mm_train_tile_on_cpu, opt_step_on_cpu, vadd_on_cpu, xent_on_cpu,
 };
 use nvidia_ga104::push::{self, PushBuf};
 use nvidia_ga104::train_step::{
     self as ts, Launch, Outcome, PROGRAMS_ALL, PROGRAMS_ALL_3, PROGRAMS_ALL_FUSED,
-    PROGRAMS_ALL_FUSED2, PROGRAMS_ALL_TILE, Plan, Prog, Refs,
+    PROGRAMS_ALL_FUSED2, PROGRAMS_ALL_SPLIT, Plan, Prog, Refs,
 };
 use nvidia_ga104::{transfer, xent as xe};
 use nvidia_rm570::regs::clc7c0 as c;
@@ -91,8 +91,8 @@ impl Board {
         // `Plan::new_tiles` / `new_p_only_tiles`).
         // T195: + the three `_3` programs (`PROGRAMS_ALL_3`), on the same CPU models as the first tiled ones.
         // T200: + `ln_back_res` (`PROGRAMS_ALL_FUSED`). T201: + `mm_train_gelu` (`PROGRAMS_ALL_FUSED2`).
-        // T215: + `mm_train_tile` (`PROGRAMS_ALL_TILE`).
-        for p in PROGRAMS_ALL_TILE {
+        // T215: + `mm_train_tile` (`PROGRAMS_ALL_TILE`). T216: + `colsum_part` (`PROGRAMS_ALL_SPLIT`).
+        for p in PROGRAMS_ALL_SPLIT {
             let code = p.code();
             match p {
                 Prog::MmTrain => {
@@ -155,6 +155,7 @@ impl Board {
                 Prog::MmTrainTile => {
                     cp.register_program_with_needs(code, mm_train_tile_on_cpu, MM_TRAIN_TILE_NEEDS)
                 }
+                Prog::ColsumPart => cp.register_program(code, colsum_part_on_cpu),
             };
             cp.mem.write(prog_va(p), code);
         }
@@ -306,6 +307,22 @@ enum Kind {
     Tiles3BothTile,
     /// T215: [`Plan::new`] + [`Plan::with_mm_tile`].
     KeptTile,
+    /// T216: [`Plan::new`] + [`Plan::with_colsum_split`].
+    KeptSplit,
+    /// T216: [`Plan::new_tiles3`] + [`Plan::with_mm_tile`] + [`Plan::with_colsum_split`] (what os-407 + `--mm-placi` +
+    /// the split would send).
+    Tiles3TileSplit,
+    /// T216: [`Plan::new_tiles3`] + both fusions + [`Plan::with_mm_tile`] + [`Plan::with_colsum_split`].
+    Tiles3BothTileSplit,
+}
+
+impl Kind {
+    fn split(self) -> bool {
+        matches!(
+            self,
+            Kind::KeptSplit | Kind::Tiles3TileSplit | Kind::Tiles3BothTileSplit
+        )
+    }
 }
 
 fn plant(plan: &Plan, list: &mut Vec<Launch>, f: Fault) {
@@ -518,6 +535,19 @@ fn run_plan(
             .with_fused_gelu()
             .with_mm_tile(),
         Kind::KeptTile => Plan::new(ar, bsz, tl, inputs, HEAP).unwrap().with_mm_tile(),
+        Kind::KeptSplit => Plan::new(ar, bsz, tl, inputs, HEAP)
+            .unwrap()
+            .with_colsum_split(),
+        Kind::Tiles3TileSplit => Plan::new_tiles3(ar, bsz, tl, inputs, HEAP)
+            .unwrap()
+            .with_mm_tile()
+            .with_colsum_split(),
+        Kind::Tiles3BothTileSplit => Plan::new_tiles3(ar, bsz, tl, inputs, HEAP)
+            .unwrap()
+            .with_fused_back()
+            .with_fused_gelu()
+            .with_mm_tile()
+            .with_colsum_split(),
     };
     // T187: the arena of `Plan::new` (the same addresses as `new_tiles`), for `Fault::OldBackward`.
     let old = Plan::new(ar, bsz, tl, inputs, HEAP).unwrap();
@@ -974,7 +1004,8 @@ fn shapes_513_on(kind: Kind, layers: usize, (bsz, tl): (usize, usize)) -> (f32, 
         w.abs,
         names[w.at].name
     );
-    assert_eq!(run.total_per_step, 31 * layers + 13);
+    let extra = if kind.split() { 8 * layers + 2 } else { 0 };
+    assert_eq!(run.total_per_step, 31 * layers + 13 + extra);
     assert!(lrel <= train::TOL_LOSS_REL, "eroarea {lrel}");
     assert!(nrel <= 1e-5, "norma {nrel}");
     assert!(g.abs <= train::TOL_GRAD_ABS && g.rel_norm <= train::TOL_GRAD_REL_NORM);
@@ -2678,4 +2709,252 @@ fn t215_mm_tile_grid_mistakes() {
         if caught { "DA" } else { "NU" }
     );
     assert!(caught, "grila mai mica nu e prinsa");
+}
+
+// ------------------------------------------------------------------ T216: `colsum` split over rows in the step
+
+/// Prediction 1 (`docs/C-157_P2y_COLSUM_IMPARTIT.md`): the #513 step of os-407 (`new_tiles3`, resident, 2 × 512) with
+/// [`Plan::with_colsum_split`] (and `--mm-placi`): 385 → 483 launches; every `colsum` becomes `colsum_part` + `colsum`
+/// (+ `colsum` for a LayerNorm) with the same tag and layer, the rest of the list unchanged in order; the work zone
+/// sits after `end`, inside `bytes()`, and is big enough.
+#[test]
+fn t216_the_513_step_with_colsum_split() {
+    let ar = train::M513;
+    let (bsz, tl) = (2, 512);
+    let inputs: Vec<u32> = (0..(bsz * tl) as u32).map(|i| (i * 37) % 16_384).collect();
+    let old = Plan::new_tiles3(ar, bsz, tl, &inputs, HEAP)
+        .unwrap()
+        .with_mm_tile()
+        .resident()
+        .unwrap();
+    let new = Plan::new_tiles3(ar, bsz, tl, &inputs, HEAP)
+        .unwrap()
+        .with_mm_tile()
+        .with_colsum_split()
+        .resident()
+        .unwrap();
+    assert!(new.colsum_split() && !old.colsum_split() && new.mm_tile());
+    assert!(new.clone().with_recompute().unwrap().colsum_split());
+    assert!(new.clone().with_batch_slots().unwrap().colsum_split());
+    assert_eq!(
+        new.colsum_split_programs(),
+        &ts::PROGRAMS_COLSUM_SPLIT_EXTRA[..]
+    );
+    assert!(old.colsum_split_programs().is_empty() && old.colsum_scratch().is_none());
+    let (p0, p1, words) = new.colsum_scratch().unwrap();
+    assert_eq!(words, 32 * 4 * 768);
+    assert!(p0 >= new.end && p1 >= p0 + 4 * words as u64);
+    assert!(p1 + 4 * words as u64 <= new.base + new.bytes());
+    assert_eq!(old.end, new.end);
+    let extra = new.bytes() - old.bytes();
+    assert!(extra <= 1 << 20, "{extra}");
+    let params: Vec<Vec<f32>> = ar
+        .tensors()
+        .iter()
+        .map(|t| vec![0.0; t.elements()])
+        .collect();
+    let opt = AdamW::recipe_513(&params);
+    drop(params);
+    let (lo, ln) = (
+        old.step(Recipe::AdamW513, &opt, 1).unwrap(),
+        new.step(Recipe::AdamW513, &opt, 1).unwrap(),
+    );
+    assert_eq!((lo.len(), ln.len()), (385, 483));
+    assert_eq!(new.launches_per_step(Recipe::AdamW513), 483);
+    let (mut same, mut bias, mut ln_sums) = (0usize, 0usize, 0usize);
+    let mut j = 0;
+    for o in &lo {
+        if o.prog != Prog::Colsum {
+            assert_eq!(o, &ln[j], "{}", o.tag);
+            same += 1;
+            j += 1;
+            continue;
+        }
+        let part = &ln[j];
+        assert_eq!(part.prog, Prog::ColsumPart, "{}", o.tag);
+        assert_eq!((part.tag, part.layer), (o.tag, o.layer));
+        let u = |l: &Launch, at: usize| u32::from_le_bytes(l.cbuf[at..at + 4].try_into().unwrap());
+        let v = |l: &Launch, at: usize| u64::from_le_bytes(l.cbuf[at..at + 8].try_into().unwrap());
+        // The same input, rows, columns and mode as the old launch; partials into the work zone; chunk 32.
+        for at in [0x28, 0x30, 0x38, 0x40] {
+            assert_eq!(v(part, at), v(o, at), "{} 0x{at:x}", o.tag);
+        }
+        assert_eq!(
+            (u(part, 0x58), u(part, 0x5c), u(part, 0x60)),
+            (u(o, 0x58), u(o, 0x5c), u(o, 0x60))
+        );
+        assert_eq!((v(part, 0x48), u(part, 0x64)), (p0, 32));
+        assert_eq!(part.grid, [u(o, 0x5c).div_ceil(256), 32, 1]);
+        let sums = if u(o, 0x60) != 0 { 2 } else { 1 };
+        for (i, (from, to)) in [(p0, v(o, 0x48)), (p1, v(o, 0x50))]
+            .into_iter()
+            .take(sums)
+            .enumerate()
+        {
+            let s = &ln[j + 1 + i];
+            assert_eq!((s.prog, s.tag, s.layer), (Prog::Colsum, o.tag, o.layer));
+            assert_eq!(
+                (v(s, 0x28), v(s, 0x48), u(s, 0x58), u(s, 0x5c), u(s, 0x60)),
+                (from, to, 32, u(o, 0x5c), 0)
+            );
+        }
+        if sums == 2 {
+            ln_sums += 1;
+        } else {
+            bias += 1;
+        }
+        j += 1 + sums;
+    }
+    assert_eq!(j, ln.len());
+    assert_eq!((same, bias, ln_sums), (312, 48, 25));
+    let (lu, _) = new.step_until_opt(&opt, 1).unwrap();
+    assert_eq!(&lu[..], &ln[..ln.len() - 1]);
+    let mixed = new.step_mixed(Recipe::AdamW513, &opt, 1, 16_384.0).unwrap();
+    assert_eq!(mixed.len(), new.launches_per_step_mixed(Recipe::AdamW513));
+    println!(
+        "kt t216 pasul #513 2 x 512 (_3, --mm-placi, rezident): {} -> {} lansari ({bias} sume de deplasare, {ln_sums} LayerNorm); zona de lucru {} KiB dupa arena",
+        lo.len(),
+        ln.len(),
+        extra >> 10
+    );
+}
+
+/// Prediction 2 and 3 (SIMULARE): the small golden step with [`Plan::with_colsum_split`] — not bit for bit (another
+/// order of the sums), but the verdict against PyTorch passes, the losses stay within 1e-5 of the unsplit plan and the
+/// step-1 gradients are as close to the f64 oracle as without the option.
+#[test]
+fn t216_colsum_split_small_golden_step() {
+    let inputs = read_i32(&dir().join("intrari.i32"));
+    let targets = read_i32(&dir().join("tinte.i32"));
+    let params = tensors("initiale");
+    let batch = Batch {
+        inputs: &inputs,
+        targets: &targets,
+        batch: B,
+        len: T,
+    };
+    for (recipe, name) in [(Recipe::Sgd, "sgd"), (Recipe::AdamW513, "adamw_513")] {
+        let cpu = train::golden_run(&MIC, &params, &batch, recipe, 1).unwrap();
+        for (base, split) in [
+            (Kind::Kept, Kind::KeptSplit),
+            (Kind::Tiles3Tile, Kind::Tiles3TileSplit),
+            (Kind::Tiles3BothTile, Kind::Tiles3BothTileSplit),
+        ] {
+            let a = run_mic_plan(base, recipe, 10, Fault::None);
+            let b = run_mic_plan(split, recipe, 10, Fault::None);
+            let count = |r: &Run, p: Prog| {
+                r.launches_per_step
+                    .iter()
+                    .filter(|e| e.0 == p)
+                    .map(|e| e.1)
+                    .sum::<usize>()
+            };
+            assert_eq!(b.total_per_step, a.total_per_step + 8 * MIC.layers + 2);
+            assert_eq!(count(&b, Prog::ColsumPart), count(&a, Prog::Colsum));
+            assert_eq!(
+                count(&b, Prog::Colsum),
+                count(&a, Prog::Colsum) + 2 * MIC.layers + 1
+            );
+            let v = ts::judge(recipe, b.total_per_step, &b.out, &refs(name));
+            let worst_loss = a
+                .out
+                .losses
+                .iter()
+                .zip(&b.out.losses)
+                .map(|(x, y)| ((x - y).abs() / x.abs()) as f64)
+                .fold(0.0, f64::max);
+            let ga = ts::deviation(&a.out.grad1, &cpu.grad_step1);
+            let gb = ts::deviation(&b.out.grad1, &cpu.grad_step1);
+            println!(
+                "kt t216 {name} {split:?}: {} lansari ({} colsum_part); fata de PyTorch {}; bit cu bit cu {base:?}: {}; pierderile fata de {base:?} {worst_loss:.1e}; gradientul pasului 1 fata de oracolul f64: {:.2e} (fara: {:.2e}), rel {:.2e} (fara: {:.2e}) (SIMULARE)",
+                b.total_per_step,
+                count(&b, Prog::ColsumPart),
+                if v.passes() { "TRECE" } else { "NU TRECE" },
+                if same_bits(&a.out, &b.out) {
+                    "DA"
+                } else {
+                    "NU"
+                },
+                gb.abs,
+                ga.abs,
+                gb.rel_norm,
+                ga.rel_norm
+            );
+            assert!(v.passes(), "{name} {split:?}: verdictul");
+            assert!(worst_loss <= 1e-5, "{name} {split:?}: {worst_loss}");
+            assert!(
+                gb.finite
+                    && gb.abs <= train::TOL_GRAD_ABS
+                    && gb.rel_norm <= train::TOL_GRAD_REL_NORM
+            );
+            assert!(
+                gb.abs <= 2.0 * ga.abs.max(1e-9),
+                "{name} {split:?}: {} > {}",
+                gb.abs,
+                ga.abs
+            );
+        }
+    }
+}
+
+/// One layer at the widths of #513 (2 × 128) with the split, against the f64 oracle (as T165 / T212).
+#[test]
+fn t216_one_layer_at_513_widths_with_the_split_matches_the_oracle() {
+    let a = shapes_513_on(Kind::Tiles3Tile, 1, (2, 128));
+    let b = shapes_513_on(Kind::Tiles3TileSplit, 1, (2, 128));
+    println!(
+        "kt t216 un strat #513 2 x 128: eroarea {} / {}, norma {} / {} (fara / cu impartire, SIMULARE)",
+        a.0, b.0, a.1, b.1
+    );
+}
+
+/// A planted mistake: the second LayerNorm sum (dβ) of every split dropped — dβ stays 0 and the step is caught.
+#[test]
+fn t216_a_dropped_second_sum_is_caught() {
+    let inputs = read_i32(&dir().join("intrari.i32"));
+    let targets = read_i32(&dir().join("tinte.i32"));
+    let params = tensors("initiale");
+    let plan = Plan::new(MIC, B, T, &inputs, HEAP)
+        .unwrap()
+        .with_colsum_split();
+    let opt = AdamW::recipe_513(&params);
+    let full = plan.step(Recipe::Sgd, &opt, 1).unwrap();
+    let mut cut = Vec::new();
+    for (i, l) in full.iter().enumerate() {
+        // A `colsum` right after another `colsum` that follows a `colsum_part` = the second sum of a LayerNorm.
+        let second = i >= 2
+            && l.prog == Prog::Colsum
+            && full[i - 1].prog == Prog::Colsum
+            && full[i - 2].prog == Prog::ColsumPart;
+        if !second {
+            cut.push(l.clone());
+        }
+    }
+    assert_eq!(cut.len(), full.len() - (2 * MIC.layers + 1));
+    let run = |list: &[Launch]| {
+        let mut b = Board::new();
+        for (va, bytes) in plan.uploads(&params, &inputs, &targets).unwrap() {
+            b.cp.mem.write(va, &bytes);
+        }
+        b.submit(list);
+        plan.unflat(&b.read(plan.g, plan.n_params)).unwrap()
+    };
+    let (g_full, g_cut) = (run(&full), run(&cut));
+    let batch = Batch {
+        inputs: &inputs,
+        targets: &targets,
+        batch: B,
+        len: T,
+    };
+    let cpu = train::golden_run(&MIC, &params, &batch, Recipe::Sgd, 1).unwrap();
+    let ok = ts::deviation(&g_full, &cpu.grad_step1);
+    let bad = ts::deviation(&g_cut, &cpu.grad_step1);
+    println!(
+        "kt t216 suma a doua lipsa: gradientul {:.2e} fata de {:.2e} (prinsa: {})",
+        bad.abs,
+        ok.abs,
+        bad.abs > train::TOL_GRAD_ABS
+    );
+    assert!(ok.abs <= train::TOL_GRAD_ABS);
+    assert!(bad.abs > train::TOL_GRAD_ABS, "nu e prinsa");
 }

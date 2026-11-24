@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 210 — 24 noiembrie 2026, ~17:13–18:15 (ora României), în cloud, FĂRĂ placă — **os-407 comparat + C-157 p.2y: `colsum` împărțit în pasul de antrenare**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 209 terminată 16:39), l-am pus `ocupat`. Test nou pe placă: **os-407**
+(`--antrenare-513 --placi3`, 16:12) → comparat întâi (punctul 2 al cozii). Apoi am legat în pas `colsum_part` (gata din sesiunea 159, nepredat).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| os-407 comparat | atenția gen 3: 20,5 ms pe pas (prezis 20–40), 1,71 ms pe strat la B 2 = jumătate din os-375; pasul 778 ms = 1 315 simb/s (prezis 770–800); `mm_train` 93 %; = oracolul | PASS pe placă (MĂSURAT de OS), comparat de noi |
+| Ceasurile 1 022 ‰ lămurite | TSC socotit cu 3 106 925 kHz (10 ms la pornire) față de 3 002 035 kHz (5 × 50 ms): timpii procesorului cu ~3,4 % prea mici; explică și NECUNOSCUTUL de la os-386 | DEDUS (aritmetică pe cifrele raportului) |
+| Predicția `mm_train_tile` corectată | `mm_train` e 724 ms, nu ~600 → pasul ~175–295 ms ≈ 3 500–5 850 simb/s | DEDUS |
+| Plan + predicții p.2y | `docs/C-157_P2y_COLSUM_IMPARTIT.md`, urcate înainte de cod (`885a44b`) | — |
+| `Plan::with_colsum_split` | `Prog::ColsumPart`, `PROGRAMS_ALL_SPLIT` (25, indicii vechi păstrați), `PROGRAMS_COLSUM_SPLIT_EXTRA`, `colsum_scratch()` (zona de lucru după `end`, în `bytes()`), aplicată în `step` / `step_until_opt` / `step_mixed`, păstrată de `resident` / `with_recompute` / `with_batch_slots` | doar adăugări |
+| T216 | #513 2 × 512: 385 → 483 lansări, restul identic, zona 768 KiB; pasul mic 10 pași (6 combinații) TRECE, pierderile identice, gradientul de 2–3 ori mai aproape de oracolul f64; un strat #513 = oracolul; a doua sumă lipsă prinsă | PASS (SIMULARE, 4/4) |
+| Nota pentru OS | `integration/cyber-universe/C-157_P2y_colsum-impartit.md` (+ propunerea pentru ceasul procesorului) | — |
+| `tools/check.sh` | format, clippy, teste (pe gazdă), build no_std (ținta adăugată în container) | PASS (**1 029 de teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** nimic trimis; programul `colsum_part` (neprobat pe placă) devine legabil în pas. Interfața publică: doar
+adăugări (o variantă nouă în `Prog` — un `match` complet din OS cere un braț în plus; `bytes()` crește doar cu opțiunea pornită).
+
+**Estimat (DEDUS):** `colsum` 24,3 → ~2,5–5 ms pe pas, pasul −19–22 ms.
+
+**Următorul pas:** comparația lui `--mm-placi` (P6-188) când vine; apoi, după ce `mm_train_tile` merge pe placă, ce rămâne mare în pas
+(probabil `mm_train_tile` însuși → plăci mai mari / pasul mixt pe #513).
+
+---
+
 ## Sesiunea 209 — 24 noiembrie 2026, ~16:11–16:39 (ora României), în cloud, FĂRĂ placă — **C-157 p.2x pasul 2: `Plan::with_mm_tile`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 208 terminată 15:50), l-am pus `ocupat`. În hub a apărut doar ciclul automat 16:08:

@@ -32,10 +32,10 @@ use crate::qmd::{ComputeQmd, SharedMemory};
 use crate::{
     attn_back as ab, attn_back_tile_2 as abt2, attn_back_tile_3 as abt3,
     attn_back_tile0_2 as abt02, attn_back_tile0_3 as abt03, attn_fwd as af, attn_fwd_tile2 as aft2,
-    attn_fwd_tile3 as aft3, attn_p as ap, attn_p_tile as apt, colsum as cs, emb_back as eb,
-    emb_fwd as ef, gelu_tr as gt, gnorm as gn, kronos_layer, ln_back as lb, ln_back_res as lbr,
-    ln_fwd as lf, mm_train as mm, mm_train_gelu as mg, mm_train_tile as mtt, opt_step as os,
-    xent as xe,
+    attn_fwd_tile3 as aft3, attn_p as ap, attn_p_tile as apt, colsum as cs, colsum_part as csp,
+    emb_back as eb, emb_fwd as ef, gelu_tr as gt, gnorm as gn, kronos_layer, ln_back as lb,
+    ln_back_res as lbr, ln_fwd as lf, mm_train as mm, mm_train_gelu as mg, mm_train_tile as mtt,
+    opt_step as os, xent as xe,
 };
 
 fn bad(why: &'static str) -> GpuError {
@@ -104,6 +104,9 @@ pub enum Prog {
     /// C-157 p.2x (`docs/C-157_P2x_MM_TRAIN_TILE.md`): `mm_train` on 64×64 tiles (`mm_train_tile`, the same cbuf and
     /// the same bits), only in plans with [`Plan::with_mm_tile`]. In [`PROGRAMS_ALL_TILE`] only.
     MmTrainTile,
+    /// C-157 p.2y (`docs/C-157_P2y_COLSUM_IMPARTIT.md`): pass 1 of the column sum split over rows (`colsum_part`), only
+    /// in plans with [`Plan::with_colsum_split`]. In [`PROGRAMS_ALL_SPLIT`] only.
+    ColsumPart,
 }
 
 /// Every program a step uses (the OS loads all 13 once; `Gnorm` only runs at `adamw_513`).
@@ -261,6 +264,22 @@ pub const PROGRAMS_ALL_TILE: [Prog; 24] = [
     Prog::MmTrainTile,
 ];
 
+/// [`PROGRAMS_ALL_TILE`] + [`Prog::ColsumPart`] at the end (all 24 keep their [`Prog::index`]): every program any plan
+/// may launch, [`Plan::with_colsum_split`] included. `check_programs` checks all 25. The older lists stay as they were.
+pub const PROGRAMS_ALL_SPLIT: [Prog; 25] = {
+    let mut all = [Prog::ColsumPart; 25];
+    let mut i = 0;
+    while i < 24 {
+        all[i] = PROGRAMS_ALL_TILE[i];
+        i += 1;
+    }
+    all
+};
+
+/// What a [`Plan::with_colsum_split`] plan launches on top of [`Plan::programs`], [`Plan::fused_programs`] and
+/// [`Plan::mm_tile_programs`].
+pub const PROGRAMS_COLSUM_SPLIT_EXTRA: [Prog; 1] = [Prog::ColsumPart];
+
 /// What a [`Plan::with_mm_tile`] plan launches on top of [`Plan::programs`] and [`Plan::fused_programs`].
 pub const PROGRAMS_MM_TILE_EXTRA: [Prog; 1] = [Prog::MmTrainTile];
 
@@ -392,6 +411,7 @@ impl Prog {
             Prog::LnBackRes => lbr::LN_BACK_RES,
             Prog::MmTrainGelu => mg::MM_TRAIN_GELU,
             Prog::MmTrainTile => mtt::MM_TRAIN_TILE,
+            Prog::ColsumPart => csp::COLSUM_PART,
         }
     }
 
@@ -422,6 +442,7 @@ impl Prog {
             Prog::LnBackRes => lbr::LN_BACK_RES_SHA256,
             Prog::MmTrainGelu => mg::MM_TRAIN_GELU_SHA256,
             Prog::MmTrainTile => mtt::MM_TRAIN_TILE_SHA256,
+            Prog::ColsumPart => csp::COLSUM_PART_SHA256,
         }
     }
 
@@ -451,6 +472,7 @@ impl Prog {
             Prog::LnBackRes => lbr::REGISTERS,
             Prog::MmTrainGelu => mg::REGISTERS,
             Prog::MmTrainTile => mtt::REGISTERS,
+            Prog::ColsumPart => csp::REGISTERS,
         }
     }
 
@@ -480,6 +502,7 @@ impl Prog {
             Prog::LnBackRes => lbr::BLOCK,
             Prog::MmTrainGelu => mg::BLOCK,
             Prog::MmTrainTile => mtt::BLOCK,
+            Prog::ColsumPart => csp::BLOCK,
         }
     }
 
@@ -531,13 +554,14 @@ impl Prog {
             Prog::LnBackRes => "ln_back_res",
             Prog::MmTrainGelu => "mm_train_gelu",
             Prog::MmTrainTile => "mm_train_tile",
+            Prog::ColsumPart => "colsum_part",
         }
     }
 
-    /// Index in [`PROGRAMS_ALL_TILE`] (= the index in [`PROGRAMS_ALL_FUSED2`], the index in [`PROGRAMS_ALL_FUSED`], [`PROGRAMS_ALL_3`], [`PROGRAMS_ALL`], [`PROGRAMS`] /
+    /// Index in [`PROGRAMS_ALL_SPLIT`] (= the index in [`PROGRAMS_ALL_TILE`], the index in [`PROGRAMS_ALL_FUSED2`], the index in [`PROGRAMS_ALL_FUSED`], [`PROGRAMS_ALL_3`], [`PROGRAMS_ALL`], [`PROGRAMS`] /
     /// [`PROGRAMS_P_ONLY`] for their programs).
     pub fn index(self) -> usize {
-        PROGRAMS_ALL_TILE
+        PROGRAMS_ALL_SPLIT
             .iter()
             .position(|&p| p == self)
             .unwrap_or(0)
@@ -546,7 +570,7 @@ impl Prog {
 
 /// Checks every program's bytes against its SHA-256 (what the OS does before loading; refuse on a mismatch).
 pub fn check_programs() -> GpuResult<()> {
-    for p in PROGRAMS_ALL_TILE {
+    for p in PROGRAMS_ALL_SPLIT {
         if hex(&crate::sha256::digest(p.code())) != p.sha256() {
             return Err(bad("pas-aur: SHA-256 al unui program nu se potriveste"));
         }
@@ -771,6 +795,9 @@ pub struct Plan {
     fused_gelu: bool,
     /// C-157 p.2x ([`Plan::with_mm_tile`]): every `mm_train` launch goes on `mm_train_tile` (same cbuf, same bits).
     mm_tile: bool,
+    /// C-157 p.2y ([`Plan::with_colsum_split`]): every `colsum` launch is split over rows (`colsum_part` + `colsum`),
+    /// with the partial sums in [`Plan::colsum_scratch`] after `end`.
+    colsum_split: bool,
     /// C-160 P8 ([`Plan::resident`]): room (in distinct tokens) of the token segment lists; 0 = the plan is not
     /// resident (its lists are exactly its batch's).
     tok_cap: usize,
@@ -1058,6 +1085,7 @@ impl Plan {
         p.fused_back = self.fused_back;
         p.fused_gelu = self.fused_gelu;
         p.mm_tile = self.mm_tile;
+        p.colsum_split = self.colsum_split;
         // Order 20:11 step 5: keep the two batch slots (slot 0's view).
         if self.slots.is_some() {
             p = p.with_batch_slots()?;
@@ -1278,6 +1306,7 @@ impl Plan {
             fused_back: false,
             fused_gelu: false,
             mm_tile: false,
+            colsum_split: false,
             tok_cap: if resident { tok_cap } else { 0 },
             recompute,
             slots: None,
@@ -1338,6 +1367,128 @@ impl Plan {
         } else {
             &[]
         }
+    }
+
+    /// C-157 p.2y (`docs/C-157_P2y_COLSUM_IMPARTIT.md`): the same plan (same arena, same addresses, plus a work zone
+    /// after `end`, [`Plan::colsum_scratch`], counted by [`Plan::bytes`]) whose `colsum` launches are split over rows:
+    /// each becomes `colsum_part` (chunks of [`colsum_part::default_chunk`](crate::colsum_part::default_chunk) rows into
+    /// the partial sums) then `colsum` in bias mode over them (two of them for a LayerNorm: dγ, dβ) — 2 or 3 launches
+    /// in place of one, the rest of the list unchanged. **Not the same bits** (another order of the sums); judged
+    /// against the f64 oracle as before (T216, SIMULARE). The work zone is reused by every sum (launches run one after
+    /// the other). Off unless asked for; combines with every other option. Load [`Plan::programs`] +
+    /// [`Plan::fused_programs`] + [`Plan::mm_tile_programs`] + [`Plan::colsum_split_programs`].
+    pub fn with_colsum_split(mut self) -> Self {
+        self.colsum_split = true;
+        self
+    }
+
+    /// True after [`Plan::with_colsum_split`].
+    pub fn colsum_split(&self) -> bool {
+        self.colsum_split
+    }
+
+    /// [`PROGRAMS_COLSUM_SPLIT_EXTRA`] after [`Plan::with_colsum_split`], none otherwise.
+    pub fn colsum_split_programs(&self) -> &'static [Prog] {
+        if self.colsum_split {
+            &PROGRAMS_COLSUM_SPLIT_EXTRA
+        } else {
+            &[]
+        }
+    }
+
+    /// The work zone of [`Plan::with_colsum_split`]: `(p0, p1, words)` — two regions of `words` f32 each (G × 4E, G =
+    /// ⌈rows / chunk⌉ for the batch's rows), right after `end` (256-byte aligned, 256 bytes of gap after each, as
+    /// every region of the arena). `None` without the option.
+    pub fn colsum_scratch(&self) -> Option<(u64, u64, usize)> {
+        if !self.colsum_split {
+            return None;
+        }
+        let rows = (self.batch * self.len) as u32;
+        let g = rows.div_ceil(csp::default_chunk(rows)) as usize;
+        let words = g * 4 * self.arch.n_emb;
+        let mut b = Bump(self.end.div_ceil(256) * 256);
+        Some((b.alloc(words), b.alloc(words), words))
+    }
+
+    /// Bytes of the work zone ([`Plan::colsum_scratch`]); 0 without the option.
+    fn scratch_bytes(&self) -> u64 {
+        match self.colsum_scratch() {
+            None => 0,
+            Some((_, p1, words)) => {
+                let mut b = Bump(p1);
+                b.alloc(words);
+                b.0 - self.end
+            }
+        }
+    }
+
+    /// Launches [`Plan::with_colsum_split`] adds per step: 1 per bias sum, 2 per LayerNorm sum — 4 + 2·2 per layer and 2
+    /// for the final LayerNorm.
+    fn colsum_split_extra(&self) -> usize {
+        if self.colsum_split {
+            8 * self.arch.layers + 2
+        } else {
+            0
+        }
+    }
+
+    /// [`Plan::with_colsum_split`]: every `colsum` launch of `list` → `colsum_part` + `colsum` (+ `colsum`).
+    fn split_colsum(&self, list: Vec<Launch>) -> GpuResult<Vec<Launch>> {
+        let Some((p0, p1, words)) = self.colsum_scratch() else {
+            return Ok(list);
+        };
+        let mut out = Vec::with_capacity(list.len() + self.colsum_split_extra());
+        for l in list {
+            if l.prog != Prog::Colsum {
+                out.push(l);
+                continue;
+            }
+            let k = colsum_args_of(&l);
+            let chunk = csp::default_chunk(k.rows);
+            let plan = csp::Plan {
+                part: csp::Args {
+                    dy: k.dy,
+                    x: k.x,
+                    mean: k.mean,
+                    rstd: k.rstd,
+                    p0,
+                    p1: if k.mode == cs::Mode::LayerNorm { p1 } else { 0 },
+                    rows: k.rows,
+                    c: k.c,
+                    mode: k.mode,
+                    chunk,
+                },
+                s0: k.s0,
+                s1: k.s1,
+            };
+            if plan.part.groups() as usize * k.c as usize > words {
+                return Err(bad(
+                    "pas-aur: zona de lucru a lui colsum impartit e prea mica",
+                ));
+            }
+            let (ls, n) = plan
+                .launches()
+                .ok_or(bad("pas-aur: colsum impartit: argumente refuzate"))?;
+            for x in &ls[..n] {
+                out.push(match x {
+                    csp::Launch::Part(a) => launch(
+                        Prog::ColsumPart,
+                        a.cbuf().as_ref().map(|b| &b[..]),
+                        a.grid(),
+                        l.tag,
+                        l.layer.map(usize::from),
+                    )?,
+                    csp::Launch::Sum(a) => launch(
+                        Prog::Colsum,
+                        a.cbuf().as_ref().map(|b| &b[..]),
+                        a.grid(),
+                        l.tag,
+                        l.layer.map(usize::from),
+                    )?,
+                });
+            }
+        }
+        Ok(out)
     }
 
     /// [`Plan::with_mm_tile`]: every `mm_train` launch of `list` on `mm_train_tile` (cbuf kept, grid recomputed).
@@ -1402,6 +1553,7 @@ impl Plan {
         p.fused_back = self.fused_back;
         p.fused_gelu = self.fused_gelu;
         p.mm_tile = self.mm_tile;
+        p.colsum_split = self.colsum_split;
         Ok(p)
     }
 
@@ -1584,7 +1736,7 @@ impl Plan {
 
     /// Bytes of board memory the arena needs (from `base`).
     pub fn bytes(&self) -> u64 {
-        self.end - self.base
+        self.end - self.base + self.scratch_bytes()
     }
 
     /// The board address of tensor `i` of the weights (`base` = [`Plan::w`]) or of the gradients ([`Plan::g`]).
@@ -1654,7 +1806,7 @@ impl Plan {
         self.forward_backward(&mut out, 1.0)?;
         self.optimize(&mut out, recipe, opt, step, None)?;
         self.tile_mm(&mut out);
-        Ok(out)
+        self.split_colsum(out)
     }
 
     /// C-157 (`docs/C-157_ADAM_RAM.md`): the launches of step `step` of `adamw_513` **up to** the optimizer step (the
@@ -1672,7 +1824,7 @@ impl Plan {
         a.m = 0;
         a.v = 0;
         self.tile_mm(&mut out);
-        Ok((out, a))
+        Ok((self.split_colsum(out)?, a))
     }
 
     /// Launches per step: 31 per layer + 13 at `adamw_513` (11 at `sgd`).
@@ -1683,6 +1835,7 @@ impl Plan {
             * self.arch.layers
             + self.p_relaunches()
             + self.recompute_launches()
+            + self.colsum_split_extra()
             + if recipe == Recipe::AdamW513 { 13 } else { 11 }
     }
 
@@ -2978,6 +3131,26 @@ fn mm_args_of(l: &Launch) -> mm::Args {
     }
 }
 
+fn colsum_args_of(l: &Launch) -> cs::Args {
+    let u64_at = |o: usize| u64::from_le_bytes(l.cbuf[o..o + 8].try_into().unwrap_or([0; 8]));
+    let u32_at = |o: usize| u32::from_le_bytes(l.cbuf[o..o + 4].try_into().unwrap_or([0; 4]));
+    cs::Args {
+        dy: u64_at(0x28),
+        x: u64_at(0x30),
+        mean: u64_at(0x38),
+        rstd: u64_at(0x40),
+        s0: u64_at(0x48),
+        s1: u64_at(0x50),
+        rows: u32_at(0x58),
+        c: u32_at(0x5c),
+        mode: if u32_at(0x60) != 0 {
+            cs::Mode::LayerNorm
+        } else {
+            cs::Mode::Bias
+        },
+    }
+}
+
 /// S must be a power of two in [1, 2²⁴] (so that dividing by it is exact).
 fn check_scale(s: f32) -> GpuResult<()> {
     let b = s.to_bits();
@@ -3022,6 +3195,7 @@ impl Plan {
         let mut list = Vec::with_capacity(32 * self.arch.layers + 16);
         self.forward_backward(&mut list, loss_scale)?;
         self.optimize(&mut list, recipe, opt, step, Some(loss_scale))?;
+        let list = self.split_colsum(list)?;
         list.into_iter()
             .map(|l| {
                 if l.prog == Prog::MmTrainGelu {

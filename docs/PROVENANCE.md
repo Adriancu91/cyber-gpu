@@ -547,3 +547,6 @@ niciun octet de firmware NVIDIA.
   Nimic copiat, nimic GPL, niciun octet de firmware NVIDIA.
 - **C-157 p.2x pasul 2 — `Plan::with_mm_tile` (sesiunea 209):** `crates/nvidia-ga104/src/train_step.rs` (opțiunea, `Prog::MmTrainTile`,
   `PROGRAMS_ALL_TILE`), testele T215 (`tests/sim_c160_p5_golden.rs`). Cod al nostru, fără surse noi.
+- **C-157 p.2y — `Plan::with_colsum_split` (sesiunea 210):** `crates/nvidia-ga104/src/train_step.rs` (opțiunea, `Prog::ColsumPart`,
+  `PROGRAMS_ALL_SPLIT`, zona de lucru), testele T216 (`tests/sim_c160_p5_golden.rs`). Leagă în pas programul `colsum_part` al nostru
+  (sesiunea 159, vezi mai sus). Cod al nostru, fără surse noi.
