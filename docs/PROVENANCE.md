@@ -540,3 +540,8 @@ niciun octet de firmware NVIDIA.
   `crates/nvidia-ga104/src/packs.rs`, testele T208 (`tests/sim_c157_p8_packs.rs`), documentul `docs/C-157_P8_FISA_MODELULUI.md`.
   Formatul KGR1 e al lui Kronos (hub `integrare/kronos/format_greutati.md`, citit ca specificație); cititorul e scris de noi.
   Nimic copiat, nimic GPL, niciun octet de firmware NVIDIA.
+- **C-157 p.2x — `mm_train_tile` (sesiunea 208):** `tools/nak/mm_train_tile.comp`, `crates/nvidia-ga104/src/mm_train_tile.rs`,
+  modelul `gpu_sim::cmdproc::mm_train_tile_on_cpu`, testele T214 (`tests/sim_mm_train_tile.rs`), documentul
+  `docs/C-157_P2x_MM_TRAIN_TILE.md`. Scrise de noi; ideea împărțirii pe blocuri 2D cu mai multe rezultate pe fir vine din articolul
+  și depozitul siboehm SGEMM_CUDA (MIT, doar ideea) și din `matmul_2d.comp` al nostru. Compilat cu Mesa NAK 25.0.7 (MIT), pe gazdă.
+  Nimic copiat, nimic GPL, niciun octet de firmware NVIDIA.

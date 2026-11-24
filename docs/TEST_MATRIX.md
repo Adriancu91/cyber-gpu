@@ -1,5 +1,11 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 208 (24 nov 2026, ~15:13, cloud, fără placă) — C-157 p.2x: `mm_train` pe plăci de 64 × 64
+
+| ID | Ce | Comanda | Așteptat | Observat | Rezultat |
+|---|---|---|---|---|---|
+| T214 | `mm_train_tile` (SHA-256 `f8acce21…bf094d`, 34 de registre, 8 KiB partajați): aceeași treabă și același cbuf ca `mm_train`, blocuri de 256 de fire pe 64 × 64, 4 × 4 pe fir; prin pushbuffer + QMD în modelul procesorului de comenzi | `cargo test -p nvidia-ga104 --test sim_mm_train_tile` | bit cu bit = `matmul_t_fma_ftz` = `mm_train` (8 combinații de opțiuni, plăci parțiale, produsele unui strat); refuzuri; grilă prea mică → restul neatins | 6/6, toate bit cu bit | **PASS (SIMULARE)** — pe placă NOT TESTED |
+
 ## Rezultate — sesiunea 207 (24 nov 2026, ~14:12, cloud, fără placă) — C-157 punctul 2: testul x16 comparat, urcarea pe procesor pe părți
 
 | ID | Ce | Comanda | Așteptat | Observat | Rezultat |

@@ -1180,6 +1180,109 @@ pub fn mm_train_gelu_unfused_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     )
 }
 
+/// C-157 p.2x (`docs/C-157_P2x_MM_TRAIN_TILE.md`): what `tools/nak/out/mm_train_tile.sm86.sass` needs — the 16×64
+/// tile of op(A) and the 16×64 tile of op(B) (8 KiB) and one barrier.
+pub const MM_TRAIN_TILE_NEEDS: Needs = Needs {
+    shared_bytes: 2 * 16 * 64 * 4,
+    barriers: 1,
+};
+
+/// The CPU stand-in for `mm_train_tile.sm86.sass`: `mm_train`'s job and cbuf0 (a/b/c/bias at 0x28/0x30/0x38/0x40,
+/// m/n/k/flags at 0x48/0x4c/0x50/0x54) on blocks of 256 threads, each block a 64×64 piece of C; thread
+/// (tx = tid % 16, ty = tid / 16) owns rows `ty + 16i`, columns `tx + 16j`. Per K-tile of 16 the "shared" tiles
+/// `as_[p][r]` / `bs_[p][c]` hold op(A) / op(B) (zeros outside), then for p < min(16, K − t) the thread copies 4 + 4
+/// values to "registers" and does its 16 `ffma.ftz`; finally `fadd.ftz` of `bias[col]` with BIAS. Same chains as
+/// [`mm_train_on_cpu`], so the same bits; oracle `reference::matmul_t_fma_ftz`.
+pub fn mm_train_tile_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    const B: usize = 64;
+    const BK: usize = 16;
+    const TM: usize = 4;
+    const THREADS: usize = 256;
+    if l.block != [THREADS as u32, 1, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: mm_train_tile cere blocuri de 256x1x1"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let a = l.mem.read_u64(l.cbuf0 + 0x28)?;
+    let b = l.mem.read_u64(l.cbuf0 + 0x30)?;
+    let c = l.mem.read_u64(l.cbuf0 + 0x38)?;
+    let bias_va = l.mem.read_u64(l.cbuf0 + 0x40)?;
+    let m = l.mem.read_u32(l.cbuf0 + 0x48)? as usize;
+    let n = l.mem.read_u32(l.cbuf0 + 0x4c)? as usize;
+    let k = l.mem.read_u32(l.cbuf0 + 0x50)? as usize;
+    let flags = l.mem.read_u32(l.cbuf0 + 0x54)?;
+    if flags & !(MM_TRAIN_TA | MM_TRAIN_TB | MM_TRAIN_BIAS) != 0 {
+        return Err(bad("SIM: mm_train_tile: biti de optiuni necunoscuti"));
+    }
+    let (ta, tb) = (flags & MM_TRAIN_TA != 0, flags & MM_TRAIN_TB != 0);
+    let x = l.mem.read_f32s(a, m * k)?;
+    let y = l.mem.read_f32s(b, k * n)?;
+    let bias = if flags & MM_TRAIN_BIAS != 0 {
+        Some(l.mem.read_f32s(bias_va, n)?)
+    } else {
+        None
+    };
+    let op_a = |r: usize, p: usize| if ta { x[p * m + r] } else { x[r * k + p] };
+    let op_b = |p: usize, col: usize| if tb { y[col * k + p] } else { y[p * n + col] };
+    let fma = gpu_compute::math::fma_f32_ftz;
+    for gy in 0..l.grid[1] as usize {
+        for gx in 0..l.grid[0] as usize {
+            let (row0, col0) = (gy * B, gx * B);
+            let mut acc = alloc::vec![[0.0f32; TM * TM]; THREADS];
+            let mut t = 0;
+            while t < k {
+                let mut as_ = [0.0f32; BK * B];
+                let mut bs_ = [0.0f32; BK * B];
+                for p in 0..BK {
+                    for r in 0..B {
+                        if row0 + r < m && t + p < k {
+                            as_[p * B + r] = op_a(row0 + r, t + p);
+                        }
+                        if t + p < k && col0 + r < n {
+                            bs_[p * B + r] = op_b(t + p, col0 + r);
+                        }
+                    }
+                }
+                // barrier()
+                let len = BK.min(k - t);
+                for (tid, acc_t) in acc.iter_mut().enumerate() {
+                    let (tx, ty) = (tid % 16, tid / 16);
+                    for p in 0..len {
+                        let reg_m: [f32; TM] = core::array::from_fn(|i| as_[p * B + ty + 16 * i]);
+                        let reg_n: [f32; TM] = core::array::from_fn(|j| bs_[p * B + tx + 16 * j]);
+                        for i in 0..TM {
+                            for j in 0..TM {
+                                acc_t[i * TM + j] = fma(reg_m[i], reg_n[j], acc_t[i * TM + j]);
+                            }
+                        }
+                    }
+                }
+                // barrier()
+                t += BK;
+            }
+            for (tid, acc_t) in acc.iter().enumerate() {
+                let (tx, ty) = (tid % 16, tid / 16);
+                for i in 0..TM {
+                    for j in 0..TM {
+                        let (row, col) = (row0 + ty + 16 * i, col0 + tx + 16 * j);
+                        if row < m && col < n {
+                            let mut v = acc_t[i * TM + j];
+                            if let Some(bv) = &bias {
+                                v = gpu_compute::math::add_f32_ftz(v, bv[col]);
+                            }
+                            l.mem.write_u32(c + 4 * (row * n + col) as u64, v.to_bits());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// What `mm_train` / `mm_train_gelu` do with a finished sum.
 #[derive(Clone, Copy)]
 enum MmEpilogue {

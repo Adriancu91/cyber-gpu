@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 208 — 24 noiembrie 2026, ~15:13–16:10 (ora României), în cloud, FĂRĂ placă — **C-157 p.2x: `mm_train` pe plăci de 64 × 64 (`mm_train_tile`)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 207 terminată 14:48), l-am pus `ocupat`. Niciun test nou pe placă de
+comparat (urcarea pe părți și #513 pe `_3` n-au venit). Am luat pasul scris de sesiunile 206–207: un `mm_train` F32 pe plăci
+(os-403: `mm_train` = 64 % din pasul #513, ~0,83 TFLOP/s).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Plan + predicții | `docs/C-157_P2x_MM_TRAIN_TILE.md`, urcate înainte de compilare (`fbf97d1`) | — |
+| Unealta | Mesa NAK 25.0.7 reconstruit în cloud; `mm_train` reconstruit = `69d54ef2…` (neschimbat) | PASS |
+| Programul | `tools/nak/mm_train_tile.comp` → SHA-256 `f8acce21…bf094d`, 1 436 instrucțiuni, **34 de registre**, fără memorie locală, 8 KiB partajați; același cbuf ca `mm_train` | COMPILAT, NU RULAT |
+| T214 | modelul `gpu_sim::cmdproc::mm_train_tile_on_cpu` + `nvidia_ga104::mm_train_tile`: bit cu bit = oracolul = `mm_train` pe 8 combinații de opțiuni, plăci parțiale, produsele unui strat (pas mic + tăietură #513) | PASS (SIMULARE, 6/6) |
+| Nota pentru OS | `integration/cyber-universe/C-157_P2x_mm-train-tile.md` (încă nimic de legat) | — |
+| Viteza pe placă | ×3–6 față de `mm_train` (~2,5–5 TFLOP/s), pasul #513 ~770–800 → ~300–450 ms | DEDUS / NOT TESTED |
+| `tools/check.sh` | format, clippy, teste (pe gazdă), build no_std | PASS (**1 022 de teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** nimic trimis; un program nou pregătit. Interfața publică: doar adăugări (un modul, o funcție de model,
+o constantă `Needs`).
+
+**Următorul pas:** comparația testelor care vin (urcarea pe părți, #513 pe `_3`); altfel `Plan::with_mm_tile` (aceeași listă,
+`mm_train` → `mm_train_tile`, aceeași amprentă în SIMULARE) + proba mică pentru placă; apoi `mm_train_gelu` pe plăci.
+
+---
+
 ## Sesiunea 207 — 24 noiembrie 2026, ~14:12–14:48 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația testului x16 (placa în SLOT2)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 206 terminată 13:32), l-am pus `ocupat`. Test nou pe placă: **x16**

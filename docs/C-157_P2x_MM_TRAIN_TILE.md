@@ -42,5 +42,18 @@ aceleași. Ideea: siboehm SGEMM_CUDA kernel 5 (MIT, doar ideea) și `matmul_2d.c
 - Legarea în pas: `Plan::...` cu `mm_train_tile` în locul lui `mm_train` (aceiași biți → aceeași amprentă a pasului).
 - `mm_train_gelu` pe aceleași plăci.
 
-## Rezultat
-(se completează după compilare și teste)
+## Rezultat (sesiunea 208, după compilare și teste)
+| Ce | Predicție | Ieșit | Stare |
+|---|---|---|---|
+| Compilarea | — | Mesa NAK 25.0.7 reconstruit în cloud; `mm_train` reconstruit = `69d54ef2…` (neschimbat); `mm_train_tile` de două ori = aceeași sumă | PASS |
+| SHA-256 | — | `f8acce2165870280d06271c6b0a60ca96ebc418b23fc7abb8ff496e08bbf094d`, 1 436 instrucțiuni, 22 976 octeți | — |
+| Registre | 40–64 | **34**, memorie locală 0 (predicția era prea largă: NAK refolosește registrele adreselor) | mai bine decât prezis |
+| Codul | lanț de FMA + un fadd pe element | 256 `ffma.ftz` (bucla de 16 desfăcută), 16 `fadd.ftz` (bias), 128 citiri partajate | conform |
+| Biții (T214, SIMULARE) | = `mm_train` = oracolul | bit cu bit pe 8 combinații × 6 forme cu plăci parțiale + 3 produse × 3 straturi; −0,0; refuzuri (opțiune 8, 2 KiB, fără barieră, blocuri 16×16); grilă prea mică → restul lui C neatins | PASS (6/6) |
+| Viteza pe placă | ×3–6 (~2,5–5 TFLOP/s) | — | NOT TESTED |
+
+**Atenție, cinstit:** modelul de pe procesor urmează sursa GLSL, nu execută codul binar; „aceiași biți pe placă” rămâne
+predicție până la proba pe placă.
+
+**Următorul pas:** `Plan::with_mm_tile` (aceeași listă de lansări, `mm_train` → `mm_train_tile`, aceeași amprentă în SIMULARE),
+apoi proba mică pentru placă; `mm_train_gelu` pe aceleași plăci.
