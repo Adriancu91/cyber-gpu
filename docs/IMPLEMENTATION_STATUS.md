@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 216 — 24 noiembrie 2026, ~23:12–00:20 (ora României), în cloud, FĂRĂ placă — **os-413: de ce `mm_tv_64x64k8` nu a terminat**
+## Sesiunea 216 — 24 noiembrie 2026, ~23:12–23:40 (ora României), în cloud, FĂRĂ placă — **os-413: de ce `mm_tv_64x64k8` nu a terminat**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 215 terminată 22:48), l-am pus `ocupat`. Venise **os-413** (prima cursă de noapte):
 pasul #513 ca os-412 (474 ms, TRECE); cursa s-a oprit la forma 1, `mm_tv_64x64k8` fără nicio înregistrare; `mm_tv_128x128` ×1,50 pe qkv.

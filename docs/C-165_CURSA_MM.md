@@ -108,7 +108,7 @@ NETERMINAT), timpii = cei scriși rotunjiți la 0,1 µs, formele și lansările 
 `with_mm_choice` mută exact formele alese; o a doua cursă înlocuiește prima; rândurile stricate (9 feluri) și străine sunt lăsate
 deoparte fără panică. Nimic nou pentru placă. Nota pentru OS: `integration/cyber-universe/C-165_cursa-mm.md` §„Pasul 3”.
 
-## os-413 — de ce `mm_tv_64x64k8` nu a terminat (sesiunea 216, 24 nov 23:12–; în cloud, FĂRĂ placă)
+## os-413 — de ce `mm_tv_64x64k8` nu a terminat (sesiunea 216, 24 nov 23:12–23:40; în cloud, FĂRĂ placă)
 **Ce s-a văzut (placa reală, prin OS):** pe prima formă (qkv, 1 024 × 2 304 × 768, f6) martorul și 3 variante au mers, cu aceiași
 biți; `mm_tv_64x64k8` **nu a scris nicio înregistrare** (ultima = 0x0, nici măcar lansarea de încălzire), apoi placa și-a revenit și
 generarea de după a fost corectă. Câștigătoarea: `mm_tv_128x128`, 1 889,8 µs față de 2 838,3 (×1,50).
