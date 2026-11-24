@@ -575,3 +575,5 @@ niciun octet de firmware NVIDIA.
   erorii (înmulțirea pierderii cu S înainte de pasul înapoi în f16, împărțirea gradientului la S înainte de optimizator) e tehnica
   publică „mixed precision training” (Micikevicius et al., 2017, arXiv:1710.03442); regula „cea mai mică putere a lui 2 cu
   S/(V·N) ≥ 2⁻¹⁰” e a noastră, din mărimea d(logits) la un softmax aproape uniform. Nicio linie de cod străin.
+
+- **Sesiunea 218 (25 nov 2026), T224 / `train_profile::parse_profiles`:** cod scris de noi. Rândurile din `crates/nvidia-ga104/tests/rapoarte/os41{4,5}-profil.txt` sunt copiate din rapoartele automate ale OS-ului nostru (`Cyber-hub/rezultate/os-automat/2026-11-25/`); nicio sursă străină.

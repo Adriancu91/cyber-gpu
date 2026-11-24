@@ -14,6 +14,29 @@ P3 — fără `colsum` + `colsum_part`, os-415 − os-414 = **+39 µs** (sub 0,1
 (`mm_train_tile` + `mm_train_tile_gelu`) **+1 190 µs**, programele mici lipite (`gelu_tr`, `vadd`, `ln_back`, `ln_back_res`) **−1 160 µs**;
 P5 — eticheta `proj-dX` → `proj-dX+gelu`: **+1 256 µs = +105 µs pe lansare (+3,0 %)**.
 
+**Ce a ieșit (T224 pe rândurile adevărate, 6/6 PASS pe procesor; P1–P5 toate confirmate):**
+- **A4 (os-414): ceasul NU e frâna.** În timpul celor 10 pași #513: nucleul **1 950 MHz** constant (110 % din boost-ul public 1 770), memoria
+  9 501 MHz, P0 ×10, niciun motiv de încetinire, 50 °C, puterea **127 W din 290 (44 %)**. **Bănuiala nr. 1 de la os-410 e exclusă.**
+  La 1 950 MHz vârful F32 e ~24,0 TFLOP/s (48 SM × 128 benzi × 2 × 1,95 GHz, DEDUS din fișa publică); înmulțirile fac ~599 GFLOP în
+  ~432 ms = **~1,39 TFLOP/s = ~5,8 % din vârf**. Placa e la ceas maxim, dar unitățile de calcul stau: **frâna e în program** (bănuiala nr. 2:
+  citirile globale neascunse — fără plăci duble, două bariere pe felie; și citirile partajate). „Încărcarea 100 %” a tabloului înseamnă
+  „SM-urile au avut de lucru”, nu „benzile au calculat”; puterea de 44 % e semnul bun.
+- **os-415 `--lipit-placi`: `mm_train_tile_gelu` a mers pe placă din prima** (prima rulare: pierderile = oracolul, 1,5e-5 / 9,4e-5).
+  Pasul a ieșit însă **+22,0 ms** (463,6 → 485,6 ms) — **nu din lipire**: lista OS-ului de la 00:58 n-a avut `--colsum-impartit`, iar
+  `colsum` vechi = 24,3 ms față de 2,4 (exact ce a scos os-412). Fără `colsum`, cele două pași diferă cu **+39 µs** (0,08 ‰) — **lipirea e la egalitate**:
+  - câștigat: 36 de lansări mici mai puține (`gelu_tr` 24 → 12, `vadd` 48 → 24): **−1,16 ms** cu tot cu `ln_back_res`;
+  - pierdut: cele 12 `proj-dX+gelu` pe `mm_train_tile_gelu` sunt cu **+105 µs pe lansare (+3,0 %)** mai lente decât `proj-dX` pe `mm_train_tile` → **+1,26 ms**;
+    restul de 135 de `mm_train_tile` neschimbate (−0,07 ms, zgomot).
+- **Predicția noastră „~2–4 ms mai puțin” — GREȘITĂ** (a ieșit ~0). Am socotit cele două treceri prin `[1 024, 3 072]` la ~1 ms pe pas și n-am
+  socotit costul finalului: citirea lui `u` (12,6 MB pe lansare) cu același tipar ca scrierea plăcii (4 × 4 pe fir, rânduri depărtate) →
+  ~105 µs în loc de ~30 la citire unită (DEDUS, nedovedit). Lecția: la un program de înmulțire frânat de memorie, orice citire în plus în final
+  costă cât ea însăși, nu „gratis”.
+- **Ce propunem OS-ului:** lista #513 implicită = `--placi3 --mm-placi --colsum-impartit` (os-414, 463,6 ms); `--lipit-placi` poate rămâne
+  opțiune (aceiași biți, −36 de lansări, ~0 timp) — cu `--colsum-impartit` alături ar da tot ~463,6 ms (DEDUS, T224 P3). Câștigul real rămâne
+  **cursa completă (fără `64x64k8`) → `128x128`** (×1,50 pe qkv la os-413) și apoi `mm_tc`.
+- Unealta nouă: `train_profile::parse_profiles` + `ParsedProfile::{diff_programs, total_without, programs_sum, tag, program}` — de acum
+  comparațiile între două rulări se fac din textul raportului, nu de mână (doar adăugări).
+
 ## os-412 `--antrenare-513 --placi3 --mm-placi --colsum-impartit` (P6-189 + ceasul P6-191; 24 nov 2026, 20:58 / 21:03) — sesiunea 215
 Surse: `Cyber-hub/rezultate/2026-11-24-workstation-os412-colsum/REZULTAT.md` (rapoartele `ciclu-auto-20261124-2058.txt` reper, `-2103.txt` nou).
 Predicțiile noastre (`docs/C-157_P2y_COLSUM_IMPARTIT.md`, scrise înainte, T216): `colsum` 24,3 → **~2,5–5 ms**; pasul **−19–22 ms**; biții = oracolul.

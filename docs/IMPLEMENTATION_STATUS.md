@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 218 — 25 noiembrie 2026, ~01:10–01:50 (ora României), în cloud, FĂRĂ placă — **os-414 (A4) + os-415 (`--lipit-placi`) comparate**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 217 terminată 00:58), l-am pus `ocupat`. Veniseră două rulări pe placă:
+os-414 (A4: tabloul în timpul pașilor #513, cu `--colsum-impartit`) și os-415 (`--lipit-placi`, **fără** `--colsum-impartit`). Cursa completă încă nu.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Predicții | P1–P5 pentru cititorul de profil, scrise înainte de cod (`804e2f2`) | 5 / 5 confirmate |
+| A4 (os-414) | ceasul 1 950 MHz constant, P0, nicio încetinire, 127 W din 290 → **bănuiala „ceasul” exclusă**; înmulțirile ~1,39 TFLOP/s = ~5,8 % din vârful la 1 950 MHz → frâna e în program | PASS pe placa reală (prin OS); concluzie DEDUSĂ |
+| os-415 | `mm_train_tile_gelu` **trece pe placă din prima** (= oracolul); pasul +22 ms = doar `colsum` neîmpărțit (lista fără `--colsum-impartit`); fără `colsum`: lipit = nelipit (+39 µs): −1,16 ms lansări mici, +1,26 ms finalul GELU' (+105 µs pe lansare) | PASS pe placa reală (biții); **predicția „−2–4 ms” greșită** (~0) |
+| Unealta | `train_profile::{parse_profiles, ParsedProfile, ParsedGroup, ProgDelta, PROFILE_HEADER}` — profilul pasului citit înapoi din raport, diferențe pe programe | doar adăugări |
+| T224 | cititorul pe rândurile adevărate os-414 / os-415 (`tests/rapoarte/`) + text stricat | PASS (pe procesor, 6/6) |
+| Note | `docs/C-157_P2_COMPARATII.md` §„os-414 + os-415”, `integration/cyber-universe/C-157_P2z_os414-os415.md`, `docs/TEST_MATRIX.md`, `docs/PROVENANCE.md` | — |
+| `tools/check.sh` | format, clippy, teste (pe gazdă), build no_std | PASS (**1 071 de teste**, 8 ignorate; build no_std PASS după instalarea țintei) |
+
+**Ce e nou pentru placă:** nimic. **Nicio schimbare incompatibilă.** Propunere pentru OS: `--colsum-impartit` mereu cu `--mm-placi`.
+
+**Următorul pas:** comparația cursei complete (fără `64x64k8`) când vine → `parse_race` → `MmChoice`; după os-352 pe placă: comparația timpului
+`mm_tc` la `qkv-513`; între timp, fiindcă frâna e în program: o variantă a plăcilor cu citirile globale ascunse (plăci duble) — doar
+dacă cursa nu o face inutilă; apoi lotul mare (prioritatea 5) sau pista B1 (int8 IMMA).
+
+---
+
 ## Sesiunea 217 — 25 noiembrie 2026, ~00:15–00:55 (ora României), în cloud, FĂRĂ placă — **pasul mixt (`mm_tc`) pe forma #513: scara S = 2¹⁴**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 216 terminată 23:43), l-am pus `ocupat`. Niciun test nou pe placă după os-413

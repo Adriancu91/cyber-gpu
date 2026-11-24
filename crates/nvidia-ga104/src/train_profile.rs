@@ -224,6 +224,197 @@ impl StepProfile {
     }
 }
 
+/// The header of the profile rows the OS writes ([`StepProfile::lines`]).
+pub const PROFILE_HEADER: &str = "profilul pasului (placa, median pe ";
+
+/// One row of a profile read back from a report: a stage, a tag or a program.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParsedGroup {
+    pub name: String,
+    /// Microseconds, as printed (the median ns divided by 1 000, cut down).
+    pub us: u64,
+    pub launches: u32,
+}
+
+/// One profile read back from a report's text (C-157 point 2, T224): what [`StepProfile::lines`] wrote, so two board
+/// runs can be compared row by row without doing the sums by hand.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ParsedProfile {
+    /// The text in front of the header on its line (the OS's prefix, e.g. which list ran).
+    pub context: String,
+    /// Fully read steps the median is over.
+    pub steps: u32,
+    /// The median board time of the step (us) and its launches, from the header.
+    pub total_us: u64,
+    pub launches: u32,
+    pub stages: Vec<ParsedGroup>,
+    /// Only the largest tags the OS printed (`cele mai lungi N etichete`).
+    pub tags: Vec<ParsedGroup>,
+    pub programs: Vec<ParsedGroup>,
+}
+
+/// One program's change between two profiles (`after - before`); a program missing on one side counts as 0 there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProgDelta {
+    pub name: String,
+    pub before_us: u64,
+    pub after_us: u64,
+    pub before_launches: u32,
+    pub after_launches: u32,
+}
+
+impl ProgDelta {
+    pub fn delta_us(&self) -> i64 {
+        self.after_us as i64 - self.before_us as i64
+    }
+}
+
+impl ParsedProfile {
+    fn find(v: &[ParsedGroup], name: &str) -> Option<ParsedGroup> {
+        v.iter().find(|g| g.name == name).cloned()
+    }
+
+    /// A program's row, if the profile has it.
+    pub fn program(&self, name: &str) -> Option<ParsedGroup> {
+        Self::find(&self.programs, name)
+    }
+
+    /// A tag's row, if it was among the printed ones.
+    pub fn tag(&self, name: &str) -> Option<ParsedGroup> {
+        Self::find(&self.tags, name)
+    }
+
+    /// The sum of the program rows (us); equals `total_us` up to one microsecond per row (each row is cut down).
+    pub fn programs_us(&self) -> u64 {
+        self.programs.iter().map(|g| g.us).sum()
+    }
+
+    /// The sum of the named programs' rows (us); missing ones count 0.
+    pub fn programs_sum(&self, names: &[&str]) -> u64 {
+        self.programs
+            .iter()
+            .filter(|g| names.contains(&g.name.as_str()))
+            .map(|g| g.us)
+            .sum()
+    }
+
+    /// The step total without the named programs (us), from the header total.
+    pub fn total_without(&self, names: &[&str]) -> u64 {
+        self.total_us.saturating_sub(self.programs_sum(names))
+    }
+
+    /// Every program of either profile, `self` = before, `after` = after; in the order of `self`, then the new ones.
+    pub fn diff_programs(&self, after: &ParsedProfile) -> Vec<ProgDelta> {
+        let mut out: Vec<ProgDelta> = Vec::new();
+        for g in self.programs.iter().chain(after.programs.iter()) {
+            if out.iter().any(|d| d.name == g.name) {
+                continue;
+            }
+            let b = self.program(&g.name);
+            let a = after.program(&g.name);
+            out.push(ProgDelta {
+                name: g.name.clone(),
+                before_us: b.as_ref().map_or(0, |x| x.us),
+                after_us: a.as_ref().map_or(0, |x| x.us),
+                before_launches: b.map_or(0, |x| x.launches),
+                after_launches: a.map_or(0, |x| x.launches),
+            });
+        }
+        out
+    }
+}
+
+/// `"  name   1234 us ( 5.6 %, 7 lansari)"` → the row; `None` for anything else.
+fn parse_group(rest: &str) -> Option<ParsedGroup> {
+    let t: Vec<&str> = rest.split_whitespace().collect();
+    if t.len() < 6 || t[2] != "us" || t[t.len() - 1] != "lansari)" {
+        return None;
+    }
+    let us = t[1].parse().ok()?;
+    let launches = t[t.len() - 2].parse().ok()?;
+    Some(ParsedGroup {
+        name: String::from(t[0]),
+        us,
+        launches,
+    })
+}
+
+/// `"10 pasi cititi intregi): 463594 us, 483 lansari"` → (steps, us, launches).
+fn parse_header(after: &str) -> Option<(u32, u64, u32)> {
+    let (steps, rest) = after.split_once(" pasi cititi intregi): ")?;
+    let (us, rest) = rest.split_once(" us, ")?;
+    let launches = rest.trim().strip_suffix(" lansari")?;
+    Some((
+        steps.trim().parse().ok()?,
+        us.trim().parse().ok()?,
+        launches.trim().parse().ok()?,
+    ))
+}
+
+/// Every profile in a report's text, in order (T224). Each profile's rows are the lines right after its header that
+/// carry the same prefix as the header line; a line that is neither a section title nor a row ends the profile.
+/// Rows that do not parse are skipped, never guessed.
+pub fn parse_profiles(text: &str) -> Vec<ParsedProfile> {
+    #[derive(Clone, Copy)]
+    enum Sec {
+        None,
+        Stages,
+        Tags,
+        Programs,
+    }
+    let mut out = Vec::new();
+    let mut cur: Option<(String, ParsedProfile, Sec)> = None;
+    for line in text.lines() {
+        if let Some(i) = line.find(PROFILE_HEADER) {
+            if let Some((_, p, _)) = cur.take() {
+                out.push(p);
+            }
+            if let Some((steps, total_us, launches)) =
+                parse_header(&line[i + PROFILE_HEADER.len()..])
+            {
+                let prefix = String::from(&line[..i]);
+                let p = ParsedProfile {
+                    context: String::from(line[..i].trim().trim_end_matches(':').trim()),
+                    steps,
+                    total_us,
+                    launches,
+                    ..ParsedProfile::default()
+                };
+                cur = Some((prefix, p, Sec::None));
+            }
+            continue;
+        }
+        let Some((prefix, p, sec)) = cur.as_mut() else {
+            continue;
+        };
+        let Some(rest) = line.strip_prefix(prefix.as_str()) else {
+            out.push(cur.take().map(|c| c.1).unwrap_or_default());
+            continue;
+        };
+        let r = rest.trim();
+        if r == "pe etape:" {
+            *sec = Sec::Stages;
+        } else if r.starts_with("cele mai lungi ") && r.ends_with(" etichete:") {
+            *sec = Sec::Tags;
+        } else if r == "pe programe:" {
+            *sec = Sec::Programs;
+        } else if let Some(g) = parse_group(rest) {
+            match sec {
+                Sec::Stages => p.stages.push(g),
+                Sec::Tags => p.tags.push(g),
+                Sec::Programs => p.programs.push(g),
+                Sec::None => {}
+            }
+        } else {
+            out.push(cur.take().map(|c| c.1).unwrap_or_default());
+        }
+    }
+    if let Some((_, p, _)) = cur {
+        out.push(p);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
