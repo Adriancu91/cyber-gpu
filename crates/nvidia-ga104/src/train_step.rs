@@ -660,6 +660,18 @@ pub struct SegVas {
     pub count: usize,
 }
 
+/// Order 20:11 step 5 (`docs/C-160_P10_LOT_IN_PARALEL.md`): where one batch lives on the board — what the CPU writes
+/// before a step ([`Plan::batch_uploads`]) and reads after it ([`Plan::step_reads`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BatchVas {
+    pub tok: u64,
+    pub tgt: u64,
+    pub seg_tok: SegVas,
+    pub loss_rows: u64,
+    /// The 64-byte `res` block (norm, clipping factor, 1/S, c/S).
+    pub res: u64,
+}
+
 /// The board memory of the step: every address absolute (`base` + offset), 256-byte aligned.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Plan {
@@ -721,6 +733,9 @@ pub struct Plan {
     /// Order 20:11 step 4 ([`Plan::with_recompute`]): one set of layer buffers shared by all layers; the backward pass
     /// re-runs the forward pass of every layer but the last before going back through it.
     recompute: bool,
+    /// Order 20:11 step 5 ([`Plan::with_batch_slots`]): the two batch slots (slot 0 = the resident plan's own
+    /// addresses); `None` = one slot.
+    slots: Option<[BatchVas; 2]>,
     /// End of the arena (exclusive).
     pub end: u64,
 }
@@ -998,6 +1013,10 @@ impl Plan {
         p.tiles3 = self.tiles3;
         p.fused_back = self.fused_back;
         p.fused_gelu = self.fused_gelu;
+        // Order 20:11 step 5: keep the two batch slots (slot 0's view).
+        if self.slots.is_some() {
+            p = p.with_batch_slots()?;
+        }
         Ok(p)
     }
 
@@ -1215,6 +1234,7 @@ impl Plan {
             fused_gelu: false,
             tok_cap: if resident { tok_cap } else { 0 },
             recompute,
+            slots: None,
             end: b.0,
         })
     }
@@ -1366,6 +1386,88 @@ impl Plan {
             (self.loss_rows, 4 * (self.batch * self.len) as u64),
             (self.res, 4),
         ]
+    }
+
+    /// Order 20:11 step 5 (`docs/C-160_P10_LOT_IN_PARALEL.md`): the batch area this plan uses.
+    pub fn batch_area(&self) -> BatchVas {
+        BatchVas {
+            tok: self.tok,
+            tgt: self.tgt,
+            seg_tok: self.seg_tok,
+            loss_rows: self.loss_rows,
+            res: self.res,
+        }
+    }
+
+    /// Order 20:11 step 5: a **second batch slot** at the end of a resident arena (same sizes as the first: inputs,
+    /// targets, token segment lists for the worst batch, per-row losses, `res`). Everything else (weights, gradient,
+    /// m, v, activations) stays shared and at the same addresses; slot 0 is the resident plan's own batch area. While
+    /// the board runs the step of one slot, the CPU reads the other slot's losses and writes the next batch there.
+    /// Refuses a plan that is not resident; a plan that already has two slots comes back unchanged (slot 0's view).
+    pub fn with_batch_slots(self) -> GpuResult<Self> {
+        if self.tok_cap == 0 {
+            return Err(bad(
+                "pas-aur: doua locuri de lot cer un plan rezident (Plan::resident)",
+            ));
+        }
+        if let Some(s) = self.slots {
+            return self.into_slot(s, 0);
+        }
+        let n = self.batch * self.len;
+        let first = self.batch_area();
+        let mut b = Bump(self.end);
+        let (tok, tgt) = (b.alloc(n), b.alloc(n));
+        let seg_tok = SegVas {
+            off: b.alloc(self.tok_cap + 1),
+            dst: b.alloc(self.tok_cap),
+            rows: b.alloc(n),
+            count: first.seg_tok.count,
+        };
+        let second = BatchVas {
+            tok,
+            tgt,
+            seg_tok,
+            loss_rows: b.alloc(n),
+            res: b.alloc(64),
+        };
+        let mut p = self;
+        p.end = b.0;
+        p.slots = Some([first, second]);
+        Ok(p)
+    }
+
+    /// Order 20:11 step 5: how many batch slots the arena has (1, or 2 after [`Plan::with_batch_slots`]).
+    pub fn batch_slots(&self) -> usize {
+        if self.slots.is_some() { 2 } else { 1 }
+    }
+
+    /// Order 20:11 step 5: the plan that uses batch slot `k` (0 or 1) — the same programs and launches, only the batch
+    /// addresses differ. Then [`Plan::rebatch`] / [`Plan::batch_uploads`] / [`Plan::step_reads`] as usual.
+    pub fn slot(&self, k: usize) -> GpuResult<Self> {
+        let s = self
+            .slots
+            .ok_or(bad("pas-aur: planul are un singur loc de lot"))?;
+        self.clone().into_slot(s, k)
+    }
+
+    fn into_slot(mut self, s: [BatchVas; 2], k: usize) -> GpuResult<Self> {
+        let a = *s.get(k).ok_or(bad("pas-aur: locul de lot e 0 sau 1"))?;
+        self.tok = a.tok;
+        self.tgt = a.tgt;
+        self.seg_tok = SegVas {
+            count: self.seg_tok.count,
+            ..a.seg_tok
+        };
+        self.loss_rows = a.loss_rows;
+        self.res = a.res;
+        Ok(self)
+    }
+
+    /// Order 20:11 step 5: what the CPU writes once for a batch slot that [`Plan::uploads`] did not cover (slot 1):
+    /// `res = [0, 1]` (for the mixed step add [`Plan::mixed_uploads`] of the same slot's plan).
+    pub fn slot_uploads(&self) -> Vec<(u64, Vec<u8>)> {
+        let b: Vec<u8> = [0.0f32, 1.0].iter().flat_map(|x| x.to_le_bytes()).collect();
+        alloc::vec![(self.res, b)]
     }
 
     /// C-160 P8: bytes over the PCIe link, for the report — the resident arena against the path of os-380 (a new
