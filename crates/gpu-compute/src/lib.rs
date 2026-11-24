@@ -15,6 +15,8 @@
 //!   bit-identical to the reference, no global state;
 //! - [`train`]: the CPU oracle of a whole training step (C-160 point 3: forward,
 //!   loss, backward, clipping, SGD / AdamW), checked against PyTorch's golden step;
+//! - [`card`]: the model card read from a KGR1 header (C-157 point 8), which
+//!   picks the compute pack;
 //! - [`cpu`]: a [`gpu_core::ComputeDevice`] that executes on the **CPU**. It is
 //!   a real backend for the runtime (plan v0.2: CPU first) and a test double
 //!   for the runtime; it is never evidence of GPU execution.
@@ -24,6 +26,7 @@
 
 extern crate alloc;
 
+pub mod card;
 pub mod cpu;
 pub mod kernels;
 pub mod layer;

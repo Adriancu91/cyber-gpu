@@ -536,3 +536,7 @@ niciun octet de firmware NVIDIA.
   al nostru la scriere), `crates/nvidia-ga104/src/mm_tc_gelu.rs`, `MixedLaunch::TcGelu` / `pack_mixed_gelu` în `train_step.rs`,
   modelul `gpu-sim::cmdproc::mm_tc_gelu_on_cpu`, testele T207, documentul `docs/C-160_P7_LIPIRE_GELU_TC.md`. Scrise de noi, fără cod
   copiat. Compilat cu a doua unealtă NAK (Mesa 26.3.1, MIT), pe gazdă. Nimic GPL, niciun octet de firmware NVIDIA.
+- **C-157 p.8 — fișa modelului și pachetele de calcul (sesiunea 201):** `crates/gpu-compute/src/card.rs`,
+  `crates/nvidia-ga104/src/packs.rs`, testele T208 (`tests/sim_c157_p8_packs.rs`), documentul `docs/C-157_P8_FISA_MODELULUI.md`.
+  Formatul KGR1 e al lui Kronos (hub `integrare/kronos/format_greutati.md`, citit ca specificație); cititorul e scris de noi.
+  Nimic copiat, nimic GPL, niciun octet de firmware NVIDIA.

@@ -123,6 +123,7 @@ pub mod mma16;
 pub mod mma16_probe;
 pub mod mmu;
 pub mod opt_step;
+pub mod packs;
 pub mod probe;
 pub mod push;
 pub mod q8_fused;

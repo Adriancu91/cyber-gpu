@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 201 — 24 noiembrie 2026, ~07:10–08:05 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 8: fișa modelului + pachetele de calcul**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 200 terminată 06:50), l-am pus `ocupat`. Niciun test nou pe placă după os-389
+(P6-174 nu a rulat încă) → C-157 punctul 8. Documentul de proiectare cu planul și predicțiile urcat **înainte** de cod (`22bad35`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Documentul de proiectare | `docs/C-157_P8_FISA_MODELULUI.md`: azi (formele #513/#651 scrise în cod, condițiile programelor împrăștiate) → fișa din KGR1 → alegerea pachetului → refuz / „dovedit pe placă” / „PROBA NECESARĂ”; ce nu face încă (pachetul de antrenare, pachete pe stick) | — |
+| `gpu_compute::card` | `ModelCard::from_kgr1` (doar antetul + cheile, fără tensori), `CardError` în română; 5 teste: #513 citit, orice tăiere = eroare fără panică, chei lipsă / greșite / fel necunoscut, lungimi uriașe | PASS |
+| `nvidia_ga104::packs` | `Pack` `kronos-gpt-q8-generare` v1 (lista `lipita-ln-32`; condițiile: 1–64 straturi, n_emb multiplu de 32, ≤ 128 valori pe cap, context ≤ 512, Q8_0, cap legat), dovezile pe placă #513 (os-346) și #651 (os-355), `select`, `Refusal::lines`, `Choice::limits` | — |
+| T208 (5 teste) | toate cele 11 predicții din document: #513 / #651 dovedite, modelul minuscul → PROBA NECESARĂ, 8 refuzuri cu motivul exact, limitele #651 din fișă = `k651_lists(&[FusedLn32])` | PASS (pe procesor) |
+| Nota pentru OS | `integration/cyber-universe/C-157_P8_fisa-modelului.md` (doar adăugări; cum s-ar lega înainte de urcarea greutăților) | — |
+| `tools/check.sh` | format, clippy, **997 de teste**, build no_std (ținta no_std reinstalată în cloud) | PASS |
+
+**Ce e nou pentru placă:** nimic (fișa doar alege și verifică înainte).
+
+**Următorul pas:** comparația când OS-ul rulează P6-174 pe placă (pasul întreg, predicția 4–5 ms) sau os-384/385; altfel C-157 punctul 9
+(motorul de antrenare, pregătire: ce a rămas nefăcut) sau al doilea pas din punctul 8 (fișele de referință #513/#651 din `kronos_speed`
+construite prin `ModelCard`).
+
+---
+
 ## Sesiunea 200 — 24 noiembrie 2026, ~06:10–06:50 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația os-389 (pasul întreg pe bucăți)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 199 terminată 05:35), l-am pus `ocupat`. Test nou pe placă: **os-389**
