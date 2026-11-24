@@ -2,6 +2,25 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-407 `--antrenare-513 --placi3` (P6-185: pasul #513 pe atenția gen 3; 24 nov 2026, 16:08 / 16:12) — sesiunea 210
+Surse: `Cyber-hub/rezultate/2026-11-24-workstation-os407-atentie-513/REZULTAT.md`, `ciclu-auto-20261124-1612.txt` (rândurile 133–179).
+Predicția noastră (`docs/C-157_P2_OS403_ATENTIA_513.md`, T212): **atenția 371 → ~20–40 ms, pasul ~770–800 ms ≈ 1 280–1 330 simb/s, pierderile = oracolul.**
+- **Corect:** ambele teste = oracolul procesorului în pașii 1–9 (`Plan::new`: 2,3e-5 / 1,1e-4; `_3`: 1,5e-5 / 9,4e-5; toleranța 1e-3). Pasul 10 doar afișat (1,0e-3).
+- **Atenția: exact în interval, la capătul de jos.** 20,5 ms pe pas (`attn_fwd_tile3` 6,18 + dS 5,16 + dQKV 9,18) = **1,71 ms pe strat la B 2**,
+  adică jumătate din os-375 (3,43 ms pe strat la B 4): atenția scalează liniar cu lotul, cum am presupus. ×18 față de `Plan::new`.
+- **Pasul: 778,2 ms pe placă = 1 315 simb/s** (prezis 770–800 / ~1 300). `mm_train` 723,9 ms (os-403: 718,9; +0,7 %, aceleași 147 lansări) = **93,0 %**.
+  Restul: `colsum` 24,3 ms (3,1 %, 73 lansări, ~333 µs fiecare), atenția 20,5, AdamW + norma 5,5, restul < 4 ms.
+- **Lămurit: „ceasurile placa / pasul întreg = 1 022 ‰”** (și vechiul NECUNOSCUT de la os-386: „așteptarea” < „placa”). Ceasul procesorului (TSC) e
+  socotit cu frecvența măsurată **la pornire în 10 ms: 3 106 925 kHz**, dar cea măsurată acum în 5 × 50 ms e **3 002 035 kHz** (+34,9 ‰). Deci toți
+  timpii pe ceasul procesorului din raport sunt **cu ~3,4 % prea mici** (DEDUS, aritmetică): pasul întreg 760,8 ms × 1,0349 = **787,4 ms** → placa / pas
+  = 988 ‰ (cum trebuie, pasul cuprinde placa); la pasul mini „așteptarea” 3 519 µs × 1,0349 = 3 642 ≥ placa 3 620. Ipoteza (a) de la os-386 confirmată.
+  Ceasul plăcii nu e atins. **Propunere OS (mică, fără placă):** timpii pe procesor socotiți cu frecvența „acum” (mediana 5 × 50 ms) sau calibrarea de la
+  pornire pe 50 ms în loc de 10. Simbolurile/s „pasul întreg” de până azi sunt cu ~3,4 % prea mari (1 345 → ~1 300).
+- **Predicția pentru `mm_train_tile` (OS-ul l-a legat deja: P6-188, `--mm-placi`), corectată:** în nota P2x scriam `mm_train` ~600 ms; e 724.
+  Cu ×3–6: **`mm_train_tile` ~120–240 ms, pasul ~175–295 ms ≈ 3 500–5 850 simb/s** (DEDUS). Atunci `colsum` (24 ms) ar fi **8–14 %** din pas.
+- **Ce tai mai departe:** (1) `--mm-placi` pe placă (gata în OS). (2) **`colsum` împărțit în pasul #513** (`colsum_part`, T170, gata din sesiunea 159,
+  nepredat): `Plan::with_colsum_split` — sesiunea aceasta (T216, nota `integration/cyber-universe/C-157_P2y_colsum-impartit.md`).
+
 ## x16: placa mutată în SLOT2, `--ram-vram` + `--antrenare-mini --vram --lot-ram` (os-403; 24 nov 2026, 13:56 / 14:01) — sesiunea 207
 Surse: `Cyber-hub/rezultate/2026-11-24-workstation-x16-ram-vram/REZULTAT.md` (rapoartele `ciclu-auto-20261124-1356.txt`, `-1401.txt`).
 Predicția noastră (`docs/C-157_PCIE_LEGATURA.md`, P5; proba din OS): **sus 11–13 GB/s, jos 11–13,5 GB/s, ×1,8–2,0 față de x8; pasul mini neschimbat (~3,8 ms prin RAM).**
