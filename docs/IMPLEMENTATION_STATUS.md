@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 213 — 24 noiembrie 2026, ~20:11–21:00 (ora României), în cloud, FĂRĂ placă — **C-165 pasul 2: `Plan::with_mm_choice`**
+## Sesiunea 213 — 24 noiembrie 2026, ~20:11–20:40 (ora României), în cloud, FĂRĂ placă — **C-165 pasul 2: `Plan::with_mm_choice`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 212 terminată 20:00), l-am pus `ocupat`. Nicio probă nouă pe placă de comparat (os-411,
 cursa C-165 + A4, e GATA DE TEST, rulează la noapte). Ca să nu așteptăm după raport, am pregătit acum partea de după cursă.

@@ -36,7 +36,7 @@ Condiția „`mm_train_tile` a trecut o dată singur pe placă” e îndeplinit�
 starea P, ceasul SM și puterea citite în timpul cursei / pasului. Comparația os-410 (`docs/C-157_P2_COMPARATII.md`) arată ambele
 programe la ~1/7 din plafonul lor, la fel pe toate formele: bănuiala nr. 1 e ceasul, nu programul.
 
-## Pasul 2 — `Plan::with_mm_choice` (sesiunea 213, 24 nov 20:15–21:00; SIMULARE) — PREDARE
+## Pasul 2 — `Plan::with_mm_choice` (sesiunea 213, 24 nov 20:15–20:40; SIMULARE) — PREDARE
 Totul e pregătit ca, **după raportul cursei**, câștigătorii să intre în pasul #513 fără cod nou la noi. Doar adăugări:
 - `mm_train_variants::RaceRow { m, n, k, flags, variant, median_ns, same_bits }` — un rând al tabelului cursei.
 - `mm_train_variants::MmChoice::from_race(&rows)` — pe fiecare formă alege cea mai rapidă variantă cu biți „=” față de martor,
