@@ -1,5 +1,11 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 203 (24 nov 2026, ~09:15–10:00, cloud, fără placă) — C-157 punctul 2: os-392 comparat, profilul pasului
+
+| ID | Ce | Comanda | Așteptat | Observat | Rezultat |
+|---|---|---|---|---|---|
+| T210 | Profilul pasului de antrenare pe programe (`nvidia_ga104::train_profile`); plan + predicții înainte (`c01a795`, `docs/C-157_P2_PROFIL_PAS.md`) | `cargo test --release -p nvidia-ga104 --test sim_c157_p2_profil -- --nocapture` | Q1 sumele pe etichete / programe / etape = totalul (sintetic și din înregistrările modelului, 82 / 76 de lansări cu copierile lotului); Q2 refuzuri (lungime, înregistrare lipsă, ceas înapoi); Q3 lipirea schimbă doar etichetele lipite | ca așteptat; Q3: dispar 6 etichete × 2, apar 3 × 2 (`…+rezidual`, `…+gelu`) | PASS (SIMULARE), 4/4 + 1 test unitar |
+
 ## Rezultate — sesiunea 197 (24 nov 2026, ~03:15–03:30, cloud, fără placă) — C-157 punctul 2: os-386, de ce pasul întreg e 370 ms
 
 | ID | Ce | Comanda | Așteptat | Observat | Rezultat |

@@ -26,7 +26,7 @@ de lipire: −26 µs pentru 6 lansări) → ~0,3 ms. Restul de **~3,3 ms e calcu
      seriale (două plăci 16×16 din memorie + barieră), fără nimic care să ascundă așteptarea memoriei.
   2. apoi `eroarea` (`xent`, 64 de blocuri × 16 384) 50–200 µs și `opt:pas` (1,15 M greutăți, ~32 MB trafic) 60–120 µs;
   3. `inainte:logit` și `inapoi:cap-dW` (K = 64, 4 096 de blocuri) sub 60 µs fiecare;
-  4. cele 24 de lansări `colsum` cu un singur bloc + cele 8 `attn_*` cu 8 blocuri: câte ~5–15 µs, împreună ~0,3–0,5 ms.
+  4. cele 13 lansări `colsum` cu un singur bloc + cele 6 `attn_*` cu 8 blocuri: câte ~5–15 µs, împreună ~0,3–0,5 ms.
   Dacă Q4.1 iese adevărat, tăietura următoare e K împărțit pe mai multe blocuri pentru `cap-dX` (sau `mm_tc` în pasul mixt).
   Dacă nu, profilul spune unde e timpul și asta e tăietura.
 

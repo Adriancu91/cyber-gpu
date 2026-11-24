@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 203 — 24 noiembrie 2026, ~09:11–10:05 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația os-392 + profilul pasului**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 202 terminată 08:55), l-am pus `ocupat`. Test nou pe placă: **os-392**
+(`rezultate/2026-11-24-workstation-os392-pas-lipit/`, P6-175, `--pas-lipit`) → are întâietate (C-157 p.2).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Comparația os-392 | lipit = nelipit **bit cu bit** (10/10 pași, 0 biți diferiți din 1 150 720), ambele = oracolul, ca predicția P1/G1; lansări 75 → 69 ca P3; placa 3 628 → 3 602 µs (−26 µs = ~4,3 µs pe lansare scutită, cât os-331), pasul întreg 4 141 µs = 15 455 simb/s; pushbuffer-ul median 71 față de 46 µs = treaptă bimodală în ambele rulări (zgomot, nu lipire); diferența ceasurilor −99 µs ambele | `docs/C-157_P2_COMPARATII.md` |
+| Planul + predicțiile, înainte de cod | `docs/C-157_P2_PROFIL_PAS.md` (Q1–Q4; Q4 = unde se duc cei ~3,3 ms de calcul, DEDUS: `inapoi:cap-dX` primul) (`c01a795`) | — |
+| `nvidia_ga104::train_profile` (doar adăugări) | `StepProfile`: numele lansărilor din listă (+ copierile lotului prin RAM), timpii din înregistrări prin `analyze_sequence`, median pe etichetă / program / etapă, rândurile de text pentru OS | — |
+| T210 (4 teste + 1 unitar) | Q1 sumele = totalul (sintetic și din înregistrările modelului, 82 / 76 de lansări); Q2 refuzuri; Q3 lipirea schimbă doar etichetele lipite | PASS (SIMULARE) |
+| Nota pentru OS | `integration/cyber-universe/C-157_P2t_profil-pas.md` | — |
+| `tools/check.sh` | format, clippy, **1 006 teste**, build no_std (ținta `x86_64-unknown-none` reinstalată în cloud) | PASS |
+| Profilul pe placă (cap-dX 0,3–1,0 ms?) | — | NOT TESTED (DEDUS) |
+
+**Ce e nou pentru placă:** nimic — doar împărțirea înregistrărilor pe care OS-ul le citește deja.
+
+**Următorul pas:** comparația următorului test pe placă (lotul prin RAM / profilul, când rulează); altfel C-157 punctul 8 pasul 2
+(formele #513/#651 prin `ModelCard`) sau punctul 9.
+
+---
+
 ## Sesiunea 202 — 24 noiembrie 2026, ~08:11–08:55 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația os-390 + lotul prin RAM**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 201 terminată 07:40), l-am pus `ocupat`. Test nou pe placă: **os-390**
