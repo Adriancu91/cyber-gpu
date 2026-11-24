@@ -21,6 +21,7 @@ use gpu_compute::q8;
 use gpu_core::error::GpuResult;
 
 use crate::kronos_diag::TokenList;
+use crate::kronos_layer::Prog;
 use crate::kronos_speed::ModelLimits;
 
 /// A form proved "identical to the CPU" on the real board with a pack: the card's numbers and the run that shows it.
@@ -196,16 +197,13 @@ pub struct Choice {
 impl Choice {
     /// The work channel's limits from the card's numbers and the pack's list (`piece` = the largest upload piece).
     pub fn limits(&self, piece: u64) -> GpuResult<ModelLimits> {
-        let c = &self.card;
-        ModelLimits::of_lists(
-            &c.shape(),
-            c.layers,
-            c.vocab,
-            c.context,
-            piece,
-            &[self.pack.list],
-            &[],
-        )
+        self.limits_with(piece, &[])
+    }
+
+    /// C-157 point 8 step 2: [`Self::limits`] with one more launch per program of `extra` after the list (the OS
+    /// appends `Prog::Argmax` when the token is chosen on the board).
+    pub fn limits_with(&self, piece: u64, extra: &[Prog]) -> GpuResult<ModelLimits> {
+        ModelLimits::of_card_lists(&self.card, piece, &[self.pack.list], extra)
     }
 
     /// One line for the OS console, in Romanian.

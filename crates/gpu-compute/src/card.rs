@@ -214,6 +214,28 @@ impl ModelCard {
     pub fn form(&self) -> (usize, usize, usize, usize, usize) {
         (self.layers, self.heads, self.e, self.context, self.vocab)
     }
+
+    /// C-157 point 8 step 2: the card of a Kronos model as `exporta_greutati.py` writes it (`kronos_gpt`, Q8_0, tied
+    /// head, eps 1e-5), without KGR1 bytes. Only data: whether a pack takes it is decided by the pack.
+    pub fn kronos(
+        layers: usize,
+        heads: usize,
+        e: usize,
+        context: usize,
+        vocab: usize,
+    ) -> ModelCard {
+        ModelCard {
+            arch: Arch::KronosGpt,
+            quant: Quant::Q8_0,
+            layers,
+            heads,
+            e,
+            context,
+            vocab,
+            eps: 1e-5,
+            tied_head: true,
+        }
+    }
 }
 
 /// Builds the header and key-values of a KGR1 file (no tensors): for tests and host tools.

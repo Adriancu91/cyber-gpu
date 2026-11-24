@@ -20,6 +20,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use gpu_compute::card::ModelCard;
 use gpu_compute::layer::Shape;
 use gpu_core::diag::{Event, Journal};
 use gpu_core::error::{GpuError, GpuResult};
@@ -52,6 +53,28 @@ pub const K651_LAYERS: usize = 24;
 pub const K651_VOCAB: usize = 16_384;
 pub const K651_CONTEXT: usize = 512;
 pub const K651_SHAPE: Shape = K513_SHAPE;
+
+/// C-157 point 8 step 2: the reference card of #513, built from the constants above (one source for the numbers).
+pub fn card_k513() -> ModelCard {
+    ModelCard::kronos(
+        K513_LAYERS,
+        K513_SHAPE.heads,
+        K513_SHAPE.e,
+        K513_CONTEXT,
+        K513_VOCAB,
+    )
+}
+
+/// C-157 point 8 step 2: the reference card of #651 (24 layers, #513's width).
+pub fn card_k651() -> ModelCard {
+    ModelCard::kronos(
+        K651_LAYERS,
+        K651_SHAPE.heads,
+        K651_SHAPE.e,
+        K651_CONTEXT,
+        K651_VOCAB,
+    )
+}
 
 // ------------------------------------------------------------------------------------------------ limits
 
@@ -244,6 +267,29 @@ impl ModelLimits {
             Ok(l) => l,
             Err(_) => unreachable!("#651 shapes are valid"),
         }
+    }
+
+    /// C-157 point 8 step 2: [`Self::of`] with the numbers of a model card.
+    pub fn of_card(c: &ModelCard, piece: u64) -> GpuResult<Self> {
+        Self::of(&c.shape(), c.layers, c.vocab, c.context, piece)
+    }
+
+    /// C-157 point 8 step 2: [`Self::of_lists`] with the numbers of a model card.
+    pub fn of_card_lists(
+        c: &ModelCard,
+        piece: u64,
+        lists: &[TokenList],
+        extra: &[Prog],
+    ) -> GpuResult<Self> {
+        Self::of_lists(
+            &c.shape(),
+            c.layers,
+            c.vocab,
+            c.context,
+            piece,
+            lists,
+            extra,
+        )
     }
 
     /// Every limit the setup does not meet (empty = it fits). `push_area` = the work channel's pushbuffer bytes,
