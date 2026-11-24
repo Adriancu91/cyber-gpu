@@ -17,6 +17,7 @@
 #   sh tools/nak/build.sh q8_fused32     # C-155 point 4: q8_fused with q8_matvec32's work split (session 135)
 #   sh tools/nak/build.sh mm_train       # C-160 point 4: training matmul, op(A)*op(B) (+bias), NN/NT/TN (session 142)
 #   sh tools/nak/build.sh mm_train_gelu  # order 20:11 step 3, part 2: mm_train with gelu_tr mode 1 in the store (session 193)
+#   sh tools/nak/build.sh mm_train_tile  # C-157 point 2: mm_train on 64x64 tiles, 4x4 per thread, same bits (session 208)
 #   sh tools/nak/build.sh xent           # C-160 point 4, program 7: softmax + cross-entropy and its gradient (session 143)
 #   sh tools/nak/build.sh ln_back        # C-160 point 4, program 4: LayerNorm backward, dx (session 144)
 #   sh tools/nak/build.sh ln_back_res    # order 20:11 step 3: ln_back + the residual addition in one program (session 192)
@@ -114,6 +115,9 @@ mm_train)
     ;;
 mm_train_gelu)
     exec sh "$0" kernel mm_train_gelu 48
+    ;;
+mm_train_tile)
+    exec sh "$0" kernel mm_train_tile 48
     ;;
 xent)
     exec sh "$0" kernel xent 40

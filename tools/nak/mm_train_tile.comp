@@ -1,0 +1,108 @@
+// C-157 point 2 / C-160 point 7 (docs/C-157_P2x_MM_TRAIN_TILE.md): mm_train on 64x64 tiles, 4x4 results per thread.
+// Same job and same push constants as mm_train.comp: C[M,N] = op(A)[M,K] * op(B)[K,N] (+ bias[N]), f32, flags
+// TA (A stored [K,M]), TB (B stored [N,K]), BIAS. Layout idea: siboehm SGEMM_CUDA kernel 5 "2D blocktiling" (MIT,
+// idea only) and our matmul_2d.comp: one workgroup of 256 threads (16 x 16) computes a 64x64 block of C; thread
+// (tx = tid % 16, ty = tid / 16) owns rows ty + 16*i and columns tx + 16*j (i, j = 0..3), so the 16 threads of a
+// half-warp store 16 neighbouring floats and read 16 neighbouring floats of the B tile.
+// Per K-tile of BK = 16: the 256 threads copy the 16x64 tile of op(A) (kept as as_[p][r]) and the 16x64 tile of
+// op(B) (bs_[p][c]) into shared memory, 4 elements each; which thread loads which element depends on TA / TB only so
+// that neighbouring threads read neighbouring addresses (the values in shared memory are the same either way).
+// Barrier, then for p in the tile: 4 values of A and 4 of B to registers, 16 fused multiply-adds. The inner loop
+// stops at K exactly (no zero padding is accumulated), so every element of C is still the chain of fused
+// multiply-adds p = 0..K-1 from +0.0, then one add of bias[col]: the bit-exact oracle stays
+// gpu-compute::reference::matmul_t_fma_ftz, the very bits of mm_train. Threads whose cells are outside C load zeros
+// and wait at the barriers; they only skip the stores. Fixed loops are [[unroll]] so the 16 sums stay in registers.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_control_flow_attributes : require
+
+#define BM 64u
+#define BN 64u
+#define BK 16u
+#define TM 4u
+#define TN 4u
+#define THREADS 256u
+#define TA 1u
+#define TB 2u
+#define BIAS 4u
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+
+layout(push_constant) uniform Args {
+    In a;
+    In b;
+    Out c;
+    In bias;
+    uint m;
+    uint n;
+    uint k;
+    uint flags;
+} args;
+
+shared float as_[BK * BM];   // as_[p * BM + r] = op(A)[row0 + r, t + p]
+shared float bs_[BK * BN];   // bs_[p * BN + c] = op(B)[t + p, col0 + c]
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint tx = tid % 16u;
+    uint ty = tid / 16u;
+    uint row0 = gl_WorkGroupID.y * BM;
+    uint col0 = gl_WorkGroupID.x * BN;
+    bool ta = (args.flags & TA) != 0u;
+    bool tb = (args.flags & TB) != 0u;
+    float acc[TM * TN];
+    [[unroll]] for (uint i = 0; i < TM * TN; i++) acc[i] = 0.0;
+    float reg_m[TM];
+    float reg_n[TN];
+    for (uint t = 0; t < args.k; t += BK) {
+        [[unroll]] for (uint e = 0; e < 4u; e++) {
+            // op(A) tile: element (r, p). A stored [M,K]: p fastest across threads; [K,M] (TA): r fastest.
+            uint r = ta ? tid % BM : tid / BK + 16u * e;
+            uint p = ta ? tid / BM + 4u * e : tid % BK;
+            uint ar = row0 + r, ak = t + p;
+            float va = 0.0;
+            if (ar < args.m && ak < args.k) {
+                va = ta ? args.a.v[ak * args.m + ar] : args.a.v[ar * args.k + ak];
+            }
+            as_[p * BM + r] = va;
+            // op(B) tile: element (p, c). B stored [K,N]: c fastest; [N,K] (TB): p fastest.
+            uint q = tb ? tid % BK : tid / BN + 4u * e;
+            uint cc = tb ? tid / BK + 16u * e : tid % BN;
+            uint bk = t + q, bc = col0 + cc;
+            float vb = 0.0;
+            if (bk < args.k && bc < args.n) {
+                vb = tb ? args.b.v[bc * args.k + bk] : args.b.v[bk * args.n + bc];
+            }
+            bs_[q * BN + cc] = vb;
+        }
+        barrier();
+        uint len = min(BK, args.k - t);
+        for (uint p = 0; p < len; p++) {
+            [[unroll]] for (uint i = 0; i < TM; i++) reg_m[i] = as_[p * BM + ty + 16u * i];
+            [[unroll]] for (uint j = 0; j < TN; j++) reg_n[j] = bs_[p * BN + tx + 16u * j];
+            [[unroll]] for (uint i = 0; i < TM; i++) {
+                [[unroll]] for (uint j = 0; j < TN; j++) {
+                    acc[i * TN + j] += reg_m[i] * reg_n[j];
+                }
+            }
+        }
+        barrier();
+    }
+    [[unroll]] for (uint i = 0; i < TM; i++) {
+        uint row = row0 + ty + 16u * i;
+        [[unroll]] for (uint j = 0; j < TN; j++) {
+            uint col = col0 + tx + 16u * j;
+            if (row < args.m && col < args.n) {
+                float v = acc[i * TN + j];
+                if ((args.flags & BIAS) != 0u) {
+                    v += args.bias.v[col];
+                }
+                args.c.v[row * args.n + col] = v;
+            }
+        }
+    }
+}
