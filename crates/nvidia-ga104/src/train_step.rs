@@ -1256,8 +1256,9 @@ impl Plan {
     /// Order 20:11 step 3, second part (`docs/C-160_P7_LIPIRE_GELU.md`): the same plan (same arena, same addresses)
     /// whose MLP backward writes GELU's backward in the "proj-dX" product itself (`mm_train_gelu`, straight into
     /// `dwide2`): L launches fewer per step (no backward `gelu_tr`), the rest of the list unchanged; `dwide` is no
-    /// longer written. Off unless asked for; combines with [`Plan::with_fused_back`]. The mixed step refuses it
-    /// (`mm_tc` has no such epilogue yet). Load [`Plan::programs`] + [`Plan::fused_programs`].
+    /// longer written. Off unless asked for; combines with [`Plan::with_fused_back`]. In the mixed step (session 199)
+    /// "proj-dX" goes on `mm_tc_gelu` ([`MixedLaunch::TcGelu`], pack with [`pack_mixed_gelu`]; load `mm_tc_gelu`
+    /// besides `mm_tc`). Load [`Plan::programs`] + [`Plan::fused_programs`].
     pub fn with_fused_gelu(mut self) -> Self {
         self.fused_gelu = true;
         self
@@ -2840,6 +2841,13 @@ pub enum MixedLaunch {
         tag: &'static str,
         layer: Option<u16>,
     },
+    /// C-157 p.2 (session 199, `docs/C-160_P7_LIPIRE_GELU_TC.md`): "inapoi:proj-dX" with GELU's backward fused, on
+    /// `mm_tc_gelu` — only in [`Plan::step_mixed`] of a [`Plan::with_fused_gelu`] plan; packed by [`pack_mixed_gelu`].
+    TcGelu {
+        args: crate::mm_tc_gelu::Args,
+        tag: &'static str,
+        layer: Option<u16>,
+    },
 }
 
 /// Bytes of one `mm_tc` launch in the control zone: the cbuf (0x800) then the QMD (0x100).
@@ -2850,13 +2858,14 @@ impl MixedLaunch {
         match self {
             MixedLaunch::Std(l) => l.prog.name(),
             MixedLaunch::Tc { .. } => "mm_tc",
+            MixedLaunch::TcGelu { .. } => "mm_tc_gelu",
         }
     }
 
     pub fn tag(&self) -> &'static str {
         match self {
             MixedLaunch::Std(l) => l.tag,
-            MixedLaunch::Tc { tag, .. } => tag,
+            MixedLaunch::Tc { tag, .. } | MixedLaunch::TcGelu { tag, .. } => tag,
         }
     }
 
@@ -2864,7 +2873,7 @@ impl MixedLaunch {
     pub fn slot(&self) -> u64 {
         match self {
             MixedLaunch::Std(_) => SLOT,
-            MixedLaunch::Tc { .. } => SLOT_TC,
+            MixedLaunch::Tc { .. } | MixedLaunch::TcGelu { .. } => SLOT_TC,
         }
     }
 }
@@ -2909,7 +2918,8 @@ impl Plan {
     /// matmul of the model (forward and backward) on `mm_tc` (inputs rounded to f16, f32 sums on the tensor cores),
     /// d(logits) multiplied by `loss_scale`, the norm compared with `loss_scale`·[`MAX_NORM`] and, before
     /// `opt_step`, one exact F32 product (`mm_train`, 1×1×1) c·(1/S) at `res + 20`, which `opt_step` reads.
-    /// Weights, gradient sums, m and v stay F32. `res[0]` is then S times the norm.
+    /// Weights, gradient sums, m and v stay F32. `res[0]` is then S times the norm. With [`Plan::with_fused_gelu`]
+    /// (session 199) "proj-dX" + GELU's backward is one [`MixedLaunch::TcGelu`] (`mm_tc_gelu`).
     pub fn step_mixed(
         &self,
         recipe: Recipe,
@@ -2924,14 +2934,32 @@ impl Plan {
         if self.mv_ram && recipe == Recipe::AdamW513 {
             return Err(bad("pas-aur: pasul mixt cu m, v in RAM nu e facut"));
         }
-        if self.fused_gelu {
-            return Err(bad("pas-mixt: GELU lipit in proj-dX nu e facut pe mm_tc"));
-        }
         let mut list = Vec::with_capacity(32 * self.arch.layers + 16);
         self.forward_backward(&mut list, loss_scale)?;
         self.optimize(&mut list, recipe, opt, step, Some(loss_scale))?;
         list.into_iter()
             .map(|l| {
+                if l.prog == Prog::MmTrainGelu {
+                    // Session 199: `mm_train_gelu`'s cbuf is `mm_train`'s with u at the bias slot.
+                    let x = mm_args_of(&l);
+                    let args = crate::mm_tc_gelu::Args {
+                        a: x.a,
+                        b: x.b,
+                        c: x.c,
+                        u: x.bias,
+                        m: x.m,
+                        n: x.n,
+                        k: x.k,
+                        flags: x.flags,
+                    };
+                    args.cbuf()
+                        .ok_or(bad("pas-mixt: argumentele mm_tc_gelu refuzate"))?;
+                    return Ok(MixedLaunch::TcGelu {
+                        args,
+                        tag: l.tag,
+                        layer: l.layer,
+                    });
+                }
                 if l.prog != Prog::MmTrain || l.tag == TAG_UNSCALE {
                     return Ok(MixedLaunch::Std(l));
                 }
@@ -2966,15 +2994,48 @@ impl Plan {
 /// The control zone of one mixed step: launches one after the other (`SLOT` bytes for an F32-list launch,
 /// [`SLOT_TC`] for an `mm_tc` one), each cbuf then its QMD. `prog_va(p)` = where program `p` is loaded,
 /// `tc_va` = where `mm_tc` is. Returns the zone and the QMD addresses for `transfer::encode_sequence_fresh`.
+/// A list with [`MixedLaunch::TcGelu`] (a [`Plan::with_fused_gelu`] plan) is refused here: use [`pack_mixed_gelu`].
 pub fn pack_mixed(
     launches: &[MixedLaunch],
     prog_va: impl Fn(Prog) -> u64,
     tc_va: u64,
     zone_va: u64,
 ) -> GpuResult<(Vec<u8>, Vec<u64>)> {
+    if launches
+        .iter()
+        .any(|l| matches!(l, MixedLaunch::TcGelu { .. }))
+    {
+        return Err(bad(
+            "pas-mixt: lista are mm_tc_gelu (with_fused_gelu): foloseste pack_mixed_gelu",
+        ));
+    }
+    pack_mixed_gelu(launches, prog_va, tc_va, 0, zone_va)
+}
+
+/// [`pack_mixed`] for lists that may hold [`MixedLaunch::TcGelu`] (C-157 p.2, session 199): `tc_gelu_va` = where
+/// `mm_tc_gelu` is loaded (256-aligned; may be 0 only when the list has no `TcGelu`).
+pub fn pack_mixed_gelu(
+    launches: &[MixedLaunch],
+    prog_va: impl Fn(Prog) -> u64,
+    tc_va: u64,
+    tc_gelu_va: u64,
+    zone_va: u64,
+) -> GpuResult<(Vec<u8>, Vec<u64>)> {
     use crate::mm_tc as tc;
-    if !zone_va.is_multiple_of(256) || !tc_va.is_multiple_of(256) || launches.is_empty() {
+    use crate::mm_tc_gelu as tg;
+    if !zone_va.is_multiple_of(256)
+        || !tc_va.is_multiple_of(256)
+        || !tc_gelu_va.is_multiple_of(256)
+        || launches.is_empty()
+    {
         return Err(bad("pas-mixt: zona de control"));
+    }
+    if tc_gelu_va == 0
+        && launches
+            .iter()
+            .any(|l| matches!(l, MixedLaunch::TcGelu { .. }))
+    {
+        return Err(bad("pas-mixt: mm_tc_gelu fara adresa"));
     }
     let total: u64 = launches.iter().map(MixedLaunch::slot).sum();
     let mut bytes = alloc::vec![0u8; total as usize];
@@ -3008,6 +3069,25 @@ pub fn pack_mixed(
                 }
                 .to_bytes_with_shared(&tc::SHARED)?;
                 let c = tc::CBUF_BYTES;
+                bytes[at..at + c].copy_from_slice(&cb);
+                bytes[at + c..at + c + q.len()].copy_from_slice(&q);
+                qmds.push(cb_va + c as u64);
+            }
+            MixedLaunch::TcGelu { args, .. } => {
+                let cb = args
+                    .cbuf()
+                    .ok_or(bad("pas-mixt: argumentele mm_tc_gelu refuzate"))?;
+                let q = ComputeQmd {
+                    program_va: tc_gelu_va,
+                    registers: tg::REGISTERS,
+                    cbuf0_va: cb_va,
+                    cbuf0_size: tg::CBUF_BYTES as u32,
+                    grid: args.grid(),
+                    block: tg::BLOCK,
+                    release: None,
+                }
+                .to_bytes_with_shared(&tg::SHARED)?;
+                let c = tg::CBUF_BYTES;
                 bytes[at..at + c].copy_from_slice(&cb);
                 bytes[at + c..at + c + q.len()].copy_from_slice(&q);
                 qmds.push(cb_va + c as u64);

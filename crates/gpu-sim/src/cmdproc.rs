@@ -2852,6 +2852,72 @@ pub fn mm_tc_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// C-157 p.2 (`docs/C-160_P7_LIPIRE_GELU_TC.md`): what `tools/nak/out2/mm_tc_gelu.sm86.sass` needs — `mm_tc`'s.
+pub const MM_TC_GELU_NEEDS: Needs = MM_TC_NEEDS;
+
+/// C-157 p.2: the CPU stand-in for `tools/nak/out2/mm_tc_gelu.sm86.sass` (session 199): [`mm_tc_on_cpu`]'s product
+/// unchanged, then each element of C is `gpu_compute::layer::gelu_tr_gpu_back`(u[row, col], v) — `gelu_tr` mode 1
+/// with the tensor-core sum v in place of g. cbuf0 as `mm_tc` with `u` in the bias slot (0x718); the BIAS flag is
+/// refused (the program has no bias), and so is a C overlapping u (other blocks would read u already overwritten).
+pub fn mm_tc_gelu_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    mm_tc_gelu_with(l, gpu_compute::layer::gelu_tr_gpu_back)
+}
+
+/// [`mm_tc_gelu_on_cpu`] with `gpu_compute::layer::gelu_tr_back_unfused_gpu` (Φ + u·φ in two roundings): what the
+/// program would do if NAK had compiled its epilogue unlike `gelu_tr`'s. Not a model of our program — T207 registers
+/// it to show the bit-for-bit comparison catches that difference.
+pub fn mm_tc_gelu_unfused_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    mm_tc_gelu_with(l, gpu_compute::layer::gelu_tr_back_unfused_gpu)
+}
+
+fn mm_tc_gelu_with(l: &mut Launch<'_>, f: fn(f32, f32) -> f32) -> GpuResult<()> {
+    use gpu_compute::mm_tc;
+    if l.block != [128, 1, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: mm_tc_gelu cere blocuri de 128x1x1"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let base = l.cbuf0 + MMA16_PUSH_BASE;
+    let a = l.mem.read_u64(base)?;
+    let b = l.mem.read_u64(base + 0x08)?;
+    let c = l.mem.read_u64(base + 0x10)?;
+    let u_va = l.mem.read_u64(base + 0x18)?;
+    let m = l.mem.read_u32(base + 0x20)? as usize;
+    let n = l.mem.read_u32(base + 0x24)? as usize;
+    let k = l.mem.read_u32(base + 0x28)? as usize;
+    let flags = l.mem.read_u32(base + 0x2c)?;
+    if flags & !(mm_tc::TA | mm_tc::TB) != 0 {
+        return Err(bad("SIM: mm_tc_gelu: biti de optiuni necunoscuti sau BIAS"));
+    }
+    if (l.grid[0] as usize) < n.div_ceil(64) || (l.grid[1] as usize) < m.div_ceil(64) {
+        return Err(bad("SIM: mm_tc_gelu: grila nu acopera C (nemodelat)"));
+    }
+    let bytes = 4 * (m * n) as u64;
+    if c < u_va + bytes && u_va < c + bytes {
+        return Err(bad("SIM: mm_tc_gelu: C se suprapune cu u"));
+    }
+    let x = l.mem.read_f32s(a, m * k)?;
+    let y = l.mem.read_f32s(b, k * n)?;
+    let u = l.mem.read_f32s(u_va, m * n)?;
+    let p = mm_tc::Product {
+        a: &x,
+        b: &y,
+        bias: None,
+        m,
+        n,
+        k,
+        flags,
+    };
+    let v = mm_tc::model(&p)
+        .ok_or_else(|| bad("SIM: mm_tc_gelu: intrari invalide (f16 sau dimensiuni)"))?;
+    let out: Vec<f32> = v.iter().zip(&u).map(|(&v, &u)| f(u, v)).collect();
+    l.mem.write_f32s(c, &out);
+    Ok(())
+}
+
 /// C-83 I13: `vadd.comp` — cbuf0 a 0x28, b 0x30, c 0x38, n 0x40; blocks of 256.
 pub fn vadd_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     if l.block != [256, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 || l.mem.read_u64(l.cbuf0)? != 0 {

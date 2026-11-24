@@ -10,14 +10,16 @@ use std::sync::OnceLock;
 
 use gpu_compute::train::{self, AdamW, Arch, Batch, Recipe};
 use gpu_sim::cmdproc::{
-    CommandProcessor, GNORM_NEEDS, LN_BACK_NEEDS, LN_BACK_RES_NEEDS, LN_FWD_NEEDS, MM_TC_NEEDS,
-    MM_TRAIN_GELU_NEEDS, MM_TRAIN_NEEDS, Needs, XENT_NEEDS, attn_back_on_cpu,
-    attn_back_tile_on_cpu, attn_back_tile0_on_cpu, attn_fwd_on_cpu, attn_fwd_tile_on_cpu,
-    attn_p_on_cpu, attn_p_tile_on_cpu, colsum_on_cpu, emb_back_on_cpu, emb_fwd_on_cpu,
-    gelu_tr_on_cpu, gnorm_on_cpu, ln_back_on_cpu, ln_back_res_on_cpu, ln_fwd_on_cpu, mm_tc_on_cpu,
+    CommandProcessor, GNORM_NEEDS, LN_BACK_NEEDS, LN_BACK_RES_NEEDS, LN_FWD_NEEDS,
+    MM_TC_GELU_NEEDS, MM_TC_NEEDS, MM_TRAIN_GELU_NEEDS, MM_TRAIN_NEEDS, Needs, ProgramFn,
+    XENT_NEEDS, attn_back_on_cpu, attn_back_tile_on_cpu, attn_back_tile0_on_cpu, attn_fwd_on_cpu,
+    attn_fwd_tile_on_cpu, attn_p_on_cpu, attn_p_tile_on_cpu, colsum_on_cpu, emb_back_on_cpu,
+    emb_fwd_on_cpu, gelu_tr_on_cpu, gnorm_on_cpu, ln_back_on_cpu, ln_back_res_on_cpu,
+    ln_fwd_on_cpu, mm_tc_gelu_on_cpu, mm_tc_gelu_unfused_on_cpu, mm_tc_on_cpu,
     mm_train_gelu_on_cpu, mm_train_on_cpu, opt_step_on_cpu, vadd_on_cpu, xent_on_cpu,
 };
 use nvidia_ga104::mm_tc::MM_TC;
+use nvidia_ga104::mm_tc_gelu::MM_TC_GELU;
 use nvidia_ga104::push::{self, PushBuf};
 use nvidia_ga104::train_step::{
     self as ts, LOSS_SCALE, MixedLaunch, PROGRAMS_ALL_FUSED2, Plan, Prog,
@@ -49,6 +51,8 @@ const PROGS: u64 = VA + 0x40_0000;
 /// `mm_tc` after the 23 programs of `PROGRAMS_ALL_FUSED2` (T200: `ln_back_res` took slot 21, T201: `mm_train_gelu`
 /// slot 22).
 const TC: u64 = PROGS + 0x1_0000 * 23;
+/// T207: `mm_tc_gelu` after `mm_tc`.
+const TCG: u64 = PROGS + 0x1_0000 * 24;
 const HEAP: u64 = VA + 0x100_0000;
 
 fn prog_va(p: Prog) -> u64 {
@@ -179,8 +183,20 @@ enum Layout {
     Tiles3,
     /// T200: [`Plan::new_tiles3`] + [`Plan::with_fused_back`].
     Tiles3Fused,
-    /// T201: [`Plan::new_tiles3`] + both fusions (F32 only: the mixed step refuses `with_fused_gelu`).
+    /// T201: [`Plan::new_tiles3`] + both fusions (T207: in the mixed step too, `mm_tc_gelu`).
     Tiles3Both,
+    /// T207: [`Plan::new_tiles3`] + [`Plan::with_fused_gelu`] only.
+    Tiles3Gelu,
+}
+
+/// T207: what is planted in a run (nothing for the real one).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Plant {
+    None,
+    /// `mm_tc_gelu` modelled with Φ + u·φ in two roundings (an epilogue compiled unlike `gelu_tr`'s).
+    Unfused,
+    /// Every `mm_tc_gelu` launch reads the u of the other layer.
+    OtherLayerU,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -192,6 +208,11 @@ enum Mode {
 }
 
 fn board() -> CommandProcessor {
+    board_with(mm_tc_gelu_on_cpu)
+}
+
+/// T207: the board with `gelu` as the model of `mm_tc_gelu` (the real one, or a planted variant).
+fn board_with(gelu: ProgramFn) -> CommandProcessor {
     ts::check_programs().expect("SHA-256 programe");
     let mut cp = CommandProcessor::new();
     for p in PROGRAMS_ALL_FUSED2 {
@@ -235,6 +256,8 @@ fn board() -> CommandProcessor {
     }
     cp.register_program_with_needs(MM_TC, mm_tc_on_cpu, MM_TC_NEEDS);
     cp.mem.write(TC, MM_TC);
+    cp.register_program_with_needs(MM_TC_GELU, gelu, MM_TC_GELU_NEEDS);
+    cp.mem.write(TCG, MM_TC_GELU);
     cp
 }
 
@@ -244,7 +267,8 @@ fn submit(
     first: &mut u32,
     launches: &[MixedLaunch],
 ) -> Result<(), String> {
-    let (zone, qmds) = ts::pack_mixed(launches, prog_va, TC, ZONE).map_err(|e| format!("{e:?}"))?;
+    let (zone, qmds) =
+        ts::pack_mixed_gelu(launches, prog_va, TC, TCG, ZONE).map_err(|e| format!("{e:?}"))?;
     assert!(zone.len() as u64 <= REC - ZONE, "zona de control prea mare");
     cp.mem.write(ZONE, &zone);
     let n = launches.len();
@@ -266,6 +290,10 @@ fn submit(
 
 /// `STEPS` steps on the simulated board; returns the run and how many launches of step 1 were on `mm_tc`.
 fn on_board(layout: Layout, mode: Mode) -> (Run, usize) {
+    on_board_planted(layout, mode, Plant::None)
+}
+
+fn on_board_planted(layout: Layout, mode: Mode, plant: Plant) -> (Run, usize) {
     let (inputs, targets) = batch();
     let params = initial();
     let plan = match layout {
@@ -276,9 +304,16 @@ fn on_board(layout: Layout, mode: Mode) -> (Run, usize) {
         }
         Layout::Tiles3Both => Plan::new_tiles3(MINI, B, T, &inputs, HEAP)
             .map(|p| p.with_fused_back().with_fused_gelu()),
+        Layout::Tiles3Gelu => {
+            Plan::new_tiles3(MINI, B, T, &inputs, HEAP).map(Plan::with_fused_gelu)
+        }
     }
     .unwrap();
-    let mut cp = board();
+    let mut cp = if plant == Plant::Unfused {
+        board_with(mm_tc_gelu_unfused_on_cpu)
+    } else {
+        board()
+    };
     for (va, bytes) in plan.uploads(&params, &inputs, &targets).unwrap() {
         cp.mem.write(va, &bytes);
     }
@@ -320,8 +355,28 @@ fn on_board(layout: Layout, mode: Mode) -> (Run, usize) {
                 l
             }
         };
+        let mut list = list;
+        if plant == Plant::OtherLayerU {
+            let us: Vec<(Option<u16>, u64)> = list
+                .iter()
+                .filter_map(|l| match l {
+                    MixedLaunch::TcGelu { args, layer, .. } => Some((*layer, args.u)),
+                    _ => None,
+                })
+                .collect();
+            assert!(us.len() >= 2, "plantat: trebuie cel putin doua straturi");
+            for x in list.iter_mut() {
+                if let MixedLaunch::TcGelu { args, layer, .. } = x {
+                    let other = us.iter().find(|(l, _)| l != layer).unwrap();
+                    args.u = other.1;
+                }
+            }
+        }
         if step == 1 {
-            tc = list.iter().filter(|l| l.name() == "mm_tc").count();
+            tc = list
+                .iter()
+                .filter(|l| l.name() == "mm_tc" || l.name() == "mm_tc_gelu")
+                .count();
         }
         submit(&mut cp, &mut first, &list).unwrap_or_else(|e| panic!("pasul {step}: {e}"));
         let rows = cp.mem.read_f32s(plan.loss_rows, B * T).unwrap();
@@ -629,9 +684,87 @@ fn t201_mini_f32_both_fusions_bit_for_bit() {
     let (inputs, _) = batch();
     let p = Plan::new_tiles3(MINI, B, T, &inputs, HEAP).unwrap();
     let opt = AdamW::new(&initial(), LR, 0.9, 0.999, 1e-8, 0.1);
-    assert!(
-        p.with_fused_gelu()
-            .step_mixed(Recipe::AdamW513, &opt, 1, LOSS_SCALE)
-            .is_err()
+    // Session 199 (T207): the mixed step no longer refuses `with_fused_gelu` — "proj-dX" goes on `mm_tc_gelu`,
+    // and the old `pack_mixed` refuses such a list.
+    let l = p
+        .with_fused_gelu()
+        .step_mixed(Recipe::AdamW513, &opt, 1, LOSS_SCALE)
+        .unwrap();
+    assert!(ts::pack_mixed(&l, prog_va, TC, ZONE).is_err());
+}
+
+fn bits_of(r: &Run) -> (Vec<u64>, Vec<u32>, Vec<u32>) {
+    (
+        r.losses.iter().map(|x| x.to_bits()).collect(),
+        r.grad1.iter().flatten().map(|x| x.to_bits()).collect(),
+        r.after_last.iter().flatten().map(|x| x.to_bits()).collect(),
+    )
+}
+
+/// T207 prediction H1 + H3 (`docs/C-160_P7_LIPIRE_GELU_TC.md`) on `antrenare mini`'s shape: the mixed step
+/// (S = 1 024) with GELU' fused on `mm_tc_gelu` gives the same bits as without it, 5 AdamW steps, with and without
+/// `ln_back_res`; L launches fewer; `mm_tc` + `mm_tc_gelu` = the `mm_tc` launches of before (SIMULARE).
+#[test]
+fn t207_mixed_mini_gelu_on_tc_bit_for_bit() {
+    let mode = Mode::Mixed(LOSS_SCALE);
+    for (plain, fused) in [
+        (Layout::Tiles3, Layout::Tiles3Gelu),
+        (Layout::Tiles3Fused, Layout::Tiles3Both),
+    ] {
+        let (old, tc_old) = on_board(plain, mode);
+        let (new, tc_new) = on_board(fused, mode);
+        assert_eq!(tc_old, tc_new, "{fused:?}: lansari pe circuitele speciale");
+        let same = bits_of(&old) == bits_of(&new);
+        println!(
+            "kt c207 antrenare mini mixt {fused:?}: mm_tc_gelu = nelipit bit cu bit {} (5 pasi AdamW, S 1024, SIMULARE)",
+            if same { "DA" } else { "NU" }
+        );
+        assert!(same, "{fused:?}: lipit != nelipit");
+    }
+    let (inputs, _) = batch();
+    let p = Plan::new_tiles3(MINI, B, T, &inputs, HEAP).unwrap();
+    let opt = AdamW::new(&initial(), LR, 0.9, 0.999, 1e-8, 0.1);
+    let a = p.step_mixed(Recipe::AdamW513, &opt, 1, LOSS_SCALE).unwrap();
+    let g = p
+        .clone()
+        .with_fused_gelu()
+        .step_mixed(Recipe::AdamW513, &opt, 1, LOSS_SCALE)
+        .unwrap();
+    assert_eq!(a.len(), g.len() + MINI.layers);
+    assert_eq!(
+        g.len(),
+        p.clone()
+            .with_fused_gelu()
+            .launches_per_step_mixed(Recipe::AdamW513)
     );
+    let n = |l: &[MixedLaunch], name: &str| l.iter().filter(|x| x.name() == name).count();
+    assert_eq!(n(&g, "mm_tc_gelu"), MINI.layers);
+    assert_eq!(n(&g, "mm_tc") + MINI.layers, n(&a, "mm_tc"));
+    assert_eq!(n(&a, "gelu_tr"), n(&g, "gelu_tr") + MINI.layers);
+    println!(
+        "kt c207 lansari pe pasul mixt: {} -> {} (mm_tc {} -> {} + mm_tc_gelu {})",
+        a.len(),
+        g.len(),
+        n(&a, "mm_tc"),
+        n(&g, "mm_tc"),
+        n(&g, "mm_tc_gelu")
+    );
+}
+
+/// T207 prediction H4: planted mistakes are caught — the u of the other layer, and an epilogue without the FFMA
+/// (what NAK 26.3.1 would give if it contracted unlike `gelu_tr`) — both give other bits than the plain mixed step.
+#[test]
+fn t207_planted_mistakes_are_caught() {
+    let mode = Mode::Mixed(LOSS_SCALE);
+    let (plain, _) = on_board(Layout::Tiles3, mode);
+    for plant in [Plant::OtherLayerU, Plant::Unfused] {
+        let (bad_run, _) = on_board_planted(Layout::Tiles3Gelu, mode, plant);
+        let (a, b) = (bits_of(&plain), bits_of(&bad_run));
+        let diff = a.1.iter().zip(&b.1).filter(|(x, y)| x != y).count();
+        println!(
+            "kt c207 plantat {plant:?}: gradientul pasului 1 cu alti biti la {diff} / {} valori",
+            a.1.len()
+        );
+        assert!(a != b && diff > 0, "{plant:?}: greseala neprinsa");
+    }
 }

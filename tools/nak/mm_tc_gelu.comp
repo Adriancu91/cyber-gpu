@@ -1,0 +1,132 @@
+// C-157 p.2 (docs/C-160_P7_LIPIRE_GELU_TC.md): mm_tc with GELU's backward fused into the store, for the MIXED
+// training step. Everything up to the final store is mm_tc.comp unchanged (same f16 slices, same coopMatMulAdd, same
+// 64x64 f32 tile in shared memory). The store writes v * fma(u, pdf, cdf) with exactly gelu_tr.comp mode 1's
+// operations (u read at [row, col], from the bias slot); the BIAS flag is not used (the caller refuses it).
+// `fma(u, pdf, cdf)` is written out as in mm_train_gelu.comp (session 193: gelu_tr rounds Phi first, then FFMA).
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_cooperative_matrix : require
+
+#define BM 64u
+#define BN 64u
+#define BK 32u
+#define THREADS 128u
+#define TA 1u
+#define TB 2u
+#define BIAS 4u
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+
+layout(push_constant) uniform Args {
+    In a;
+    In b;
+    Out c;
+    In bias;
+    uint m;
+    uint n;
+    uint k;
+    uint flags;
+} args;
+
+shared float16_t as_[BM * BK];  // op(A) slice, row-major [r][p], stride BK
+shared float16_t bs_[BK * BN];  // op(B) slice, row-major [p][col], stride BN
+shared float cs_[BM * BN];      // the finished 64x64 block, row-major, stride BN
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint w = tid / 32u;
+    uint wr = (w / 2u) * 32u;
+    uint wc = (w % 2u) * 32u;
+    uint row0 = gl_WorkGroupID.y * BM;
+    uint col0 = gl_WorkGroupID.x * BN;
+    bool ta = (args.flags & TA) != 0u;
+    bool tb = (args.flags & TB) != 0u;
+
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> acc[2][2];
+    for (uint i = 0u; i < 2u; i++) {
+        for (uint j = 0u; j < 2u; j++) {
+            acc[i][j] = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+        }
+    }
+
+    for (uint t = 0u; t < args.k; t += BK) {
+        for (uint s = 0u; s < (BM * BK) / THREADS; s++) {
+            uint e = tid + s * THREADS;
+            // A stored [M,K]: consecutive threads -> consecutive p; stored [K,M] (TA): -> consecutive r.
+            uint r = ta ? e % BM : e / BK;
+            uint p = ta ? e / BM : e % BK;
+            uint gr = row0 + r;
+            uint gp = t + p;
+            float x = 0.0;
+            if (gr < args.m && gp < args.k) {
+                x = ta ? args.a.v[gp * args.m + gr] : args.a.v[gr * args.k + gp];
+            }
+            as_[r * BK + p] = float16_t(x);
+        }
+        for (uint s = 0u; s < (BK * BN) / THREADS; s++) {
+            uint e = tid + s * THREADS;
+            // B stored [K,N]: consecutive threads -> consecutive col; stored [N,K] (TB): -> consecutive p.
+            uint p = tb ? e % BK : e / BN;
+            uint cl = tb ? e / BK : e % BN;
+            uint gp = t + p;
+            uint gc = col0 + cl;
+            float x = 0.0;
+            if (gp < args.k && gc < args.n) {
+                x = tb ? args.b.v[gc * args.k + gp] : args.b.v[gp * args.n + gc];
+            }
+            bs_[p * BN + cl] = float16_t(x);
+        }
+        barrier();
+        for (uint kk = 0u; kk < BK; kk += 16u) {
+            coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> fa[2];
+            coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> fb[2];
+            for (uint i = 0u; i < 2u; i++) {
+                coopMatLoad(fa[i], as_, (wr + 16u * i) * BK + kk, BK, gl_CooperativeMatrixLayoutRowMajor);
+            }
+            for (uint j = 0u; j < 2u; j++) {
+                coopMatLoad(fb[j], bs_, kk * BN + wc + 16u * j, BN, gl_CooperativeMatrixLayoutRowMajor);
+            }
+            for (uint i = 0u; i < 2u; i++) {
+                for (uint j = 0u; j < 2u; j++) {
+                    acc[i][j] = coopMatMulAdd(fa[i], fb[j], acc[i][j]);
+                }
+            }
+        }
+        barrier();
+    }
+
+    for (uint i = 0u; i < 2u; i++) {
+        for (uint j = 0u; j < 2u; j++) {
+            coopMatStore(acc[i][j], cs_, (wr + 16u * i) * BN + wc + 16u * j, BN, gl_CooperativeMatrixLayoutRowMajor);
+        }
+    }
+    barrier();
+    for (uint s = 0u; s < (BM * BN) / THREADS; s++) {
+        uint e = tid + s * THREADS;
+        uint r = e / BN;
+        uint cl = e % BN;
+        uint gr = row0 + r;
+        uint gc = col0 + cl;
+        if (gr < args.m && gc < args.n) {
+            uint i = gr * args.n + gc;
+            float v = cs_[e];
+            float u = args.bias.v[i];
+            float z = u * 0.70710678118654752;
+            float a = abs(z);
+            float t = 1.0 / (1.0 + 0.3275911 * a);
+            float p = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+            float ex = exp(-a * a);
+            float e1 = 1.0 - p * ex;
+            float erf = z < 0.0 ? -e1 : e1;
+            float cdf = 0.5 * (1.0 + erf);
+            float pdf = 0.39894228040143268 * ex;
+            args.c.v[i] = v * fma(u, pdf, cdf);
+        }
+    }
+}
