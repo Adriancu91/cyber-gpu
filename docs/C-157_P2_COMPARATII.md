@@ -2,6 +2,24 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-410 `--antrenare-513 --placi3 --mm-placi` (P6-188: cele 147 de înmulțiri pe `mm_train_tile`; 24 nov 2026, 18:18 / 18:22) — sesiunea 211
+- **Ce s-a potrivit:** biții (= oracolul, aceeași pierdere 9,8493 → 10,1735) — prima rulare a lui `mm_train_tile` pe placă, din prima.
+- **Ce a ieșit altfel:** înmulțirile 718,1 → **428,7 ms (×1,68)**, prezis ×3–6; pasul 772 → **483 ms = 2 120 simb/s** (prezis 175–295 ms).
+  Câștigul e **același pe toate formele** (×1,65–1,70), și la cele cu A transpus (dW, `f1`), și la cele cu B transpus (`f6`).
+- **Socoteala plafonului (DEDUS, din cifrele publice Ampere: 128 de benzi F32 / ceas / SM, memoria partajată 128 B / ceas / SM):**
+  `mm_train` face 2 citiri partajate pe FMA → plafon ~25 % din vârf (~5,4 TFLOP/s); `mm_train_tile` 0,5 → plafon ~50 % (~10,8).
+  Măsurat: 0,84 și ~1,4 TFLOP/s = **~15 % și ~13 % din plafonul fiecăruia** — același factor comun ~1/7 la amândouă.
+- **Ce NU e frâna comună (DEDUS):** ocuparea (34 de registre × 256 de fire, 8 KiB → 6 blocuri / SM = 48 de warp-uri, plin);
+  conflictele de bancă la scrierea plăcilor (16 căi, dar doar la `f0` / `f6`; `f1` n-are și a câștigat la fel); lotul mic
+  (192–768 de blocuri = 4–16 pe SM, iar câștigul e același și la formele mari).
+- **Bănuiala nr. 1 (NECUNOSCUT până la A4):** placa nu calculează la ceasul maxim (stare P / ceas SM scăzut în timpul pasului).
+  Un factor comun ~1/7 pe toate formele și pe ambele programe se potrivește exact cu un ceas mai mic, nu cu o problemă a programului.
+  De aceea A4 (puterea + starea P + ceasul SM în timpul pasului) are întâietate; fără el, cursa C-165 măsoară programe sub frână.
+- **Bănuiala nr. 2:** întârzierea citirilor globale neascunsă (fără plăci duble; două bariere pe felie). Cursa o lămurește parțial:
+  `mm_tv_64x64k8` (felie 8, 4 KiB) vs martorul.
+- **Ce tai mai departe:** variantele cursei (C-165) sunt gata (T217); propun pentru OS: cursa + A4 în aceeași pornire. Dacă A4 arată
+  ceas mic, nu mai scriem programe până nu e lămurit ceasul.
+
 ## os-407 `--antrenare-513 --placi3` (P6-185: pasul #513 pe atenția gen 3; 24 nov 2026, 16:08 / 16:12) — sesiunea 210
 Surse: `Cyber-hub/rezultate/2026-11-24-workstation-os407-atentie-513/REZULTAT.md`, `ciclu-auto-20261124-1612.txt` (rândurile 133–179).
 Predicția noastră (`docs/C-157_P2_OS403_ATENTIA_513.md`, T212): **atenția 371 → ~20–40 ms, pasul ~770–800 ms ≈ 1 280–1 330 simb/s, pierderile = oracolul.**

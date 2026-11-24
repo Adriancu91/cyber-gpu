@@ -30,3 +30,8 @@ parte din C nescrisă (T217 arată că se prinde prin comparație, dar n-are ce 
 ## Ce urmează la noi
 `Plan::with_mm_choice(...)`: pentru fiecare formă, varianta câștigătoare din raportul cursei (aceiași biți → aceeași amprentă a
 pasului), apoi variante pentru `mm_train_gelu` și pentru atenție.
+
+## După os-410 (adăugat la sfârșitul sesiunii 211)
+Condiția „`mm_train_tile` a trecut o dată singur pe placă” e îndeplinită (os-410). **Rugăminte:** în aceeași pornire cu cursa, A4 —
+starea P, ceasul SM și puterea citite în timpul cursei / pasului. Comparația os-410 (`docs/C-157_P2_COMPARATII.md`) arată ambele
+programe la ~1/7 din plafonul lor, la fel pe toate formele: bănuiala nr. 1 e ceasul, nu programul.

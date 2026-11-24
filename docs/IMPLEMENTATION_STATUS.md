@@ -3,7 +3,7 @@
 ## Sesiunea 211 — 24 noiembrie 2026, ~18:10–19:00 (ora României), în cloud, FĂRĂ placă — **C-165: variantele cursei de noapte pentru `mm_train_tile`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 210 terminată 17:45), l-am pus `ocupat`. Nicio probă nouă pe placă de comparat
-(os-410 `--mm-placi` e GATA DE TEST, nerulat). Comandă nouă de la Adrian (DECIZII 17:35, H3): **C-165, cursa de noapte** → luată prima.
+(os-410 a venit la 18:25, în timpul sesiunii — comparat la final). Comandă nouă de la Adrian (DECIZII 17:35, H3): **C-165, cursa de noapte** → luată prima.
 
 | Pas | Ce s-a făcut | Rezultat |
 |---|---|---|
@@ -13,13 +13,14 @@ Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 210 terminată 17:45), l-am
 | Tabelul pentru OS | `nvidia_ga104::mm_train_variants::{VARIANTS, Variant, forms}` (indicele 0 = martorul) | doar adăugări |
 | T217 | bit cu bit = `mm_train` = oracolul pe 8 combinații × 7 forme cu plăci parțiale; −0,0; refuzuri; grila altei variante prinsă; #513: 15 forme, 147 lansări, 599,1 GFLOP, toate ÷ 128 | PASS (SIMULARE, 6/6) |
 | Predicție greșită | NAK n-a desfăcut bucla lui p la cele 3 variante mari (biții la fel; viteza poate pierde ~5–15 %, DEDUS) | notat |
+| os-410 comparat | `mm_train_tile` = oracolul pe placă; ×1,68 (prezis ×3–6), același pe toate formele; ambele programe la ~1/7 din plafonul lor de memorie partajată → bănuiala nr. 1: ceasul / starea P (A4) | comparat (`docs/C-157_P2_COMPARATII.md`); cauza NECUNOSCUTĂ |
 | Nota pentru OS | `integration/cyber-universe/C-165_cursa-mm.md`: rândul `test-placa --cursa` propus (median, biți față de martor pe aceeași placă) | — |
 | `tools/check.sh` | format, clippy, teste (pe gazdă), build no_std | PASS (**1 035 de teste**, 8 ignorate) |
 
 **Ce e nou pentru placă:** nimic trimis. 4 programe noi, aceeași cale de lansare ca `mm_train_tile`; niciun registru, nicio comandă nouă.
 Prima cursă doar după ce os-410 arată `mm_train_tile` trecut singur pe placă.
 
-**Următorul pas:** comparația lui os-410 (`--mm-placi`) când vine; după cursă, `Plan::with_mm_choice` (câștigătorul pe formă); variante
+**Următorul pas:** cursa C-165 + A4 pe placă (OS); dacă ceasul e mic, întâi lămurit ceasul; după cursă, `Plan::with_mm_choice` (câștigătorul pe formă); variante
 pentru `mm_train_gelu` / atenție; poate bucla lui p desfăcută de mână la variantele mari.
 
 ---
