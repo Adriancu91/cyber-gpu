@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 199 — 24 noiembrie 2026, ~05:10–05:35 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: GELU' lipit pe circuitele speciale (`mm_tc_gelu`, pasul mixt)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 198 terminată 04:30), l-am pus `ocupat`. Niciun test nou pe placă după os-386
+(os-389 e doar GATA DE TEST) → pasul următor din stare. Plan + predicții urcate **înainte** de cod (`9151cde`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Unealta NAK 2 | Mesa 26.3.1 reconstruit în cloud; `mm_tc` recompilat **identic** (SHA-256 `f60cd944…`) | PASS |
+| H2 listarea | `mm_tc_gelu.comp` → 1 543 instr., 64 registre, 24 KiB; bucla HMMA + rotunjirile f16 identice cu `mm_tc`; epilogul = operațiile `gelu_tr` mod 1 (semnele ca modificatori, exacte) | PASS (listare) |
+| T207 H1 | `antrenare mini` mixt S = 1 024, 5 pași AdamW: lipit = nelipit **bit cu bit**, singur și cu `ln_back_res` | PASS (SIMULARE) |
+| T207 H3 | 76 → 74 lansări pe pas; `mm_tc` 27 → 25 + `mm_tc_gelu` 2 | PASS (SIMULARE) |
+| T207 H4 | `u` al altui strat → 89 600 gradienți alți biți; epilog fără `ffma` → 12 631; `pack_mixed` vechi refuză | PASS (SIMULARE) |
+| Nota pentru OS | `integration/cyber-universe/C-157_P2_gelu-pe-mm_tc.md` (doar adăugări: `mm_tc_gelu`, `MixedLaunch::TcGelu`, `pack_mixed_gelu`) | — |
+| `tools/check.sh` | format, clippy, **987 de teste**, build no_std | PASS |
+| `mm_tc_gelu` pe placă (~1,8 GB / 12 lansări mai puțin pe bucata #513) | — | NOT TESTED |
+
+**Ce e nou pentru placă:** un singur program, `mm_tc_gelu` (după os-384 `--mixt` și `mm_train_gelu`).
+
+**Următorul pas:** comparația când OS-ul rulează os-389 (pasul întreg pe bucăți) sau os-384/385; altfel C-157 punctul 8 (fișa de model,
+documentul de proiectare) cât antrenarea așteaptă după placă.
+
+---
+
 ## Sesiunea 198 — 24 noiembrie 2026, ~04:11–04:40 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: al doilea rând de tăieturi pentru pasul întreg de antrenare**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 197 terminată 03:27), l-am pus `ocupat`. Niciun test nou pe placă după

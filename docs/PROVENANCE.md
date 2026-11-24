@@ -532,3 +532,7 @@ niciun octet de firmware NVIDIA.
   + expresia lui `gelu_tr.comp` al nostru la scriere), `crates/nvidia-ga104/src/mm_train_gelu.rs`, modelele din `gpu-compute::layer` /
   `gpu-sim::cmdproc`, testele T201, documentul `docs/C-160_P7_LIPIRE_GELU.md`. Scrise de noi; ideea lipirii epilogului e generală
   (folosită în CUTLASS / tinygrad), fără cod copiat. Compilat cu Mesa NAK 25.0.7 (MIT), pe gazdă.
+- **C-157 p.2 — `mm_tc_gelu` (sesiunea 199):** `tools/nak/mm_tc_gelu.comp` (= `mm_tc.comp` al nostru + expresia lui `gelu_tr.comp`
+  al nostru la scriere), `crates/nvidia-ga104/src/mm_tc_gelu.rs`, `MixedLaunch::TcGelu` / `pack_mixed_gelu` în `train_step.rs`,
+  modelul `gpu-sim::cmdproc::mm_tc_gelu_on_cpu`, testele T207, documentul `docs/C-160_P7_LIPIRE_GELU_TC.md`. Scrise de noi, fără cod
+  copiat. Compilat cu a doua unealtă NAK (Mesa 26.3.1, MIT), pe gazdă. Nimic GPL, niciun octet de firmware NVIDIA.

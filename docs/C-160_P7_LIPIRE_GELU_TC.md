@@ -39,3 +39,18 @@ de refuz; `pack_mixed` (cel de azi) refuză `TcGelu` cu mesaj clar. În simulato
 
 Un singur program, `mm_tc_gelu`, după ce `--antrenare-mini --mixt` (os-384) a trecut pe placă cu `mm_tc` și după `mm_train_gelu`.
 Nimic în registre, nimic prin GSP.
+
+## 4. Rezultatul (sesiunea 199, 24 nov 2026, cloud, fără placă) — SIMULARE
+
+Unealta a doua (Mesa 26.3.1) reconstruită în cloud; `mm_tc` recompilat a ieșit **identic** (SHA-256 `f60cd944…1ee3`), deci aceeași
+unealtă ca în sesiunea 157.
+
+| Predicție | Rezultat |
+|---|---|
+| H1 (biți) | **IEȘIT**: `antrenare mini`, 5 pași AdamW, S = 1 024: cu `mm_tc_gelu` = fără, bit cu bit (pierderi, gradientul pasului 1, greutățile), atât singur cât și împreună cu `ln_back_res` (T207) |
+| H2 (listarea) | **IEȘIT din prima compilare.** Partea de înmulțire: aceleași 16 `HMMA`, aceeași buclă pe K și aceleași 32 de rotunjiri la f16 ca `mm_tc` (diferă doar numele registrelor și scrierea finală; `mm_tc` o desface de 32 de ori, `mm_tc_gelu` o ține în buclă). Epilogul: aceleași operații rotunjite ca `gelu_tr` mod 1, în aceeași ordine — `fmul` z, `ffma`(\|z\|, A, 1), `MUFU.RCP`, 4 `ffma` + `fmul` pe polinom, `fmul`·`fmul` pentru −a²·log₂e, `MUFU.EX2`, `ffma`(−p, e, 1), `sel`, `fadd` 1, `fmul` 0,5, `fmul` φ, `ffma`(u, φ, Φ), `fmul`(v, ·); NAK 26.3.1 a pus semnele ca modificatori (\|z\|, −t, −\|z\|) în loc de trei `fadd` cu −0 — schimbări de semn exacte, aceiași biți. 1 543 instrucțiuni (24 688 octeți), **64 registre**, 24 KiB partajați, SHA-256 `03de80cf…62557d8` |
+| H3 (lansări) | **IEȘIT**: pasul mixt 76 → 74 lansări (L = 2); `mm_tc` 27 → 25 + `mm_tc_gelu` 2; `gelu_tr` cu L mai puține; `launches_per_step_mixed` corect |
+| H4 (greșeli plantate) | **IEȘIT**: `u` al celuilalt strat → 89 600 / 1 150 720 gradienți alți biți; epilogul fără `ffma` → 12 631 alți biți; `pack_mixed` vechi pe lista cu `mm_tc_gelu` → refuzat |
+| H5 (resurse) | **IEȘIT**: 64 registre (≤ 72), memoria și grila ca `mm_tc`. Câștigul ~1,8 GB și 12 lansări pe bucata #513 rămâne DEDUS — **se vede doar pe placă** |
+
+`tools/check.sh`: format, clippy, **987 de teste**, build no_std — PASS. Nimic din acestea nu a rulat pe RTX 3070 Ti.
