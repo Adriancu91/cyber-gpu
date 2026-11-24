@@ -89,3 +89,28 @@ Predicțiile testului (T208):
 | cap nelegat | refuz: capul |
 | antet stricat / tăiat / cheie lipsă / `vocabular` ≠ … | eroare de fișă, nu panică |
 | limitele din fișa #651 | = `ModelLimits::k651_lists(&[FusedLn32])` |
+
+## 5. Pasul 2 de cod — fișele de referință #513 / #651 (planul + predicțiile, scrise ÎNAINTE de cod, sesiunea 204)
+
+Ținta: numerele lui #513 / #651 să aibă **o singură sursă** — fișa. Azi ele stau de trei ori: constantele `K513_*` /
+`K651_*`, formele scrise de mână în dovezile pachetului (`(12, 12, 768, 512, 16 384)`) și cheile din teste. Doar adăugări:
+1. `gpu_compute::card::ModelCard::kronos(layers, heads, e, context, vocab)` — fișa Kronos „cum o scrie
+   `exporta_greutati.py`” (kronos_gpt, Q8_0, cap legat, eps 1e-5), fără octeți KGR1.
+2. `nvidia_ga104::kronos_speed::{card_k513, card_k651}` — fișele de referință făcute din `K513_*` / `K651_*`.
+3. `ModelLimits::of_card(&card, piece)` (= `of`) și `ModelLimits::of_card_lists(&card, piece, lists, extra)`
+   (= `of_lists`); `Choice::limits_with(piece, extra)` (OS-ul adaugă `Prog::Argmax` după listă).
+4. `k513()` / `k651()` / `k651_lists` rămân neschimbate (interfața nu se strică); testul arată că dau aceleași cifre.
+
+Predicțiile testului (T211):
+| ce | prezis |
+|---|---|
+| `card_k513()` = `from_kgr1(kgr1_header(kronos_keys(12, 12, 768, 512, 16 384)))` | egale câmp cu câmp |
+| `card_k651()` la fel, cu 24 de straturi | egale |
+| `ModelLimits::of_card(card_k513, 8 MiB)` / `card_k651` | = `k513()` / `k651()` |
+| `of_card_lists(card_k651, 8 MiB, [FusedLn32], [])` | = `k651_lists(&[FusedLn32])` (172 de lansări) |
+| `select(card_k513)` / `select(card_k651)` | dovedit pe placă, os-346 / os-355 |
+| formele scrise în dovezile pachetului | = `card_k513().form()` și `card_k651().form()` (dacă cineva schimbă o constantă, testul cade) |
+| `Choice::limits_with(piece, [Argmax])` pentru #651 | o lansare în plus față de `limits(piece)` |
+| `ModelCard::kronos` cu n_emb 100 | fișa se face (e doar date), dar `select` o refuză (nemultiplu de 32) |
+
+Ce e nou pentru placă: nimic.
