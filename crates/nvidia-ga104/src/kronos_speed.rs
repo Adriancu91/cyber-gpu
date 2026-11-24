@@ -601,6 +601,160 @@ impl Speed {
     }
 }
 
+/// C-157 point 2 (after the x16 test, 24 Nov 2026): the host's time of the weights' upload, split per piece into
+/// three parts from four clock readings in the OS's loop — `t0` before the piece is written into the RAM arena,
+/// `t1` after that copy, `t2` after the copy's commands (cbuf, QMD, records) were prepared, `t3` after its last record
+/// was read (the submission: the pending VRAM writes, the doorbell, the wait). Separate from [`Speed`] so that type
+/// keeps its fields; nothing here touches the board.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UploadHostParts {
+    pub pieces: u32,
+    pub bytes: u64,
+    /// The copy of the pieces into the pinned RAM arena (µs, summed).
+    pub ram_us: u64,
+    /// The commands of the copy launch written (collected) for the board (µs, summed).
+    pub prepare_us: u64,
+    /// The submission: pending VRAM writes, doorbell, wait for the last record (µs, summed).
+    pub submit_us: u64,
+}
+
+/// Which part of [`UploadHostParts`] is the largest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UploadPart {
+    Ram,
+    Prepare,
+    Submit,
+}
+
+impl UploadPart {
+    pub fn label(self) -> &'static str {
+        match self {
+            UploadPart::Ram => "copia in RAM",
+            UploadPart::Prepare => "pregatirea comenzilor",
+            UploadPart::Submit => "trimiterea + asteptarea",
+        }
+    }
+}
+
+impl UploadHostParts {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// One piece of `bytes` from the four clock readings (µs). Refused (nothing counted) when a reading goes back.
+    pub fn add_piece(&mut self, bytes: u64, t0: u64, t1: u64, t2: u64, t3: u64) -> GpuResult<()> {
+        if t1 < t0 || t2 < t1 || t3 < t2 {
+            return Err(GpuError::InvalidArgument(
+                "urcare pe parti: ceasul procesorului merge inapoi",
+            ));
+        }
+        self.pieces += 1;
+        self.bytes += bytes;
+        self.ram_us += t1 - t0;
+        self.prepare_us += t2 - t1;
+        self.submit_us += t3 - t2;
+        Ok(())
+    }
+
+    pub fn total_us(&self) -> u64 {
+        self.ram_us + self.prepare_us + self.submit_us
+    }
+
+    /// The largest part (`None` before the first piece or when every part is 0).
+    pub fn largest(&self) -> Option<UploadPart> {
+        if self.total_us() == 0 {
+            return None;
+        }
+        let parts = [
+            (UploadPart::Ram, self.ram_us),
+            (UploadPart::Prepare, self.prepare_us),
+            (UploadPart::Submit, self.submit_us),
+        ];
+        parts.iter().max_by_key(|(_, v)| *v).map(|(p, _)| *p)
+    }
+
+    /// MB/s (10^6 bytes) of the copy into the RAM arena.
+    pub fn ram_mb_s(&self) -> Option<u64> {
+        mb_s(self.bytes, self.ram_us.saturating_mul(1000))
+    }
+
+    /// One line for the screen and the report.
+    pub fn line(&self, source: Source) -> String {
+        let pm = |v: u64| match self.total_us() {
+            0 => 0,
+            t => v * 1000 / t,
+        };
+        format!(
+            "viteza ({}): urcarea pe procesor pe parti ({} bucati, {} us): copia in RAM {} us ({} promile, {} MB/s), pregatirea comenzilor {} us ({} promile), trimiterea + asteptarea {} us ({} promile); cea mai mare: {}",
+            source.label(),
+            self.pieces,
+            self.total_us(),
+            self.ram_us,
+            pm(self.ram_us),
+            self.ram_mb_s()
+                .map_or(String::from("?"), |x| format!("{x}")),
+            self.prepare_us,
+            pm(self.prepare_us),
+            self.submit_us,
+            pm(self.submit_us),
+            self.largest().map_or("?", UploadPart::label)
+        )
+    }
+
+    /// The `kv` rows (µs, saturated), in order.
+    pub fn rows(&self) -> Vec<(&'static str, u32)> {
+        use rows as n;
+        alloc::vec![
+            (n::UP_PARTS_PIECES, self.pieces),
+            (n::UP_PARTS_RAM, sat(self.ram_us)),
+            (n::UP_PARTS_PREPARE, sat(self.prepare_us)),
+            (n::UP_PARTS_SUBMIT, sat(self.submit_us)),
+        ]
+    }
+
+    /// Writes [`Self::rows`] into the journal (4 rows; on the board each costs a write on the stick).
+    pub fn journal(&self, j: &mut Journal) {
+        for (what, value) in self.rows() {
+            j.push(Event::Value { what, value });
+        }
+    }
+
+    /// The parts back from a journal's text (the last run; `None` when a row is missing).
+    pub fn parse_journal(text: &str) -> Option<UploadHostParts> {
+        use rows as n;
+        let (mut pieces, mut ram, mut prep, mut sub) = (None, None, None, None);
+        for line in text.lines() {
+            let Some(rest) = line.split("valoare ").nth(1) else {
+                continue;
+            };
+            let Some((name, value)) = rest.rsplit_once(" = ") else {
+                continue;
+            };
+            let Some(v) = value
+                .trim()
+                .strip_prefix("0x")
+                .and_then(|h| u32::from_str_radix(h, 16).ok())
+            else {
+                continue;
+            };
+            match name.trim() {
+                x if x == n::UP_PARTS_PIECES => pieces = Some(v),
+                x if x == n::UP_PARTS_RAM => ram = Some(u64::from(v)),
+                x if x == n::UP_PARTS_PREPARE => prep = Some(u64::from(v)),
+                x if x == n::UP_PARTS_SUBMIT => sub = Some(u64::from(v)),
+                _ => {}
+            }
+        }
+        Some(UploadHostParts {
+            pieces: pieces?,
+            bytes: 0,
+            ram_us: ram?,
+            prepare_us: prep?,
+            submit_us: sub?,
+        })
+    }
+}
+
 /// The names of the `kv` rows (what the stick journal prints after `valoare `).
 pub mod rows {
     pub const SOURCE: &str = "kv sursa (0 SIMULARE, 1 placa)";
@@ -621,6 +775,10 @@ pub mod rows {
     pub const HOST_X100: &str = "kv simboluri pe secunda x100 (procesor)";
     pub const UP_BOARD_MB: &str = "kv urcare MB/s (placa)";
     pub const UP_HOST_MB: &str = "kv urcare MB/s (procesor)";
+    pub const UP_PARTS_PIECES: &str = "kv urcare pe parti bucati";
+    pub const UP_PARTS_RAM: &str = "kv urcare pe parti copia in RAM (us)";
+    pub const UP_PARTS_PREPARE: &str = "kv urcare pe parti pregatirea comenzilor (us)";
+    pub const UP_PARTS_SUBMIT: &str = "kv urcare pe parti trimiterea + asteptarea (us)";
 }
 
 /// What a journal's `kv` rows say (the last run in the text; `None` = row absent or `ffffffff`).
@@ -890,5 +1048,105 @@ mod tests {
         assert_eq!(p.host_x100, None);
         assert_eq!(p.board_x100, Some(57_142));
         assert_eq!(p.up_board_mb_s, Some(4194));
+    }
+    // T213 (C-157 point 2, after the x16 test): the host's upload time split into three parts.
+    #[test]
+    fn t213_upload_parts_sum_and_name_the_largest() {
+        let mut u = UploadHostParts::new();
+        assert_eq!(u.largest(), None);
+        assert!(u.line(Source::Placa).contains("cea mai mare: ?"));
+        // The shape of os-403's upload: 13 pieces of 8 MiB + a rest, ~19 ms each on the host (made-up split).
+        let piece = 8u64 << 20;
+        let total = 110_786_560u64;
+        let mut t = 1_000u64;
+        let mut left = total;
+        while left > 0 {
+            let b = left.min(piece);
+            u.add_piece(b, t, t + 2_000, t + 2_100, t + 19_000).unwrap();
+            t += 19_000;
+            left -= b;
+        }
+        assert_eq!(u.pieces, 14);
+        assert_eq!(u.bytes, total);
+        assert_eq!(u.ram_us, 14 * 2_000);
+        assert_eq!(u.prepare_us, 14 * 100);
+        assert_eq!(u.submit_us, 14 * 16_900);
+        assert_eq!(u.total_us(), 14 * 19_000);
+        assert_eq!(u.largest(), Some(UploadPart::Submit));
+        // 110 786 560 B in 28 ms = 3 956 MB/s.
+        assert_eq!(u.ram_mb_s(), Some(3_956));
+        let l = u.line(Source::Placa);
+        assert!(
+            l.starts_with("viteza (placa): urcarea pe procesor pe parti (14 bucati, 266000 us)"),
+            "{l}"
+        );
+        assert!(
+            l.contains("copia in RAM 28000 us (105 promile, 3956 MB/s)"),
+            "{l}"
+        );
+        assert!(
+            l.contains("trimiterea + asteptarea 236600 us (889 promile)"),
+            "{l}"
+        );
+        assert!(l.ends_with("cea mai mare: trimiterea + asteptarea"), "{l}");
+    }
+
+    #[test]
+    fn t213_upload_parts_refuse_a_clock_going_back() {
+        let mut u = UploadHostParts::new();
+        u.add_piece(16, 0, 10, 20, 30).unwrap();
+        let before = u;
+        assert!(u.add_piece(16, 100, 90, 120, 130).is_err());
+        assert!(u.add_piece(16, 100, 110, 105, 130).is_err());
+        assert!(u.add_piece(16, 100, 110, 120, 115).is_err());
+        assert_eq!(u, before, "a refused piece counts nothing");
+        // A slow RAM copy is named as such.
+        u.add_piece(8 << 20, 0, 17_000, 17_100, 18_000).unwrap();
+        assert_eq!(u.largest(), Some(UploadPart::Ram));
+        assert!(u.line(Source::Simulare).starts_with("viteza (SIMULARE):"));
+    }
+
+    #[test]
+    fn t213_upload_parts_journal_round_trip_leaves_the_old_rows_alone() {
+        let mut u = UploadHostParts::new();
+        u.add_piece(8 << 20, 0, 1_500, 1_600, 19_000).unwrap();
+        u.add_piece(8 << 20, 19_000, 20_400, 20_500, 38_200)
+            .unwrap();
+        let mut j = Journal::new(16);
+        u.journal(&mut j);
+        assert_eq!(j.len(), 4);
+        let mut s = Speed::new(Source::Placa);
+        s.add_piece(16 << 20, 1_300_000, Some(38_200));
+        let text: String = s
+            .rows(false)
+            .iter()
+            .chain(u.rows().iter())
+            .map(|(w, v)| format!("[  1.000000] gpu: valoare {w} = {v:#010x}\n"))
+            .collect();
+        let back = UploadHostParts::parse_journal(&text).unwrap();
+        assert_eq!(
+            (back.pieces, back.ram_us, back.prepare_us, back.submit_us),
+            (2, 2_900, 200, 35_100)
+        );
+        // The old parser reads the same rows as before; the new ones change nothing in it.
+        let p = parse_journal(&text);
+        assert_eq!(
+            p,
+            parse_journal(
+                &text
+                    .lines()
+                    .filter(|l| !l.contains("pe parti"))
+                    .map(|l| format!("{l}\n"))
+                    .collect::<String>()
+            )
+        );
+        assert_eq!(p.up_host_us, Some(38_200));
+        // A missing row → None.
+        let cut: String = text
+            .lines()
+            .filter(|l| !l.contains("pregatirea"))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        assert_eq!(UploadHostParts::parse_journal(&cut), None);
     }
 }

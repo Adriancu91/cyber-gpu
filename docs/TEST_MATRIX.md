@@ -1,5 +1,11 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 207 (24 nov 2026, ~14:12, cloud, fără placă) — C-157 punctul 2: testul x16 comparat, urcarea pe procesor pe părți
+
+| ID | Ce | Comanda | Așteptat | Observat | Rezultat |
+|---|---|---|---|---|---|
+| T213 | `kronos_speed::UploadHostParts`: timpul procesorului la urcarea greutăților pe 3 părți (copia în RAM / pregătirea comenzilor / trimiterea + așteptarea) din 4 citiri de ceas pe bucată; rândul de raport, 4 rânduri `kv`, citirea lor înapoi | `cargo test -p nvidia-ga104 --lib t213` | sumele și cea mai mare parte corecte (forma lui os-403: 14 bucăți); ceasul înapoi refuzat fără să numere; rândurile vechi `kv` citite la fel cu sau fără cele noi; un rând lipsă → nimic | ca așteptat (3 / 3) | PASS (pe procesor) |
+
 ## Rezultate — sesiunea 206 (24 nov 2026, ~13:11–13:32, cloud, fără placă) — C-157 punctul 2: os-403 comparat, atenția `_3` în pasul #513
 
 | ID | Ce | Comanda | Așteptat | Observat | Rezultat |

@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 207 — 24 noiembrie 2026, ~14:12–15:00 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația testului x16 (placa în SLOT2)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 206 terminată 13:32), l-am pus `ocupat`. Test nou pe placă: **x16**
+(`rezultate/2026-11-24-workstation-x16-ram-vram/`: `--ram-vram` + `--antrenare-mini --vram --lot-ram` după mutarea plăcii) → are întâietate.
+Testul #513 pe atenția `_3` (nota P2v) n-a venit încă.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Comparația | `docs/C-157_P2_COMPARATII.md` (x16): sus 12,38 / jos 13,53 GB/s față de 11–13 / 11–13,5 prezis (×2,07 / ×2,00 față de x8); pasul mini prin RAM 3 921 µs față de ~3,8 ms | predicție CONFIRMATĂ (pe placă) |
+| Găsit în același raport | urcarea greutăților: placa 9,1 ms (12,2 GB/s), **procesorul 265–292 ms (~400 MB/s), neschimbat față de x8** → ~97 % din urcare e pe procesor, ~15 ms pe bucată nelămuriți | DEDUS (din cifrele plăcii) |
+| T213 | `nvidia_ga104::kronos_speed::UploadHostParts` — timpul procesorului pe 3 părți (copia în RAM / pregătirea / trimiterea + așteptarea), rândul de raport, 4 rânduri `kv` + citirea lor | PASS (pe procesor, 3 / 3) |
+| Nota pentru OS | `integration/cyber-universe/C-157_P2w_x16-urcare.md` (4 citiri de ceas pe bucată; predicțiile scrise înainte) | — |
+| `docs/C-157_RAM_OFFLOAD.md` §6 | coloana x16 confirmată + avertismentul despre drumul procesor → arena | — |
+| `tools/check.sh` | format, clippy, teste (pe gazdă), build no_std | PASS (**1 016 teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** nimic (doar citiri de ceas pe procesor, dacă OS-ul leagă nota). Interfața publică: doar adăugări (un tip nou, 4 nume de rânduri).
+
+**Următorul pas:** comparația testului #513 pe `_3` sau a urcării pe părți, când vin; apoi `--antrenare-513 --mixt` (S = 2¹⁴) și un `mm_train` F32 pe plăci; altfel C-157 punctul 9.
+
+---
+
 ## Sesiunea 206 — 24 noiembrie 2026, ~13:11–13:32 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația os-403 (profilul pasului #513)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 205 terminată 12:16), l-am pus `ocupat`. Test nou pe placă: **os-403**

@@ -89,6 +89,14 @@ Greutățile strat cu strat (tabelul din §3), legătura / calculul pe lot mic d
   slotul x16** înainte de orice lucru serios cu RAM-ul (o schimbare fizică, fără cod; de verificat întâi în Windows, de ex. GPU-Z,
   „Bus Interface”).
 
+## 6. Confirmat pe placă (sesiunea 207, după testul x16 din 24 nov)
+
+Placa mutată în SLOT2: sus **12,4 GB/s**, jos **13,5 GB/s** — coloana „slot x16” din §5 (~12,5 GB/s) e acum cifra măsurată. **Atenție
+nouă:** urcarea greutăților la generare arată ~400 MB/s **pe procesor** (placa 12,2 GB/s); dacă drumul procesor → arena din RAM e atât de
+încet, orice mutare prin RAM în care procesorul scrie datele ar fi frânată de el, nu de legătură. Se măsoară întâi
+(`integration/cyber-universe/C-157_P2w_x16-urcare.md`, T213). Stările AdamW ținute direct în RAM fixată (scrise doar de placă) nu trec
+prin procesor și nu sunt atinse de asta.
+
 ## Surse
 - [Dell Precision 5820 Tower — fișa tehnică (sloturile: 2 × x16, 1 × x16 cablat x8, 1 × x4, 1 × x1, toate Gen 3)](https://delltechnologies.com/asset/en-vn/products/workstations/technical-support/Precision_5820_Tower_Spec_Sheet.pdf)
 - [ZeRO-Offload: Democratizing Billion-Scale Model Training](https://arxiv.org/pdf/2101.06840v1)

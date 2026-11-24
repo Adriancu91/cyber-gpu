@@ -2,6 +2,25 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## x16: placa mutată în SLOT2, `--ram-vram` + `--antrenare-mini --vram --lot-ram` (os-403; 24 nov 2026, 13:56 / 14:01) — sesiunea 207
+Surse: `Cyber-hub/rezultate/2026-11-24-workstation-x16-ram-vram/REZULTAT.md` (rapoartele `ciclu-auto-20261124-1356.txt`, `-1401.txt`).
+Predicția noastră (`docs/C-157_PCIE_LEGATURA.md`, P5; proba din OS): **sus 11–13 GB/s, jos 11–13,5 GB/s, ×1,8–2,0 față de x8; pasul mini neschimbat (~3,8 ms prin RAM).**
+- **Legătura: exact cum am prezis.** Sus **12 379 MB/s** (×2,07), jos **13 529 MB/s** (×2,00) = 79 / 86 % din plafonul brut gen3 x16 (15,75 GB/s);
+  4 copii în paralel = 1 000 / 999 promile din una (plafonul e legătura, nu motorul de copiere). P5 confirmat; cauza (slotul 1 = x8) confirmată.
+- **Sus, bucățile sub 64 MiB merg cu 11,4–11,8 GB/s** (64 MiB: 12,4), jos aproape plat (13,2 → 13,5 GB/s). Nu e un cost fix pe copie (4 MiB e mai lent
+  decât 1 MiB), ci o împrăștiere de ~5 % la urcare (DEDUS). Pentru lotul prin RAM (copii de câțiva KiB) legătura nu contează oricum.
+- **Pasul mini prin RAM: 3 921 µs** (estimat ~3,8 ms, +3 %), 16 322 simb/s; arena de 26 MiB urcată în 2,44 ms (înainte ~4,9) și adusă în 2,06 ms (înainte 4,1) — ×2 tot.
+  Pasul nu depinde de legătură (1,3 KiB sus / 260 B jos pe pas), cum am spus.
+- **Ce n-am observat până azi — urcarea greutăților la generare:** placa 9,1 ms (12,2 GB/s, ×2 față de 18,0 ms pe x8), dar **procesorul 265–292 ms
+  (~400 MB/s) — neschimbat față de x8 (271 ms)**. Deci **~97 % din urcare e pe procesor**, ~19 ms pe fiecare din cele 14 bucăți de 8 MiB, iar
+  costurile pe care le știm nu ajung: o copie de 8 MiB în RAM cu cache ~1–3 ms, ~140 de cuvinte scrise în VRAM ~0,5 ms, o sonerie + așteptarea ~0,7 ms
+  (DEDUS) → **~15 ms pe bucată nelămuriți**. Nu e o problemă azi (o dată pe pornire, ~0,3 s), dar e exact drumul pe care l-ar folosi mutarea
+  greutăților / a stărilor AdamW prin RAM (`docs/C-157_RAM_OFFLOAD.md`): la 400 MB/s pe procesor ar fi de ~30 de ori prea încet.
+- **Ce tai mai departe:** întâi măsurăm, nu ghicim: `nvidia_ga104::kronos_speed::UploadHostParts` (T213) desparte timpul procesorului pe bucată în
+  3 părți (copia în RAM / pregătirea comenzilor / trimiterea + așteptarea), cu 4 citiri de ceas în bucla OS-ului; nimic nou pentru placă.
+  Predicțiile, scrise înainte: §„Urcarea pe procesor” din nota `integration/cyber-universe/C-157_P2w_x16-urcare.md`.
+- `docs/C-157_RAM_OFFLOAD.md` §5: coloana „slot x16” (~12,5 GB/s) e acum cifra măsurată; tabelele rămân valabile.
+
 ## os-403 `--antrenare-mini --vram --antrenare-513` (P6-180..182: profilul pasului #513 pe programe; 24 nov 2026, 12:58) — sesiunea 206
 Surse: `Cyber-hub/rezultate/2026-11-24-workstation-os403-profil-513/REZULTAT.md` (rapoartele `ciclu-auto-20261124-1258.txt`, `-1300.txt`).
 Predicția noastră (os-395, mai jos; `tools/buget-antrenare/pas513.py`): **91 % înmulțiri `mm_train` la ~0,5–0,7 TFLOP/s, atenția ~9 %.**
