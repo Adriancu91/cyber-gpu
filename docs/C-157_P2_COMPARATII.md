@@ -2,6 +2,22 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-403 `--antrenare-mini --vram --antrenare-513` (P6-180..182: profilul pasului #513 pe programe; 24 nov 2026, 12:58) — sesiunea 206
+Surse: `Cyber-hub/rezultate/2026-11-24-workstation-os403-profil-513/REZULTAT.md` (rapoartele `ciclu-auto-20261124-1258.txt`, `-1300.txt`).
+Predicția noastră (os-395, mai jos; `tools/buget-antrenare/pas513.py`): **91 % înmulțiri `mm_train` la ~0,5–0,7 TFLOP/s, atenția ~9 %.**
+- **Înmulțirile: aproape.** `mm_train` 718 ms = 63,9 % (147 lansări); pe ~599 GFLOP = **~0,83 TFLOP/s** (DEDUS), puțin peste intervalul nostru.
+- **Atenția: RATAT de ~4 ori.** 371 ms = 33 % (`attn_fwd` 212 ms = **17,7 ms pe strat**, `attn_back` 159 ms) față de ~9 %: socoteala număra
+  doar operațiile (58 GFLOP), nu cât de prost merg programele **de bază** (0,09 TFLOP/s înainte, 0,24 înapoi). Cauza, citită în OS
+  (`gpu_i14.rs`, `train_513_resident`): pasul e făcut cu **`Plan::new`**, deci nu folosește atenția pe plăci gen 3, trecută pe placă la os-375
+  (3,43 ms pe strat la B 4) și legată în `Plan::new_tiles3` de la sesiunea 187. Am presupus greșit că pasul #513 o folosește deja.
+- **Pierderea: ca os-395** (9,85 → 10,18 pe loturi sintetice; criteriul „scade” nu se potrivește, vezi oracolul de mai jos). Restul (colsum 2 %,
+  AdamW 0,4 %) = cât era de așteptat.
+- **Ce tai mai departe — întâi atenția, nu înmulțirile:** e cea mai ieftină tăietură (niciun program nou, o linie în OS): `Plan::new` →
+  `Plan::new_tiles3` în pasul #513. T212 (MĂSURAT în cloud): aceeași arenă 2 560 MiB, aceleași 385 lansări, doar cele 36 de atenție schimbă
+  programul; SIMULARE: un strat la lățimile #513, 2 × 128, = oracolul. Estimat (DEDUS): atenția **371 → ~20–40 ms**, pasul **~770–800 ms ≈
+  1 280–1 330 simb/s**. Apoi `mm_train` (~90 % din pasul nou): `--mixt` pe #513 (scara 2¹⁴), apoi `mm_train` F32 pe plăci.
+  Nota: `integration/cyber-universe/C-157_P2v_atentia3-in-513.md`; plan + predicții: `docs/C-157_P2_OS403_ATENTIA_513.md`.
+
 ## os-395 `--antrenare-513` (P6-172: pasul de antrenare #513 pe placă, arena 2,5 GiB în VRAM; 24 nov 2026, 10:58) — sesiunea 205
 Surse: `Cyber-hub/rezultate/2026-11-24-workstation-os395-antrenare-513/REZULTAT.md`, `ciclu-auto-20261124-1058.txt` (rândurile 112–126).
 Predicția OS-ului: trece = pierderea 1 ≈ ln 16 384 (la 2 %), apoi scade. A noastră (`C-160_P7_VITEZA_ESTIMARE.md` §3): `mm_train` ~2,6 TFLOP/s → ~3 400 simb/s.

@@ -36,5 +36,10 @@ au trecut deja pe placă în probele de atenție (os-375; gen 4 la os-386), dar 
 4. **Pierderile pe loturile sintetice** rămân pe oracolul `ORACLE_513_SYNTH` la ≤ 1·10⁻³ pe pașii 1–9 (ordinea diferită a
    sumelor din atenție schimbă doar a 6-a–7-a cifră).
 
-## Rezultat
-(se completează după test)
+## Rezultat (sesiunea 206, în cloud)
+| Predicția | Ce a ieșit | Verdict |
+|---|---|---|
+| 1. lista la 2 × 512 | arena 2 560 MiB la ambele; 385 lansări; 349 identice; 36 de atenție [12, 12, 12] cu alt program, același cbuf, grila [8, 12, 2] | PASS (pe procesor, T212) |
+| 2. un strat la lățimile #513, 2 × 128 | = oracolul: eroarea identică, norma 2,7·10⁻⁹ rel., gradientul 2,8·10⁻⁷ abs, greutățile 1,6·10⁻⁵ (tol. 1·10⁻⁴); față de `Plan::new`: eroarea și norma **identice** (9,750025 / 3,738398; prezisesem ≤ 1·10⁻⁶), gradienții nu bit cu bit (2,76 vs 2,91·10⁻⁷ față de oracol) | PASS (SIMULARE, T212) |
+| 3. timpul pe placă | — | NETESTAT (așteaptă testul OS-ului) |
+| 4. pierderile pe oracol | — | NETESTAT |

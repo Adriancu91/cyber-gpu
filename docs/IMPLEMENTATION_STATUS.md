@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 206 — 24 noiembrie 2026, ~13:11–14:20 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația os-403 (profilul pasului #513)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 205 terminată 12:16), l-am pus `ocupat`. Test nou pe placă: **os-403**
+(`rezultate/2026-11-24-workstation-os403-profil-513/`: `mm_train` 64 %, atenția 33 %) → are întâietate.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Comparația | `docs/C-157_P2_COMPARATII.md` (os-403): `mm_train` ~0,83 TFLOP/s (estimat 0,5–0,7); atenția 33 % față de ~9 % estimat — **ratat**: pasul #513 din OS e pe `Plan::new` (atenția de bază, 17,7 ms pe strat) | DEDUS (din cifrele plăcii) |
+| Plan + predicții | `docs/C-157_P2_OS403_ATENTIA_513.md`, urcate înainte de test (`efbc456`) | — |
+| T212 lista | `Plan::new_tiles3(...).resident()` la #513 2 × 512: arena 2 560 MiB ca `Plan::new`, 385 lansări, 349 identice, 36 de atenție cu alt program, același cbuf, grila [8, 12, 2] | PASS (pe procesor) |
+| T212 SIMULARE | un strat la lățimile #513, 2 × 128, AdamW: = oracolul; eroarea / norma identice cu `Plan::new` (comparația, ~3 min, e `--ignored`) | PASS (SIMULARE) |
+| Timpul pe placă | atenția 371 → ~20–40 ms, pasul ~770–800 ms ≈ 1 280–1 330 simb/s | DEDUS / NOT TESTED |
+| Nota pentru OS | `integration/cyber-universe/C-157_P2v_atentia3-in-513.md` (o linie: `Plan::new` → `Plan::new_tiles3`, sub o opțiune nouă) | — |
+| Întrebarea 13:05 (a doua placă video) | răspuns în hub, `stare/cyber-gpu.md`: driverul alege după ID (NVIDIA `0x10de`, scrieri doar pe `0x2482`), nimic de schimbat în Cyber-GPU; de verificat după montare `gpu gfw` | DEDUS (din cod) |
+| `tools/check.sh` | format, clippy, teste (pe gazdă), build no_std | PASS (**1 013 teste**, 8 ignorate; no_std după instalarea țintei) |
+
+**Ce e nou pentru placă:** doar dacă OS-ul leagă nota: pasul #513 pe cele 3 programe `_3` (deja trecute pe placă). Interfața publică: neschimbată (doar teste noi).
+
+**Următorul pas:** comparația testului #513 pe `_3` când vine; apoi `--antrenare-513 --mixt` (S = 2¹⁴) și un `mm_train` F32 pe plăci; altfel C-157 punctul 9.
+
+---
+
 ## Sesiunea 205 — 24 noiembrie 2026, ~11:14–12:16 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația os-395 (#513 pe placă) + oracolul #513**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 204 terminată 10:45), l-am pus `ocupat`. Test nou pe placă: **os-395**

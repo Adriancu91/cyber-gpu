@@ -426,18 +426,6 @@ struct Run {
     board_bytes: u64,
 }
 
-fn run_with(
-    ar: Arch,
-    shape: (usize, usize),
-    params: &[Vec<f32>],
-    data: (&[u32], &[u32]),
-    recipe: Recipe,
-    steps: u32,
-    fault: Fault,
-) -> Run {
-    run_plan(Kind::Kept, ar, shape, params, data, recipe, steps, fault)
-}
-
 /// `recalc`: [`Plan::new_p_recalc`] (one P shared by all layers, rebuilt in the backward pass) instead of
 /// [`Plan::new`].
 #[allow(clippy::too_many_arguments)]
@@ -879,11 +867,16 @@ fn rng(seed: u64) -> impl FnMut() -> f32 {
 /// so this is not the 513 golden step — it checks that the same list of launches, at #513's widths, gives the CPU
 /// oracle's numbers (one AdamW step) in the hub's tolerances.
 fn shapes_513(layers: usize) {
+    shapes_513_on(Kind::Kept, layers, (1, 64));
+}
+
+/// [`shapes_513`] on the plan `kind` with the batch `(bsz, tl)`; returns the run's first loss and norm (C-157 point 2
+/// after os-403, T212: the same check on [`Plan::new_tiles3`]).
+fn shapes_513_on(kind: Kind, layers: usize, (bsz, tl): (usize, usize)) -> (f32, f32) {
     let ar = Arch {
         layers,
         ..train::M513
     };
-    let (bsz, tl) = (1usize, 64usize);
     let mut r = rng(513);
     let params: Vec<Vec<f32>> = ar
         .tensors()
@@ -900,9 +893,11 @@ fn shapes_513(layers: usize) {
             }
         })
         .collect();
-    let toks: Vec<u32> = (0..=tl).map(|_| ((r() + 1.0) * 8_191.9) as u32).collect();
-    let (inputs, targets) = (toks[..tl].to_vec(), toks[1..].to_vec());
-    let run = run_with(
+    let n = bsz * tl;
+    let toks: Vec<u32> = (0..=n).map(|_| ((r() + 1.0) * 8_191.9) as u32).collect();
+    let (inputs, targets) = (toks[..n].to_vec(), toks[1..].to_vec());
+    let run = run_plan(
+        kind,
         ar,
         (bsz, tl),
         &params,
@@ -929,7 +924,7 @@ fn shapes_513(layers: usize) {
     let nrel =
         (norm as f64 - train::grad_norm(&cpu.grad_step1)).abs() / train::grad_norm(&cpu.grad_step1);
     println!(
-        "kt c165 formele lui #513 ({layers} straturi, greutati inventate, 1 x 64): {} lansari, memoria placii {} MiB; fata de oracol: eroarea {loss} rel {lrel:.2e}, norma rel {nrel:.2e}, grad_abs {:.2e} ({}) grad_rel_norma {:.2e}, w1_abs {:.2e} ({})",
+        "kt c165 formele lui #513 ({kind:?}, {layers} straturi, greutati inventate, {bsz} x {tl}): {} lansari, memoria placii {} MiB; fata de oracol: eroarea {loss} rel {lrel:.2e}, norma rel {nrel:.2e}, grad_abs {:.2e} ({}) grad_rel_norma {:.2e}, w1_abs {:.2e} ({})",
         run.total_per_step,
         run.board_bytes >> 20,
         g.abs,
@@ -943,6 +938,7 @@ fn shapes_513(layers: usize) {
     assert!(nrel <= 1e-5, "norma {nrel}");
     assert!(g.abs <= train::TOL_GRAD_ABS && g.rel_norm <= train::TOL_GRAD_REL_NORM);
     assert!(w.abs <= train::TOL_ADAMW_W_ABS);
+    (loss, norm)
 }
 
 #[test]
@@ -955,6 +951,99 @@ fn t165_one_layer_at_513_widths_matches_the_oracle() {
 #[ignore]
 fn t165_all_12_layers_at_513_widths_matches_the_oracle() {
     shapes_513(12);
+}
+
+// ------------------------------------------------------------------ T212: #513's step on the `_3` attention (os-403)
+
+/// C-157 point 2 after os-403 (`docs/C-157_P2_OS403_ATENTIA_513.md`, prediction 1, on the CPU — nothing runs): the
+/// step os-403 sent (`Plan::new(...).resident()`, #513, 2 x 512, 12 layers) beside the same step on the third tiled
+/// attention generation (`Plan::new_tiles3(...).resident()`): the same arena, the same 385 launches with the same tags,
+/// layers and cbufs; only the 36 attention launches change program (and grid, to [8, 12, 2]).
+#[test]
+fn t212_the_513_step_on_tiles3_is_the_os403_list_with_the_attention_swapped() {
+    let (bsz, tl) = (2usize, 512usize);
+    let ar = train::M513;
+    let inputs: Vec<u32> = (0..bsz * tl)
+        .map(|i| ((i * 7_919) % 16_384) as u32)
+        .collect();
+    let old = Plan::new(ar, bsz, tl, &inputs, HEAP)
+        .unwrap()
+        .resident()
+        .unwrap();
+    let new = Plan::new_tiles3(ar, bsz, tl, &inputs, HEAP)
+        .unwrap()
+        .resident()
+        .unwrap();
+    assert!(new.tiles3() && !old.tiles3());
+    assert_eq!(old.bytes(), new.bytes(), "arena");
+    assert_eq!(new.programs(), &ts::PROGRAMS_TILES3[..]);
+    let params: Vec<Vec<f32>> = ar
+        .tensors()
+        .iter()
+        .map(|t| vec![0.0; t.elements()])
+        .collect();
+    let opt = AdamW::recipe_513(&params);
+    drop(params);
+    let (lo, ln) = (
+        old.step(Recipe::AdamW513, &opt, 1).unwrap(),
+        new.step(Recipe::AdamW513, &opt, 1).unwrap(),
+    );
+    assert_eq!(lo.len(), 385);
+    assert_eq!(ln.len(), 385);
+    assert_eq!(new.launches_per_step(Recipe::AdamW513), 385);
+    let (mut same, mut swapped) = (0usize, [0usize; 3]);
+    for (o, n) in lo.iter().zip(&ln) {
+        assert_eq!(
+            (o.tag, o.layer, o.cbuf),
+            (n.tag, n.layer, n.cbuf),
+            "{}",
+            o.tag
+        );
+        match (o.prog, n.prog) {
+            (Prog::AttnFwd, Prog::AttnFwdTile3) => swapped[0] += 1,
+            (Prog::AttnBack, Prog::AttnBackTile0_3) => swapped[1] += 1,
+            (Prog::AttnBack, Prog::AttnBackTile3) => swapped[2] += 1,
+            (a, b) => {
+                assert_eq!(a, b, "{}", o.tag);
+                assert_eq!(o.grid, n.grid, "{}", o.tag);
+                same += 1;
+                continue;
+            }
+        }
+        assert_eq!(n.grid, [8, 12, 2], "{}", n.tag);
+    }
+    println!(
+        "kt t212 pasul #513 2 x 512: arena {} MiB la ambele, {} lansari, {same} neschimbate, atentia schimbata {swapped:?} (fwd, dS, dqkv)",
+        new.bytes() >> 20,
+        ln.len()
+    );
+    assert_eq!(same, 349);
+    assert_eq!(swapped, [12, 12, 12]);
+    // The OS sends the step in parts of at most `split` launches: the same count → the same parts (255 + 130).
+    assert_eq!(ln.len().div_ceil(255), lo.len().div_ceil(255));
+}
+
+/// Prediction 2 (SIMULARE): one layer at #513's widths, made-up weights, 2 x 128 (two tiles per text, the diagonal
+/// tile included) on [`Plan::new_tiles3`] = the CPU oracle in the hub's tolerances; beside [`Plan::new`] on the same
+/// data the loss differs by ≤ 1e-6 relative (not bit for bit: the tiled forward sums in another order).
+#[test]
+fn t212_one_layer_at_513_widths_on_tiles3_matches_the_oracle() {
+    shapes_513_on(Kind::Tiles3, 1, (2, 128));
+}
+
+/// [`t212_one_layer_at_513_widths_on_tiles3_matches_the_oracle`] beside [`Plan::new`] on the same data (two runs,
+/// ~3 minutes; run by hand: `cargo test --release -- --ignored t212`). Session 206: both 9.750025 / 3.738398.
+#[test]
+#[ignore]
+fn t212_one_layer_at_513_widths_tiles3_beside_plan_new() {
+    let (l3, n3) = shapes_513_on(Kind::Tiles3, 1, (2, 128));
+    let (l0, n0) = shapes_513_on(Kind::Kept, 1, (2, 128));
+    let lrel = ((l3 - l0) as f64).abs() / l0 as f64;
+    let nrel = ((n3 - n0) as f64).abs() / n0 as f64;
+    println!(
+        "kt t212 _3 fata de Plan::new (1 strat, 2 x 128): eroarea {l3} / {l0} rel {lrel:.2e}, norma {n3} / {n0} rel {nrel:.2e}"
+    );
+    assert!(lrel <= 1e-6, "eroarea {lrel}");
 }
 
 // ------------------------------------------------------------------ T177: P rebuilt instead of kept (C-160 point 7)

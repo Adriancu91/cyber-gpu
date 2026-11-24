@@ -1,5 +1,11 @@
 # Matricea de teste
 
+## Rezultate — sesiunea 206 (24 nov 2026, ~13:11–14:20, cloud, fără placă) — C-157 punctul 2: os-403 comparat, atenția `_3` în pasul #513
+
+| ID | Ce | Comanda | Așteptat | Observat | Rezultat |
+|---|---|---|---|---|---|
+| T212 | Pasul #513 pe `Plan::new_tiles3` față de lista trimisă la os-403 (`Plan::new`); plan + predicții înainte (`efbc456`, `docs/C-157_P2_OS403_ATENTIA_513.md`) | `cargo test --release -p nvidia-ga104 --test sim_c160_p5_golden t212` (+ `-- --ignored t212` pentru comparația cu `Plan::new`, ~3 min) | 2 × 512 × 12 straturi: aceeași arenă, 385 lansări, 349 identice, 36 de atenție cu alt program / același cbuf / grila [8, 12, 2]; un strat la lățimile #513, 2 × 128 = oracolul; eroarea față de `Plan::new` ≤ 1e-6 rel. | arena 2 560 MiB la ambele, 385, 349, [12, 12, 12]; = oracolul (norma 2,7e-9, grad 2,8e-7, greutăți 1,6e-5); eroarea / norma identice cu `Plan::new` | PASS (pe procesor + SIMULARE) |
+
 ## Rezultate — sesiunea 203 (24 nov 2026, ~09:15–10:00, cloud, fără placă) — C-157 punctul 2: os-392 comparat, profilul pasului
 
 | ID | Ce | Comanda | Așteptat | Observat | Rezultat |
