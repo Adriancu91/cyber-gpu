@@ -38,3 +38,15 @@ ultima citite (`kronos_diet2::RecordPlan::DIET`, `ends_span`), plus așteptarea 
 Nicio lansare, niciun program, niciun registru, nicio valoare nouă pe placă: aceleași cuvinte ajung în pushbuffer, aceleași
 înregistrări le scrie placa. Codul e al OS-ului (`gpu_i14.rs`, `run_records_d2` există deja în `gpu_i11.rs`); de la noi:
 proba T206 și nota pentru OS. Nimic nu rulează pe RTX 3070 Ti.
+
+## Rezultatul (după cod; T206, `crates/nvidia-ga104/tests/sim_c157_p2_taieturi.rs`, SIMULARE)
+- **K1 — trece:** pierderile, normele și greutățile după 10 pași **bit cu bit** aceleași ca drumul de azi; pushbuffer-ul din
+  memorie identic la sfârșit.
+- **K2 — trece exact:** pasul 0 scrie 908 cuvinte, apoi **76** pe pas (832 lăsate, știute deja).
+- **K3 — trece exact:** înregistrările pe zero doar la pasul 0; citite 304 la pașii 0, 1, 8 și **8** la ceilalți; timpul plăcii
+  din cele două capete = suma duratelor la fiecare pas (ceasul modelului `gpu_sim`, cu un cost fix ales de test — nu e o măsurătoare).
+- **K4 — trece:** pasul 2 oprit după lansarea 40 (fără punere pe zero): ultima înregistrare `0x714b` (a pasului 1), așteptat
+  `0x724b` → așteptarea nu se termină, `ends_span` și `analyze_sequence` refuză, `records_seen` = 41.
+- **K5 — aritmetica:** azi 1 533 scrise + 369 citite ≈ **1 196 µs**; cu tăieturi 397 + 73 ≈ **299 µs**; cu lotul în paralel (P10)
+  ≈ **87 µs**. Pe placă: DEDUS, nemăsurat.
+- Nimic n-a ieșit altfel decât prezis. `tools/check.sh`: 983 de teste, PASS.
