@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 198 — 24 noiembrie 2026, ~04:11–04:40 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: al doilea rând de tăieturi pentru pasul întreg de antrenare**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 197 terminată 03:27), l-am pus `ocupat`. Niciun test nou pe placă după
+os-386 → pasul următor din stare. Plan + predicții urcate **înainte** de cod (`a4f0655`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| T206 K1 | pasul rezident de `antrenare mini`, 10 pași, cu umbra pushbuffer-ului + înregistrările pe zero o dată + doar prima/ultima: pierderi, norme, greutăți **bit cu bit** = azi | PASS (SIMULARE) |
+| T206 K2 | pushbuffer-ul: 908 cuvinte la pasul 0, apoi **76** pe pas (doar valorile înregistrărilor) | PASS (SIMULARE) |
+| T206 K3 | înregistrările pe zero doar la pasul 0; citite 304 la pașii 0, 1, 8 și 8 în rest; timpul plăcii din capete = suma | PASS (SIMULARE) |
+| T206 K4 | pas oprit după lansarea 40, fără punere pe zero: prins (ultima înregistrare = a pasului de dinainte, `records_seen` 41) | PASS (SIMULARE) |
+| T206 K5 | driverul pe pas: ~1 196 µs azi → ~299 µs cu tăieturi → ~87 µs cu lotul în paralel | aritmetică (DEDUS) |
+| Nota pentru OS | `integration/cyber-universe/C-157_P2_taieturi-pasul-intreg.md` (uneltele generării, aplicate în `train_mini_resident`) | — |
+| `tools/check.sh` | format, clippy, **983 de teste**, build no_std | PASS |
+| Pasul întreg ~4–4,5 ms pe placă (cu remediul jurnalului) | — | NOT TESTED |
+
+**Ce e nou pentru placă:** nimic — aceleași lansări și cuvinte; doar ce scrie / citește driverul.
+
+**Următorul pas:** comparația când OS-ul rulează remediul jurnalului + tăieturile (sau os-384/385 `--mixt`); altfel lipirea GELU' pe
+`mm_tc` (pasul mixt) în SIMULARE, sau C-157 punctul 8 (fișa de model) dacă antrenarea așteaptă după placă.
+
+---
+
 ## Sesiunea 197 — 24 noiembrie 2026, ~03:11–03:30 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația os-386 (arena în VRAM)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 196 terminată 02:36), l-am pus `ocupat`. Rezultat nou pe placă: **os-386**
