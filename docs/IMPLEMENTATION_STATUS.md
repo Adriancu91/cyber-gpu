@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 212 — 24 noiembrie 2026, ~19:10–20:15 (ora României), în cloud, FĂRĂ placă — **C-164: Kronos croit pe placă, partea Cyber-GPU**
+## Sesiunea 212 — 24 noiembrie 2026, ~19:10–20:00 (ora României), în cloud, FĂRĂ placă — **C-164: Kronos croit pe placă, partea Cyber-GPU**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 211 terminată 18:53), l-am pus `ocupat`. Niciun test nou pe placă de comparat (după os-410
 nu a mai venit nimic; cursa C-165 + A4 o rulează OS-ul). C-165 așteaptă placa → am luat **C-164** (comanda din 17:35, partea noastră neîncepută).
