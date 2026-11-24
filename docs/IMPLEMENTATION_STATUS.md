@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 196 — 24 noiembrie 2026, ~02:10–03:05 (ora României), în cloud, FĂRĂ placă — **ordinea 20:11, pasul 5: lotul următor pregătit în paralel (două locuri de lot)**
+## Sesiunea 196 — 24 noiembrie 2026, ~02:10–02:35 (ora României), în cloud, FĂRĂ placă — **ordinea 20:11, pasul 5: lotul următor pregătit în paralel (două locuri de lot)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 195 terminată 01:27), l-am pus `ocupat`. Niciun rezultat nou de pe placă de
 comparat (os-384 / os-385 doar „gata de test”). Plan + predicții urcate **înainte** de cod (`044bb0c`, `docs/C-160_P10_LOT_IN_PARALEL.md`).

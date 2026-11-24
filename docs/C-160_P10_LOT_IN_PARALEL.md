@@ -57,7 +57,7 @@ trimite pasul 3; așteaptă pasul 2 → citește locul 1, scrie lotul 4 în locu
 - Nu adaugă niciun program GPU și nu schimbă nicio lansare; nimic nou în registre.
 - Nu mută nimic din antrenare în RAM-ul calculatorului pe placa reală.
 
-## Rezultatul (sesiunea 196, ~03:00; cod + test `d52f264`)
+## Rezultatul (sesiunea 196, ~02:25; cod + test `d52f264`)
 
 | Predicție | Ce a ieșit | Verdict |
 |---|---|---|
