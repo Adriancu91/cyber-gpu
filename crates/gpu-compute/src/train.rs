@@ -1344,6 +1344,29 @@ pub fn golden_run(
     Ok(run)
 }
 
+/// C-157 point 2 after os-395: the CPU oracle of the OS's `test-placa --antrenare-513` run on synthetic batches —
+/// loss and gradient norm (before clipping) of steps 1 … 10, MEASURED on the processor (cloud) with
+/// `examples/oracol_513.rs` (this module's [`loss_and_grad`], [`clip_grad_norm`] and [`AdamW`]).
+///
+/// Valid **only** for exactly that run: [`M513`], batch 2 × 512, start weights uniform ±0.034641016 from MT19937 seeded
+/// with 1 (biases 0, LayerNorm weights 1, in [`Arch::tensors`] order), batches from MT19937 seeded with 0x164
+/// (`next_u32() % 16384`, 513 symbols per row), AdamW lr 1e-3, betas (0.9, 0.999), eps 1e-8, weight decay 0.1,
+/// clipping at 1.0. Any other recipe, batch or seed makes these numbers meaningless. Rounded to 4 decimals.
+/// The board (os-395) matched steps 1–9 within 1.1e-4 relative; step 10 (where the run jumps: norm 0.93 → 1.65) differed
+/// by 1.4e-3 in the loss, so a verdict should use steps 1–9.
+pub const ORACLE_513_SYNTH: [(f32, f32); 10] = [
+    (9.8493, 3.2729),
+    (9.8750, 1.1021),
+    (9.8293, 1.0242),
+    (9.9083, 0.9176),
+    (9.8642, 0.8955),
+    (9.8817, 0.8962),
+    (9.8472, 0.8914),
+    (9.9391, 0.9364),
+    (9.9929, 0.9346),
+    (10.1628, 1.6557),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;

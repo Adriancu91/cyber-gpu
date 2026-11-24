@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 205 — 24 noiembrie 2026, ~11:14–12:30 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația os-395 (#513 pe placă) + oracolul #513**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 204 terminată 10:45), l-am pus `ocupat`. Test nou pe placă: **os-395**
+(`rezultate/2026-11-24-workstation-os395-antrenare-513/`, P6-172, `--antrenare-513`: rulează, dar „NU TRECE” + 911 simb/s) → are întâietate.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Oracolul #513 (cererea 1) | `crates/gpu-compute/examples/oracol_513.rs` refă rularea OS-ului pe procesor (aceleași greutăți, loturi, AdamW lr 1e-3); 10 pași × ~4 min | MĂSURAT (procesor, cloud) |
+| Placa față de oracol | pașii 1–7 identici la 4 zecimale, 8–9 ≤ 1,1·10⁻⁴, pasul 10 1,4·10⁻³ (pasul în care rularea „sare”) → **placa calculează corect**; pierderea urcă din rețetă (loturi la întâmplare, lr 1e-3) | PASS (1–9) / 10 la 1,4e-3 (DEDUS: rotunjire mărită) |
+| `gpu_compute::train::ORACLE_513_SYNTH` | cele 10 perechi (pierdere, normă) ca constante, doar adăugare | PASS (compilare, teste) |
+| Timpul pe program (cererea 2) | `tools/buget-antrenare/pas513.py`: 657 GFLOP pe pas, 91 % înmulțiri, 0,59 TFLOP/s efectiv; rețeta pentru OS: `StepProfile` cu cele 2 părți puse cap la cap | DEDUS / NOT TESTED |
+| Ceasurile | raportul placă / pas = 1,027 și pe 1,1 s, ca pe 4 ms → ritm diferit cu 2,7 %, nu decalaj | DEDUS |
+| Planul bf16 / circuitele speciale (cererea 3) | profil → os-352 `mm_tc` → `--antrenare-513 --mixt` cu S = 2¹⁴ (nu 1 024) | plan, în nota pentru OS |
+| Comparația + nota | `docs/C-157_P2_COMPARATII.md` (os-395), `integration/cyber-universe/C-157_P2u_oracol-513.md` | — |
+| `tools/check.sh` | format, clippy, teste (pe gazdă), build no_std | PASS (1 011 teste; clippy cu exemplul nou) |
+
+**Ce e nou pentru placă:** nimic. Interfața publică: doar adăugări (o constantă).
+
+**Următorul pas:** comparația următorului test pe placă (profilul #513 / lotul prin RAM / `--mixt`); altfel C-157 punctul 9.
+
+---
+
 ## Sesiunea 204 — 24 noiembrie 2026, ~10:13–10:45 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 8, pasul 2: fișele de referință #513 / #651**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 203 terminată 09:50), l-am pus `ocupat`. Niciun test nou pe placă după os-392

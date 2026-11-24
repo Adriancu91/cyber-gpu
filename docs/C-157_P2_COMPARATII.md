@@ -2,6 +2,33 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-395 `--antrenare-513` (P6-172: pasul de antrenare #513 pe placă, arena 2,5 GiB în VRAM; 24 nov 2026, 10:58) — sesiunea 205
+Surse: `Cyber-hub/rezultate/2026-11-24-workstation-os395-antrenare-513/REZULTAT.md`, `ciclu-auto-20261124-1058.txt` (rândurile 112–126).
+Predicția OS-ului: trece = pierderea 1 ≈ ln 16 384 (la 2 %), apoi scade. A noastră (`C-160_P7_VITEZA_ESTIMARE.md` §3): `mm_train` ~2,6 TFLOP/s → ~3 400 simb/s.
+- **Corectitudinea: placa = oracolul pe procesor, MĂSURAT acum.** Oracolul nou (`crates/gpu-compute/examples/oracol_513.rs`: aceleași greutăți
+  de start MT19937(1), aceleași loturi sintetice MT19937(0x164), AdamW lr 1e-3, tăiere 1,0; ~4 min pe pas, un fir, în cloud) dă
+  aceleași pierderi și norme: pașii 1–7 identici la 4 zecimale (9,8493 / 3,2729 … 9,8472 / 0,8914), 8–9 la ≤ 1,1·10⁻⁴, iar pasul 10
+  10,1628 față de 10,1774 pe placă (**1,4·10⁻³**, norma 4,8·10⁻⁴) — exact pasul în care rularea „sare” (norma 0,93 → 1,65), unde orice
+  rotunjire diferită se mărește (DEDUS; greutățile finale necomparate). **Placa nu greșește: creșterea pierderii e a rețetei, nu a calculului.**
+- **De ce urcă pierderea (DEDUS):** loturile sintetice sunt simboluri la întâmplare — nu e nimic de învățat, cel mai bun rezultat posibil e
+  ln 16 384 = 9,704 pe orice lot nou. Pornim puțin deasupra (9,849: greutățile σ 0,02 pe E 768 dau logit-uri cu σ ~0,55, iar 9,704 + 0,55²/2 ≈ 9,85,
+  exact cât a ieșit), iar AdamW cu lr 1e-3 (de 20 de ori rețeta lui #513, 5e-5) „învață” zgomotul fiecărui lot, care strică lotul următor.
+  Criteriul „ultima pierdere sub prima” nu se potrivește cu date la întâmplare. **Propunere OS:** pe loturi sintetice, criteriul = cele 10
+  pierderi și norme ale oracolului (`gpu_compute::train::ORACLE_513_SYNTH`), pașii 1–9 la 1e-3 (pasul 10 doar afișat); scăderea se cere doar pe datele lui Kronos.
+- **Viteza: 1 123 ms pe pas = 911 simb/s, de ~3,7 ori sub estimarea noastră (~3 400) și de ~43 de ori sub Windows.** Socoteala
+  (`tools/buget-antrenare/pas513.py`, DEDUS): 657 GFLOP pe pas → **0,59 TFLOP/s efectiv**; 91 % sunt înmulțiri `mm_train` (straturile 79 %,
+  capul legat 12 %), atenția ~9 %. La 0,6 TFLOP/s înmulțirile singure ar lua ~1 000 ms — adică `mm_train` merge probabil tot la ~0,5–0,7
+  TFLOP/s, ca programele de atenție măsurate la os-358 (de 4–9 ori sub estimări), nu la 2,6. **Nemăsurat pe program** — de aici cererea (2).
+- **Ceasurile, lămurit (DEDUS):** placa / pasul întreg = 1 123 236 / 1 093 282 = **1,027** pe fiecare pas; la os-390/392 raportul era tot 0,973
+  (invers) pe intervale de 4 ms. Același raport pe 4 ms și pe 1,1 s = **ritm diferit cu 2,7 %, nu decalaj fix.** Care ceas greșește:
+  NECUNOSCUT (proba: amândouă față de un al treilea, ex. ceasul RTC pe 60 s). Nu schimbă concluziile (2,7 % din viteză).
+- **Ce tai mai departe:** (1) profilul pasului #513 pe programe (`train_profile`, fără nimic nou pentru placă) — confirmă sau infirmă
+  „91 % `mm_train`”; (2) circuitele speciale: proba `mm_tc` (os-352, `qkv-513`), apoi `--antrenare-513 --mixt` cu **scara S = 2¹⁴**
+  (la 1 024 de simboluri pe lot d(logits) ≈ 6·10⁻⁸·S: cu S = 1 024 cade exact la marginea f16; 2¹⁴ dă ~10⁻³, iar ținta (p−1)/N·S ≈ −16 ≪ 65 504);
+  dacă `mm_tc` atinge măcar 5 TFLOP/s, înmulțirile scad de la ~1 000 la ~120 ms → ~5 000–7 000 simb/s; pentru 39 300 mai trebuie lotul
+  12 × 512 și restul pasului tăiat. Nimic nou trimis la placă din această comparație.
+- **Generarea, testul 2:** 18/18, ca os-392.
+
 ## os-392 `--antrenare-mini --vram --pas-lipit` (P6-175; 24 nov 2026, 08:19) — sesiunea 203
 Surse: `Cyber-hub/rezultate/2026-11-24-workstation-os392-pas-lipit/REZULTAT.md`, `ciclu-auto-20261124-0819.txt` (rândurile 89–124).
 Predicții scrise înainte: `docs/C-160_P7_LIPIRE_INAPOI.md` (P1 biți, P3 lansări) și `docs/C-160_P7_LIPIRE_GELU.md` (G1); la os-390 (mai sus):
