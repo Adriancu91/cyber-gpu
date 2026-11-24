@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 197 — 24 noiembrie 2026, ~03:11–04:05 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația os-386 (arena în VRAM)**
+## Sesiunea 197 — 24 noiembrie 2026, ~03:11–03:30 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația os-386 (arena în VRAM)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 196 terminată 02:36), l-am pus `ocupat`. Rezultat nou pe placă: **os-386**
 (arena în VRAM + atenția gen 4) → punctul 2 al cozii are întâietate. Plan + predicții urcate **înainte** de cod (`b9d0899`).

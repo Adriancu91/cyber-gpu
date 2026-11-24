@@ -1,6 +1,6 @@
 # Matricea de teste
 
-## Rezultate — sesiunea 197 (24 nov 2026, ~03:15–04:00, cloud, fără placă) — C-157 punctul 2: os-386, de ce pasul întreg e 370 ms
+## Rezultate — sesiunea 197 (24 nov 2026, ~03:15–03:30, cloud, fără placă) — C-157 punctul 2: os-386, de ce pasul întreg e 370 ms
 
 | ID | Ce | Comanda | Așteptat | Observat | Rezultat |
 |---|---|---|---|---|---|
