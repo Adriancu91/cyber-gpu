@@ -2,6 +2,18 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-414 (A4, tabloul în timpul pașilor) + os-415 `--lipit-placi` (25 nov 2026, 00:18 / 00:58) — sesiunea 218
+Surse: `Cyber-hub/rezultate/2026-11-25-workstation-os414-tablou/REZULTAT.md`, `rezultate/os-automat/2026-11-25/ciclu-auto-20261125-0018.txt`
+(os-414: `--mm-placi --colsum-impartit`) și `ciclu-auto-20261125-0058.txt` (os-415: `--mm-placi --lipit-placi`, **fără** `--colsum-impartit`).
+Predicțiile noastre (scrise înainte): A4 — „dacă ceasul e mic, întâi lămurit ceasul” (bănuiala nr. 1 de la os-410);
+`--lipit-placi` (`docs/C-165_MM_TILE_GELU.md`) — **~2–4 ms pe pas mai puțin** decât nelipit, aceiași biți.
+
+**Predicțiile cititorului de profil (T224), scrise înainte de cod:** P1 — în fiecare raport sunt 2 profiluri (mini, apoi #513), #513 = 463 594 µs /
+483 de lansări (os-414) și 485 577 / 349 (os-415); P2 — suma rândurilor „pe programe” = totalul, la cel mult 1 µs pe rând (rotunjirea);
+P3 — fără `colsum` + `colsum_part`, os-415 − os-414 = **+39 µs** (sub 0,1 ‰ din pas: lipirea nu schimbă nimic); P4 — înmulțirile
+(`mm_train_tile` + `mm_train_tile_gelu`) **+1 190 µs**, programele mici lipite (`gelu_tr`, `vadd`, `ln_back`, `ln_back_res`) **−1 160 µs**;
+P5 — eticheta `proj-dX` → `proj-dX+gelu`: **+1 256 µs = +105 µs pe lansare (+3,0 %)**.
+
 ## os-412 `--antrenare-513 --placi3 --mm-placi --colsum-impartit` (P6-189 + ceasul P6-191; 24 nov 2026, 20:58 / 21:03) — sesiunea 215
 Surse: `Cyber-hub/rezultate/2026-11-24-workstation-os412-colsum/REZULTAT.md` (rapoartele `ciclu-auto-20261124-2058.txt` reper, `-2103.txt` nou).
 Predicțiile noastre (`docs/C-157_P2y_COLSUM_IMPARTIT.md`, scrise înainte, T216): `colsum` 24,3 → **~2,5–5 ms**; pasul **−19–22 ms**; biții = oracolul.
