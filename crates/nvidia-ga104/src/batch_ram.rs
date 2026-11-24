@@ -163,8 +163,10 @@ pub fn results(staging: &[u8], v: &ViaRam) -> GpuResult<(Vec<f32>, f32)> {
         let b = staging
             .get(at..at + len)
             .ok_or(bad("lot prin RAM: zona de tranzit prea scurta"))?;
-        Ok(b.chunks_exact(4)
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        Ok(b.as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| f32::from_le_bytes(*c))
             .collect())
     };
     let rows = f(v.loss_at)?;
