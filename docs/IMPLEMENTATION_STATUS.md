@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 217 — 25 noiembrie 2026, ~00:15–01:30 (ora României), în cloud, FĂRĂ placă — **pasul mixt (`mm_tc`) pe forma #513: scara S = 2¹⁴**
+## Sesiunea 217 — 25 noiembrie 2026, ~00:15–00:55 (ora României), în cloud, FĂRĂ placă — **pasul mixt (`mm_tc`) pe forma #513: scara S = 2¹⁴**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 216 terminată 23:43), l-am pus `ocupat`. Niciun test nou pe placă după os-413
 (raportul cursei complete încă nu a venit) → următorul punct din coadă: prioritatea 2 a centrului (`mm_tc` / umbra pe 16 biți) pe #513.
