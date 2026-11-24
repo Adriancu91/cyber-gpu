@@ -12,6 +12,8 @@ use alloc::vec::Vec;
 use crate::mm_train as mm;
 use crate::mm_train_tile as mtt;
 use crate::qmd::{MAX_SHARED_BYTES, SharedMemory};
+use gpu_core::error::{GpuError, GpuResult};
+
 use crate::train_step::{Launch, Prog};
 
 /// One program of the race: the code, its checksum and how to launch it.
@@ -139,12 +141,12 @@ pub struct Form {
     pub count: u32,
 }
 
-/// The distinct shapes of the `mm_train` / `mm_train_tile` launches of a step (in first-seen order, with counts) —
+/// The distinct shapes of the `mm_train` / `mm_train_tile` / race-variant launches of a step (in first-seen order, with counts) —
 /// the list the race runs on (`test-placa --cursa`). Other programs are ignored.
 pub fn forms(launches: &[Launch]) -> Vec<Form> {
     let mut out: Vec<Form> = Vec::new();
     for l in launches {
-        if !matches!(l.prog, Prog::MmTrain | Prog::MmTrainTile) {
+        if l.prog != Prog::MmTrain && l.prog.race_index().is_none() {
             continue;
         }
         let u32_at =
@@ -165,4 +167,167 @@ pub fn forms(launches: &[Launch]) -> Vec<Form> {
         }
     }
     out
+}
+
+/// How many shapes one [`MmChoice`] can hold (#513 has 15; the small golden step has fewer).
+pub const MAX_CHOICE_FORMS: usize = 32;
+
+/// How much faster than the witness a variant must be to be chosen by [`MmChoice::from_race`]: ≥ 3 % (median
+/// against median), so that the noise between two runs does not flip the pick.
+pub const MIN_GAIN_PERMILLE: u64 = 30;
+
+/// One row of the race report (`test-placa --cursa`): one variant on one shape.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RaceRow {
+    pub m: u32,
+    pub n: u32,
+    pub k: u32,
+    pub flags: u32,
+    /// Index in [`VARIANTS`] (0 = the witness `mm_train_tile`).
+    pub variant: usize,
+    /// The median time of one launch, in nanoseconds (board clock).
+    pub median_ns: u64,
+    /// True when C was bit for bit the witness's C on the same board (the race's verdict).
+    pub same_bits: bool,
+}
+
+/// C-165: the race's pick, one variant per `mm_train` shape — what [`crate::train_step::Plan::with_mm_choice`]
+/// launches. A shape that is not in the table stays on the witness (`mm_train_tile`). A small fixed table (no
+/// allocation, `Copy`), so that a plan carrying it stays as cheap to copy as before.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MmChoice {
+    /// (M, N, K, flags, variant index), the first `len` used.
+    forms: [(u32, u32, u32, u32, u8); MAX_CHOICE_FORMS],
+    len: usize,
+    /// The chosen variants (indices ≥ 1), once each, in [`VARIANTS`] order — [`MmChoice::programs`].
+    progs: [Prog; VARIANTS.len() - 1],
+    n_progs: usize,
+}
+
+impl Default for MmChoice {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MmChoice {
+    /// The empty choice: every shape on the witness (the plan is then exactly `with_mm_tile`).
+    pub const fn new() -> Self {
+        MmChoice {
+            forms: [(0, 0, 0, 0, 0); MAX_CHOICE_FORMS],
+            len: 0,
+            progs: [Prog::MmTrainTile; VARIANTS.len() - 1],
+            n_progs: 0,
+        }
+    }
+
+    /// Puts shape (M, N, K, flags) on `VARIANTS[variant]` (replaces an earlier pick for the same shape). Refuses an
+    /// index past [`VARIANTS`], unknown flag bits, a zero side, and a full table.
+    pub fn set(&mut self, m: u32, n: u32, k: u32, flags: u32, variant: usize) -> GpuResult<()> {
+        if variant >= VARIANTS.len() {
+            return Err(GpuError::InvalidArgument("cursa: varianta nu exista"));
+        }
+        if m == 0 || n == 0 || k == 0 || flags & !(mm::TA | mm::TB | mm::BIAS) != 0 {
+            return Err(GpuError::InvalidArgument("cursa: forma invalida"));
+        }
+        let v = variant as u8;
+        match self.forms[..self.len]
+            .iter_mut()
+            .find(|f| (f.0, f.1, f.2, f.3) == (m, n, k, flags))
+        {
+            Some(f) => f.4 = v,
+            None => {
+                if self.len == MAX_CHOICE_FORMS {
+                    return Err(GpuError::InvalidArgument("cursa: prea multe forme"));
+                }
+                self.forms[self.len] = (m, n, k, flags, v);
+                self.len += 1;
+            }
+        }
+        self.refresh_programs();
+        Ok(())
+    }
+
+    /// The variant index for shape (M, N, K, flags): the pick, or 0 (the witness) when the shape is not in the table.
+    pub fn of(&self, m: u32, n: u32, k: u32, flags: u32) -> usize {
+        self.forms[..self.len]
+            .iter()
+            .find(|f| (f.0, f.1, f.2, f.3) == (m, n, k, flags))
+            .map_or(0, |f| f.4 as usize)
+    }
+
+    /// The shapes in the table, with their variant index, in the order they were set.
+    pub fn entries(&self) -> impl Iterator<Item = (Form, usize)> + '_ {
+        self.forms[..self.len].iter().map(|&(m, n, k, flags, v)| {
+            (
+                Form {
+                    m,
+                    n,
+                    k,
+                    flags,
+                    count: 0,
+                },
+                v as usize,
+            )
+        })
+    }
+
+    /// The programs the choice may launch besides `mm_train_tile` (each chosen variant once, in [`VARIANTS`] order).
+    pub fn programs(&self) -> &[Prog] {
+        &self.progs[..self.n_progs]
+    }
+
+    fn refresh_programs(&mut self) {
+        self.n_progs = 0;
+        for i in 1..VARIANTS.len() {
+            if self.forms[..self.len].iter().any(|f| f.4 as usize == i)
+                && let Some(p) = Prog::of_race_index(i)
+            {
+                self.progs[self.n_progs] = p;
+                self.n_progs += 1;
+            }
+        }
+    }
+
+    /// The pick from a race report: for every shape, the fastest variant whose C was the witness's bit for bit, if
+    /// its median is at least [`MIN_GAIN_PERMILLE`] below the witness's median on that shape; otherwise the witness
+    /// (also when the witness has no row with `same_bits` for that shape — nothing to compare against). Rows of an
+    /// unknown variant or with a zero median are ignored. A variant that changed the bits is never chosen.
+    pub fn from_race(rows: &[RaceRow]) -> GpuResult<MmChoice> {
+        let mut c = MmChoice::new();
+        let mut seen: Vec<(u32, u32, u32, u32)> = Vec::new();
+        for r in rows {
+            let key = (r.m, r.n, r.k, r.flags);
+            if seen.contains(&key) {
+                continue;
+            }
+            seen.push(key);
+            let same = |x: &&RaceRow| {
+                (x.m, x.n, x.k, x.flags) == key
+                    && x.same_bits
+                    && x.median_ns > 0
+                    && x.variant < VARIANTS.len()
+            };
+            let witness = rows
+                .iter()
+                .filter(same)
+                .filter(|x| x.variant == 0)
+                .map(|x| x.median_ns)
+                .min();
+            let Some(w) = witness else {
+                continue;
+            };
+            let best = rows
+                .iter()
+                .filter(same)
+                .filter(|x| x.variant > 0)
+                .min_by_key(|x| (x.median_ns, x.variant));
+            if let Some(b) = best
+                && b.median_ns * 1_000 <= w * (1_000 - MIN_GAIN_PERMILLE)
+            {
+                c.set(r.m, r.n, r.k, r.flags, b.variant)?;
+            }
+        }
+        Ok(c)
+    }
 }

@@ -35,3 +35,29 @@ pasului), apoi variante pentru `mm_train_gelu` și pentru atenție.
 Condiția „`mm_train_tile` a trecut o dată singur pe placă” e îndeplinită (os-410). **Rugăminte:** în aceeași pornire cu cursa, A4 —
 starea P, ceasul SM și puterea citite în timpul cursei / pasului. Comparația os-410 (`docs/C-157_P2_COMPARATII.md`) arată ambele
 programe la ~1/7 din plafonul lor, la fel pe toate formele: bănuiala nr. 1 e ceasul, nu programul.
+
+## Pasul 2 — `Plan::with_mm_choice` (sesiunea 213, 24 nov 20:15–21:00; SIMULARE) — PREDARE
+Totul e pregătit ca, **după raportul cursei**, câștigătorii să intre în pasul #513 fără cod nou la noi. Doar adăugări:
+- `mm_train_variants::RaceRow { m, n, k, flags, variant, median_ns, same_bits }` — un rând al tabelului cursei.
+- `mm_train_variants::MmChoice::from_race(&rows)` — pe fiecare formă alege cea mai rapidă variantă cu biți „=” față de martor,
+  **doar dacă e cu cel puțin 3 % mai rapidă** decât martorul (`MIN_GAIN_PERMILLE = 30`; altfel rămâne martorul, ca zgomotul să nu
+  schimbe alegerea). O variantă cu alți biți nu e aleasă niciodată; fără rândul martorului pe acea formă, nicio alegere.
+  Se poate face și de mână: `MmChoice::new()` + `set(m, n, k, flags, indice)`.
+- `Plan::with_mm_choice(alegerea)` = `with_mm_tile()` + alegerea: lansările formelor alese merg pe varianta lor, cu grila ei;
+  restul pe `mm_train_tile`. Aceeași arenă, aceleași 385 de lansări, aceleași cbuf-uri; alegerea goală = `with_mm_tile` exact.
+  Trece prin `resident()`, `with_recompute()`, `with_colsum_split()`, `step_until_opt`.
+- Programele de încărcat: în plus față de azi, `plan.mm_choice_programs()` (doar variantele alese, o dată fiecare):
+  `programs() + fused_programs() + mm_tile_programs() + mm_choice_programs() + colsum_split_programs()`.
+- `Prog` are 4 valori noi (`MmTv128x64`, `MmTv64x128`, `MmTv128x128`, `MmTv64x64K8`) cu indicii 25–28
+  (`PROGRAMS_ALL_CHOICE`, 29 de programe); **indicii vechi 0–24 nu se schimbă**; `check_programs()` verifică acum 29 de SHA-256.
+  `Prog::race_index()` / `Prog::of_race_index(i)` leagă `Prog` de `VARIANTS[i]`. Dacă OS-ul are un `match` pe `Prog` fără `_`,
+  are nevoie de un braț în plus (în `antrenare_sim.rs` există deja `_ =>`).
+
+**Teste T219 (SIMULARE, pe procesor):** pasul #513 cu o alegere dintr-un raport inventat = lista `with_mm_tile` cu doar formele
+alese schimbate (385 lansări, 147 pe variante, blocuri 64 960 → 34 016); pasul de aur mic cu **toate cele 4 variante în același pas**
+= `with_mm_tile` **bit cu bit** în 10 pași (sgd și adamw_513, pe `_3` și `_3` + lipiri), verdictul față de PyTorch TRECE; regulile
+alegerii (biți diferiți, sub 3 %, fără martor, egalitate → indicele mic, tabel plin).
+
+**Propunere pentru OS (după cursă, decide sesiunea OS):** opțiunea `--mm-alegere` după `--mm-placi`, cu tabelul cursei (din raport
+sau din fișierul cursei de pe stick) → `MmChoice::from_race` → `with_mm_choice`; în raport, rândul alegerii (formă → variantă).
+Nou pentru placă: doar programele variantelor deja rulate în cursă; niciun registru, nicio comandă nouă.

@@ -78,3 +78,11 @@ pasul următor e o variantă cu bucla desfăcută de mână (`BK` fix în cod).
 (dX al capului, K = 16 384) are puține blocuri la orice variantă → candidat pentru K împărțit (nu azi).
 
 **Viteza pe placă: NOT TESTED.** Cursa o face OS-ul (`test-placa --cursa`), după ce os-410 arată `mm_train_tile` trecut pe placă.
+
+## Pasul 2 — `Plan::with_mm_choice` (sesiunea 213, SIMULARE)
+Predicții (scrise înainte de cod): (1) lista #513 cu o alegere = lista `with_mm_tile` cu doar formele alese schimbate, aceeași
+arenă; (2) pasul de aur mic cu toate cele 4 variante în același pas = `with_mm_tile` bit cu bit (aceeași catenă `ffma.ftz`);
+(3) alegerea goală = `with_mm_tile` exact. **Toate trei confirmate** (T219, 3/3 PASS, SIMULARE). Blocuri #513 cu alegerea
+inventată (fiecare formă pe altă variantă): 64 960 → 34 016. Regula alegerii: cea mai rapidă cu biți „=”, doar dacă bate martorul
+cu ≥ 3 %. Nimic rulat pe placă; ce variantă câștigă pe ce formă o spune doar cursa. Nota pentru OS:
+`integration/cyber-universe/C-165_cursa-mm.md` §„Pasul 2”.

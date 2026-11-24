@@ -11,7 +11,12 @@ const HEAP: u64 = 0x2_0000_0000;
 
 fn kind(l: &Launch) -> Kind {
     match l.prog {
-        Prog::MmTrain | Prog::MmTrainTile => Kind::Mm,
+        Prog::MmTrain
+        | Prog::MmTrainTile
+        | Prog::MmTv128x64
+        | Prog::MmTv64x128
+        | Prog::MmTv128x128
+        | Prog::MmTv64x64K8 => Kind::Mm,
         Prog::MmTrainGelu => Kind::MmActBack,
         Prog::AttnFwd | Prog::AttnFwdTile2 | Prog::AttnFwdTile3 => Kind::AttnFwd,
         Prog::AttnBack

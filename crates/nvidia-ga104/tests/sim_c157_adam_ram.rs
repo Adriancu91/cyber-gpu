@@ -80,7 +80,14 @@ fn board() -> CommandProcessor {
             Prog::AttnBackTile3 => {
                 cp.register_program_with_needs(code, attn_back_tile_on_cpu, sh())
             }
-            Prog::LnBackRes | Prog::MmTrainGelu | Prog::MmTrainTile | Prog::ColsumPart => {
+            Prog::LnBackRes
+            | Prog::MmTrainGelu
+            | Prog::MmTrainTile
+            | Prog::ColsumPart
+            | Prog::MmTv128x64
+            | Prog::MmTv64x128
+            | Prog::MmTv128x128
+            | Prog::MmTv64x64K8 => {
                 unreachable!("nu e in PROGRAMS_ALL_3")
             }
         };

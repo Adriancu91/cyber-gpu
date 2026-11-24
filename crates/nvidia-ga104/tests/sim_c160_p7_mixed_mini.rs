@@ -251,7 +251,12 @@ fn board_with(gelu: ProgramFn) -> CommandProcessor {
             Prog::MmTrainGelu => {
                 cp.register_program_with_needs(code, mm_train_gelu_on_cpu, MM_TRAIN_GELU_NEEDS)
             }
-            Prog::MmTrainTile | Prog::ColsumPart => unreachable!("nu e in PROGRAMS_ALL_FUSED2"),
+            Prog::MmTrainTile
+            | Prog::ColsumPart
+            | Prog::MmTv128x64
+            | Prog::MmTv64x128
+            | Prog::MmTv128x128
+            | Prog::MmTv64x64K8 => unreachable!("nu e in PROGRAMS_ALL_FUSED2"),
         };
         cp.mem.write(prog_va(p), code);
     }

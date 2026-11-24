@@ -24,12 +24,14 @@ use gpu_sim::cmdproc::{
     attn_p_on_cpu, attn_p_tile_on_cpu, colsum_on_cpu, colsum_part_on_cpu, emb_back_on_cpu,
     emb_fwd_on_cpu, gelu_tr_on_cpu, gnorm_on_cpu, ln_back_on_cpu, ln_back_res_contracted_on_cpu,
     ln_back_res_on_cpu, ln_fwd_on_cpu, mm_train_gelu_on_cpu, mm_train_gelu_unfused_on_cpu,
-    mm_train_on_cpu, mm_train_tile_on_cpu, opt_step_on_cpu, vadd_on_cpu, xent_on_cpu,
+    mm_train_on_cpu, mm_train_tile_on_cpu, mm_tv_64x64k8_on_cpu, mm_tv_64x128_on_cpu,
+    mm_tv_128x64_on_cpu, mm_tv_128x128_on_cpu, opt_step_on_cpu, vadd_on_cpu, xent_on_cpu,
 };
+use nvidia_ga104::mm_train_variants::{self as mv, MmChoice, RaceRow, VARIANTS};
 use nvidia_ga104::push::{self, PushBuf};
 use nvidia_ga104::train_step::{
-    self as ts, Launch, Outcome, PROGRAMS_ALL, PROGRAMS_ALL_3, PROGRAMS_ALL_FUSED,
-    PROGRAMS_ALL_FUSED2, PROGRAMS_ALL_SPLIT, Plan, Prog, Refs,
+    self as ts, Launch, Outcome, PROGRAMS_ALL, PROGRAMS_ALL_3, PROGRAMS_ALL_CHOICE,
+    PROGRAMS_ALL_FUSED, PROGRAMS_ALL_FUSED2, PROGRAMS_ALL_SPLIT, Plan, Prog, Refs,
 };
 use nvidia_ga104::{transfer, xent as xe};
 use nvidia_rm570::regs::clc7c0 as c;
@@ -92,7 +94,8 @@ impl Board {
         // T195: + the three `_3` programs (`PROGRAMS_ALL_3`), on the same CPU models as the first tiled ones.
         // T200: + `ln_back_res` (`PROGRAMS_ALL_FUSED`). T201: + `mm_train_gelu` (`PROGRAMS_ALL_FUSED2`).
         // T215: + `mm_train_tile` (`PROGRAMS_ALL_TILE`). T216: + `colsum_part` (`PROGRAMS_ALL_SPLIT`).
-        for p in PROGRAMS_ALL_SPLIT {
+        // T219: + the four race variants (`PROGRAMS_ALL_CHOICE`), each on its own CPU model and its own shared memory.
+        for p in PROGRAMS_ALL_CHOICE {
             let code = p.code();
             match p {
                 Prog::MmTrain => {
@@ -156,6 +159,26 @@ impl Board {
                     cp.register_program_with_needs(code, mm_train_tile_on_cpu, MM_TRAIN_TILE_NEEDS)
                 }
                 Prog::ColsumPart => cp.register_program(code, colsum_part_on_cpu),
+                Prog::MmTv128x64 => cp.register_program_with_needs(
+                    code,
+                    mm_tv_128x64_on_cpu,
+                    needs(p.shared().unwrap()),
+                ),
+                Prog::MmTv64x128 => cp.register_program_with_needs(
+                    code,
+                    mm_tv_64x128_on_cpu,
+                    needs(p.shared().unwrap()),
+                ),
+                Prog::MmTv128x128 => cp.register_program_with_needs(
+                    code,
+                    mm_tv_128x128_on_cpu,
+                    needs(p.shared().unwrap()),
+                ),
+                Prog::MmTv64x64K8 => cp.register_program_with_needs(
+                    code,
+                    mm_tv_64x64k8_on_cpu,
+                    needs(p.shared().unwrap()),
+                ),
             };
             cp.mem.write(prog_va(p), code);
         }
@@ -314,6 +337,12 @@ enum Kind {
     Tiles3TileSplit,
     /// T216: [`Plan::new_tiles3`] + both fusions + [`Plan::with_mm_tile`] + [`Plan::with_colsum_split`].
     Tiles3BothTileSplit,
+    /// T219: [`Plan::new_tiles3`] + [`Plan::with_mm_choice`] (every shape of the step on a race variant, in turn).
+    Tiles3Choice,
+    /// T219: [`Plan::new_tiles3`] + both fusions + [`Plan::with_mm_choice`].
+    Tiles3BothChoice,
+    /// T219: [`Plan::new`] + [`Plan::with_mm_choice`] with the empty choice (= [`Plan::with_mm_tile`]).
+    KeptChoiceEmpty,
 }
 
 impl Kind {
@@ -548,6 +577,22 @@ fn run_plan(
             .with_fused_gelu()
             .with_mm_tile()
             .with_colsum_split(),
+        Kind::Tiles3Choice => {
+            let p = Plan::new_tiles3(ar, bsz, tl, inputs, HEAP).unwrap();
+            let c = turn_choice(&p, params);
+            p.with_mm_choice(c)
+        }
+        Kind::Tiles3BothChoice => {
+            let p = Plan::new_tiles3(ar, bsz, tl, inputs, HEAP)
+                .unwrap()
+                .with_fused_back()
+                .with_fused_gelu();
+            let c = turn_choice(&p, params);
+            p.with_mm_choice(c)
+        }
+        Kind::KeptChoiceEmpty => Plan::new(ar, bsz, tl, inputs, HEAP)
+            .unwrap()
+            .with_mm_choice(MmChoice::new()),
     };
     // T187: the arena of `Plan::new` (the same addresses as `new_tiles`), for `Fault::OldBackward`.
     let old = Plan::new(ar, bsz, tl, inputs, HEAP).unwrap();
@@ -2957,4 +3002,254 @@ fn t216_a_dropped_second_sum_is_caught() {
     );
     assert!(ok.abs <= train::TOL_GRAD_ABS);
     assert!(bad.abs > train::TOL_GRAD_ABS, "nu e prinsa");
+}
+
+// ------------------------------------------------------------------ T219: the race's pick in the step
+
+/// T219: every `mm_train` shape of `plan`'s step on a race variant, in turn (shape i on `VARIANTS[1 + i % 4]`), so that
+/// all four variants run in one step.
+fn turn_choice(plan: &Plan, params: &[Vec<f32>]) -> MmChoice {
+    let opt = AdamW::recipe_513(params);
+    let list = plan.step(Recipe::AdamW513, &opt, 1).unwrap();
+    let mut c = MmChoice::new();
+    for (i, f) in mv::forms(&list).iter().enumerate() {
+        c.set(f.m, f.n, f.k, f.flags, 1 + i % (VARIANTS.len() - 1))
+            .unwrap();
+    }
+    c
+}
+
+fn row(f: &mv::Form, variant: usize, median_ns: u64, same_bits: bool) -> RaceRow {
+    RaceRow {
+        m: f.m,
+        n: f.n,
+        k: f.k,
+        flags: f.flags,
+        variant,
+        median_ns,
+        same_bits,
+    }
+}
+
+/// Prediction 1 (`docs/C-165_CURSA_MM.md`, "Plan::with_mm_choice"): the #513 step of os-410 (`new_tiles3`, resident,
+/// 2 × 512, `--mm-placi`) with a pick from a (made-up) race report is the `with_mm_tile` list with only the chosen
+/// shapes' launches on their variant and that variant's grid; same arena, 385 launches, same tags, layers, cbufs; the
+/// pick survives `resident()`, `with_recompute()` and `with_colsum_split()`; the empty pick is `with_mm_tile` exactly.
+#[test]
+fn t219_the_513_step_with_the_race_pick_swaps_only_the_chosen_shapes() {
+    let (bsz, tl) = (2usize, 512usize);
+    let ar = train::M513;
+    let inputs: Vec<u32> = (0..bsz * tl)
+        .map(|i| ((i * 7_919) % 16_384) as u32)
+        .collect();
+    let tile = Plan::new_tiles3(ar, bsz, tl, &inputs, HEAP)
+        .unwrap()
+        .with_mm_tile()
+        .resident()
+        .unwrap();
+    let params: Vec<Vec<f32>> = ar
+        .tensors()
+        .iter()
+        .map(|t| vec![0.0; t.elements()])
+        .collect();
+    let opt = AdamW::recipe_513(&params);
+    drop(params);
+    let lt = tile.step(Recipe::AdamW513, &opt, 1).unwrap();
+    let forms = mv::forms(&lt);
+    assert_eq!(forms.len(), 15);
+    // A made-up race report: on shape i variant 1 + i % 4 is 10 % faster than the witness, another variant 1 % faster
+    // (below the 3 % threshold), and shape 0's best variant changed the bits (never chosen: the next one is).
+    let mut rows = Vec::new();
+    for (i, f) in forms.iter().enumerate() {
+        rows.push(row(f, 0, 1_000_000, true));
+        let best = 1 + i % 4;
+        let other = 1 + (i + 1) % 4;
+        rows.push(row(f, other, 990_000, true));
+        if i == 0 {
+            rows.push(row(f, best, 500_000, false));
+        }
+        rows.push(row(f, best, 900_000, true));
+    }
+    let pick = MmChoice::from_race(&rows).unwrap();
+    for (i, f) in forms.iter().enumerate() {
+        assert_eq!(pick.of(f.m, f.n, f.k, f.flags), 1 + i % 4, "{f:?}");
+    }
+    assert_eq!(pick.programs(), &PROGRAMS_ALL_CHOICE[25..]);
+    let chosen = Plan::new_tiles3(ar, bsz, tl, &inputs, HEAP)
+        .unwrap()
+        .with_mm_choice(pick)
+        .resident()
+        .unwrap();
+    assert!(chosen.mm_tile() && chosen.mm_choice() == Some(&pick));
+    assert_eq!(chosen.mm_choice_programs(), pick.programs());
+    assert!(tile.mm_choice_programs().is_empty());
+    assert_eq!(
+        chosen.clone().with_recompute().unwrap().mm_choice(),
+        Some(&pick)
+    );
+    assert_eq!(chosen.clone().with_colsum_split().mm_choice(), Some(&pick));
+    assert_eq!(chosen.bytes(), tile.bytes(), "arena");
+    assert_eq!(chosen.programs(), tile.programs());
+    assert_eq!(chosen.mm_tile_programs(), tile.mm_tile_programs());
+    let lc = chosen.step(Recipe::AdamW513, &opt, 1).unwrap();
+    assert_eq!((lt.len(), lc.len()), (385, 385));
+    let mut per_variant = [0usize; 5];
+    let (mut blocks_tile, mut blocks_chosen) = (0u64, 0u64);
+    for (t, c) in lt.iter().zip(&lc) {
+        assert_eq!(
+            (t.tag, t.layer, t.cbuf),
+            (c.tag, c.layer, c.cbuf),
+            "{}",
+            t.tag
+        );
+        match c.prog.race_index() {
+            Some(v) => {
+                assert_eq!(t.prog, Prog::MmTrainTile, "{}", t.tag);
+                let a = mm_args(c);
+                assert_eq!(v, pick.of(a.m, a.n, a.k, a.flags), "{}", c.tag);
+                assert_eq!(c.grid, VARIANTS[v].grid(&a), "{}", c.tag);
+                assert_eq!(c.prog.block(), VARIANTS[v].block());
+                blocks_tile += t.grid.iter().map(|&g| g as u64).product::<u64>();
+                blocks_chosen += c.grid.iter().map(|&g| g as u64).product::<u64>();
+                per_variant[v] += 1;
+            }
+            None => assert_eq!((t.prog, t.grid), (c.prog, c.grid), "{}", t.tag),
+        }
+    }
+    assert_eq!(per_variant.iter().sum::<usize>(), 147);
+    assert_eq!(per_variant[0], 0, "every shape was chosen");
+    // The part before the optimizer (the `_mv_ram` path) is swapped the same way.
+    let (lu, _) = chosen.step_until_opt(&opt, 1).unwrap();
+    assert_eq!(&lu[..], &lc[..lc.len() - 1]);
+    println!(
+        "kt t219 pasul #513 2 x 512 cu alegerea cursei: 385 lansari, pe variante {per_variant:?} (martor, 128x64, 64x128, 128x128, 64x64k8); blocuri {blocks_tile} -> {blocks_chosen}"
+    );
+    // The empty pick is `with_mm_tile`, launch for launch.
+    let empty = Plan::new_tiles3(ar, bsz, tl, &inputs, HEAP)
+        .unwrap()
+        .with_mm_choice(MmChoice::new())
+        .resident()
+        .unwrap();
+    assert_eq!(empty.step(Recipe::AdamW513, &opt, 1).unwrap(), lt);
+    assert!(empty.mm_choice_programs().is_empty());
+}
+
+/// Prediction 2 (SIMULARE): the small golden step with every shape on a race variant (all four variants in one step)
+/// gives `with_mm_tile`'s numbers **bit for bit** (sgd and adamw_513, 10 steps) on `new_tiles3` and `_3` + both
+/// fusions; the verdict against PyTorch passes; the launch count is unchanged; the empty pick on `Plan::new` too.
+#[test]
+fn t219_the_race_pick_small_golden_step_is_bit_for_bit() {
+    for (recipe, name) in [(Recipe::Sgd, "sgd"), (Recipe::AdamW513, "adamw_513")] {
+        for (base, chosen) in [
+            (Kind::Tiles3Tile, Kind::Tiles3Choice),
+            (Kind::Tiles3BothTile, Kind::Tiles3BothChoice),
+            (Kind::KeptTile, Kind::KeptChoiceEmpty),
+        ] {
+            let a = run_mic_plan(base, recipe, 10, Fault::None);
+            let b = run_mic_plan(chosen, recipe, 10, Fault::None);
+            assert_eq!(a.total_per_step, b.total_per_step);
+            let on_variants: Vec<(Prog, usize)> = b
+                .launches_per_step
+                .iter()
+                .filter(|e| e.0.race_index().is_some_and(|v| v > 0))
+                .copied()
+                .collect();
+            if chosen == Kind::KeptChoiceEmpty {
+                assert!(on_variants.is_empty());
+                assert_eq!(a.launches_per_step, b.launches_per_step);
+            } else {
+                assert_eq!(on_variants.len(), 4, "{name} {chosen:?}: {on_variants:?}");
+            }
+            let v = ts::judge(recipe, b.total_per_step, &b.out, &refs(name));
+            let s = same_bits(&a.out, &b.out);
+            println!(
+                "kt t219 {name} {chosen:?}: {} lansari, pe variante {on_variants:?}; fata de PyTorch {}; = {base:?} bit cu bit {} (SIMULARE)",
+                b.total_per_step,
+                if v.passes() { "TRECE" } else { "NU TRECE" },
+                if s { "DA" } else { "NU" }
+            );
+            assert!(v.passes(), "{name} {chosen:?}: verdictul");
+            assert!(s, "{name} {chosen:?}: nu e bit cu bit");
+        }
+    }
+}
+
+/// Prediction 3: the rules of the pick — a variant that changed the bits is never chosen, a gain under 3 % keeps the
+/// witness, no witness row = no pick, rows of unknown variants or zero medians are ignored, ties go to the lower
+/// index; `set` refuses an unknown variant, unknown flags, a zero side and a full table; a re-set replaces.
+#[test]
+fn t219_the_pick_rules() {
+    let f = mv::Form {
+        m: 1_024,
+        n: 768,
+        k: 3_072,
+        flags: 0,
+        count: 1,
+    };
+    let pick = |rows: &[RaceRow]| {
+        MmChoice::from_race(rows)
+            .unwrap()
+            .of(f.m, f.n, f.k, f.flags)
+    };
+    // Changed bits: never, however fast.
+    assert_eq!(pick(&[row(&f, 0, 100, true), row(&f, 3, 1, false)]), 0);
+    // 2 % faster: the witness stays; 3 % faster: chosen.
+    assert_eq!(pick(&[row(&f, 0, 1_000, true), row(&f, 2, 980, true)]), 0);
+    assert_eq!(pick(&[row(&f, 0, 1_000, true), row(&f, 2, 970, true)]), 2);
+    // No witness row (or the witness itself changed bits): nothing to compare against.
+    assert_eq!(pick(&[row(&f, 1, 10, true)]), 0);
+    assert_eq!(pick(&[row(&f, 0, 1_000, false), row(&f, 1, 10, true)]), 0);
+    // Unknown variant and zero median ignored; a tie goes to the lower index.
+    assert_eq!(
+        pick(&[
+            row(&f, 0, 1_000, true),
+            row(&f, 9, 1, true),
+            row(&f, 4, 0, true),
+            row(&f, 4, 800, true),
+            row(&f, 1, 800, true),
+        ]),
+        1
+    );
+    // Several runs of the same variant: its best median counts for the witness, the best row for the variant.
+    assert_eq!(
+        pick(&[
+            row(&f, 0, 1_000, true),
+            row(&f, 0, 900, true),
+            row(&f, 2, 880, true),
+        ]),
+        0
+    );
+    let mut c = MmChoice::new();
+    assert!(c.set(1, 1, 1, 0, VARIANTS.len()).is_err());
+    assert!(c.set(1, 1, 1, 0x80, 1).is_err());
+    assert!(c.set(0, 1, 1, 0, 1).is_err());
+    c.set(64, 64, 64, 0, 3).unwrap();
+    c.set(64, 64, 64, 0, 1).unwrap();
+    assert_eq!(c.of(64, 64, 64, 0), 1);
+    assert_eq!(c.programs(), &[Prog::MmTv128x64][..]);
+    assert_eq!(c.of(64, 64, 64, 1), 0, "another flag = another shape");
+    for i in 1..mv::MAX_CHOICE_FORMS as u32 {
+        c.set(64 + i, 64, 64, 0, 2).unwrap();
+    }
+    assert!(c.set(9_999, 64, 64, 0, 2).is_err(), "the table is full");
+    assert_eq!(c.programs(), &[Prog::MmTv128x64, Prog::MmTv64x128][..]);
+    assert_eq!(c.entries().count(), mv::MAX_CHOICE_FORMS);
+    // The programs: indices 25..=28, the right code behind each, every SHA-256 checked.
+    ts::check_programs().unwrap();
+    for (i, v) in VARIANTS.iter().enumerate() {
+        let p = Prog::of_race_index(i).unwrap();
+        assert_eq!(p.race_index(), Some(i));
+        assert_eq!(
+            (p.name(), p.sha256(), p.registers()),
+            (v.name, v.sha256, v.registers)
+        );
+        assert_eq!(p.code(), v.code);
+        assert_eq!(p.block(), v.block());
+        assert_eq!(p.shared(), Some(v.shared()));
+        assert_eq!(p.index(), if i == 0 { 23 } else { 24 + i });
+    }
+    assert_eq!(Prog::of_race_index(VARIANTS.len()), None);
+    for (k, p) in PROGRAMS_ALL_SPLIT.iter().enumerate() {
+        assert_eq!(p.index(), k, "the old indices stay");
+    }
 }

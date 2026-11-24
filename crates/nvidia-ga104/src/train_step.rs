@@ -35,7 +35,7 @@ use crate::{
     attn_fwd_tile3 as aft3, attn_p as ap, attn_p_tile as apt, colsum as cs, colsum_part as csp,
     emb_back as eb, emb_fwd as ef, gelu_tr as gt, gnorm as gn, kronos_layer, ln_back as lb,
     ln_back_res as lbr, ln_fwd as lf, mm_train as mm, mm_train_gelu as mg, mm_train_tile as mtt,
-    opt_step as os, xent as xe,
+    mm_train_variants as mtv, opt_step as os, xent as xe,
 };
 
 fn bad(why: &'static str) -> GpuError {
@@ -107,6 +107,12 @@ pub enum Prog {
     /// C-157 p.2y (`docs/C-157_P2y_COLSUM_IMPARTIT.md`): pass 1 of the column sum split over rows (`colsum_part`), only
     /// in plans with [`Plan::with_colsum_split`]. In [`PROGRAMS_ALL_SPLIT`] only.
     ColsumPart,
+    /// C-165 (`docs/C-165_CURSA_MM.md`): the race variants of `mm_train_tile` (`mm_train_variants::VARIANTS[1..]`, the
+    /// same cbuf and the same bits), only in plans with [`Plan::with_mm_choice`]. In [`PROGRAMS_ALL_CHOICE`] only.
+    MmTv128x64,
+    MmTv64x128,
+    MmTv128x128,
+    MmTv64x64K8,
 }
 
 /// Every program a step uses (the OS loads all 13 once; `Gnorm` only runs at `adamw_513`).
@@ -276,6 +282,23 @@ pub const PROGRAMS_ALL_SPLIT: [Prog; 25] = {
     all
 };
 
+/// [`PROGRAMS_ALL_SPLIT`] + the four race variants of C-165 at the end (all 25 keep their [`Prog::index`]): every
+/// program any plan may launch, [`Plan::with_mm_choice`] included. `check_programs` checks all 29. The older lists
+/// stay as they were.
+pub const PROGRAMS_ALL_CHOICE: [Prog; 29] = {
+    let mut all = [Prog::MmTv64x64K8; 29];
+    let mut i = 0;
+    while i < 25 {
+        all[i] = PROGRAMS_ALL_SPLIT[i];
+        i += 1;
+    }
+    all[25] = Prog::MmTv128x64;
+    all[26] = Prog::MmTv64x128;
+    all[27] = Prog::MmTv128x128;
+    all[28] = Prog::MmTv64x64K8;
+    all
+};
+
 /// What a [`Plan::with_colsum_split`] plan launches on top of [`Plan::programs`], [`Plan::fused_programs`] and
 /// [`Plan::mm_tile_programs`].
 pub const PROGRAMS_COLSUM_SPLIT_EXTRA: [Prog; 1] = [Prog::ColsumPart];
@@ -412,6 +435,7 @@ impl Prog {
             Prog::MmTrainGelu => mg::MM_TRAIN_GELU,
             Prog::MmTrainTile => mtt::MM_TRAIN_TILE,
             Prog::ColsumPart => csp::COLSUM_PART,
+            p => p.race_variant().code,
         }
     }
 
@@ -443,6 +467,7 @@ impl Prog {
             Prog::MmTrainGelu => mg::MM_TRAIN_GELU_SHA256,
             Prog::MmTrainTile => mtt::MM_TRAIN_TILE_SHA256,
             Prog::ColsumPart => csp::COLSUM_PART_SHA256,
+            p => p.race_variant().sha256,
         }
     }
 
@@ -473,6 +498,7 @@ impl Prog {
             Prog::MmTrainGelu => mg::REGISTERS,
             Prog::MmTrainTile => mtt::REGISTERS,
             Prog::ColsumPart => csp::REGISTERS,
+            p => p.race_variant().registers,
         }
     }
 
@@ -503,6 +529,7 @@ impl Prog {
             Prog::MmTrainGelu => mg::BLOCK,
             Prog::MmTrainTile => mtt::BLOCK,
             Prog::ColsumPart => csp::BLOCK,
+            p => p.race_variant().block(),
         }
     }
 
@@ -523,6 +550,9 @@ impl Prog {
             Prog::LnBackRes => Some(lbr::SHARED),
             Prog::MmTrainGelu => Some(mg::SHARED),
             Prog::MmTrainTile => Some(mtt::SHARED),
+            Prog::MmTv128x64 | Prog::MmTv64x128 | Prog::MmTv128x128 | Prog::MmTv64x64K8 => {
+                Some(self.race_variant().shared())
+            }
             _ => None,
         }
     }
@@ -555,13 +585,45 @@ impl Prog {
             Prog::MmTrainGelu => "mm_train_gelu",
             Prog::MmTrainTile => "mm_train_tile",
             Prog::ColsumPart => "colsum_part",
+            p => p.race_variant().name,
         }
     }
 
-    /// Index in [`PROGRAMS_ALL_SPLIT`] (= the index in [`PROGRAMS_ALL_TILE`], the index in [`PROGRAMS_ALL_FUSED2`], the index in [`PROGRAMS_ALL_FUSED`], [`PROGRAMS_ALL_3`], [`PROGRAMS_ALL`], [`PROGRAMS`] /
+    /// C-165: the index of this program in [`mm_train_variants::VARIANTS`](crate::mm_train_variants::VARIANTS)
+    /// (`mm_train_tile` = 0, the four race variants 1–4); `None` for every other program.
+    pub fn race_index(self) -> Option<usize> {
+        match self {
+            Prog::MmTrainTile => Some(0),
+            Prog::MmTv128x64 => Some(1),
+            Prog::MmTv64x128 => Some(2),
+            Prog::MmTv128x128 => Some(3),
+            Prog::MmTv64x64K8 => Some(4),
+            _ => None,
+        }
+    }
+
+    /// C-165: the program of [`mm_train_variants::VARIANTS`](crate::mm_train_variants::VARIANTS)`[i]` (0 =
+    /// `mm_train_tile`); `None` past the list.
+    pub fn of_race_index(i: usize) -> Option<Prog> {
+        match i {
+            0 => Some(Prog::MmTrainTile),
+            1 => Some(Prog::MmTv128x64),
+            2 => Some(Prog::MmTv64x128),
+            3 => Some(Prog::MmTv128x128),
+            4 => Some(Prog::MmTv64x64K8),
+            _ => None,
+        }
+    }
+
+    /// The race variant behind one of the four `MmTv*` programs (called only for them; the witness for any other).
+    fn race_variant(self) -> &'static mtv::Variant {
+        &mtv::VARIANTS[self.race_index().unwrap_or(0)]
+    }
+
+    /// Index in [`PROGRAMS_ALL_CHOICE`] (= the index in [`PROGRAMS_ALL_SPLIT`] = the index in [`PROGRAMS_ALL_TILE`], the index in [`PROGRAMS_ALL_FUSED2`], the index in [`PROGRAMS_ALL_FUSED`], [`PROGRAMS_ALL_3`], [`PROGRAMS_ALL`], [`PROGRAMS`] /
     /// [`PROGRAMS_P_ONLY`] for their programs).
     pub fn index(self) -> usize {
-        PROGRAMS_ALL_SPLIT
+        PROGRAMS_ALL_CHOICE
             .iter()
             .position(|&p| p == self)
             .unwrap_or(0)
@@ -570,7 +632,7 @@ impl Prog {
 
 /// Checks every program's bytes against its SHA-256 (what the OS does before loading; refuse on a mismatch).
 pub fn check_programs() -> GpuResult<()> {
-    for p in PROGRAMS_ALL_SPLIT {
+    for p in PROGRAMS_ALL_CHOICE {
         if hex(&crate::sha256::digest(p.code())) != p.sha256() {
             return Err(bad("pas-aur: SHA-256 al unui program nu se potriveste"));
         }
@@ -795,6 +857,8 @@ pub struct Plan {
     fused_gelu: bool,
     /// C-157 p.2x ([`Plan::with_mm_tile`]): every `mm_train` launch goes on `mm_train_tile` (same cbuf, same bits).
     mm_tile: bool,
+    /// C-165 ([`Plan::with_mm_choice`]): the race's pick per `mm_train` shape (the others stay on `mm_train_tile`).
+    mm_choice: Option<mtv::MmChoice>,
     /// C-157 p.2y ([`Plan::with_colsum_split`]): every `colsum` launch is split over rows (`colsum_part` + `colsum`),
     /// with the partial sums in [`Plan::colsum_scratch`] after `end`.
     colsum_split: bool,
@@ -1085,6 +1149,7 @@ impl Plan {
         p.fused_back = self.fused_back;
         p.fused_gelu = self.fused_gelu;
         p.mm_tile = self.mm_tile;
+        p.mm_choice = self.mm_choice;
         p.colsum_split = self.colsum_split;
         // Order 20:11 step 5: keep the two batch slots (slot 0's view).
         if self.slots.is_some() {
@@ -1306,6 +1371,7 @@ impl Plan {
             fused_back: false,
             fused_gelu: false,
             mm_tile: false,
+            mm_choice: None,
             colsum_split: false,
             tok_cap: if resident { tok_cap } else { 0 },
             recompute,
@@ -1366,6 +1432,33 @@ impl Plan {
             &PROGRAMS_MM_TILE_EXTRA
         } else {
             &[]
+        }
+    }
+
+    /// C-165 (`docs/C-165_CURSA_MM.md`, "Plan::with_mm_choice"): [`Plan::with_mm_tile`] plus the race's pick — every
+    /// `mm_train` launch whose shape (M, N, K, flags) is in `choice` goes on the variant chosen for it
+    /// ([`mm_train_variants::VARIANTS`](crate::mm_train_variants::VARIANTS), the grid of that variant), every other
+    /// one on `mm_train_tile` as before. Same arena, same launches in the same order with the same cbufs: **the same
+    /// bits** (every variant is the same `ffma.ftz` chain; T219, SIMULARE). An empty choice = [`Plan::with_mm_tile`]
+    /// exactly. Combines with every other option. Load [`Plan::programs`] + [`Plan::fused_programs`] +
+    /// [`Plan::mm_tile_programs`] + [`Plan::mm_choice_programs`] + [`Plan::colsum_split_programs`].
+    pub fn with_mm_choice(mut self, choice: mtv::MmChoice) -> Self {
+        self.mm_tile = true;
+        self.mm_choice = Some(choice);
+        self
+    }
+
+    /// The pick of [`Plan::with_mm_choice`], if any.
+    pub fn mm_choice(&self) -> Option<&mtv::MmChoice> {
+        self.mm_choice.as_ref()
+    }
+
+    /// The race variants a [`Plan::with_mm_choice`] plan may launch on top of [`Plan::mm_tile_programs`] (each chosen
+    /// variant once, in [`PROGRAMS_ALL_CHOICE`] order); none otherwise.
+    pub fn mm_choice_programs(&self) -> &[Prog] {
+        match &self.mm_choice {
+            Some(c) => c.programs(),
+            None => &[],
         }
     }
 
@@ -1497,8 +1590,21 @@ impl Plan {
             return;
         }
         for l in list.iter_mut().filter(|l| l.prog == Prog::MmTrain) {
-            l.grid = mtt::grid(&mm_args_of(l));
-            l.prog = Prog::MmTrainTile;
+            let a = mm_args_of(l);
+            let v = self
+                .mm_choice
+                .as_ref()
+                .map_or(0, |c| c.of(a.m, a.n, a.k, a.flags));
+            match Prog::of_race_index(v) {
+                Some(p) if v > 0 => {
+                    l.grid = mtv::VARIANTS[v].grid(&a);
+                    l.prog = p;
+                }
+                _ => {
+                    l.grid = mtt::grid(&a);
+                    l.prog = Prog::MmTrainTile;
+                }
+            }
         }
     }
 
@@ -1553,6 +1659,7 @@ impl Plan {
         p.fused_back = self.fused_back;
         p.fused_gelu = self.fused_gelu;
         p.mm_tile = self.mm_tile;
+        p.mm_choice = self.mm_choice;
         p.colsum_split = self.colsum_split;
         Ok(p)
     }

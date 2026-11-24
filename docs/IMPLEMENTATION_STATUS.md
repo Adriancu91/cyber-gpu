@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 213 — 24 noiembrie 2026, ~20:11–21:00 (ora României), în cloud, FĂRĂ placă — **C-165 pasul 2: `Plan::with_mm_choice`**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 212 terminată 20:00), l-am pus `ocupat`. Nicio probă nouă pe placă de comparat (os-411,
+cursa C-165 + A4, e GATA DE TEST, rulează la noapte). Ca să nu așteptăm după raport, am pregătit acum partea de după cursă.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Predicții | în `docs/C-165_CURSA_MM.md` §„Pasul 2”, înainte de cod | 3 / 3 confirmate |
+| `Prog` | 4 valori noi `MmTv128x64`, `MmTv64x128`, `MmTv128x128`, `MmTv64x64K8` (indicii 25–28, `PROGRAMS_ALL_CHOICE`), `race_index` / `of_race_index`; `check_programs` pe 29 | doar adăugări; indicii 0–24 neschimbați |
+| `mm_train_variants` | `RaceRow`, `MmChoice` (tabel fix, `Copy`), `MmChoice::from_race` (cea mai rapidă cu biți „=”, doar la ≥ 3 % față de martor) | doar adăugări |
+| `Plan` | `with_mm_choice`, `mm_choice`, `mm_choice_programs`; alegerea trece prin `resident`, `rebatch`, `with_recompute`, `with_colsum_split` | doar adăugări |
+| T219 | #513: lista = `with_mm_tile` cu doar formele alese schimbate (385, 147 pe variante, blocuri 64 960 → 34 016); pasul de aur mic cu toate 4 variantele în același pas = `with_mm_tile` bit cu bit, 10 pași, sgd + adamw_513, față de PyTorch TRECE; regulile alegerii | PASS (SIMULARE, 3/3) |
+| Nota pentru OS | `integration/cyber-universe/C-165_cursa-mm.md` §„Pasul 2” (cum se leagă: `--mm-alegere`, propunere) | — |
+| `tools/check.sh` | format, clippy, teste (pe gazdă), build no_std | PASS (**1 047 de teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** nimic trimis. După cursă, doar programele variantelor deja rulate în cursă; niciun registru, nicio comandă nouă.
+**Nicio schimbare incompatibilă** (4 valori noi în `Prog`: un `match` fără `_` pe `Prog` are nevoie de un braț în plus — testele noastre l-au primit).
+
+**Următorul pas:** raportul cursei C-165 + A4 (os-411) → comparația; dacă ceasul e mic, întâi lămurit ceasul; altfel tabelul cursei →
+`MmChoice::from_race` → OS leagă `with_mm_choice`. Apoi variantele pentru `mm_train_gelu` și atenție.
+
+---
+
 ## Sesiunea 212 — 24 noiembrie 2026, ~19:10–20:00 (ora României), în cloud, FĂRĂ placă — **C-164: Kronos croit pe placă, partea Cyber-GPU**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 211 terminată 18:53), l-am pus `ocupat`. Niciun test nou pe placă de comparat (după os-410
