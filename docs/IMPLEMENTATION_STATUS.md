@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 207 — 24 noiembrie 2026, ~14:12–15:00 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația testului x16 (placa în SLOT2)**
+## Sesiunea 207 — 24 noiembrie 2026, ~14:12–14:48 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația testului x16 (placa în SLOT2)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 206 terminată 13:32), l-am pus `ocupat`. Test nou pe placă: **x16**
 (`rezultate/2026-11-24-workstation-x16-ram-vram/`: `--ram-vram` + `--antrenare-mini --vram --lot-ram` după mutarea plăcii) → are întâietate.
