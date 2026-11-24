@@ -56,3 +56,15 @@ trimite pasul 3; așteaptă pasul 2 → citește locul 1, scrie lotul 4 în locu
 - Nu alocă nimic pe placă și nu trimite nimic: coada și semafoarele sunt ale OS-ului.
 - Nu adaugă niciun program GPU și nu schimbă nicio lansare; nimic nou în registre.
 - Nu mută nimic din antrenare în RAM-ul calculatorului pe placa reală.
+
+## Rezultatul (sesiunea 196, ~03:00; cod + test `d52f264`)
+
+| Predicție | Ce a ieșit | Verdict |
+|---|---|---|
+| L1 | locul 0 = adresele planului rezident (toate); locul 1 după capătul vechi; **+3 840 B**; lansările celor două locuri diferă doar prin adresele lotului (simplu și lipit + recalculare); `with_recompute` păstrează locurile | PASS (SIMULARE) |
+| L2 | „în paralel” (scriere la mijlocul pasului, citire după pasul următor) = pas cu pas **bit cu bit**, pentru ambele feluri de plan; oracolul 9,85e-8 (pierderi) / 1,54e-5 (greutăți); 11 108 B sus, 2 600 B jos pe 10 pași | PASS (SIMULARE) |
+| L3 | un singur loc în aceeași ordine: 10/10 pierderi și 1 150 719 greutăți alți biți; `slot(2)`, `slot` pe un plan cu un loc și `with_batch_slots` pe un plan nerezident refuzate | PASS (SIMULARE) |
+| L4 | câștigul pe placă ~50–300 µs pe pas | NOT TESTED (DEDUS) |
+
+Test: `crates/nvidia-ga104/tests/sim_c160_p10_slots.rs` (T204, 3 teste). `tools/check.sh`: **978 de teste** trec (+7 ignorate),
+format, clippy, build no_std. Nota pentru OS: `integration/cyber-universe/C-160_P10_lot-in-paralel.md`.

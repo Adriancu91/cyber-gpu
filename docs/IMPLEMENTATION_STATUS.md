@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 196 — 24 noiembrie 2026, ~02:10–03:05 (ora României), în cloud, FĂRĂ placă — **ordinea 20:11, pasul 5: lotul următor pregătit în paralel (două locuri de lot)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 195 terminată 01:27), l-am pus `ocupat`. Niciun rezultat nou de pe placă de
+comparat (os-384 / os-385 doar „gata de test”). Plan + predicții urcate **înainte** de cod (`044bb0c`, `docs/C-160_P10_LOT_IN_PARALEL.md`).
+AdamW cu m, v în RAM (cealaltă jumătate a pasului 5) există deja (`_mv_ram`) și rămâne doar în simulare (condiția lui Adrian).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Biblioteca (doar adăugări) | `BatchVas`, `Plan::batch_area`, `with_batch_slots` (al doilea loc de lot la capătul unei arene rezidente: intrări, ținte, segmentele simbolurilor, pierderile, `res`), `slot(k)`, `slot_uploads`, `batch_slots`; `with_recompute` păstrează locurile; planurile vechi neschimbate | — |
+| T204 L1 | locul 0 = adresele planului rezident; locul 1 după capătul vechi, **+3 840 B**; lansările diferă doar prin adresele lotului | PASS (SIMULARE) |
+| T204 L2 | `antrenare mini`, 10 pași, 10 loturi, AdamW F32: lotul următor scris la mijlocul pasului + pierderile citite după pasul următor = pas cu pas **bit cu bit** (simplu; lipit + recalculare); oracolul 9,85e-8 / 1,54e-5 | PASS (SIMULARE) |
+| T204 L3 | aceeași ordine cu un singur loc: 10/10 pierderi, 1 150 719 greutăți greșite; refuzurile | PASS (SIMULARE) |
+| Nota pentru OS | `integration/cyber-universe/C-160_P10_lot-in-paralel.md` | — |
+| `tools/check.sh` | format, clippy, **978 de teste** (+7 ignorate), build no_std | PASS |
+| Câștigul pe placă (L4: ~50–300 µs pe pas, ~2–15 %) | — | NOT TESTED |
+
+**Ce e nou pentru placă:** nimic în registre, niciun program, nicio lansare; doar 3 840 B în arenă și altă ordine a scrierilor.
+
+**Următorul pas:** comparațiile când rulează pe placă (os-384/385 `--antrenare-mini --mixt`, gen 4, arena în VRAM); altfel ordinea
+20:11 pasul 6 doar în SIMULARE (straturile din RAM — pe placă oprit de condiția PCIe) sau lipirea GELU' pe `mm_tc` (pasul mixt).
+
+---
+
 ## Sesiunea 195 — 24 noiembrie 2026, ~01:11–01:25 (ora României), în cloud, FĂRĂ placă — **ordinea 20:11, pasul 4: recalcularea activărilor**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 194 terminată 00:27), l-am pus `ocupat`. Niciun rezultat nou de pe placă de comparat
