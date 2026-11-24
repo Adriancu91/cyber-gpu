@@ -2,6 +2,21 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-412 `--antrenare-513 --placi3 --mm-placi --colsum-impartit` (P6-189 + ceasul P6-191; 24 nov 2026, 20:58 / 21:03) — sesiunea 215
+Surse: `Cyber-hub/rezultate/2026-11-24-workstation-os412-colsum/REZULTAT.md` (rapoartele `ciclu-auto-20261124-2058.txt` reper, `-2103.txt` nou).
+Predicțiile noastre (`docs/C-157_P2y_COLSUM_IMPARTIT.md`, scrise înainte, T216): `colsum` 24,3 → **~2,5–5 ms**; pasul **−19–22 ms**; biții = oracolul.
+- **Corect:** verdictul = oracolul (1,6e-5 / 9,6e-5, toleranța 1e-3) — `colsum_part` a mers pe placă din prima, ca în SIMULARE (aceeași abatere mică).
+- **`colsum`: 2,4 ms** (`colsum_part` 1,5 + `colsum` 0,8; ×10) — cu 0,1 ms **sub** capătul de jos al intervalului. Podeaua pe lansare pe care am
+  presupus-o (5–10 µs) e de fapt mai mică în lista lungă: 171 de lansări / 2,4 ms ≈ **14 µs pe lansare cu tot cu lucrul** (DEDUS) → costul fix
+  ≤ ~5 µs. O cifră nouă, bună pentru estimările viitoare ale programelor mici.
+- **Pasul: placa 485,6 → 463,0 ms (−22,6 ms)** — la marginea de sus a predicției (−19–22): aproape tot e `colsum` (−21,9), restul ±0,7 zgomot.
+  Pasul întreg **473,5 ms = 2 162 simb/s**; între placă și pasul întreg rămân ~10 ms (citirile pierderilor + urcarea lotului; neschimbat).
+- **Ceasul reparat (P6-191):** placa / pasul întreg = 977–981 ‰ (înainte 1 022 ‰) — confirmă socoteala de la os-407 (+3,4 %, frecvența de la
+  pornire). Cifrele vechi „pas întreg” erau prea mici cu ~3,4 %; cele noi sunt bune.
+- **Ce rămâne:** `mm_train_tile` **430,5 ms = 92,9 %** din pas; tot restul ~33 ms. Orice câștig de acum încolo e în înmulțire:
+  (1) cursa C-165 (os-413, GATA DE TEST) + A4 → `MmChoice::from_race` (sesiunea aceasta: cititorul raportului, ca alegerea să iasă direct din
+  textul raportului); (2) `mm_train_tile_gelu` (T220) dacă OS-ul vrea lipirile; (3) `mm_tc` / pasul mixt pe #513.
+
 ## os-410 `--antrenare-513 --placi3 --mm-placi` (P6-188: cele 147 de înmulțiri pe `mm_train_tile`; 24 nov 2026, 18:18 / 18:22) — sesiunea 211
 - **Ce s-a potrivit:** biții (= oracolul, aceeași pierdere 9,8493 → 10,1735) — prima rulare a lui `mm_train_tile` pe placă, din prima.
 - **Ce a ieșit altfel:** înmulțirile 718,1 → **428,7 ms (×1,68)**, prezis ×3–6; pasul 772 → **483 ms = 2 120 simb/s** (prezis 175–295 ms).

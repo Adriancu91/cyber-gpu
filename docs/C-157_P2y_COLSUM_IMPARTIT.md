@@ -51,4 +51,4 @@ lista fără opțiune.
 | 2 | nu bit cu bit, = oracolul, pierderile ≤ 1e-5 față de fără opțiune | 6 / 6 (sgd, adamw_513 × `new`, `_3` + plăci, `_3` + lipiri + plăci): verdict față de PyTorch **TRECE**; pierderile **identice** pe 10 pași (abaterea 0); biții gradientului diferă | PASS (SIMULARE) |
 | 3 | gradientul nu mai departe de oracolul f64 | **1,19e-7** cu împărțire față de **2,4–3,6e-7** fără (de 2–3 ori mai aproape, ca la T170); un strat #513 (2 × 128): aceleași cifre ca fără | PASS (SIMULARE) |
 | — | greșeală plantată: a doua sumă a LayerNorm (dβ) lipsă | gradientul 9,5e-2 față de 1,2e-7 → prinsă | PASS |
-| 4–5 | `colsum` 24 → ~2,5–5 ms, pasul −19–22 ms | — | DEDUS / NOT TESTED |
+| 4–5 | `colsum` 24 → ~2,5–5 ms, pasul −19–22 ms | **pe placă (os-412, 24 nov 21:03): `colsum` 2,4 ms, placa pe pas −22,6 ms (485,6 → 463,0), = oracolul** | PASS pe placa reală (prin OS); `colsum` puțin sub interval — comparația în `docs/C-157_P2_COMPARATII.md` |
