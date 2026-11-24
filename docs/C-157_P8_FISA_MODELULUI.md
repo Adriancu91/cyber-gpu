@@ -1,6 +1,6 @@
 # C-157 punctul 8 — fișa modelului și „pachetele de calcul” (documentul de proiectare)
 
-**Stare:** documentul de proiectare + primul pas de cod. Totul pe procesor / în SIMULARE; nimic nou trimis la placă.
+**Stare:** documentul de proiectare + pașii 1 și 2 de cod (pasul 2: fișele de referință, T211 PASS, `e87fa5d`). Totul pe procesor / în SIMULARE; nimic nou trimis la placă.
 **Deciziile lui Adrian (hub `DECIZII.md`):**
 - **20 nov 19:41** — driverul și Kronos merg împerecheați: tot ce e dedicat lui Kronos (lanțul, programele lipite,
   mărimile) se construiește **din fișa modelului** din KGR1, nu din numere scrise în cod; o arhitectură nouă = fișă nouă

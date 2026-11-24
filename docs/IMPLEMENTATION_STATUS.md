@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 204 — 24 noiembrie 2026, ~10:13–10:45 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 8, pasul 2: fișele de referință #513 / #651**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 203 terminată 09:50), l-am pus `ocupat`. Niciun test nou pe placă după os-392
+(deja comparat) → C-157 punctul 8 pasul 2. Planul + predicțiile urcate **înainte** de cod (`docs/C-157_P8_FISA_MODELULUI.md` §5).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `gpu_compute::card` | `ModelCard::kronos(...)` — fișa Kronos fără octeți KGR1 (doar date) | PASS |
+| `nvidia_ga104::kronos_speed` | `card_k513()` / `card_k651()` din `K513_*` / `K651_*`; `ModelLimits::of_card` / `of_card_lists` | PASS |
+| `nvidia_ga104::packs` | `Choice::limits_with(piece, extra)` (argmax după listă); `limits` = `limits_with(piece, &[])` | PASS |
+| T211 (5 teste) | toate cele 8 predicții: fișele = fișierele KGR1, limitele din fișe = `k513()` / `k651()` / `k651_lists` (172 lansări), dovezile pachetului = formele fișelor, argmax = +1 lansare, n_emb 100 refuzat | PASS (pe procesor) |
+| Nota pentru OS | `integration/cyber-universe/C-157_P8_fisa-modelului.md`, secțiunea „Pasul 2” | — |
+| `tools/check.sh` | format, clippy, **1 011 teste**, build no_std | PASS |
+
+**Ce e nou pentru placă:** nimic. Interfața publică: doar adăugări.
+
+**Următorul pas:** comparația următorului test pe placă (lotul prin RAM / profilul pasului / `--mixt`) când rulează; altfel
+C-157 punctul 9 (motorul de antrenare, pregătire: ce a rămas nefăcut).
+
+---
+
 ## Sesiunea 203 — 24 noiembrie 2026, ~09:11–10:05 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația os-392 + profilul pasului**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 202 terminată 08:55), l-am pus `ocupat`. Test nou pe placă: **os-392**

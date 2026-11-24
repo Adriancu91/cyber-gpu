@@ -20,3 +20,17 @@ fișa din primii octeți de pe stick → `select` → la refuz se tipăresc rân
 din `gpu_i14.rs` rămâne pentru tensori.
 
 **Ce e nou pentru placă:** nimic.
+
+## Pasul 2 (sesiunea 204, 24 nov 2026, commit `e87fa5d`) — fișele de referință #513 / #651
+
+**Doar adăugări**, testat pe procesor (T211, 5 teste); **nimic nou pentru placă**:
+- `gpu_compute::card::ModelCard::kronos(straturi, capete, n_emb, context, vocabular)` — fișa Kronos fără octeți KGR1.
+- `nvidia_ga104::kronos_speed::{card_k513, card_k651}` — fișele de referință, făcute din `K513_*` / `K651_*`; dovezile
+  pachetului sunt verificate față de ele (dacă se schimbă o constantă, testul cade).
+- `ModelLimits::of_card(&fișă, bucata)` și `ModelLimits::of_card_lists(&fișă, bucata, liste, extra)` — aceleași cifre ca
+  `k513()` / `k651()` / `k651_lists` (verificat).
+- `Choice::limits_with(bucata, &[Prog::Argmax])` — limitele când OS-ul pune argmax-ul după listă (o lansare în plus).
+
+**Pentru OS (propunere):** unde azi `run_model` scrie `ModelLimits::k651_lists(...)` sau `k513()`, poate scrie
+`select(&fișă)?.limits_with(I11_DEFAULT_BYTES, &[Prog::Argmax])` — aceeași cifră pentru #513 / #651, dar și pentru o
+formă nouă, fără număr nou în cod.
