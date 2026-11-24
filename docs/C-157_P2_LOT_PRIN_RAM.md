@@ -36,3 +36,11 @@ Doar adăugări: modulul nou `nvidia_ga104::batch_ram` (`via_ram`, `pack_via_ram
   ca lanțul pasului de azi.
 - Zona de tranzit nu se rescrie cât placa o citește: aici pas cu pas, deci sigur; cu lotul în paralel (P10) trebuie două zone de tranzit.
 - Citirea din RAM după placă: același drum ca aducerea arenei înapoi la sfârșit (os-390, MĂSURAT corect).
+
+## Rezultat (T209, SIMULARE, sesiunea 202)
+- **R1 trece:** 10 pași, pierderile / normele / greutățile prin RAM = prin fereastră, bit cu bit.
+- **R2 trece:** arena după pașii 1, 4, 9 identică; 0 octeți diferiți (cozile rotunjirii erau deja 0 în ambele drumuri).
+- **R3 trece:** prin fereastră pe pas 397 → 83 cuvinte scrise, 73 → 8 citite; 82 de lansări (75 + 7); tranzitul 2 048 B în RAM.
+- **R4 trece, cu o diferență față de predicție:** fără copierile de la coadă procesorul nu citește rezultatele vechi (cum scrisesem), ci
+  **0** — zona de rezultate e scrisă pe zero odată cu lotul. Mai bine: pierderea 0 și norma 0 sunt imposibile, deci prinse sigur.
+- **R5 (DEDUS, nemăsurat):** ~382 → ~72 µs prin fereastră (−~310 µs) + lotul pus în coadă −~47 µs, placa +~20–30 µs → **~3,8 ms pe pas**.

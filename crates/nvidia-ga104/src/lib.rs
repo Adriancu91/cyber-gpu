@@ -74,6 +74,7 @@ pub mod attn_p;
 pub mod attn_p_tile;
 pub mod attn_tile_probe;
 pub mod backend;
+pub mod batch_ram;
 pub mod board_compare;
 pub mod boot;
 pub mod chain;
