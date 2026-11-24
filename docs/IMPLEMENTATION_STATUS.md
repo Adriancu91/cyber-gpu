@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 202 — 24 noiembrie 2026, ~08:11–08:55 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 2: comparația os-390 + lotul prin RAM**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 201 terminată 07:40), l-am pus `ocupat`. Test nou pe placă: **os-390**
+(`rezultate/2026-11-24-workstation-os390-pas-taiat/`, P6-174 + tăieturile T206) → are întâietate (C-157 p.2).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Comparația os-390 | pasul întreg **4 150 µs = 15 421 simb/s** (estimat 4–4,5 ms; os-389: 370 ms), placa 3 625 µs = 87 % din pas; încălzirea pașilor 1–2 și pasul 9 (+121 µs) exact ca planul; **în afara plăcii 525 µs, nu ~300**: 0,76 µs pe cuvânt scris, ~1,1 µs citit (luasem 0,66 / 0,5) + 221 µs de procesor nenumărați; cea mai mare bucată = lotul prin fereastra VRAM (~290 µs). Comparația în `docs/C-157_P2_COMPARATII.md` (`74e8edc`) | MĂSURAT (pe placă, de OS) |
+| Planul + predicțiile, înainte de cod | `docs/C-157_P2_LOT_PRIN_RAM.md` (R1–R5, `73c3197`) | — |
+| `nvidia_ga104::batch_ram` (doar adăugări) | `via_ram` (lotul în zona de tranzit din RAM + 5 copieri RAM → arenă, 2 copieri arenă → RAM pentru pierderi + normă), `pack_via_ram`, `results`, `extra_launches` | — |
+| T209 (4 teste) | R1 pierderi / norme / greutăți bit cu bit cu drumul os-390; R2 arena identică; R3 prin fereastră 397 → 83 cuvinte scrise, 73 → 8 citite; R4 greșeli plantate prinse (copierile afară lipsă → 0, nu valori vechi: diferit de predicție, mai bine) | PASS (SIMULARE) |
+| Nota pentru OS | `integration/cyber-universe/C-157_P2s_lot-prin-ram.md` (`ram_write_at` pe începutul lui `stage`, `zone_bytes` + 7) | — |
+| `tools/check.sh` | format, clippy, **1 001 de teste**, build no_std | PASS |
+| Pasul întreg ~3,8 ms (~16 700 simb/s) pe placă cu lotul prin RAM | — | NOT TESTED (DEDUS) |
+
+**Ce e nou pentru placă:** nici un program nou — doar 7 copieri `copy_b128` (deja pe placă) în lista pasului.
+
+**Următorul pas:** comparația os-392 (`--pas-lipit`) când rulează; altfel C-157 punctul 8 pasul 2 (formele #513/#651 prin
+`ModelCard`) sau punctul 9.
+
+---
+
 ## Sesiunea 201 — 24 noiembrie 2026, ~07:10–07:40 (ora României), în cloud, FĂRĂ placă — **C-157 punctul 8: fișa modelului + pachetele de calcul**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 200 terminată 06:50), l-am pus `ocupat`. Niciun test nou pe placă după os-389
