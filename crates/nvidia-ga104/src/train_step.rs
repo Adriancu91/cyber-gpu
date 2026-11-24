@@ -3231,6 +3231,19 @@ pub fn parse_rows(text: &str) -> Vec<Vec<(String, u32)>> {
 /// The loss scale of the mixed step (`docs/C-160_P7_PAS_MIXT.md` §0): d(logits) ≈ 6·10⁻⁵ sits on f16's smallest
 /// normal number; × 2¹⁰ moves it to ~6·10⁻², far from both ends of f16.
 pub const LOSS_SCALE: f32 = 1024.0;
+/// C-165 (`docs/C-165_PAS_MIXT_513.md`): the loss scale for #513's batch (2 × 512 = 1 024 symbols on Kronos's 16 384):
+/// [`LOSS_SCALE`] would put d(logits) ≈ S / (V · N) right on f16's smallest normal number; 2¹⁴ moves it to ~10⁻³.
+pub const LOSS_SCALE_513: f32 = 16384.0;
+
+/// C-165: the smallest power of two S with S / (`vocab` · `tokens`) ≥ 2⁻¹⁰ (the off-target d(logits) of a near-uniform
+/// softmax, scaled, stays ~10⁻³: normal in f16 and far below 65 504), clamped to [1, 2²⁴]. `(16 384, 64)` gives
+/// [`LOSS_SCALE`] (`antrenare mini`), `(16 384, 1 024)` gives [`LOSS_SCALE_513`].
+pub fn loss_scale_for(vocab: usize, tokens: usize) -> f32 {
+    let need = (vocab as u64).saturating_mul(tokens as u64).div_ceil(1024);
+    let e = need.max(1).next_power_of_two().trailing_zeros().min(24);
+    (1u32 << e) as f32
+}
+
 /// `res + 16` = 1/S (written once by the CPU, [`Plan::mixed_uploads`]).
 pub const RES_INV_SCALE: u64 = 16;
 /// `res + 20` = c / S, what `opt_step` reads at the mixed step (inside the existing 64-byte `res`; nothing moves).

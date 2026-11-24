@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 217 — 25 noiembrie 2026, ~00:15–01:30 (ora României), în cloud, FĂRĂ placă — **pasul mixt (`mm_tc`) pe forma #513: scara S = 2¹⁴**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 216 terminată 23:43), l-am pus `ocupat`. Niciun test nou pe placă după os-413
+(raportul cursei complete încă nu a venit) → următorul punct din coadă: prioritatea 2 a centrului (`mm_tc` / umbra pe 16 biți) pe #513.
+Constatare: **`mm_tc` n-a rulat încă niciodată pe placă** (os-352 `--mm-tc` și os-384 `--antrenare-mini --mixt` sunt GATA DE TEST, nerulate).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Plan + predicții | `docs/C-165_PAS_MIXT_513.md`, scrise înainte de cod (`d221fd3`) | 4 / 5 confirmate, **predicția 3 greșită** |
+| Scara | `train_step::LOSS_SCALE_513` (16 384), `train_step::loss_scale_for(vocab, tokens)` | doar adăugări |
+| T223 (a) | lista #513 adevărată, mixtă la S = 2¹⁴: 484 de lansări, **147 pe `mm_tc`**, zona 499 KiB; lipit: 448, 135 + 12 `mm_tc_gelu`, 481 KiB | PASS (SIMULARE, construită, nerulată) |
+| T223 (b) | modelul mini cu lotul 32 × 32 (același d(logits) ca #513), 2 pași față de oracol: S = 2¹⁴ în toleranțe (rare 4,1·10⁻⁴, max 16, 0 % subnormale); S = 1 024: 53 % subnormale **dar aceeași eroare** | PASS (SIMULARE) |
+| Note | `integration/cyber-universe/C-165_pas-mixt-513.md`, `docs/TEST_MATRIX.md`, `docs/PROVENANCE.md` | — |
+| `tools/check.sh` | format, clippy, teste (pe gazdă), build no_std | PASS (**1 065 de teste**, 8 ignorate; build no_std PASS) |
+
+**Ce e nou pentru placă:** nimic. **Nicio schimbare incompatibilă.** Recomandare: `--antrenare-513 --mixt` cu `LOSS_SCALE_513`, după
+os-352 și os-384 pe placă.
+
+**Următorul pas:** comparația cursei complete (os-414+) când vine → `parse_race` → `MmChoice`; după os-352 pe placă: comparația timpului
+`mm_tc` la `qkv-513`; apoi lotul mare (prioritatea 5) sau pista B1 (int8 IMMA).
+
+---
+
 ## Sesiunea 216 — 24 noiembrie 2026, ~23:12–23:40 (ora României), în cloud, FĂRĂ placă — **os-413: de ce `mm_tv_64x64k8` nu a terminat**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 215 terminată 22:48), l-am pus `ocupat`. Venise **os-413** (prima cursă de noapte):

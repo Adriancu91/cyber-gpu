@@ -571,3 +571,7 @@ niciun octet de firmware NVIDIA.
   programului: Mesa nouveau/nvc0, commit „nouveau/nvc0: increase overallocation on shader bo” (Dave Airlie, 2024, MIT; comentariul
   „Shader storage needs a 2K (from NVIDIA) overallocations at the end to avoid prefetch bugs”) și NVK (o pagină întreagă, după
   același commit). Citite ca idee; nicio linie copiată. Rândurile os-413 din T222 sunt copiate din raportul nostru (OS-ul propriu).
+- **C-165 / pasul mixt pe forma #513 — `LOSS_SCALE_513`, `loss_scale_for`, T223 (sesiunea 217):** scrise de noi. Ideea scalării
+  erorii (înmulțirea pierderii cu S înainte de pasul înapoi în f16, împărțirea gradientului la S înainte de optimizator) e tehnica
+  publică „mixed precision training” (Micikevicius et al., 2017, arXiv:1710.03442); regula „cea mai mică putere a lui 2 cu
+  S/(V·N) ≥ 2⁻¹⁰” e a noastră, din mărimea d(logits) la un softmax aproape uniform. Nicio linie de cod străin.
