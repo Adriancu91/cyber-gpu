@@ -19,17 +19,17 @@ use std::path::{Path, PathBuf};
 use gpu_compute::train::{self, AdamW, Arch, Batch, Recipe};
 use gpu_sim::cmdproc::{
     CommandProcessor, Event, GNORM_NEEDS, LN_BACK_NEEDS, LN_BACK_RES_NEEDS, LN_FWD_NEEDS,
-    MM_TRAIN_GELU_NEEDS, MM_TRAIN_NEEDS, Needs, XENT_NEEDS, attn_back_on_cpu,
+    MM_TRAIN_GELU_NEEDS, MM_TRAIN_NEEDS, MM_TRAIN_TILE_NEEDS, Needs, XENT_NEEDS, attn_back_on_cpu,
     attn_back_tile_on_cpu, attn_back_tile0_on_cpu, attn_fwd_on_cpu, attn_fwd_tile_on_cpu,
     attn_p_on_cpu, attn_p_tile_on_cpu, colsum_on_cpu, emb_back_on_cpu, emb_fwd_on_cpu,
     gelu_tr_on_cpu, gnorm_on_cpu, ln_back_on_cpu, ln_back_res_contracted_on_cpu,
     ln_back_res_on_cpu, ln_fwd_on_cpu, mm_train_gelu_on_cpu, mm_train_gelu_unfused_on_cpu,
-    mm_train_on_cpu, opt_step_on_cpu, vadd_on_cpu, xent_on_cpu,
+    mm_train_on_cpu, mm_train_tile_on_cpu, opt_step_on_cpu, vadd_on_cpu, xent_on_cpu,
 };
 use nvidia_ga104::push::{self, PushBuf};
 use nvidia_ga104::train_step::{
     self as ts, Launch, Outcome, PROGRAMS_ALL, PROGRAMS_ALL_3, PROGRAMS_ALL_FUSED,
-    PROGRAMS_ALL_FUSED2, Plan, Prog, Refs,
+    PROGRAMS_ALL_FUSED2, PROGRAMS_ALL_TILE, Plan, Prog, Refs,
 };
 use nvidia_ga104::{transfer, xent as xe};
 use nvidia_rm570::regs::clc7c0 as c;
@@ -91,7 +91,8 @@ impl Board {
         // `Plan::new_tiles` / `new_p_only_tiles`).
         // T195: + the three `_3` programs (`PROGRAMS_ALL_3`), on the same CPU models as the first tiled ones.
         // T200: + `ln_back_res` (`PROGRAMS_ALL_FUSED`). T201: + `mm_train_gelu` (`PROGRAMS_ALL_FUSED2`).
-        for p in PROGRAMS_ALL_FUSED2 {
+        // T215: + `mm_train_tile` (`PROGRAMS_ALL_TILE`).
+        for p in PROGRAMS_ALL_TILE {
             let code = p.code();
             match p {
                 Prog::MmTrain => {
@@ -150,6 +151,9 @@ impl Board {
                 }
                 Prog::MmTrainGelu => {
                     cp.register_program_with_needs(code, mm_gelu, MM_TRAIN_GELU_NEEDS)
+                }
+                Prog::MmTrainTile => {
+                    cp.register_program_with_needs(code, mm_train_tile_on_cpu, MM_TRAIN_TILE_NEEDS)
                 }
             };
             cp.mem.write(prog_va(p), code);
@@ -258,6 +262,11 @@ enum Fault {
     NoRecompute,
     /// T203: layer 0's `recalcul:ln1` reads layer 1's input.
     RecomputeWrongInput,
+    /// T215: every `mm_train_tile` launch keeps `mm_train`'s grid (16 × 16 pieces: far too many blocks — not a
+    /// mistake, the extra blocks write nothing).
+    TileOldGrid,
+    /// T215: every `mm_train_tile` launch with one block row too few (the last 64 rows of C never written).
+    TileShortGrid,
 }
 
 /// Which arena: P kept per layer ([`Plan::new`]), one shared P rebuilt with `attn_fwd` ([`Plan::new_p_recalc`]) or
@@ -291,11 +300,34 @@ enum Kind {
     Tiles3BothRecompute,
     /// T203: [`Plan::new_p_only_tiles3`] + [`Plan::with_recompute`].
     POnlyTiles3Recompute,
+    /// T215: [`Plan::new_tiles3`] + [`Plan::with_mm_tile`].
+    Tiles3Tile,
+    /// T215: [`Plan::new_tiles3`] + both fusions + [`Plan::with_mm_tile`].
+    Tiles3BothTile,
+    /// T215: [`Plan::new`] + [`Plan::with_mm_tile`].
+    KeptTile,
 }
 
 fn plant(plan: &Plan, list: &mut Vec<Launch>, f: Fault) {
     match f {
         Fault::None => {}
+        Fault::TileOldGrid | Fault::TileShortGrid => {
+            let tiled: Vec<&mut Launch> = list
+                .iter_mut()
+                .filter(|l| l.prog == Prog::MmTrainTile)
+                .collect();
+            assert!(!tiled.is_empty(), "niciun mm_train_tile");
+            for l in tiled {
+                let a = mm_args(l);
+                if f == Fault::TileOldGrid {
+                    l.grid = a.grid();
+                } else if l.grid[1] > 1 {
+                    l.grid[1] -= 1;
+                } else {
+                    l.grid[0] = l.grid[0].saturating_sub(1).max(1);
+                }
+            }
+        }
         Fault::NoBackResidual => list.retain(|l| l.tag != "inapoi:rezidual-ln2"),
         Fault::XentScale => {
             let n = (plan.batch * plan.len) as u32;
@@ -477,6 +509,15 @@ fn run_plan(
             .unwrap()
             .with_recompute()
             .unwrap(),
+        Kind::Tiles3Tile => Plan::new_tiles3(ar, bsz, tl, inputs, HEAP)
+            .unwrap()
+            .with_mm_tile(),
+        Kind::Tiles3BothTile => Plan::new_tiles3(ar, bsz, tl, inputs, HEAP)
+            .unwrap()
+            .with_fused_back()
+            .with_fused_gelu()
+            .with_mm_tile(),
+        Kind::KeptTile => Plan::new(ar, bsz, tl, inputs, HEAP).unwrap().with_mm_tile(),
     };
     // T187: the arena of `Plan::new` (the same addresses as `new_tiles`), for `Fault::OldBackward`.
     let old = Plan::new(ar, bsz, tl, inputs, HEAP).unwrap();
@@ -2482,4 +2523,159 @@ fn t203_arena_memory_with_recompute() {
         lines.join("; ")
     );
     assert!((23..=27).contains(&best), "{best}");
+}
+
+// ------------------------------------------------------------------ T215: `mm_train` on 64×64 tiles in the step
+
+/// `mm_train`'s arguments back from a launch's cbuf (the layout of `mm_train::Args::cbuf`).
+fn mm_args(l: &Launch) -> nvidia_ga104::mm_train::Args {
+    let u64_at = |o: usize| u64::from_le_bytes(l.cbuf[o..o + 8].try_into().unwrap());
+    let u32_at = |o: usize| u32::from_le_bytes(l.cbuf[o..o + 4].try_into().unwrap());
+    nvidia_ga104::mm_train::Args {
+        a: u64_at(0x28),
+        b: u64_at(0x30),
+        c: u64_at(0x38),
+        bias: u64_at(0x40),
+        m: u32_at(0x48),
+        n: u32_at(0x4c),
+        k: u32_at(0x50),
+        flags: u32_at(0x54),
+    }
+}
+
+/// Prediction 1 (`docs/C-157_P2x_MM_TRAIN_TILE.md`, "Plan::with_mm_tile"): the #513 step of os-407 (`Plan::new_tiles3`,
+/// resident, 2 × 512) with [`Plan::with_mm_tile`] is the same list — same arena, 385 launches, same tags, layers,
+/// cbufs — with exactly the 147 `mm_train` launches on `mm_train_tile` and grid ⌈N/64⌉ × ⌈M/64⌉; the option survives
+/// `resident()` and `with_recompute()`; nothing else changes.
+#[test]
+fn t215_the_513_step_with_mm_tile_is_the_same_list_with_the_products_swapped() {
+    let (bsz, tl) = (2usize, 512usize);
+    let ar = train::M513;
+    let inputs: Vec<u32> = (0..bsz * tl)
+        .map(|i| ((i * 7_919) % 16_384) as u32)
+        .collect();
+    let old = Plan::new_tiles3(ar, bsz, tl, &inputs, HEAP)
+        .unwrap()
+        .resident()
+        .unwrap();
+    let new = Plan::new_tiles3(ar, bsz, tl, &inputs, HEAP)
+        .unwrap()
+        .with_mm_tile()
+        .resident()
+        .unwrap();
+    assert!(new.mm_tile() && !old.mm_tile() && new.tiles3());
+    assert!(new.clone().with_recompute().unwrap().mm_tile());
+    assert_eq!(old.bytes(), new.bytes(), "arena");
+    assert_eq!(new.programs(), old.programs());
+    assert_eq!(new.mm_tile_programs(), &ts::PROGRAMS_MM_TILE_EXTRA[..]);
+    assert!(old.mm_tile_programs().is_empty());
+    let params: Vec<Vec<f32>> = ar
+        .tensors()
+        .iter()
+        .map(|t| vec![0.0; t.elements()])
+        .collect();
+    let opt = AdamW::recipe_513(&params);
+    drop(params);
+    let (lo, ln) = (
+        old.step(Recipe::AdamW513, &opt, 1).unwrap(),
+        new.step(Recipe::AdamW513, &opt, 1).unwrap(),
+    );
+    assert_eq!((lo.len(), ln.len()), (385, 385));
+    assert_eq!(new.launches_per_step(Recipe::AdamW513), 385);
+    let (mut same, mut swapped, mut blocks_old, mut blocks_new) = (0usize, 0usize, 0u64, 0u64);
+    for (o, n) in lo.iter().zip(&ln) {
+        assert_eq!(
+            (o.tag, o.layer, o.cbuf),
+            (n.tag, n.layer, n.cbuf),
+            "{}",
+            o.tag
+        );
+        if (o.prog, n.prog) == (Prog::MmTrain, Prog::MmTrainTile) {
+            let a = mm_args(n);
+            assert_eq!(n.grid, [a.n.div_ceil(64), a.m.div_ceil(64), 1], "{}", n.tag);
+            assert_eq!(o.grid, a.grid(), "{}", o.tag);
+            blocks_old += o.grid.iter().map(|&g| g as u64).product::<u64>();
+            blocks_new += n.grid.iter().map(|&g| g as u64).product::<u64>();
+            swapped += 1;
+        } else {
+            assert_eq!((o.prog, o.grid), (n.prog, n.grid), "{}", o.tag);
+            same += 1;
+        }
+    }
+    // The part of the step before the optimizer (`step_until_opt`, the `_mv_ram` path) is swapped the same way.
+    let (lu, _) = new.step_until_opt(&opt, 1).unwrap();
+    assert_eq!(&lu[..], &ln[..ln.len() - 1]);
+    println!(
+        "kt t215 pasul #513 2 x 512 (_3, rezident): {} lansari, {same} neschimbate, {swapped} mm_train -> mm_train_tile; blocuri {blocks_old} -> {blocks_new}",
+        ln.len()
+    );
+    assert_eq!(swapped, 147);
+    assert_eq!(same, 238);
+    assert!(
+        blocks_new * 4 <= blocks_old,
+        "blocuri {blocks_old} -> {blocks_new}"
+    );
+}
+
+/// Prediction 2 (SIMULARE): the small golden step with [`Plan::with_mm_tile`] gives the plan's numbers **bit for bit**
+/// (sgd and adamw_513, 10 steps) on `Plan::new`, `Plan::new_tiles3` and `_3` + both fusions; the verdict against PyTorch
+/// passes; the launch count is unchanged.
+#[test]
+fn t215_mm_tile_small_golden_step_is_bit_for_bit() {
+    for (recipe, name) in [(Recipe::Sgd, "sgd"), (Recipe::AdamW513, "adamw_513")] {
+        for (base, tiled) in [
+            (Kind::Kept, Kind::KeptTile),
+            (Kind::Tiles3, Kind::Tiles3Tile),
+            (Kind::Tiles3Both, Kind::Tiles3BothTile),
+        ] {
+            let a = run_mic_plan(base, recipe, 10, Fault::None);
+            let b = run_mic_plan(tiled, recipe, 10, Fault::None);
+            assert_eq!(a.total_per_step, b.total_per_step);
+            let n_tile = b
+                .launches_per_step
+                .iter()
+                .filter(|e| e.0 == Prog::MmTrainTile)
+                .map(|e| e.1)
+                .sum::<usize>();
+            let n_mm = a
+                .launches_per_step
+                .iter()
+                .filter(|e| e.0 == Prog::MmTrain)
+                .map(|e| e.1)
+                .sum::<usize>();
+            assert_eq!(n_tile, n_mm, "{name} {tiled:?}");
+            assert!(b.launches_per_step.iter().all(|e| e.0 != Prog::MmTrain));
+            let v = ts::judge(recipe, b.total_per_step, &b.out, &refs(name));
+            let s = same_bits(&a.out, &b.out);
+            println!(
+                "kt t215 {name} {tiled:?}: {} lansari ({n_tile} pe mm_train_tile); fata de PyTorch {}; = {base:?} bit cu bit {} (SIMULARE)",
+                b.total_per_step,
+                if v.passes() { "TRECE" } else { "NU TRECE" },
+                if s { "DA" } else { "NU" }
+            );
+            assert!(v.passes(), "{name} {tiled:?}: verdictul");
+            assert!(s, "{name} {tiled:?}: nu e bit cu bit");
+        }
+    }
+}
+
+/// Prediction 3: a grid with one block row too few is caught (different bits); `mm_train`'s own, much larger grid is
+/// harmless (the extra blocks write nothing: the same bits).
+#[test]
+fn t215_mm_tile_grid_mistakes() {
+    let base = run_mic_plan(Kind::Tiles3Tile, Recipe::AdamW513, 3, Fault::None);
+    let old_grid = run_mic_plan(Kind::Tiles3Tile, Recipe::AdamW513, 3, Fault::TileOldGrid);
+    assert!(same_bits(&base.out, &old_grid.out), "grila veche");
+    let short = std::panic::catch_unwind(|| {
+        run_mic_plan(Kind::Tiles3Tile, Recipe::AdamW513, 3, Fault::TileShortGrid)
+    });
+    let caught = match short {
+        Err(_) => true,
+        Ok(r) => !same_bits(&base.out, &r.out),
+    };
+    println!(
+        "kt t215 grila mai mica prinsa: {} (SIMULARE)",
+        if caught { "DA" } else { "NU" }
+    );
+    assert!(caught, "grila mai mica nu e prinsa");
 }

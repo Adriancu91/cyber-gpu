@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 209 — 24 noiembrie 2026, ~16:11–16:39 (ora României), în cloud, FĂRĂ placă — **C-157 p.2x pasul 2: `Plan::with_mm_tile`**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 208 terminată 15:50), l-am pus `ocupat`. În hub a apărut doar ciclul automat 16:08:
+repetă os-403 (pasul #513 pe `Plan::new`), aceleași cifre (1 124 ms pe pas, `mm_train` 718,9 ms) → 3 rânduri în
+`docs/C-157_P2_COMPARATII.md`, nimic de tăiat nou. os-407 (`--placi3`) și urcarea pe părți încă n-au venit.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Opțiunea | `Plan::with_mm_tile` / `mm_tile()` / `mm_tile_programs()`; `Prog::MmTrainTile`; `PROGRAMS_ALL_TILE` (24, indicii vechi păstrați), `PROGRAMS_MM_TILE_EXTRA`; aplicată în `step` și `step_until_opt`, păstrată de `resident` / `with_recompute` | doar adăugări |
+| T215 | #513 2 × 512 (`_3`, rezident): 385 lansări, 147 `mm_train` → `mm_train_tile`, 238 identice, blocuri ÷ 16; pasul mic 10 pași (sgd + adamw_513, pe `new`, `_3`, `_3` + lipiri) **bit cu bit** = fără opțiune, verdict TRECE; grilă scurtă prinsă | PASS (SIMULARE, 3/3) |
+| Nota pentru OS | `integration/cyber-universe/C-157_P2x_mm-train-tile.md`, secțiunea „Pasul 2”: gata de legat în SIMULARE; recomandat întâi proba mică pe placă | — |
+| `tools/check.sh` | format, clippy, teste (pe gazdă), build no_std | PASS (**1 025 de teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** nimic trimis; `mm_train_tile` tot neprobat pe placă. Interfața publică: doar adăugări (o variantă nouă în
+`Prog` — un `match` complet din OS cere un braț în plus, scris în notă).
+
+**Următorul pas:** comparația testelor care vin (os-407 `--placi3`, urcarea pe părți P2w); altfel proba mică pentru placă a lui
+`mm_train_tile` (ca `mm_tc_probe`: seturile mici bit cu bit cu `mm_train` + `qkv-513` cronometrat); apoi `mm_train_gelu` pe plăci.
+
+---
+
 ## Sesiunea 208 — 24 noiembrie 2026, ~15:13–15:50 (ora României), în cloud, FĂRĂ placă — **C-157 p.2x: `mm_train` pe plăci de 64 × 64 (`mm_train_tile`)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 207 terminată 14:48), l-am pus `ocupat`. Niciun test nou pe placă de

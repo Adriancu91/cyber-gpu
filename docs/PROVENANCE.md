@@ -545,3 +545,5 @@ niciun octet de firmware NVIDIA.
   `docs/C-157_P2x_MM_TRAIN_TILE.md`. Scrise de noi; ideea împărțirii pe blocuri 2D cu mai multe rezultate pe fir vine din articolul
   și depozitul siboehm SGEMM_CUDA (MIT, doar ideea) și din `matmul_2d.comp` al nostru. Compilat cu Mesa NAK 25.0.7 (MIT), pe gazdă.
   Nimic copiat, nimic GPL, niciun octet de firmware NVIDIA.
+- **C-157 p.2x pasul 2 — `Plan::with_mm_tile` (sesiunea 209):** `crates/nvidia-ga104/src/train_step.rs` (opțiunea, `Prog::MmTrainTile`,
+  `PROGRAMS_ALL_TILE`), testele T215 (`tests/sim_c160_p5_golden.rs`). Cod al nostru, fără surse noi.

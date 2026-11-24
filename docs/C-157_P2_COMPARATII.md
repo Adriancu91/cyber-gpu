@@ -21,6 +21,12 @@ Predicția noastră (`docs/C-157_PCIE_LEGATURA.md`, P5; proba din OS): **sus 11�
   Predicțiile, scrise înainte: §„Urcarea pe procesor” din nota `integration/cyber-universe/C-157_P2w_x16-urcare.md`.
 - `docs/C-157_RAM_OFFLOAD.md` §5: coloana „slot x16” (~12,5 GB/s) e acum cifra măsurată; tabelele rămân valabile.
 
+## ciclul automat 16:08 (`ciclu-auto-20261124-1608.txt`, cyber-gpu `408c69c`; 24 nov 2026) — sesiunea 209
+Nu e un test nou: repetă os-403 (pasul #513 tot pe `Plan::new`, fără `--placi3`; urcarea fără cele 3 părți ale P2w).
+- **Reproductibil:** placa 1 124 ms pe pas (910 simb/s), `mm_train` 718,9 ms / 147 lansări, atenția 18,8 % + 14,1 % — aceleași cifre ca
+  os-403 la sub 0,1 %; pierderile = oracolul pe pașii 1–9. Pasul mini 3 617 µs, generarea 941 simb/s (placa), ca înainte.
+- **Ce tai mai departe:** nimic nou de aici; așteptăm os-407 (`--placi3`) și urcarea pe părți. Între timp: `Plan::with_mm_tile` (T215).
+
 ## os-403 `--antrenare-mini --vram --antrenare-513` (P6-180..182: profilul pasului #513 pe programe; 24 nov 2026, 12:58) — sesiunea 206
 Surse: `Cyber-hub/rezultate/2026-11-24-workstation-os403-profil-513/REZULTAT.md` (rapoartele `ciclu-auto-20261124-1258.txt`, `-1300.txt`).
 Predicția noastră (os-395, mai jos; `tools/buget-antrenare/pas513.py`): **91 % înmulțiri `mm_train` la ~0,5–0,7 TFLOP/s, atenția ~9 %.**

@@ -5,6 +5,7 @@
 | ID | Ce | Comanda | Așteptat | Observat | Rezultat |
 |---|---|---|---|---|---|
 | T214 | `mm_train_tile` (SHA-256 `f8acce21…bf094d`, 34 de registre, 8 KiB partajați): aceeași treabă și același cbuf ca `mm_train`, blocuri de 256 de fire pe 64 × 64, 4 × 4 pe fir; prin pushbuffer + QMD în modelul procesorului de comenzi | `cargo test -p nvidia-ga104 --test sim_mm_train_tile` | bit cu bit = `matmul_t_fma_ftz` = `mm_train` (8 combinații de opțiuni, plăci parțiale, produsele unui strat); refuzuri; grilă prea mică → restul neatins | 6/6, toate bit cu bit | **PASS (SIMULARE)** — pe placă NOT TESTED |
+| T215 | `Plan::with_mm_tile`: `mm_train` → `mm_train_tile` în pasul de antrenare (aceeași listă, aceleași cbuf-uri); plan + predicții în `docs/C-157_P2x_MM_TRAIN_TILE.md` (Pasul 2) | `cargo test --release -p nvidia-ga104 --test sim_c160_p5_golden t215` | #513 2 × 512 (`_3`, rezident): 385 lansări, 147 schimbate, restul identic; pasul mic 10 pași (sgd, adamw_513; `new`, `_3`, `_3` + lipiri) bit cu bit = fără opțiune, verdict TRECE; grilă scurtă prinsă | 385 / 147 / 238, blocuri ÷ 16; 6 / 6 bit cu bit, TRECE; prinsă | **PASS (SIMULARE)** — pe placă NOT TESTED |
 
 ## Rezultate — sesiunea 207 (24 nov 2026, ~14:12, cloud, fără placă) — C-157 punctul 2: testul x16 comparat, urcarea pe procesor pe părți
 

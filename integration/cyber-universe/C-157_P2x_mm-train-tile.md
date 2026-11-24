@@ -28,3 +28,16 @@ estimat **×3–6 → ~2,5–5 TFLOP/s**; în pasul #513 (atenția `_3`): `mm_tr
 1. După `Plan::with_mm_tile` la noi: aceeași comandă de antrenare ca la os-395 / os-403 cu o opțiune nouă — **aceeași amprentă
    a pasului** (biții nu se schimbă), timpul `mm_train` pe profil.
 2. Întâi, separat: o probă mică (ca `mm_tc_probe`): seturile mici bit cu bit = `mm_train` pe aceeași placă + `qkv-513` cronometrat.
+
+## Pasul 2 (sesiunea 209, 24 nov 2026): `Plan::with_mm_tile` — **gata de legat în SIMULARE**
+- **Cum:** `Plan::new_tiles3(...)?.with_mm_tile().resident()?` (sau `.with_mm_tile()` pe orice plan; se păstrează prin
+  `resident()` / `with_recompute()`). Lista de lansări e aceeași (385 la #513 2 × 512, aceleași tag-uri, cbuf-uri, ordine), doar cele
+  147 de `mm_train` au programul `Prog::MmTrainTile` și grila ⌈N/64⌉ × ⌈M/64⌉. `pack` / QMD: la fel ca până acum (`Launch::qmd` pune
+  singur 8 KiB partajați + o barieră și blocul 256 × 1 × 1).
+- **Încărcarea programelor:** pe lângă `plan.programs()` și `plan.fused_programs()`, și `plan.mm_tile_programs()` (un program,
+  `mm_train_tile`, SHA-256 `f8acce21…bf094d`). `Prog::index()` merge acum pe `PROGRAMS_ALL_TILE` (24); indicii vechi neschimbați.
+  `Prog` are o variantă nouă (`MmTrainTile`): un `match` complet pe `Prog` în OS cere un braț în plus.
+- **Placa simulată a OS-ului:** înregistrează `gpu_sim::cmdproc::mm_train_tile_on_cpu` cu `MM_TRAIN_TILE_NEEDS` (altfel refuză programul).
+- **Ce se vede:** aceeași amprentă / aceleași numere (T215: bit cu bit în SIMULARE); în profil `mm_train_tile` în locul lui `mm_train`.
+- **Ce e nou pentru placă:** programul `mm_train_tile` (încă neprobat pe placă). **Recomandare:** întâi proba mică (pregătită de noi
+  în sesiunea următoare), apoi opțiunea în `--antrenare-513`, după ce os-407 (`--placi3`) a trecut. Nimic de trimis acum.

@@ -80,7 +80,9 @@ fn board() -> CommandProcessor {
             Prog::AttnBackTile3 => {
                 cp.register_program_with_needs(code, attn_back_tile_on_cpu, sh())
             }
-            Prog::LnBackRes | Prog::MmTrainGelu => unreachable!("nu e in PROGRAMS_ALL_3"),
+            Prog::LnBackRes | Prog::MmTrainGelu | Prog::MmTrainTile => {
+                unreachable!("nu e in PROGRAMS_ALL_3")
+            }
         };
         cp.mem.write(prog_va(p), code);
     }

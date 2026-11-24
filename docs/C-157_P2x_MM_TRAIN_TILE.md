@@ -57,3 +57,21 @@ predicție până la proba pe placă.
 
 **Următorul pas:** `Plan::with_mm_tile` (aceeași listă de lansări, `mm_train` → `mm_train_tile`, aceeași amprentă în SIMULARE),
 apoi proba mică pentru placă; `mm_train_gelu` pe aceleași plăci.
+
+## Pasul 2 — `Plan::with_mm_tile` (sesiunea 209, 24 nov 2026, în cloud, FĂRĂ placă)
+**Ce e:** o opțiune pe plan, ca `with_fused_back` / `with_fused_gelu`: aceeași arenă, aceleași adrese, aceleași lansări în aceeași
+ordine, cu aceleași cbuf-uri; doar lansările `mm_train` trec pe `mm_train_tile` (program nou `Prog::MmTrainTile`, grila
+⌈N/64⌉ × ⌈M/64⌉). Se aplică în `Plan::step` și `Plan::step_until_opt` (calea `_mv_ram`); `mm_train_gelu` rămâne cum e; pasul
+mixt (`step_mixed`) nu se schimbă. Supraviețuiește lui `resident()` și `with_recompute()`. Programe de încărcat:
+`programs()` + `fused_programs()` + `mm_tile_programs()` (= `PROGRAMS_MM_TILE_EXTRA`); lista completă `PROGRAMS_ALL_TILE` (24,
+toate indicii vechi păstrați; `check_programs` le verifică pe toate). Doar adăugări în interfața publică.
+
+**Predicții (scrise înainte de teste) și ce a ieșit (T215):**
+| # | Predicție | Ieșit | Stare |
+|---|---|---|---|
+| 1 | Pasul #513 al lui os-407 (`new_tiles3`, rezident, 2 × 512) cu opțiunea = aceeași listă: 385 lansări, 147 `mm_train` → `mm_train_tile`, restul identic; blocurile ÷ 16 | 385, 147 schimbate, 238 neschimbate, aceleași cbuf-uri; blocuri 1 039 360 → 64 960 (÷ 16); `step_until_opt` = pasul fără ultima lansare | PASS (pe procesor) |
+| 2 | Pasul mic, 10 pași, sgd și adamw_513, pe `Plan::new`, `new_tiles3` și `_3` + ambele lipiri: **bit cu bit** = același plan fără opțiune; verdictul față de PyTorch trece | toate 6 bit cu bit, toate TRECE; 27 (25 cu lipirea GELU) de lansări pe `mm_train_tile` pe pas | PASS (SIMULARE) |
+| 3 | Grilă cu un rând de blocuri lipsă → prinsă; grila veche a lui `mm_train` (mult prea mare) → inofensivă | prinsă; grila veche = aceiași biți | PASS (SIMULARE) |
+
+**Ce rămâne:** proba mică pentru placă (ca `mm_tc_probe`: seturile mici bit cu bit cu `mm_train` pe aceeași placă + `qkv-513`
+cronometrat), apoi OS-ul leagă opțiunea în pasul #513. Viteza pe placă: tot DEDUS (×3–6 pe înmulțiri).

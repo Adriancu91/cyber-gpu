@@ -34,7 +34,8 @@ use crate::{
     attn_back_tile0_2 as abt02, attn_back_tile0_3 as abt03, attn_fwd as af, attn_fwd_tile2 as aft2,
     attn_fwd_tile3 as aft3, attn_p as ap, attn_p_tile as apt, colsum as cs, emb_back as eb,
     emb_fwd as ef, gelu_tr as gt, gnorm as gn, kronos_layer, ln_back as lb, ln_back_res as lbr,
-    ln_fwd as lf, mm_train as mm, mm_train_gelu as mg, opt_step as os, xent as xe,
+    ln_fwd as lf, mm_train as mm, mm_train_gelu as mg, mm_train_tile as mtt, opt_step as os,
+    xent as xe,
 };
 
 fn bad(why: &'static str) -> GpuError {
@@ -100,6 +101,9 @@ pub enum Prog {
     /// Order 20:11 step 3, second part (`docs/C-160_P7_LIPIRE_GELU.md`): `mm_train` with GELU's backward fused into
     /// the store (`mm_train_gelu`), only in plans with [`Plan::with_fused_gelu`]. In [`PROGRAMS_ALL_FUSED2`] only.
     MmTrainGelu,
+    /// C-157 p.2x (`docs/C-157_P2x_MM_TRAIN_TILE.md`): `mm_train` on 64×64 tiles (`mm_train_tile`, the same cbuf and
+    /// the same bits), only in plans with [`Plan::with_mm_tile`]. In [`PROGRAMS_ALL_TILE`] only.
+    MmTrainTile,
 }
 
 /// Every program a step uses (the OS loads all 13 once; `Gnorm` only runs at `adamw_513`).
@@ -228,6 +232,38 @@ pub const PROGRAMS_ALL_FUSED2: [Prog; 23] = [
     Prog::MmTrainGelu,
 ];
 
+/// [`PROGRAMS_ALL_FUSED2`] + [`Prog::MmTrainTile`] at the end (all 23 keep their [`Prog::index`]): every program any
+/// plan may launch, [`Plan::with_mm_tile`] included. `check_programs` checks all 24. The older lists stay as they were.
+pub const PROGRAMS_ALL_TILE: [Prog; 24] = [
+    Prog::MmTrain,
+    Prog::Xent,
+    Prog::LnFwd,
+    Prog::LnBack,
+    Prog::Colsum,
+    Prog::GeluTr,
+    Prog::AttnFwd,
+    Prog::AttnBack,
+    Prog::EmbFwd,
+    Prog::EmbBack,
+    Prog::Gnorm,
+    Prog::OptStep,
+    Prog::Vadd,
+    Prog::AttnP,
+    Prog::AttnFwdTile2,
+    Prog::AttnBackTile0_2,
+    Prog::AttnBackTile2,
+    Prog::AttnPTile,
+    Prog::AttnFwdTile3,
+    Prog::AttnBackTile0_3,
+    Prog::AttnBackTile3,
+    Prog::LnBackRes,
+    Prog::MmTrainGelu,
+    Prog::MmTrainTile,
+];
+
+/// What a [`Plan::with_mm_tile`] plan launches on top of [`Plan::programs`] and [`Plan::fused_programs`].
+pub const PROGRAMS_MM_TILE_EXTRA: [Prog; 1] = [Prog::MmTrainTile];
+
 /// What a [`Plan::with_fused_gelu`] plan launches on top of [`Plan::programs`] (without [`Plan::with_fused_back`]).
 pub const PROGRAMS_FUSED_GELU_EXTRA: [Prog; 1] = [Prog::MmTrainGelu];
 
@@ -355,6 +391,7 @@ impl Prog {
             Prog::AttnBackTile3 => abt3::ATTN_BACK_TILE_3,
             Prog::LnBackRes => lbr::LN_BACK_RES,
             Prog::MmTrainGelu => mg::MM_TRAIN_GELU,
+            Prog::MmTrainTile => mtt::MM_TRAIN_TILE,
         }
     }
 
@@ -384,6 +421,7 @@ impl Prog {
             Prog::AttnBackTile3 => abt3::ATTN_BACK_TILE_3_SHA256,
             Prog::LnBackRes => lbr::LN_BACK_RES_SHA256,
             Prog::MmTrainGelu => mg::MM_TRAIN_GELU_SHA256,
+            Prog::MmTrainTile => mtt::MM_TRAIN_TILE_SHA256,
         }
     }
 
@@ -412,6 +450,7 @@ impl Prog {
             Prog::AttnBackTile3 => abt3::REGISTERS,
             Prog::LnBackRes => lbr::REGISTERS,
             Prog::MmTrainGelu => mg::REGISTERS,
+            Prog::MmTrainTile => mtt::REGISTERS,
         }
     }
 
@@ -440,6 +479,7 @@ impl Prog {
             Prog::AttnBackTile3 => abt3::BLOCK,
             Prog::LnBackRes => lbr::BLOCK,
             Prog::MmTrainGelu => mg::BLOCK,
+            Prog::MmTrainTile => mtt::BLOCK,
         }
     }
 
@@ -459,6 +499,7 @@ impl Prog {
             Prog::AttnBackTile3 => Some(abt3::SHARED),
             Prog::LnBackRes => Some(lbr::SHARED),
             Prog::MmTrainGelu => Some(mg::SHARED),
+            Prog::MmTrainTile => Some(mtt::SHARED),
             _ => None,
         }
     }
@@ -489,13 +530,14 @@ impl Prog {
             Prog::AttnBackTile3 => "attn_back_tile_3",
             Prog::LnBackRes => "ln_back_res",
             Prog::MmTrainGelu => "mm_train_gelu",
+            Prog::MmTrainTile => "mm_train_tile",
         }
     }
 
-    /// Index in [`PROGRAMS_ALL_FUSED2`] (= the index in [`PROGRAMS_ALL_FUSED`], [`PROGRAMS_ALL_3`], [`PROGRAMS_ALL`], [`PROGRAMS`] /
+    /// Index in [`PROGRAMS_ALL_TILE`] (= the index in [`PROGRAMS_ALL_FUSED2`], the index in [`PROGRAMS_ALL_FUSED`], [`PROGRAMS_ALL_3`], [`PROGRAMS_ALL`], [`PROGRAMS`] /
     /// [`PROGRAMS_P_ONLY`] for their programs).
     pub fn index(self) -> usize {
-        PROGRAMS_ALL_FUSED2
+        PROGRAMS_ALL_TILE
             .iter()
             .position(|&p| p == self)
             .unwrap_or(0)
@@ -504,7 +546,7 @@ impl Prog {
 
 /// Checks every program's bytes against its SHA-256 (what the OS does before loading; refuse on a mismatch).
 pub fn check_programs() -> GpuResult<()> {
-    for p in PROGRAMS_ALL_FUSED2 {
+    for p in PROGRAMS_ALL_TILE {
         if hex(&crate::sha256::digest(p.code())) != p.sha256() {
             return Err(bad("pas-aur: SHA-256 al unui program nu se potriveste"));
         }
@@ -727,6 +769,8 @@ pub struct Plan {
     /// Order 20:11 step 3, second part ([`Plan::with_fused_gelu`]): "inapoi:proj-dX" writes GELU's backward itself
     /// (`mm_train_gelu`), no backward `gelu_tr`.
     fused_gelu: bool,
+    /// C-157 p.2x ([`Plan::with_mm_tile`]): every `mm_train` launch goes on `mm_train_tile` (same cbuf, same bits).
+    mm_tile: bool,
     /// C-160 P8 ([`Plan::resident`]): room (in distinct tokens) of the token segment lists; 0 = the plan is not
     /// resident (its lists are exactly its batch's).
     tok_cap: usize,
@@ -1013,6 +1057,7 @@ impl Plan {
         p.tiles3 = self.tiles3;
         p.fused_back = self.fused_back;
         p.fused_gelu = self.fused_gelu;
+        p.mm_tile = self.mm_tile;
         // Order 20:11 step 5: keep the two batch slots (slot 0's view).
         if self.slots.is_some() {
             p = p.with_batch_slots()?;
@@ -1232,6 +1277,7 @@ impl Plan {
             mv_ram,
             fused_back: false,
             fused_gelu: false,
+            mm_tile: false,
             tok_cap: if resident { tok_cap } else { 0 },
             recompute,
             slots: None,
@@ -1267,6 +1313,42 @@ impl Plan {
     /// True after [`Plan::with_fused_gelu`].
     pub fn fused_gelu(&self) -> bool {
         self.fused_gelu
+    }
+
+    /// C-157 p.2x (`docs/C-157_P2x_MM_TRAIN_TILE.md`): the same plan (same arena, same addresses, same launches in the
+    /// same order with the same cbufs) whose `mm_train` launches go on `mm_train_tile` — 64×64 pieces of C per block of
+    /// 256 threads, the grid [`mm_train_tile::grid`](crate::mm_train_tile::grid). **The same bits** (T214, T215,
+    /// SIMULARE). `mm_train_gelu` launches ([`Plan::with_fused_gelu`]) stay as they are; the mixed step
+    /// ([`Plan::step_mixed`]) is unchanged (its products go on `mm_tc`). Off unless asked for; combines with every
+    /// other option. Load [`Plan::programs`] + [`Plan::fused_programs`] + [`Plan::mm_tile_programs`].
+    pub fn with_mm_tile(mut self) -> Self {
+        self.mm_tile = true;
+        self
+    }
+
+    /// True after [`Plan::with_mm_tile`].
+    pub fn mm_tile(&self) -> bool {
+        self.mm_tile
+    }
+
+    /// [`PROGRAMS_MM_TILE_EXTRA`] after [`Plan::with_mm_tile`], none otherwise.
+    pub fn mm_tile_programs(&self) -> &'static [Prog] {
+        if self.mm_tile {
+            &PROGRAMS_MM_TILE_EXTRA
+        } else {
+            &[]
+        }
+    }
+
+    /// [`Plan::with_mm_tile`]: every `mm_train` launch of `list` on `mm_train_tile` (cbuf kept, grid recomputed).
+    fn tile_mm(&self, list: &mut [Launch]) {
+        if !self.mm_tile {
+            return;
+        }
+        for l in list.iter_mut().filter(|l| l.prog == Prog::MmTrain) {
+            l.grid = mtt::grid(&mm_args_of(l));
+            l.prog = Prog::MmTrainTile;
+        }
     }
 
     /// The programs this plan launches on top of [`Plan::programs`]: [`PROGRAMS_FUSED_EXTRA`] with
@@ -1319,6 +1401,7 @@ impl Plan {
         p.tiles3 = self.tiles3;
         p.fused_back = self.fused_back;
         p.fused_gelu = self.fused_gelu;
+        p.mm_tile = self.mm_tile;
         Ok(p)
     }
 
@@ -1570,6 +1653,7 @@ impl Plan {
         let mut out = Vec::with_capacity(32 * self.arch.layers + 16);
         self.forward_backward(&mut out, 1.0)?;
         self.optimize(&mut out, recipe, opt, step, None)?;
+        self.tile_mm(&mut out);
         Ok(out)
     }
 
@@ -1587,6 +1671,7 @@ impl Plan {
         let mut a = self.opt_args(&mut out, Recipe::AdamW513, opt, step, None)?;
         a.m = 0;
         a.v = 0;
+        self.tile_mm(&mut out);
         Ok((out, a))
     }
 
