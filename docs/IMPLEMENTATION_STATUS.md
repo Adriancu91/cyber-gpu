@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 215 — 24 noiembrie 2026, ~22:13–22:45 (ora României), în cloud, FĂRĂ placă — **os-412 comparat + C-165 pasul 3: `parse_race`**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 214 terminată 21:47), l-am pus `ocupat`. Venise un test nou pe placă: **os-412**
+(`colsum` împărțit, ceasul reparat). Cursa C-165 (os-413) e GATA DE TEST, rulează la noapte → încă nimic de comparat acolo.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| C-157 p.2: os-412 | comparația în `docs/C-157_P2_COMPARATII.md` + rândul 4–5 din `docs/C-157_P2y_COLSUM_IMPARTIT.md`: `colsum` 24,3 → **2,4 ms** (prezis 2,5–5), placa pe pas **−22,6 ms** (prezis −19–22), = oracolul; costul fix pe lansare mică ≤ ~5 µs (DEDUS); `mm_train_tile` = 92,9 % din pas | PASS pe placa reală (prin OS); predicția bună, `colsum` puțin sub interval |
+| Predicții C-165 pasul 3 | scrise înainte de cod (`6fb0107`) | 5 / 5 confirmate |
+| `parse_race` | `mm_train_variants::{parse_race, ParsedRace}` (+ `choice()`, `saved_ns()`): citește rândurile cursei din raportul OS-ului (P6-190), doar ultima cursă, fără panică pe rânduri stricate | doar adăugări |
+| T221 | raportul #513 scris cu șabloanele OS-ului copiate: 73 de rânduri, timpii rotunjiți la 0,1 µs, aceeași alegere ca timpii adevărați, `with_mm_choice` mută exact formele alese; a doua cursă o înlocuiește pe prima; 9 feluri de rânduri stricate lăsate deoparte | PASS (pe procesor, 3/3 + 1/1) |
+| Nota pentru OS | `integration/cyber-universe/C-165_cursa-mm.md` §„Pasul 3” | — |
+| `tools/check.sh` | format, clippy, teste (pe gazdă), build no_std | PASS (**1 057 de teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** nimic. **Nicio schimbare incompatibilă** (doar funcții și un tip noi).
+
+**Următorul pas:** raportul cursei os-413 (C-165 + A4) → comparația (C-157 p.2) și `parse_race` → `MmChoice` pe raportul adevărat →
+OS leagă `with_mm_choice` (+ `with_mm_tile_gelu` dacă vrea lipirile). Dacă A4 arată ceas mic în timpul pasului: întâi lămurit ceasul.
+Apoi `mm_tc` / pasul mixt pe #513 (ordinea 1–2 din `idei/2026-11-24-centru-ordinea-prioritatilor.md`); pista B1 (int8 IMMA) abia după.
+
+---
+
 ## Sesiunea 214 — 24 noiembrie 2026, ~21:12–21:48 (ora României), în cloud, FĂRĂ placă — **C-165: `mm_train_tile_gelu`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 213 terminată 20:40), l-am pus `ocupat`. Cursa C-165 (os-412) încă n-a rulat
