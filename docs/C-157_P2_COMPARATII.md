@@ -2,6 +2,28 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-392 `--antrenare-mini --vram --pas-lipit` (P6-175; 24 nov 2026, 08:19) — sesiunea 203
+Surse: `Cyber-hub/rezultate/2026-11-24-workstation-os392-pas-lipit/REZULTAT.md`, `ciclu-auto-20261124-0819.txt` (rândurile 89–124).
+Predicții scrise înainte: `docs/C-160_P7_LIPIRE_INAPOI.md` (P1 biți, P3 lansări) și `docs/C-160_P7_LIPIRE_GELU.md` (G1); la os-390 (mai sus):
+„după lotul prin RAM placa e ~95 % din pas, deci câștigul următor e pe placă”. Pentru modelul mini nu scrisesem un număr în µs.
+- **Corectitudinea = predicția, la bit:** lipit = nelipit pe 10 / 10 pași (pierdere și normă), greutățile 0 biți diferiți din 1 150 720;
+  ambele = oracolul (9,9e-8 / 6,3e-7 / 8,8e-6, ca os-390). Cele 2 programe noi (`ln_back_res`, `mm_train_gelu`) au mers din prima.
+- **Lansările = predicția:** 75 → 69 (2·L = 4 din `ln_back_res` + L = 2 din `mm_train_gelu`, L = 2 straturi).
+- **Timpul: placa 3 628 → 3 602 µs (−26 µs, −0,7 %), pasul întreg 4 166 → 4 141 µs (−25) = 15 455 simb/s.** DEDUS după: 26 µs / 6 lansări
+  = **~4,3 µs pe lansare scutită**, exact costul unei lansări măsurat la os-331 (~4 µs); traficul scutit pe mini e ~0,4 MB (rânduri 64 × C 64)
+  ≈ 1 µs. Deci pe mini lipirea câștigă doar lansări; câștigul de trafic (~2,7 GB, ~6–7 ms pe bucată) rămâne de văzut la #513.
+- **Diferit (zgomot, nu lipire):** pushbuffer-ul median 71 µs lipit față de 46 nelipit — dar pe pași e **bimodal în ambele rulări**
+  (42–46 µs la pașii 2–5 și 10, 71–73 µs la pașii 6–8/9); mediana a căzut pe cealaltă treaptă. Un salt de golire unic (pasul 4 nelipit: 584 µs).
+- **NECUNOSCUTUL ceasurilor, încă o dată:** „așteptarea” − „placa” = −98 µs nelipit, −99 µs lipit (raport 0,973 în ambele). Intervalele sunt
+  prea apropiate ca să despartă „decalaj fix” de „ceasuri diferite cu 2,7 %”; proba cu intervalul lung (urcarea arenei, 4,9 ms) rămâne.
+- **Ce tai mai departe:** (1) lotul prin RAM (T209, predat, −~290 µs în afara plăcii); (2) **pe placă: unde se duc cei 3,6 ms?**
+  69 de lansări × ~4 µs = ~0,3 ms, restul ~3,3 ms e calcul pe matrici mici, pe care nu l-am măsurat niciodată pe program.
+  Bănuitul principal (DEDUS din formă): `inapoi:cap-dX` = `mm_train` cu doar **16 blocuri** pe 48 de multiprocesoare și K = 16 384 →
+  1 024 de ture seriale de plăci 16×16 cu barieră; urmează `eroarea` (64 de rânduri × 16 384), `opt:pas` (1,15 M greutăți, ~32 MB trafic).
+  Remediul: **profilul pasului pe programe** (`nvidia_ga104::train_profile`, T210, plan în `docs/C-157_P2_PROFIL_PAS.md`) — din
+  înregistrările pe care OS-ul le citește deja la 3 pași; nimic nou pentru placă. Abia cu cifrele lui alegem tăietura (K împărțit, `mm_tc`, pasul mixt).
+- **Generarea, testul 2:** 636,13 simb/s = os-390 (632,84), în zgomot.
+
 ## os-390 `--antrenare-mini --vram`, pasul întreg tăiat (P6-174 + tăieturile T206; 24 nov 2026, 07:37) — sesiunea 202
 Surse: `Cyber-hub/rezultate/2026-11-24-workstation-os390-pas-taiat/REZULTAT.md`, `ciclu-auto-20261124-0737.txt`. Predicții scrise
 înainte: os-389 (mai jos: „pasul întreg 4–5 ms”) și `integration/cyber-universe/C-157_P2_taieturi-pasul-intreg.md` (K5: driverul ~0,3 ms,
