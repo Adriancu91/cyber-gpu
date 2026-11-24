@@ -555,3 +555,7 @@ niciun octet de firmware NVIDIA.
 - **C-157 p.2y — `Plan::with_colsum_split` (sesiunea 210):** `crates/nvidia-ga104/src/train_step.rs` (opțiunea, `Prog::ColsumPart`,
   `PROGRAMS_ALL_SPLIT`, zona de lucru), testele T216 (`tests/sim_c160_p5_golden.rs`). Leagă în pas programul `colsum_part` al nostru
   (sesiunea 159, vezi mai sus). Cod al nostru, fără surse noi.
+- **C-164 — Kronos croit pe placă (sesiunea 212):** `crates/gpu-compute/src/v2.rs` (numărătoarea lansărilor, oracolele RMS și ReLU²),
+  testele T218 (`crates/nvidia-ga104/tests/c164_kronos_v2.rs`). Cod al nostru. Formule din documentația publică PyTorch (`RMSNorm`,
+  `F.rms_norm`, BSD; eps implicit f32 = `finfo.eps`), Zhang & Sennrich 2019 (RMSNorm) și So et al. 2021 (Primer, ReLU²) — doar
+  formulele, niciun cod copiat.

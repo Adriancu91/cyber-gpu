@@ -40,6 +40,7 @@ pub mod reference;
 pub mod rows;
 pub mod tensor;
 pub mod train;
+pub mod v2;
 
 pub use op::OpCode;
 pub use tensor::{DType, TensorDesc};

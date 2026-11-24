@@ -203,7 +203,7 @@ pub struct Batch<'a> {
 
 // ---------------------------------------------------------------- f64 helpers (no_std: no libm)
 
-fn sqrt64(x: f64) -> f64 {
+pub(crate) fn sqrt64(x: f64) -> f64 {
     if x <= 0.0 || !x.is_finite() {
         return if x == 0.0 { 0.0 } else { f64::NAN };
     }

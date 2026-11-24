@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 212 — 24 noiembrie 2026, ~19:10–20:15 (ora României), în cloud, FĂRĂ placă — **C-164: Kronos croit pe placă, partea Cyber-GPU**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 211 terminată 18:53), l-am pus `ocupat`. Niciun test nou pe placă de comparat (după os-410
+nu a mai venit nimic; cursa C-165 + A4 o rulează OS-ul). C-165 așteaptă placa → am luat **C-164** (comanda din 17:35, partea noastră neîncepută).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Predicții | în `docs/C-164_KRONOS_V2_PLACA.md`, înainte de cod | 2 confirmate, 2 greșite (felurile de programe nu scad la ~5; dγ al RMS nu cere program nou) |
+| `gpu_compute::v2` | alegerile (`Act`, `Norm`, `Choices`, `CANDIDATES`, `Fusions`), `StepCount::count` (lansările pe fel), parametrii, `mm_flop`, `widths_off_tile`, timpii os-410 (`OS410_SMALL_US`), oracolele `rms_rows` / `rms_back_rows` / `relu2_rows` / `relu2_back_rows` / `dgamma_is_colsum_with_zero_mean` | doar adăugări (`train::sqrt64` devine `pub(crate)`) |
+| T218 | numărătoarea pentru Kronos de azi = `Plan::step` al planului `_3` (simplu, `with_fused_back`, `with_fused_gelu`, ambele; `adamw_513` și `sgd`), la MIC și #513 | PASS (pe procesor, 2/2) |
+| `v2::tests` | 98 032 128 parametri și 385 / 73 lansări ca os-410; candidații (337 / 312 / 276 / 264); 599,1 GFLOP, capul 12,9 %; ReLU² biți identici + derivată; RMS diferențe finite cu și fără γ; dγ RMS = `colsum` cu media 0 (≤ 1e-6 la 1 024 × 768) | PASS (SIMULARE pe procesor, 7/7) |
+| Câștigurile | toate candidatele: −24,3 ms = −5,0 % azi; după `colsum` împărțit doar ~1 % | DEDUS / NOT TESTED |
+| Fișa comună | hub `integrare/KRONOS_V2_FISA.md`: coloana „placă” completată, coloanele „calitate” lăsate lui Kronos | — |
+| `tools/check.sh` | format, clippy, teste (pe gazdă), build no_std | PASS (**1 044 de teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** nimic (numărare + oracole pe procesor). **Nicio schimbare incompatibilă**.
+
+**Următorul pas:** cursa C-165 + A4 pe placă (OS) → `Plan::with_mm_choice`; dacă ceasul e mic, întâi lămurit ceasul. C-164: așteaptă coloanele lui
+Kronos (laboratorul C-163) și alegerea lui Adrian; programele RMS / ReLU² doar după alegere.
+
+---
+
 ## Sesiunea 211 — 24 noiembrie 2026, ~18:10–19:00 (ora României), în cloud, FĂRĂ placă — **C-165: variantele cursei de noapte pentru `mm_train_tile`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 210 terminată 17:45), l-am pus `ocupat`. Nicio probă nouă pe placă de comparat

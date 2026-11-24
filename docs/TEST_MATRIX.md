@@ -1,9 +1,10 @@
 # Matricea de teste
 
-## Rezultate — sesiunea 211 (24 nov 2026, ~18:10, cloud, fără placă) — C-165: variantele cursei de noapte pentru `mm_train_tile`
+## Rezultate — sesiunile 212 (24 nov 2026, ~19:10, C-164: Kronos croit pe placă, T218) și 211 (~18:10, cloud, fără placă — C-165: variantele cursei de noapte pentru `mm_train_tile`)
 
 | ID | Ce | Comanda | Așteptat | Observat | Rezultat |
 |---|---|---|---|---|---|
+| T218 | C-164: numărătoarea lansărilor `gpu_compute::v2::StepCount` pentru Kronos de azi față de `Plan::step` (planul `_3`, simplu / `with_fused_back` / `with_fused_gelu` / ambele, `adamw_513` și `sgd`), MIC și #513; plus `v2::tests` (candidații, oracolele RMS și ReLU²) | `cargo test --release -p nvidia-ga104 --test c164_kronos_v2`; `cargo test --release -p gpu-compute v2::` | aceleași lansări pe fel ca lista planului; RMS / ReLU² = diferențele finite; dγ RMS = `colsum` cu media 0 | 2/2 + 7/7 | PASS (pe procesor; numărare, nimic pe placă) |
 | T217 | 4 variante noi (`mm_tv_128x64`, `mm_tv_64x128`, `mm_tv_128x128`, `mm_tv_64x64k8`) + martorul `mm_train_tile`, prin pushbuffer + QMD în modelul procesorului de comenzi; SHA-256, registre, buclă; formele #513 | `cargo test --release -p nvidia-ga104 --test sim_mm_train_variants` | bit cu bit = `mm_train` = oracolul; formele #513 ÷ 128; refuzuri; grila greșită prinsă | 6/6; 15 forme, 147 lansări, 599,1 GFLOP; registre 54 / 54 / 90 / 34, 0 memorie locală | PASS (SIMULARE) |
 
 ## Rezultate — sesiunea 210 (24 nov 2026, ~17:13, cloud, fără placă) — C-157 p.2y: `colsum` împărțit în pasul de antrenare
