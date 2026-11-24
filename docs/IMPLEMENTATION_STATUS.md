@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 208 — 24 noiembrie 2026, ~15:13–16:10 (ora României), în cloud, FĂRĂ placă — **C-157 p.2x: `mm_train` pe plăci de 64 × 64 (`mm_train_tile`)**
+## Sesiunea 208 — 24 noiembrie 2026, ~15:13–15:50 (ora României), în cloud, FĂRĂ placă — **C-157 p.2x: `mm_train` pe plăci de 64 × 64 (`mm_train_tile`)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 207 terminată 14:48), l-am pus `ocupat`. Niciun test nou pe placă de
 comparat (urcarea pe părți și #513 pe `_3` n-au venit). Am luat pasul scris de sesiunile 206–207: un `mm_train` F32 pe plăci
