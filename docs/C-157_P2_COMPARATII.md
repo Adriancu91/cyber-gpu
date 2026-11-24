@@ -2,6 +2,31 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-390 `--antrenare-mini --vram`, pasul întreg tăiat (P6-174 + tăieturile T206; 24 nov 2026, 07:37) — sesiunea 202
+Surse: `Cyber-hub/rezultate/2026-11-24-workstation-os390-pas-taiat/REZULTAT.md`, `ciclu-auto-20261124-0737.txt`. Predicții scrise
+înainte: os-389 (mai jos: „pasul întreg 4–5 ms”) și `integration/cyber-universe/C-157_P2_taieturi-pasul-intreg.md` (K5: driverul ~0,3 ms,
+pasul ~4–4,5 ms, „la primii 2 pași umbra scrie tot”, pașii 0, 1, 8 citesc toate înregistrările).
+- **Corectitudinea = predicția:** ACELEAȘI NUMERE (9,9e-8 / 6,3e-7 / 8,8e-6), 0 scrieri pe stick în pași, 0 rânduri aruncate.
+- **Pasul întreg 4 150 µs = 15 421 simb/s** (estimat 4–4,5 ms; os-389: 370 ms, ×89). Placa 3 625 µs (= os-386) → placa e acum **87 %** din pas.
+- **Încălzirea = predicția, la pas:** pasul 1 5 258 µs, pasul 2 4 574 (umbra pushbuffer-ului se umple de două ori), de la 3 constant ~4 135;
+  pasul 9 4 271 (+121 µs = citirea tuturor înregistrărilor la `k = 8`, cum scria planul `RecordPlan::DIET`).
+- **Diferit: în afara plăcii 525 µs, nu ~300.** Pe cuvânt (MĂSURAT): golirea 302 µs / 397 cuvinte = **0,76 µs** la scriere (luasem 0,66);
+  citirile 13 + 70 µs / 73 cuvinte = **~1,1 µs** la citire (luasem 0,5 — de două ori mai scumpe). Și n-am numărat deloc partea de procesor:
+  planul lotului 34 + lotul pus în coadă 49 + lista și zona de control 53 + umbra pushbuffer-ului 52 + TLB 24 + soneria 9 = **221 µs**.
+- **Cea mai mare bucată din afara plăcii = lotul (1 284 B) scris cuvânt cu cuvânt prin fereastra VRAM, fiecare recitit:** 321 din cele 397
+  de cuvinte → ~245 µs la golire + 49 µs pus în coadă ≈ **~290 µs**. Pierderile + norma (65 de cuvinte citite prin fereastră) = 70 µs.
+- **NECUNOSCUT (mărunt):** „așteptarea” (3 525 µs, ceasul procesorului, de după sonerie) e mai mică decât „placa” (3 625 µs, ceasul plăcii,
+  prima → ultima înregistrare). Ipoteze: (a) cele două ceasuri diferă cu ~2,8 %; (b) placa pornește înainte de semnul de după sonerie.
+  Proba ieftină: același interval lung măsurat cu ambele ceasuri (ex. urcarea arenei, 4,9 ms) în același rând.
+- **Ce tai mai departe (DEDUS, nimic nou pentru placă — programul de copiere `copy_b128` merge deja pe placă la urcarea arenei):**
+  (1) **lotul prin RAM:** procesorul scrie lotul în zona de control din RAM (deja fixată, ~1 µs) și lista pornește cu 5 copieri mici
+  RAM → arena (câte o zonă: intrări, ținte, cele 3 liste de segmente) → −~290 µs în afara plăcii, +~15–20 µs pe placă;
+  (2) **pierderile + norma prin RAM:** 2 copieri la coada listei, arena → RAM, citite apoi din RAM → −~60 µs, +~8 µs pe placă;
+  (3) apoi lotul în paralel (P10, predat) ascunde planul + lista (~90 µs). Estimat: **~3,75–3,85 ms pe pas ≈ 16 600–17 000 simb/s**;
+  după asta placa e ~95 % din pas, deci câștigul următor e pe placă: `--pas-lipit` (os-392, următorul la rând), apoi pasul mixt.
+- **De lămurit de OS (știut deja de centru):** rândul „REZULTAT TEST PLACA … antrenare mini pe placa: niciun rezultat” deși blocul spune TRECE.
+- **Generarea, testul 2 (`--argmax-fara-copie --dieta2`):** 632,84 simb/s, driverul 405 µs = os-353 / os-355 (635,90 / 647,24), în zgomot.
+
 ## os-389 `--antrenare-mini --vram`, pasul întreg pe bucăți (24 nov 2026, 05:22) — sesiunea 200
 Surse: `Cyber-hub/rezultate/2026-11-24-workstation-os389-bucati/REZULTAT.md`, `ciclu-auto-20261124-0522.txt` (rândurile 87–106),
 `gpu-jurnal-072.txt` (rândurile 4250–4485). os-389 = doar măsurarea pe bucăți (P6-173); remediul jurnalului (P6-174) a intrat în OS după.
