@@ -2,6 +2,38 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-423 — proba `mm_tc` pe placă (`--mm-tc`, circuitele speciale f16 → f32, 25 nov 2026, 10:46) — sesiunea 228
+Sursa: `rezultate/os-automat/2026-11-25/ciclu-auto-20261125-1052.txt` (rândurile 94–104), `rezultate/2026-11-25-workstation-os423-mm-tc/`.
+Predicțiile (scrise înainte, `docs/C-160_P7_MM_TC_PROBA.md`, sesiunea 160): 6/6 în margine (~85 %), bit cu bit modelul (~50 %),
+abaterea ≤ 100 ‰, qkv-513 la 8–17 TFLOP/s, seturile mici ~5–10 µs.
+- **Ieșit ca prezis — corectitudinea:** 6 / 6 în margine, gărzile neatinse, abaterea maximă **69 ‰** (aceeași cifră ca în SIMULARE).
+  **Predicția 2 (încredere doar 50 %) a ieșit: 132 780 / 132 780 de elemente bit cu bit modelul** (`gpu_compute::mm_tc::model`, sumatorul
+  `GA104_OS335` potrivit în os-335 pe 12 numere) — pe 6 forme, cu TA/TB/BIAS, valori f16 subnormale și K = 768. Sumatorul circuitelor
+  speciale e acum dovedit pe placă, nu doar potrivit: `mm_tc` poate fi oracolul pasului mixt fără toleranță.
+- **Ieșit altfel — viteza:** qkv-513 (6 144 × 2 304 × 768, 21,74 GFLOP) **21,15 ms = 1,03 TFLOP/s**, de **8–17 ori sub predicție**
+  (pragul nostru scris: „sub 5 TFLOP/s = frâna e altundeva decât credem”). Seturile mici: 18–161 µs, nu 5–10.
+- **Unde e frâna (din listare + timpi; DEDUS, nu măsurat separat):** fiecare fir copiază felia de K în 32 de elemente (16 din A, 16 din B),
+  **câte unul**: citește, **așteaptă** valoarea, o rotunjește, o scrie în memoria partajată, abia apoi cere următoarea. Unealta nouă
+  `tools/nak/citiri_seriale.py` pe `tools/nak/out2/mm_tc.sm86.txt`: **96 / 96 de `ld.global` așteptate înainte de următoarea citire,
+  cel mult 1 în zbor**. Cu un singur bloc de 4 grupuri de fire pe unitate (24 KiB), nimic nu acoperă așteptarea.
+  Socoteala: 3 456 blocuri / 48 unități = 72 de valuri → 293,8 µs pe bloc / 24 felii = **12,2 µs pe felie** ≈ 22–24 mii de cicluri
+  (1,8–1,95 GHz) ≈ **~700 de cicluri × 32 de citiri la rând**; circuitele speciale au de lucru doar ~500 de cicluri pe felie.
+  Seturile mici o confirmă: timpul crește cu **numărul de felii**, nu cu numărul de blocuri (1 felie 18,4 µs; 2 felii 36,8 / 38,9 µs;
+  3 felii 75,3; 7 felii 161,2 → ~18–25 µs pe felie „la rece”; setul cu 6 blocuri costă cât cel cu 1 bloc la același număr de felii).
+- **Aceeași formă de citire e în toate înmulțirile noastre** (listări): `mm_train_tile` 32/32, `mm_tv_128x128` 80/80,
+  `mm_tv_64x64k8` 24/24, `mm_tc128` 128/128, `mm_s8` 128/128, `mm_tc_gelu` 65/65 — toate cu cel mult 1 în zbor. Excepția care
+  arată leacul: **atenția gen 3** (`attn_fwd_tile3`, trecută pe placă) — indicele strâns cu `min()`, citirile într-un șir de registre
+  fără ramificare, zeroul pus după → **până la 16 citiri în zbor**. La F32 frâna se amestecă cu calculul și memoria partajată (modelul
+  simplu nu le ordonează bine cursa), deci partea ei acolo e NECUNOSCUTĂ; la `mm_tc`, unde calculul e mic, ea e aproape tot timpul.
+- **Ce înseamnă pentru „ocuparea” (citirea centrului):** ocuparea e înmulțitorul, nu cauza. Treapta cea mai mare a noastră (64 KiB) dă
+  `mm_tc` **2 blocuri** pe unitate (24 KiB + rezerva) → cel mult **×2 → ~2 TFLOP/s** (cât F32 de azi). Leacul e în program.
+- **Ce tăiem mai departe (predicții DEDUS, scrise acum, înainte de cod):** (1) proba ocupării pe `mm_tc` la 64 KiB: ×1,7–2,0;
+  (2) `mm_tc128` așa cum e (aceleași 32 de citiri la rând pe fir, de 4 ori mai mult calcul pe felie, 1 bloc): qkv-513 **~3–4,5 TFLOP/s**;
+  (3) **`mm_tc` cu citirile în avans** (ca atenția gen 3: 32 de citiri în zbor, apoi rotunjirea și scrierea): felia ~2–3 mii de cicluri
+  în loc de ~23 de mii → qkv-513 **~5–10 TFLOP/s** (plafonul de acolo = traficul ~1,4 GB din L2 / memoria plăcii, plăcile 64×64 cu f32).
+  Ordinea propusă: (3) e următorul program (o sesiune, SIMULARE + listarea verificată cu `citiri_seriale.py`: ≥ 16 în zbor), apoi
+  același leac în `mm_tc128` / `mm_s8` și în `mm_tv_*`. Nimic nou pentru placă din comparația asta.
+
 ## os-418 — pasul #513 cu alegerea cursei (`--mm-alegere`, 25 nov 2026, 04:33) — sesiunea 222
 Sursa: `rezultate/os-automat/2026-11-25/ciclu-auto-20261125-0433.txt` (rândurile 158–218). Estimarea (sesiunea 219): pasul ~341 ms
 (325–345), înmulțirile ~297 ms, aceiași biți.

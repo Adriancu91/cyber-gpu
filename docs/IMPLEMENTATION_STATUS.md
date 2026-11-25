@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 228 — 25 noiembrie 2026, ~11:13–11:45 (ora României), în cloud, FĂRĂ placă — **comparația os-423: `mm_tc` corect bit cu bit pe placă, dar lent (1,03 TFLOP/s) — cauza: citirile așteptate una câte una**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 227 terminată 10:46), l-am pus `ocupat`. Raport nou de pe placă: **os-423** (`--mm-tc`,
+10:46) → punctul 2 al cozii C-157 (are întâietate). Am lucrat pe ramura de la origine (HEAD detașat pe `ca4ebab`, urcat în
+`g0-g2-fundatie`); clona locală veche are istoria tăiată, n-am șters nimic din ea.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Corectitudinea pe placă | 6 / 6 seturi în margine, gărzile neatinse, 69 ‰ (= SIMULARE); **132 780 / 132 780 bit cu bit modelul** (predicția 2, încredere 50 %) | PASS (placă, os-423) |
+| Viteza pe placă | qkv-513 21,15 ms = **1,03 TFLOP/s** față de 8–17 prezis; seturile mici 18–161 µs față de 5–10 | FAIL (predicția 4 și 5 greșite) |
+| Cauza | listarea: 96 / 96 `ld.global` așteptate înainte de următoarea, cel mult 1 în zbor; 12,2 µs pe felie ≈ 32 × ~700 cicluri; seturile mici: timpul ∝ felii, nu blocuri | DEDUS |
+| Unealta | `tools/nak/citiri_seriale.py` + testul T234 (`crates/nvidia-ga104/tests/nak_serial_loads.rs`, 4/4): toate înmulțirile noastre au forma asta; atenția gen 3 are ≥ 16 în zbor | PASS (MĂSURAT pe text) |
+| Predicții noi (DEDUS) | proba ocupării `mm_tc` la 64 KiB ×1,7–2,0; `mm_tc128` ~3–4,5 TFLOP/s; `mm_tc` cu citirile în avans ~5–10 TFLOP/s | NOT TESTED |
+| Nota pentru OS | `integration/cyber-universe/C-157_P2za_os423-mm-tc.md` — nimic nou de cerut | — |
+| `tools/check.sh` | format, clippy, teste pe gazdă, build no_std | PASS (**1 130 de teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** nimic. **Nicio schimbare incompatibilă** (doar un test și o unealtă noi).
+
+**Următorul pas:** `mm_tc` cu citirile în avans (program nou NAK 26.3.1, aceiași biți ca `mm_tc` în SIMULARE, T234 ≥ 16 în zbor); apoi același
+leac în `mm_tc128` / `mm_s8` / `mm_tv_*`; comparațiile când vin (proba ocupării, os-421, os-422).
+
+---
+
 ## Sesiunea 227 — 25 noiembrie 2026, ~10:12–10:45 (ora României), în cloud, FĂRĂ placă — **dieta de registre la 128×128: `mm_tv_128x128t512` (54 registre), gata de adăugat în cursă în SIMULARE**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 226 terminată 09:58), l-am pus `ocupat`. Niciun raport nou de pe placă după os-418 (laboratorul Kronos are placa; os-419, os-421, os-422 și proba ocupării sunt nerulate). Am luat punctul (3) rămas din nota centrului de la 07:00: „`128x128` la ≤ 85 de registre” (pragul corect: ≤ 80). Am lucrat într-o clonă nouă a ramurii (clona locală veche are istoria tăiată; n-am șters nimic din ea).
@@ -1515,7 +1538,7 @@ aveau ramuri desincronizate; am lucrat în clone proaspete, nimic șters.
 | `nvidia_ga104::mm_tc_probe` (doar adăugări) | 5 seturi mici fixe (toate opțiunile TA/TB/BIAS, margini, limitele f16) + `qkv-513` (6 144×2 304×768, 5 lansări, timpul median, citit pe 3 benzi de 16 rânduri); buffer cu gărzi NaN; QMD cu 24 KiB partajați + barieră; intrările scrise bucată cu bucată (~82,6 MB pentru qkv); rânduri `kt mm_tc`, `parse_mm_tc` | PASS (SIMULARE) |
 | T171 | seturile 0–4 prin procesorul de comenzi: 5/5 în marginea T168, 22 188/22 188 bit cu bit modelul, cel mai rău 69 ‰ (≤ 100 prezis); benzile = lansarea întreagă octet cu octet; greșeli plantate prinse; QMD fără memorie partajată refuzat | PASS (SIMULARE) |
 | `tools/check.sh` (Rust 1.100, ca CI) | format, clippy `-D warnings`, **807 teste**, build no_std; CI roșu pe `8efe392` (o regulă clippy nouă în 1.100, `as_chunks_mut`), reparat în commit-ul următor | PASS |
-| `mm_tc` pe RTX 3070 Ti (corectitudine + 8–17 TFLOP/s prezis la qkv) | predat OS-ului, de rulat după pasul de aur mic F32 | NOT TESTED |
+| `mm_tc` pe RTX 3070 Ti (corectitudine + 8–17 TFLOP/s prezis la qkv) | os-423: corect bit cu bit; 1,03 TFLOP/s (citirile așteptate una câte una, sesiunea 228) | PASS corectitudine / FAIL viteza |
 
 Note: `docs/C-160_P7_MM_TC_PROBA.md`, `integration/cyber-universe/C-160_P7d_mm_tc-proba.md` (commit de legat `54563a5`).
 
