@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 237 — 25 noiembrie 2026, ~21:11–22:40 (ora României), în cloud, FĂRĂ placă — **os-443 comparat (`mm_tc*` la treapta 64 KiB): toate predicțiile în bandă, `mm_tc_v4` = 8,28 TFLOP/s; proba barierei pe toată placa COMPILATĂ + în SIMULARE; găsit: `token.comp` ar fi citit numărul grupurilor de la 0x0c (lăsat 0)**
+## Sesiunea 237 — 25 noiembrie 2026, ~21:11–22:20 (ora României), în cloud, FĂRĂ placă — **os-443 comparat (`mm_tc*` la treapta 64 KiB): toate predicțiile în bandă, `mm_tc_v4` = 8,28 TFLOP/s; proba barierei pe toată placa COMPILATĂ + în SIMULARE; găsit: `token.comp` ar fi citit numărul grupurilor de la 0x0c (lăsat 0)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 236), l-am pus `ocupat`. os-443 (`--mm-tc-64k`) rulase la 21:05 → comparat întâi,
 apoi următorul punct din coadă (proba barierei, `docs/C-157_PROGRAM_PERSISTENT.md` §5 p.3). Plan + predicții B1–B5 scrise înainte de cod
