@@ -174,3 +174,22 @@ cu ~141 387 µs (DEDUS, din timpii izolați); tabloul: 1 785 MHz, P0, 77 W, nici
   Intervalul 325–345 ms rămâne. Biții: aceiași ca oracolul (ca la os-416, unde toate variantele au dat biții martorului).
 - **Ce rămâne după:** și `mm_tv_128x128` e doar ~2,0 TFLOP/s la 1 785 MHz (~9 % din vârful F32) → frâna e tot în citiri; următorul pas
   mare e `mm_tc` (os-352 / os-384 încă nerulate) pe aceeași formă de plăci, apoi pasul mixt pe #513 (`LOSS_SCALE_513`).
+
+## `mm_tc128` — `mm_tc` pe plăci 128×128 (sesiunea 220, 25 nov 03:14; în cloud, FĂRĂ placă)
+
+**De ce:** cursa os-416 a ales pe toate 15 formele placa de 128×128 (×1,45 față de 64×64 în F32). `mm_tc` (circuitele speciale, f16 → f32)
+are azi doar plăci de 64×64 (128 de fire). Pregătim varianta lui de 128×128, ca să intre în aceeași cursă imediat după ce `mm_tc` trece
+o dată singur pe placă (os-352 / os-384, încă nerulate — regula „primul de felul lui” rămâne).
+
+**Ce e:** `tools/nak/mm_tc128.comp` — aceeași treabă, aceleași constante (cbuf 0 + 0x700), aceeași aritmetică ca `mm_tc` (op(A), op(B)
+rotunjite la f16 la copiere; produsele adunate în f32 de circuitele speciale de la 0, K în pași de 16 în ordine; bias o dată la final).
+Se schimbă doar lansarea: 256 de fire (8 subgrupuri), 128×128 din C pe bloc, fiecare subgrup 32×64 = 2×4 acumulatori; ieșirea prin câte
+o zonă mică de 16×16 pe subgrup (16 + 8 = 24 KiB de memorie comună, ca `mm_tc`; un bloc de 128×128 f32 nu încape în 48 KiB).
+
+**Predicții (scrise înainte de cod, T226):**
+1. NAK 26.3.1 compilează programul; registre ≤ 128 pe fir (8 acumulatori × 8 + fragmentele), fără scurgeri în memoria locală.
+2. În listare: 16 `HMMA.16816.F32` pe felie de 32 (8 acumulatori × 2 pași de 16) — de 4 ori mai multe decât `mm_tc` (4), două bariere de bloc.
+3. În SIMULARE: aceiași biți ca `mm_tc` pe toate 15 formele pasului #513 și pe forme cu margini (M, N, K care nu se împart la 128 / 32),
+   cu și fără TA / TB / BIAS; grila = ⌈N/128⌉ × ⌈M/128⌉; modelul refuză blocuri de 128 sau grila prea mică.
+4. Pe placă (ESTIMARE, de verificat după os-352): între ×1,3 și ×2 față de `mm_tc` 64×64 pe formele mari ale pasului #513
+   (aceeași cauză ca în F32: de 2 ori mai puține citiri din memorie pe operație).

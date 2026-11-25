@@ -11,6 +11,7 @@
 #   sh tools/nak/build2.sh mma16_s8     # 16x16x32 s8 -> s32 (IMMA probe; compiled, not modelled)
 #   sh tools/nak/build2.sh mm_tc        # C-160 point 7: training matmul on the tensor cores, f32 in/out, f16 products (session 157)
 #   sh tools/nak/build2.sh mm_tc_gelu   # C-157 p.2: mm_tc with gelu_tr mode 1 in the store, mixed step (session 199)
+#   sh tools/nak/build2.sh mm_tc128     # C-165 after os-416: mm_tc on 128x128 tiles, 256 threads, same bits (session 220)
 #   sh tools/nak/build2.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): the apt packages listed in build.sh, plus
@@ -49,6 +50,9 @@ mma16_s8)
 mm_tc)
     exec sh "$0" kernel mm_tc 48
     ;;
+mm_tc128)
+    exec sh "$0" kernel mm_tc128 48
+    ;;
 mm_tc_gelu)
     exec sh "$0" kernel mm_tc_gelu 48
     ;;
@@ -75,6 +79,6 @@ kernel)
     rm -rf "$TMP"
     ;;
 *)
-    echo "usage: $0 mesa|mma16_f16|mma16_s8|mm_tc|mm_tc_gelu|kernel <nume> <octeti>" >&2; exit 2
+    echo "usage: $0 mesa|mma16_f16|mma16_s8|mm_tc|mm_tc128|mm_tc_gelu|kernel <nume> <octeti>" >&2; exit 2
     ;;
 esac
