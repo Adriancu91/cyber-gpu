@@ -32,3 +32,19 @@ memoria comună (16 scrieri de 2 octeți pe vector) sau la bariere.
 ## Ce e nou pentru placă
 Doar programul `mm_tc_v4` (SHA-256 notat la compilare). Nicio scriere în registre, niciun firmware, aceeași lansare ca `mm_tc`.
 O citire de 128 de biți nealiniată ar fi o eroare pe placă → OS-ul îl lansează **numai** când `fits` spune da.
+
+## Rezultatul (sesiunea 230, în cloud) — ce a ieșit față de predicții
+Unealta: Mesa 26.3.1 reconstruit în cloud; `mm_tc_pf` recompilat a ieșit **identic** (SHA `48defc5d…`), deci unealta e aceeași.
+Programul a ieșit din **prima** compilare: SHA-256 `488ca341fd5bf400cbaf41eebe65998c5f7ae167b8c5443828ef451e1967acf1`.
+
+| # | Prezis | Ieșit | Verdict |
+|---|---|---|---|
+| P1 | 8 citiri de 128 de biți pe felie | **16 `ld.global…b128`** = 8 înainte de buclă + 8 în buclă; restul de 32 citiri sunt `bias` la final (ca la `mm_tc_pf`); 48 de citiri în total față de 96 | PASS |
+| P2 | ≤ 248 registre, 0 memorie locală | **128 registre**, 0 memorie locală, 16 `hmma` ca `mm_tc` | PASS — și mai bine: 128 × 128 registre → 4 blocuri pe unitate după registre (față de 2), cât permite memoria comună la treapta maximă |
+| P3 | 5–8 în zbor (regula strictă) | **5 în zbor** (marginea de jos); în buclă cele 8 citiri sunt așteptate în ~3 locuri, toate înainte de primele circuite speciale (nu se suprapun cu ele, ca la `mm_tc_pf`) | PASS (MĂSURAT pe text) |
+| P4 | SIMULARE (T236) | transcrierea citirilor (fir cu fir, vector cu vector, toate opțiunile, margini): **aceleași valori** în memoria comună ca `mm_tc` pentru toate produsele aliniate; fiecare vector aliniat și întreg în buffer; formele nealiniate prinse; o greșeală plantată (ordinea benzilor la Aᵀ) prinsă; prin procesorul de comenzi: **aceiași biți** pe 50 de produse × opțiuni; produsele nealiniate (forme sau adrese) **refuzate** fără scriere | PASS (SIMULARE) |
+| P5 | aceiași biți pe placă | — | NOT TESTED |
+| P6 | qkv-513 ~5–9 TFLOP/s | DEDUS: așteptările pe felie ~6–7 → ~3, plus ocuparea dublă (registre) | NOT TESTED |
+
+Ce ar urma pentru mai mult (DEDUS): citirile feliei următoare tot nu se suprapun cu circuitele speciale (NAK le așteaptă înainte de
+primele `hmma`); ocuparea mai mare (4 blocuri) e cea care ar ascunde restul.

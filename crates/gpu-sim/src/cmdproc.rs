@@ -3249,6 +3249,37 @@ pub fn mm_tc_pf_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     mm_tc_on_cpu(l)
 }
 
+/// C-157 p.2 (session 230, `docs/C-157_P2_CITIRI_128.md`): what `tools/nak/out2/mm_tc_v4.sm86.sass` needs — exactly
+/// `mm_tc`'s shared memory and one barrier (the 128-bit loads land in registers).
+pub const MM_TC_V4_NEEDS: Needs = MM_TC_NEEDS;
+
+/// C-157 p.2 (session 230): the CPU stand-in for `tools/nak/out2/mm_tc_v4.sm86.sass` — `mm_tc_pf` with 128-bit global
+/// loads (4 neighbouring floats per load). Valid only for aligned products: the stored row length of A (k, or m with
+/// TA) and of B (n, or k with TB) a multiple of 4, and A / B at multiples of 16 bytes; anything else would be a
+/// misaligned or straddling 128-bit load on the board, so the model REFUSES it (no write) instead of guessing. For
+/// aligned products the values copied to shared memory are `mm_tc`'s (T236), so the stand-in is [`mm_tc_on_cpu`].
+pub fn mm_tc_v4_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    let base = l.cbuf0 + MMA16_PUSH_BASE;
+    let a = l.mem.read_u64(base)?;
+    let b = l.mem.read_u64(base + 0x08)?;
+    let m = l.mem.read_u32(base + 0x20)?;
+    let n = l.mem.read_u32(base + 0x24)?;
+    let k = l.mem.read_u32(base + 0x28)?;
+    let flags = l.mem.read_u32(base + 0x2c)?;
+    let a_row = if flags & 1 != 0 { m } else { k };
+    let b_row = if flags & 2 != 0 { k } else { n };
+    if !a_row.is_multiple_of(4)
+        || !b_row.is_multiple_of(4)
+        || !a.is_multiple_of(16)
+        || !b.is_multiple_of(16)
+    {
+        return Err(bad(
+            "SIM: mm_tc_v4: produs nealiniat (randuri multiplu de 4, adrese multiplu de 16)",
+        ));
+    }
+    mm_tc_on_cpu(l)
+}
+
 /// C-165 after os-416 (session 220): what `tools/nak/out2/mm_tc128.sm86.sass` needs — the f16 slices of op(A)
 /// (128×32) and op(B) (32×128) plus one 16×16 f32 scratch per subgroup (8 of them): 8 + 8 + 8 KiB, one barrier.
 pub const MM_TC128_NEEDS: Needs = Needs {

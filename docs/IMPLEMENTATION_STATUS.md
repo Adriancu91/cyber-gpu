@@ -1,5 +1,30 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 230 — 25 noiembrie 2026, ~14:11–15:10 (ora României), în cloud, FĂRĂ placă — **`mm_tc_v4`: `mm_tc_pf` cu citiri de 128 de biți, gata pentru placă în SIMULARE; 128 de registre în loc de 248**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 229 terminată 13:35), l-am pus `ocupat`. Niciun raport nou de pe placă (OS-ul are
+`mm_tc_pf` în lucru). Am luat pasul următor scris: citiri de 128 de biți (coada C-157). Plan + predicții urcate **înainte** de compilare
+(`01949ca`, `docs/C-157_P2_CITIRI_128.md`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Unealta | Mesa 26.3.1 reconstruit în cloud; `mm_tc_pf` recompilat **identic** (SHA `48defc5d…`) | PASS |
+| Programul | `tools/nak/mm_tc_v4.comp`: 4 + 4 citiri `vec4` pe fir pe felie (în loc de 16 + 16), doar pentru produse aliniate; o singură compilare | **128 registre** (P2 ≤ 248 ✓), 0 locală, 16 `ld…b128`, SHA `488ca341…` |
+| Cod (doar adăugări) | `nvidia_ga104::mm_tc_v4` (cu `fits`: rânduri multiplu de 4, adrese multiplu de 16), `gpu_sim::cmdproc::{mm_tc_v4_on_cpu, MM_TC_V4_NEEDS}` (refuză produsele nealiniate) | — |
+| T236 (5 teste) | transcrierea citirilor vector cu vector = aceleași valori în memoria comună ca `mm_tc`, fiecare vector aliniat și întreg; greșeala plantată și formele nealiniate prinse; aceiași biți prin procesorul de comenzi (50 de produse); refuzurile | PASS (SIMULARE) |
+| Listarea (T234f) | 48 de citiri (față de 96), regula strictă: **5 în zbor**; în buclă cele 8 citiri sunt așteptate în ~3 locuri (față de ~6–7), tot înainte de circuitele speciale | MĂSURAT pe text |
+| Predicția de viteză | qkv-513 **~5–9 TFLOP/s** (os-423: 1,03; `mm_tc_pf` prezis 3–5); ocuparea după registre 4 blocuri în loc de 2 | NOT TESTED |
+| Nota pentru OS | `integration/cyber-universe/C-157_P2zc_mm-tc-v4.md` — un rând în plus în `--mm-tc`, **numai când `fits`** | NOT TESTED (de rulat de OS) |
+| `tools/check.sh` | format, clippy, teste pe gazdă, build no_std | PASS (**1 146 de teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** doar programul `mm_tc_v4` (SHA-256 `488ca341fd5bf400cbaf41eebe65998c5f7ae167b8c5443828ef451e1967acf1`,
+QMD cu 128 registre), când îl pune OS-ul în proba `--mm-tc`, **numai pe produse aliniate**. **Nicio schimbare incompatibilă.**
+
+**Următorul pas:** același leac (citiri de 128 de biți fără ramificări) în `mm_tc128`, apoi `mm_s8` / `mm_tv_*`; comparațiile când vin
+(`mm_tc_pf`, `mm_tc_v4`, proba ocupării, os-421, os-422).
+
+---
+
 ## Sesiunea 229 — 25 noiembrie 2026, ~12:10–13:00 (ora României), în cloud, FĂRĂ placă — **`mm_tc_pf`: `mm_tc` cu citirile în avans, gata pentru placă în SIMULARE; regula strictă a citirilor în zbor**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 228 terminată 11:50), l-am pus `ocupat`. Niciun raport nou de pe placă. Am luat

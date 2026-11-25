@@ -154,3 +154,19 @@ fn t234e_mm_tc_pf_loads_ahead_and_the_strict_count() {
     let text = "a = ld.global.b32 [r0] // wr:0\nb = ld.global.b32 [r2] // wr:1\nc = ld.global.b32 [r4] // wt=000001 wr:0\n";
     assert_eq!(strict_in_flight(text), 2);
 }
+
+#[test]
+fn t234f_mm_tc_v4_four_times_fewer_loads() {
+    // mm_tc_v4 (C-157 p.2, session 230): the same 5 in flight as mm_tc_pf, but a quarter of the loads — 8 of 128 bits
+    // per slice (twice: before the loop and in it) instead of 32 of 32 bits; the 32 bias loads of the epilogue stay.
+    let v4 = listing("out2/mm_tc_v4.sm86.txt");
+    let l = analyse(&v4);
+    assert_eq!((l.total, l.serial), (48, 34));
+    assert_eq!(
+        v4.lines()
+            .filter(|x| x.contains("ld.global") && x.contains(".b128"))
+            .count(),
+        16
+    );
+    assert_eq!(strict_in_flight(&v4), 5);
+}
