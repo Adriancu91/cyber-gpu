@@ -127,6 +127,7 @@ pub mod mm_train_variants;
 pub mod mma16;
 pub mod mma16_probe;
 pub mod mmu;
+pub mod occupancy;
 pub mod opt_step;
 pub mod packs;
 pub mod probe;

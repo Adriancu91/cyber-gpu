@@ -71,6 +71,10 @@ pub fn sm_config_shared_units(bytes: u32) -> u32 {
     kib / 4 + 1
 }
 
+/// C-165: the SM shared-memory steps [`ComputeQmd::encode_with_sm_config`] accepts (bytes). 96 KiB is left out:
+/// our `MAX` is the 64 KiB step (Mesa NVK's 48 KiB limit per block).
+pub const SM_CONFIG_STEPS: [u32; 4] = [8 << 10, 16 << 10, 32 << 10, 64 << 10];
+
 /// Inputs for one launch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ComputeQmd {
@@ -215,6 +219,55 @@ impl ComputeQmd {
         )?;
         put(&mut m, q::NVC6C0_QMDV03_00_BARRIER_COUNT, s.barriers as u32)?;
         Ok(m)
+    }
+
+    /// C-165 (`docs/C-165_OCUPAREA.md`): [`Self::encode_with_shared`] with the SM's shared-memory step chosen by the
+    /// caller — `MIN = TARGET =` `step_bytes` (8/16/32/64 KiB), `MAX` as today — instead of the step of one block.
+    /// Every other field is the same as [`Self::encode_with_shared`]; at the one-block step the bytes are identical.
+    /// That the board keeps more blocks per SM with a larger step is DEDUS (no public description of the fields);
+    /// the occupancy probe on the board decides.
+    pub fn encode_with_sm_config(
+        &self,
+        s: &SharedMemory,
+        step_bytes: u32,
+    ) -> GpuResult<[u32; QMD_SIZE / 4]> {
+        if !SM_CONFIG_STEPS.contains(&step_bytes) {
+            return Err(GpuError::InvalidArgument(
+                "QMD: treapta memoriei comune nu e 8/16/32/64 KiB",
+            ));
+        }
+        let mut m = self.encode_with_shared(s)?;
+        if step_bytes < s.bytes.next_multiple_of(0x100) {
+            return Err(GpuError::InvalidArgument(
+                "QMD: treapta e mai mica decat memoria blocului",
+            ));
+        }
+        let units = sm_config_shared_units(step_bytes);
+        if units > sm_config_shared_units(s.max_bytes) {
+            return Err(GpuError::InvalidArgument(
+                "QMD: treapta depaseste MAX_SM_CONFIG",
+            ));
+        }
+        put(
+            &mut m,
+            q::NVC6C0_QMDV03_00_MIN_SM_CONFIG_SHARED_MEM_SIZE,
+            units,
+        )?;
+        put(
+            &mut m,
+            q::NVC6C0_QMDV03_00_TARGET_SM_CONFIG_SHARED_MEM_SIZE,
+            units,
+        )?;
+        Ok(m)
+    }
+
+    /// [`Self::encode_with_sm_config`] as little-endian bytes.
+    pub fn to_bytes_with_sm_config(
+        &self,
+        s: &SharedMemory,
+        step_bytes: u32,
+    ) -> GpuResult<[u8; QMD_SIZE]> {
+        Ok(words_to_bytes(&self.encode_with_sm_config(s, step_bytes)?))
     }
 
     /// [`Self::encode_with_shared`] as little-endian bytes.

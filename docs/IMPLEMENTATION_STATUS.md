@@ -1,5 +1,25 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 224 — 25 noiembrie 2026, ~07:14–07:39 (ora României), în cloud, FĂRĂ placă — **proba ocupării gata de legat (studiul centrului 07:00)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 223 terminată 06:46), l-am pus `ocupat`. Niciun raport nou de pe placă (laboratorul Kronos o are de la 07:00); centrul a cerut la 07:00 părerea noastră și proba ocupării (`idei/2026-11-25-centru-inmultirea-la-altii.md`). Clona locală veche avea istoria tăiată; am lucrat într-o clonă nouă, fără să șterg nimic.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Părerea | câmpurile citite bine (DEDUS); pragul la `128x128` e ≤ 80 registre, nu ≤ 85; rezerva CUDA de 1 KiB pe bloc și ipoteza H2 (placa urcă singură treapta) — proba le deosebește | scrisă în hub, „Discuție” |
+| Verificări | P1–P6 + T230a–f scrise înainte de cod (`4e761ae`), `docs/C-165_OCUPAREA.md` | — |
+| Cod (doar adăugări) | `qmd::{SM_CONFIG_STEPS, ComputeQmd::encode_with_sm_config, to_bytes_with_sm_config}`; `nvidia_ga104::occupancy` (limitele 8.6, `blocks_per_sm`, `best_step`, `PROBE` cu 10 rulări); `gpu_sim::CommandProcessor::sm_configs` + verificarea MIN ≤ TARGET ≤ MAX și treapta ≥ memoria blocului | — |
+| T230 | `crates/nvidia-ga104/tests/sim_c165_ocuparea.rs`: tabelul blocurilor, octeții de azi neschimbați la treapta unui bloc, trepte greșite refuzate, `best_step`, cele 10 rulări = biții martorului, modelul refuză trepte greșite | PASS 6/6 în SIMULARE |
+| Viteza | H1: ×1,5–3 pe `mm_train_tile` la 64 KiB; H2: nimic | DEDUS, NOT TESTED |
+| Nota pentru OS | `integration/cyber-universe/C-165_proba-ocuparii.md` | NOT TESTED (de rulat de OS) |
+| `tools/check.sh` | format, clippy, teste pe gazdă, build no_std | PASS (**1 105 de teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** doar valoarea câmpurilor `MIN`/`TARGET_SM_CONFIG_SHARED_MEM_SIZE` din QMD, la proba ocupării. **Nicio schimbare incompatibilă.**
+
+**Următorul pas:** comparația probei ocupării și a cursei cu 5 variante când vin; dacă H1 → o singură treaptă pe tot pasul în `Plan` (`best_step`), apoi `128x128` la ≤ 80 registre și `mm_tc` cu mai puțină memorie pe bloc; altfel B1 `mm_s8` pe plăci (SIMULARE).
+
+---
+
 ## Sesiunea 223 — 25 noiembrie 2026, ~06:11–06:45 (ora României), în cloud, FĂRĂ placă — **B1: NAK scoate int8 pe tensor cores; proba `mma16_s8` modelată, bit cu bit**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 222 terminată 05:38), l-am pus `ocupat`. Niciun raport nou de pe placă după os-418 (laboratorul Kronos are placa de la 07:00), deci am luat punctul următor din coadă: pista B1 (aprobată 24 nov 21:39).

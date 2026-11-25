@@ -417,6 +417,9 @@ pub struct CommandProcessor {
     pub sim_ce_mb_s: u64,
     /// C-157, SIMULARE: simulated fixed cost of one copy (ns).
     pub sim_ce_copy_ns: u64,
+    /// C-165 (`docs/C-165_OCUPAREA.md`), SIMULARE: `[MIN, TARGET, MAX]` of the QMD's SM shared-memory step, one entry
+    /// per launch that set a step (QMD units: KiB / 4 + 1). The model has no occupancy: it only checks and records.
+    pub sm_configs: Vec<[u32; 3]>,
 }
 
 impl Default for CommandProcessor {
@@ -450,6 +453,7 @@ impl CommandProcessor {
             ce: CeState::default(),
             sim_ce_mb_s: 0,
             sim_ce_copy_ns: 0,
+            sm_configs: Vec::new(),
         }
     }
 
@@ -949,6 +953,26 @@ impl CommandProcessor {
                 "SIM: QMD da mai putina memorie partajata decat cere programul",
             ));
         }
+        // C-165: the SM shared-memory step. 0 everywhere = a QMD without shared memory (`ComputeQmd::encode`).
+        let sm = [
+            g(q::NVC6C0_QMDV03_00_MIN_SM_CONFIG_SHARED_MEM_SIZE),
+            g(q::NVC6C0_QMDV03_00_TARGET_SM_CONFIG_SHARED_MEM_SIZE),
+            g(q::NVC6C0_QMDV03_00_MAX_SM_CONFIG_SHARED_MEM_SIZE),
+        ];
+        if sm != [0, 0, 0] {
+            if sm[0] > sm[1] || sm[1] > sm[2] {
+                return Err(bad(
+                    "SIM: QMD cu MIN > TARGET sau TARGET > MAX la treapta SM",
+                ));
+            }
+            // Units are KiB / 4 + 1 (Mesa NAK `gv100_sm_config_smem_size`).
+            let target_bytes = sm[1].saturating_sub(1) * 4096;
+            if target_bytes < g(q::NVC6C0_QMDV03_00_SHARED_MEMORY_SIZE) {
+                return Err(bad(
+                    "SIM: treapta SM e mai mica decat memoria comuna a blocului",
+                ));
+            }
+        }
         if g(q::NVC6C0_QMDV03_00_BARRIER_COUNT) < needs.barriers {
             return Err(bad(
                 "SIM: QMD declara mai putine bariere decat foloseste programul",
@@ -970,6 +994,9 @@ impl CommandProcessor {
         });
         self.mem.set_in_program(was);
         ran?;
+        if sm != [0, 0, 0] {
+            self.sm_configs.push(sm);
+        }
         self.gpu_time_ns += self.sim_launch_ns;
         self.events.push(Event::Launch {
             qmd: qmd_va,
