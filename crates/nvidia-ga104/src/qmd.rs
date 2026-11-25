@@ -39,7 +39,8 @@ pub const MAX_SHARED_BYTES: u32 = 48 * 1024;
 /// mapped after it, that read-ahead is a page fault on a read the program never asked for. Mesa NVK leaves a whole
 /// page after the code; Mesa nouveau/nvc0 went from 256 bytes to 2 KiB for "read page faults at the end of the shader
 /// allocation" (commit "nouveau/nvc0: increase overallocation on shader bo", MIT; idea only). We take NVK's page.
-/// Status: the cause of the os-413 stop is DEDUS (`docs/C-165_CURSA_MM.md`, „os-413”), not proven on the board.
+/// Status: the cause of the os-413 stop was DEDUS (`docs/C-165_CURSA_MM.md`, „os-413”); os-417 (25 nov 2026) ran the
+/// same program, mapped last again, with this page after it — it finished with the witness's bits (the one change).
 pub const PROGRAM_TAIL_BYTES: u64 = 4096;
 
 /// How many bytes to map for a program of `code_len` bytes: the code rounded up to 4 KiB pages, plus

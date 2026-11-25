@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 221 — 25 noiembrie 2026, ~04:14–05:05 (ora României), în cloud, FĂRĂ placă — **os-417 comparat: `mm_tv_64x64k8` se întoarce în cursă**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 220 terminată 04:05), l-am pus `ocupat`. Venise os-417 (proba `64x64k8` cu pagina de pază, 03:48) — comparația are întâietate (C-157 p.2).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Predicții | P1–P5 scrise înainte de cod (`eb57a00`) | toate 5 corecte; **neprezis:** `64x64k8` mai rapidă și decât `128x128` pe qkv (1 768 față de 1 890 µs) |
+| Proba os-417 | `parse_race` pe rândurile adevărate: 2 rânduri „=”; qkv → `mm_tv_64x64k8` (0,622 din martor); economia 12 854 µs = OS | PASS (pe procesor; timpii = ai plăcii reale, prin OS) |
+| Cauza os-413 | aceeași variantă, mapată tot ultima, cu o pagină după cod → termină cu aceiași biți: citirea în avans confirmată | confirmat pe placă (de OS, os-417) |
+| Cod | `mm_train_variants::{RACE_CLEARED_OS417, race_list_full}`; comentariul lui `qmd::PROGRAM_TAIL_BYTES` | doar adăugări |
+| T227 | `crates/nvidia-ga104/tests/c165_os417.rs` + `tests/rapoarte/os417-{proba64k8,profil}.txt` | PASS (4/4) |
+| Predicția pentru placă | cursa completă cu 5 variante: `64x64k8` câștigă formele cu 768 de coloane (48 de blocuri la `128x128`), pasul încă ~15–40 ms mai jos decât alegerea os-416 | NOT TESTED (de rulat de OS) |
+| Note | `docs/C-165_CURSA_MM.md` §„os-417”, `docs/C-157_P2_COMPARATII.md`, `integration/cyber-universe/C-165_os417_64x64k8-intoarsa.md`, `docs/TEST_MATRIX.md` | — |
+| `tools/check.sh` | format, clippy, teste pe gazdă, build no_std | PASS (**1 084 de teste**, 8 ignorate; build no_std PASS după instalarea țintei) |
+
+**Ce e nou pentru placă:** nimic (aceleași programe, aceeași mapare ca la os-417). **Nicio schimbare incompatibilă.**
+
+**Următorul pas:** comparația os-418 (pasul #513 cu `128x128`, prezis ~341 ms) când vine; apoi cursa cu `race_list_full()`; `mm_tc` / `mm_tc128` după os-352; altfel `mm_tc_gelu` pe 128×128 sau B1 (int8 IMMA).
+
+---
+
 ## Sesiunea 220 — 25 noiembrie 2026, ~03:10–04:05 (ora României), în cloud, FĂRĂ placă — **`mm_tc128`: `mm_tc` pe plăci 128×128**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 219 terminată 02:54), l-am pus `ocupat`. Niciun test nou pe placă de comparat (os-417 = proba `64x64k8`, încă nerulată), deci punctul următor din coadă: `mm_tc` pe plăcile care au câștigat cursa os-416.

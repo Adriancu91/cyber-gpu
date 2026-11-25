@@ -148,6 +148,22 @@ pub fn race_list() -> impl Iterator<Item = (usize, &'static Variant)> {
     VARIANTS.iter().enumerate().filter(|(i, _)| in_race(*i))
 }
 
+/// C-165, os-417 (25 nov 2026, the board): `mm_tv_64x64k8`, mapped last again but with
+/// [`crate::qmd::program_map_bytes`] (one page after the code), finished with the witness's bits on the qkv shape
+/// (1 768.0 µs against 2 839.2) — the one change from os-413, so the read-ahead cause is confirmed for this board. The
+/// variants that board run brought back from [`RACE_HOLD`] (which itself stays as it was, for callers that use it).
+pub const RACE_CLEARED_OS417: [usize; 1] = [4];
+
+/// The race list after os-417: every variant of [`VARIANTS`], the witness first (= [`race_list`] plus
+/// [`RACE_CLEARED_OS417`]). Only for a race whose programs are all mapped with [`crate::qmd::program_map_bytes`] —
+/// the condition under which `mm_tv_64x64k8` finished on the board.
+pub fn race_list_full() -> impl Iterator<Item = (usize, &'static Variant)> {
+    VARIANTS
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| in_race(*i) || RACE_CLEARED_OS417.contains(i))
+}
+
 /// One shape of `mm_train` product in a step: the arguments without the addresses, and how many launches have it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Form {

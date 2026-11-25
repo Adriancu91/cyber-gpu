@@ -2,6 +2,15 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-417 — proba `mm_tv_64x64k8` singură, cu pagina de pază (25 nov 2026, 03:48) — sesiunea 221
+Sursa: `rezultate/os-automat/2026-11-25/ciclu-auto-20261125-0348.txt` (rândurile 183–222). Estimarea (sesiunea 216): „termină cu aceiași
+biți → cauza = citirea în avans”; timp neprezis.
+- **Ieșit ca estimat:** termină, aceiași biți ca martorul → cauza confirmată; varianta se întoarce în cursă (`race_list_full()`).
+- **Ieșit altfel:** pe qkv e **cea mai rapidă dintre toate** — 1 768 µs față de 1 890 la `128x128` (os-416) și 2 839 la martor (×1,61).
+- Pasul #513 (aceeași listă ca os-414): 463,7 ms față de 463,6 — repetabil sub 1 ‰; înmulțirile = 93 % din placă.
+- **Ce tăiem mai departe:** cursa completă cu 5 variante; bănuiala: `128x128` are doar 48 de blocuri pe formele cu 768 de coloane,
+  acolo `64x64k8` (192 de blocuri) ar trebui să câștige. Nota `integration/cyber-universe/C-165_os417_64x64k8-intoarsa.md`.
+
 ## os-414 (A4, tabloul în timpul pașilor) + os-415 `--lipit-placi` (25 nov 2026, 00:18 / 00:58) — sesiunea 218
 Surse: `Cyber-hub/rezultate/2026-11-25-workstation-os414-tablou/REZULTAT.md`, `rezultate/os-automat/2026-11-25/ciclu-auto-20261125-0018.txt`
 (os-414: `--mm-placi --colsum-impartit`) și `ciclu-auto-20261125-0058.txt` (os-415: `--mm-placi --lipit-placi`, **fără** `--colsum-impartit`).

@@ -221,3 +221,24 @@ confirmată și varianta se întoarce în cursă. Nu prezisesem un timp pentru `
 4. Pasul #513 din os-417 (`--placi3 --mm-placi --colsum-impartit`, fără alegere) = os-414 (aceeași listă): placa 463,7 ms față de
    463,6, sub 1 ‰ — pasul e repetabil, deci comparația os-418 cu alegerea `128x128` (prezis ~341 ms) rămâne curată.
 5. `program_page_slack` pentru `mm_tv_64x64k8` cu `program_map_bytes` ≥ 4 096 (față de 16 la os-413).
+
+**Rezultat (sesiunea 221, T227 4/4 PASS pe procesor; timpii = ai plăcii reale, prin OS):**
+- **Cauza de la os-413 confirmată pe placă:** cu pagina de pază după cod (singurul lucru schimbat), `mm_tv_64x64k8` a terminat cu
+  **aceiași biți** ca martorul. `program_page_slack` = 16 B la os-413, ≥ 4 096 B la os-417. Varianta se întoarce în cursă:
+  `RACE_CLEARED_OS417 = [4]`, `race_list_full()` (toate 5; `RACE_HOLD` și `race_list()` rămân neschimbate — doar adăugări).
+- **P1, P2 corecte:** 2 rânduri „=”, 12 lansări; qkv → `64x64k8`, **1 768,0 µs față de 2 839,2** (0,622 din martor = ×1,61);
+  economia 12 854 µs = cât a scris OS-ul.
+- **Surpriza (n-o prezisesem):** pe qkv, `64x64k8` e **mai rapidă și decât `128x128`** (1 768,0 față de 1 890,2 µs, −6,5 %),
+  la același ceas al cursei (martorul 2 839,2 / 2 839,4 µs în cele două rulări).
+- **P3 corectă:** os-416 + os-417 împreună → qkv pe `64x64k8`, celelalte 14 pe `128x128`, 2 programe; economia 142 852 µs față de
+  141 385 (+1,5 ms pe pas, DEDUS din timpii izolați). Mic — dar `64x64k8` n-a fost încă măsurată pe celelalte 14 forme.
+- **P4 corectă:** pasul os-417 (463 732 µs) = os-414 (463 594 µs), sub 1 ‰ → pasul e repetabil; înmulțirile 431,2 ms = 93 % din placă.
+- **P5 corectă.**
+
+**De ce poate conta mai mult decât 1,5 ms (DEDUS, de verificat cu cursa completă):** `128x128` face puține blocuri pe formele
+înguste: 1 024 × 768 → 8 × 6 = **48 de blocuri** = un singur bloc pe fiecare din cele 48 de unități de calcul; `64x64k8` face 192.
+Exact pe formele cu 768 de coloane `128x128` a câștigat cel mai puțin la os-416 (768×768×1024: 0,888 din martor; 2304×768×1024:
+0,883; 1024×768×768: 0,75). **Predicție pentru cursa completă cu 5 variante:** `64x64k8` câștigă cel puțin cele 3 forme de mai sus
+(și probabil alte forme cu N = 768); `128x128` păstrează capul (16 384) și formele cu N ≥ 2 304, unde are destule blocuri. Dacă
+`64x64k8` ține ~0,62 din martor peste tot, pasul ar mai scădea cu ~15–40 ms față de alegerea os-416 (interval larg: un singur punct
+măsurat).
