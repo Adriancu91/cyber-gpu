@@ -62,7 +62,31 @@ noi → în afara modelului (cursa le judecă).
 
 ## 4. Rezultat (sesiunea 232, T238, pe procesor)
 
-(completat după cod)
+Cod: `nvidia_ga104::wave_model` (doar adăugare: `OS423_WAVES`, `wave_ns`, `launch_ns`, `launch_ns_at`,
+`blocks_per_sm` cu R0, `predicted_choice`); test `crates/nvidia-ga104/tests/c165_os431.rs` (T238, 4/4 PASS).
+
+- **T238a:** cele 10 rânduri os-423 citite; modelul le reface la ≤ 1 % (tabelul e făcut din ele); P5 → R0 verificat
+  (16 KiB: 2 blocuri fără rezervă, 1 cu rezervă — placa a câștigat ×1,48).
+- **V1 corectă:** pe cursa os-416, cele 15 forme `128x128` la ≤ **10,4 %** (cea mai rea: capul 16 384 × 768 × 1 024,
+  TA — modelul îl vede cu +10 %; restul ≤ 4 %).
+- **V2 corectă:** `mm_tv_128x128` în pas — os-418 placa 294 946 µs, modelul 302 341 (+2,5 %); os-431 223 234, modelul
+  226 803 (+1,6 %); cele 7 etichete la ≤ **3,9 %**, la ambele trepte. Cele două etichete cu 48 de blocuri n-au câștigat
+  nimic (≤ 1 %), cum spune modelul.
+- **V3 (alegerea modelului la 64 KiB):** `mm_tv_128x128` păstrează cele 2 forme 1024 × 3072 × 768 (192 de blocuri), logit
+  (1024 × 16 384 × 768) și cap-dW (16 384 × 768 × 1 024); `mm_tv_64x64k8` ia qkv înainte (1024 × 2304 × 768) și
+  dW-urile 768 × 3072 / 3072 × 768; **`mm_train_tile`** (64 × 64, 6 blocuri pe unitate) ia toate cele 6 forme cu
+  N = 768 și M = 1 024 (inclusiv cap-dX, K = 16 384), out-dW (768 × 768) și qkv-dW (2 304 × 768, la egalitate cu
+  `64x64k8`).
+- **V4 (predicția pentru placă):** înmulțirile **~160,7 ms** (din 223,2), pasul **~204,3 ms ≈ 5 010 simb/s** (din 266,8 /
+  3 837), interval 195–215 ms. Restul plăcii (32,7 ms) și ce e în afara ei (11,0 ms) neschimbate. Aceiași biți.
+- **V5** rămâne deschisă până la cursa refăcută la 64 KiB.
+
+**Corectură la §2:** cele 6 forme cu N = 768 și M = 1 024 cântăresc în os-431 ~105 ms din 223 (modelul), nu ~97.
+
+**Ce tăiem mai departe (în ordinea câștigului, DEDUS):** (1) alegerea pe formă la 64 KiB (−60 ms pe pas, V4) — o cursă
+refăcută cu `--treapta-pas` o confirmă; (2) formele cu N = 768 rămân cele mai „goale” și după (192 de blocuri de 64 × 64
+= 4 pe unitate din 6 posibile) — o variantă 64 × 32 sau „split-K” ar umple unitățile (de judecat după cursă); (3) circuitele
+speciale (`mm_tc*`) — modelul se aplică și lor: `mm_tc` 24 KiB / 128 de fire → 2 blocuri pe unitate la 64 KiB.
 
 ## Surse
 - `docs/C-165_OCUPAREA.md` (predicțiile os-423), `docs/C-165_CURSA_MM.md` §„os-418” (raportul pas / cursă 0,936).

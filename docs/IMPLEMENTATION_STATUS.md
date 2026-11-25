@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 232 — 25 noiembrie 2026, ~16:11–17:15 (ora României), în cloud, FĂRĂ placă — **os-423 + os-431 comparate: modelul „valurilor” explică ×1,32; alegerea pe formă la 64 KiB → pasul #513 ~204 ms ≈ 5 000 simb/s (DEDUS)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Coada C-157 p.2 („după fiecare test pe placă”): os-431 (pasul #513 cu
+`--treapta-pas`, 266,8 ms) și proba ocupării os-423 nu aveau încă comparația scrisă. Predicțiile V1–V5 urcate **înainte** de cod
+(`87373fb`, `docs/C-165_VALURI.md`). Cinste: rezultatele le văzusem înainte de model — potrivirea pe ele e explicație, nu predicție;
+predicția adevărată e V4/V5. Copia locală a ramurii nu avea istorie comună cu GitHub (clonă scurtă); am lucrat pe o ramură locală nouă
+din `origin/g0-g2-fundatie` (nimic șters, nimic rescris).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| os-423 față de P1–P6 | P1–P5 corecte; **R0**: rezerva de 1 KiB pe bloc nu se aplică (128x128 a câștigat la 16 KiB) | PASS (timpi ai plăcii) |
+| os-431 pe etichete | 192 de blocuri ×1,9; 108–144 ×1,5; **48 de blocuri ×1,00** (formele 1024×768) | MĂSURAT de OS |
+| Cod (doar adăugări) | `nvidia_ga104::wave_model` (`OS423_WAVES`, `wave_ns`, `launch_ns(_at)`, `blocks_per_sm` R0, `predicted_choice`) | — |
+| T238 (4 teste) | V1: modelul pe cursa os-416 ≤ 10,4 %; V2: pe pas os-418 +2,5 %, os-431 +1,6 %, 7 etichete ≤ 3,9 %; alegerea la 64 KiB: 3 programe, treapta tot 64 KiB | PASS (pe procesor) |
+| Predicția V4 | înmulțirile ~161 ms, **pasul ~204 ms ≈ 5 000 simb/s** (195–215) | NOT TESTED (de rulat de OS) |
+| Nota pentru OS | `integration/cyber-universe/C-165_valuri-alegerea-64k.md`: cursa refăcută la 64 KiB sau scurtătura `predicted_choice` | NOT TESTED |
+| Verificări | format, clippy, teste pe gazdă, build no_std | PASS (**1 160 de teste**, 8 ignorate; ținta no_std reinstalată în cloud) |
+
+**Ce e nou pentru placă:** nimic nou ca program sau câmp — doar amestecul `mm_train_tile` + `mm_tv_64x64k8` + `mm_tv_128x128` în același
+pas la 64 KiB, dacă OS-ul îl leagă. **Nicio schimbare incompatibilă.**
+
+**Următorul pas:** comparația când vine cursa / pasul la 64 KiB (V4, V5); comparațiile `--mm-tc` (mm_tc_pf, mm_tc_v4, mm_tc128_v4)
+când vin; apoi formele 1024×768 (64×32 sau split-K) dacă rămân frâna.
+
 ## Sesiunea 231 — 25 noiembrie 2026, ~15:11–15:50 (ora României), în cloud, FĂRĂ placă — **`mm_tc128_v4`: `mm_tc128` cu citirile în avans de 128 de biți, gata pentru placă în SIMULARE; 168 de registre → 1 bloc pe unitate**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 230 terminată 14:58), l-am pus `ocupat`. Niciun raport nou de pe placă de comparat

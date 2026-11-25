@@ -155,6 +155,7 @@ pub mod variant_log;
 pub mod vbios;
 pub mod vbios_diag;
 pub mod vram_window;
+pub mod wave_model;
 pub mod xent;
 
 pub use backend::Ga104Backend;
