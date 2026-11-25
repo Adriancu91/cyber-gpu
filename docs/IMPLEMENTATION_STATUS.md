@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 237 — 25 noiembrie 2026, ~21:11–22:15 (ora României), în cloud, FĂRĂ placă — **os-443 comparat (`mm_tc*` la treapta 64 KiB): toate predicțiile în bandă, `mm_tc_v4` = 8,28 TFLOP/s; proba barierei pe toată placa COMPILATĂ + în SIMULARE; găsit: `token.comp` ar fi citit numărul grupurilor de la 0x0c (lăsat 0)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 236), l-am pus `ocupat`. os-443 (`--mm-tc-64k`) rulase la 21:05 → comparat întâi,
+apoi următorul punct din coadă (proba barierei, `docs/C-157_PROGRAM_PERSISTENT.md` §5 p.3). Plan + predicții B1–B5 scrise înainte de cod
+(`docs/C-157_PROBA_BARIERA.md` §3).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| os-443: aceiași biți | `mm_tc@64k` 6/6, `mm_tc_pf@64k` 6/6, `mm_tc_v4@64k` 5/5 (setul nealiniat sărit) | PASS pe placa reală (prin OS) |
+| os-443: viteza qkv-513 | `mm_tc` ×1,93 (prezis 1,7–2,0); `mm_tc_pf` ×1,76 = 4,85 TFLOP/s (prezis 4,4–5,2); **`mm_tc_v4` ×1,81 = 8,28 TFLOP/s** (prezis 6,9–8,3) | MĂSURAT; toate predicțiile CORECTE (DEDUS) |
+| T244 | rândurile os-443 în `tests/rapoarte/os443-mm-tc-64k.txt`, 4 teste pe procesor | PASS |
+| Proba barierei: program | `tools/nak/grid_barrier.comp` → Mesa NAK 25.0.7 (reconstruit; `add64` identic): 1 968 B, 19 registre, SHA `535f3537…`; citiri / adunări `.strong.sys` + `membar.sc.gpu` (la L2, nu L1) | COMPILAT, NERULAT |
+| Proba barierei: Rust + model | `nvidia_ga104::grid_barrier` (cbuf, QMD, G, verdict, cost), `gpu_sim::cmdproc::grid_barrier_on_cpu`; T245 4/4 | PASS în SIMULARE |
+| Găsit: 0x0c | NVK pune `cs.group_count` la 0x0c; `token.comp` îl citește (`c[0x0][0xc]`), `token_cbuf` îl lăsa 0 → pe placă blocare. Nou `token_cbuf_for` (adăugare), modelul refuză lansarea fără 0x0c, test nou în `sim_i14_token.rs` | PASS în SIMULARE |
+| Verificări | format, clippy, teste pe gazdă, build no_std | __VERIF__ |
+
+**Ce înseamnă:** treapta 64 KiB aproape dublează circuitele speciale; `mm_tc_v4` trece pragul de 8 TFLOP/s pus pentru pasul mixt rapid →
+pasul mixt rapid (P6-215, deja în `main` la OS) merită rulat (prezis 72–87 ms de înmulțiri, pasul ~120–140 ms).
+
+**Ce e nou pentru placă:** nimic din comparație. Proba barierei (nota `integration/cyber-universe/C-157_P2zh_proba-barierei.md`, de rulat
+când decide OS-ul/centrul): un program nou mic cu adunări atomice pe un contor în VRAM, cu limită de timp. **Nicio schimbare incompatibilă**
+(`token_cbuf` neschimbat; doar modelul din `gpu-sim` e acum mai strict pentru `token.comp`).
+
+**Următorul pas:** comparația pasului mixt rapid (`--mixt-rapid` / `--mixt-513-rapid`) când rulează; apoi proba barierei când o rulează OS-ul
+(B1–B5); altfel `token.comp` cu `token_cbuf_for` în lista de generare (SIMULARE) ca pregătire.
+
 ## Sesiunea 236 — 25 noiembrie 2026, ~20:11–20:50 (ora României), în cloud, FĂRĂ placă — **os-438 comparat + studiul „programului persistent” pe un strat (nota centrului 11:55, cererea 2): la antrenare nu merită acum (≤ 3,6 % singur; rezultatele stratului nu încap în memoria rapidă), partea bună = lansarea dublă dX + dW (+3 % peste alegerea pe formă); la generare merită (31 % din placă = cost de lansare) → întâi proba barierei**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 235), l-am pus `ocupat`. Niciun test nou pe placă (os-438 încă nerulat) → am luat

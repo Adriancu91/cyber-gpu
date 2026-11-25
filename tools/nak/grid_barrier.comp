@@ -1,0 +1,43 @@
+// C-157 (docs/C-157_PROBA_BARIERA.md): the grid-barrier probe. G workgroups of 32 threads do R rounds; in round k
+// thread 0 of workgroup g writes k into data[(k & 1)·G + g], all G meet at a grid barrier (the same grid_sync as
+// token.comp: atomicAdd on a counter cleared by the driver, then wait until it reaches k·G), then thread 0 reads the
+// word its neighbour (g + 1) mod G wrote in this round and counts the rounds where it was not exactly k. Two halves,
+// so the neighbour cannot overwrite the word before we read it (it would have to pass the next barrier, which also
+// waits for us). At the end out[g] = wrong rounds (0 expected); the counter ends at R·G.
+//
+// Correct only if ALL G workgroups are on the GPU at once (G chosen by the driver). No shared memory.
+//
+// Push constants: sync 0x28, data 0x30, out 0x38, rounds 0x40.
+#version 460
+#extension GL_EXT_buffer_reference : require
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) coherent buffer Sync { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) coherent buffer Words { uint v[]; };
+layout(push_constant) uniform Args { Sync sync; Words data; Words out_; uint rounds; } args;
+
+void grid_sync(uint k, uint t) {
+    memoryBarrierBuffer();
+    barrier();
+    if (t == 0u) {
+        atomicAdd(args.sync.v[0], 1u);
+        uint target = k * gl_NumWorkGroups.x;
+        while (atomicAdd(args.sync.v[0], 0u) < target) {
+        }
+    }
+    barrier();
+    memoryBarrierBuffer();
+}
+
+void main() {
+    uint t = gl_LocalInvocationID.x;
+    uint g = gl_WorkGroupID.x;
+    uint n = gl_NumWorkGroups.x;
+    uint wrong = 0u;
+    for (uint k = 1u; k <= args.rounds; k++) {
+        uint half_ = (k & 1u) * n;
+        if (t == 0u) args.data.v[half_ + g] = k;
+        grid_sync(k, t);
+        if (t == 0u && args.data.v[half_ + (g + 1u) % n] != k) wrong++;
+    }
+    if (t == 0u) args.out_.v[g] = wrong;
+}

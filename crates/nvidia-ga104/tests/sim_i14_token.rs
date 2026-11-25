@@ -548,6 +548,8 @@ struct OneProgram<'a> {
     launches_seen: usize,
     /// Plants an unknown operation number in this entry of the list (after it is written).
     tamper: Option<usize>,
+    /// Session 237: writes the old constant buffer (`token_cbuf`, workgroup count at 0x0c left 0).
+    old_cbuf: bool,
 }
 
 fn one_program(m: &OwnedModel, groups: u32) -> OneProgram<'_> {
@@ -572,6 +574,7 @@ fn one_program(m: &OwnedModel, groups: u32) -> OneProgram<'_> {
         groups,
         launches_seen: 0,
         tamper: None,
+        old_cbuf: false,
     }
 }
 
@@ -594,7 +597,11 @@ impl TokenRunner for OneProgram<'_> {
         put_bytes(
             w,
             self.launch.pa,
-            &kt::token_cbuf(self.list.va, sync, list.len())?,
+            &if self.old_cbuf {
+                kt::token_cbuf(self.list.va, sync, list.len())?
+            } else {
+                kt::token_cbuf_for(self.list.va, sync, list.len(), self.groups)?
+            },
         );
         put_bytes(
             w,
@@ -737,6 +744,27 @@ fn one_program_refuses_a_bad_list() {
     one.tamper = Some(3);
     assert!(one.run_token(17, 1).is_err());
     assert!(kt::work_list(&[]).is_err());
+}
+
+/// Session 237: `token.comp` reads its workgroup count from 0x0c of the constant buffer (NVK's root table). The old
+/// `token_cbuf` left it 0 — on the board a hang (`vb += 0`); the model refuses that launch, `token_cbuf_for` passes.
+#[test]
+fn one_program_refuses_the_cbuf_without_the_group_count() {
+    use nvidia_ga104::kronos_token as kt;
+    let m = small(7, 64);
+    let mut one = one_program(&m, 4);
+    one.old_cbuf = true;
+    assert!(one.run_token(5, 0).is_err());
+    let c = kt::token_cbuf_for(0x1000, 0x2000, 3, 4).unwrap();
+    assert_eq!(
+        &c[kt::CBUF_GROUP_COUNT..kt::CBUF_GROUP_COUNT + 4],
+        &[4, 0, 0, 0]
+    );
+    assert_eq!(
+        &kt::token_cbuf(0x1000, 0x2000, 3).unwrap()[kt::CBUF_GROUP_COUNT..kt::CBUF_GROUP_COUNT + 4],
+        &[0; 4]
+    );
+    assert!(kt::token_cbuf_for(0x1000, 0x2000, 3, 0).is_err());
 }
 
 /// C-87 step 4: the budget of the test model matches what the rig really mapped (an upper bound, page-rounded).

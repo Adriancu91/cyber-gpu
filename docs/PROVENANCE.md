@@ -598,3 +598,7 @@ niciun octet de firmware NVIDIA.
   modelul valurilor (`wave_model`, al nostru) și pe timpii măsurați de OS (os-431, os-346, os-392). Cifre publice NVIDIA (fișa
   GA104 / ghidul CUDA pentru capacitatea 8.6): L2 4 MB, memoria partajată ≤ 100 KiB pe SM, 64 Ki registre pe SM, 608 GB/s. Nicio sursă
   străină de cod, nimic din firmware-ul NVIDIA.
+- **Sesiunea 237 (25 nov 2026), `tools/nak/grid_barrier.comp`, `grid_barrier`, `grid_barrier_on_cpu`, T244–T245, `kronos_token::token_cbuf_for`:**
+  cod scris de noi; bariera = aceeași funcție `grid_sync` ca în `token.comp` (al nostru, C-87). Așezarea `cs.group_count` la 0x0c în
+  bufferul constant: citită în sursa Mesa 25.0.7 (MIT), `src/nouveau/vulkan/nvk_cmd_buffer.h` (`struct nvk_root_descriptor_table`),
+  confirmată în listarea NAK (`c[0x0][0xc]`). Cifrele T244 = rândurile jurnalului OS-ului (os-443). Nimic din firmware-ul NVIDIA.

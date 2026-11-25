@@ -95,6 +95,7 @@ pub mod fwsec;
 pub mod gelu_tr;
 pub mod gfw;
 pub mod gnorm;
+pub mod grid_barrier;
 pub mod gsp;
 pub mod i6_check;
 pub mod i6_log;

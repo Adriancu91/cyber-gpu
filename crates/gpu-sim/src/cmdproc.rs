@@ -3837,6 +3837,13 @@ fn token_ops(l: &mut Launch<'_>) -> GpuResult<()> {
     if n == 0 {
         return Err(bad("SIM: token fara operatii"));
     }
+    // Session 237: `token.comp` reads gl_NumWorkGroups.x from NVK's root table at 0x0c (listing lines 3188 / 3226:
+    // c[0x0][0xc]) for its block stride and the barrier target; 0 there = `vb += 0` (a hang) on the board.
+    if l.mem.read_u32(l.cbuf0 + 0x0c)? != l.grid[0] {
+        return Err(bad(
+            "SIM: token: numarul grupurilor de la 0x0c difera de grila (programul il citeste de acolo)",
+        ));
+    }
     if l.mem.read_u32(sync)? != 0 {
         return Err(bad(
             "SIM: token: contorul barierei nu a fost golit inainte de lansare",
@@ -3871,6 +3878,70 @@ fn token_ops(l: &mut Launch<'_>) -> GpuResult<()> {
         if k + 1 < n {
             l.mem.write_u32(sync, (k as u32 + 1) * g);
         }
+    }
+    Ok(())
+}
+
+/// C-157 (docs/C-157_PROBA_BARIERA.md): what `grid_barrier.comp` needs — no shared memory, no hardware barrier
+/// beyond the workgroup's own.
+pub const GRID_BARRIER_NEEDS: Needs = Needs {
+    shared_bytes: 0,
+    barriers: 0,
+};
+
+/// C-157: the grid-barrier probe — sync 0x28, data 0x30, out 0x38, rounds 0x40; G workgroups of 32. The model plays
+/// the G workgroups round by round as a CORRECT grid barrier would order them: every workgroup writes its word, the
+/// counter reaches k·G, then every workgroup reads its neighbour's word (in a rotated order each round, so no single
+/// order is baked in). It shows the arguments, the two halves and the expected results (counter R·G, out = 0); it says
+/// NOTHING about whether the barrier holds on a real SM (residency, L1 coherence, hangs) — that is the board's job.
+pub fn grid_barrier_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [32, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 || l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad("SIM: bariera cere blocuri de 32x1x1, grila 1D, baza 0"));
+    }
+    let (sync, data, out) = (
+        l.mem.read_u64(l.cbuf0 + 0x28)?,
+        l.mem.read_u64(l.cbuf0 + 0x30)?,
+        l.mem.read_u64(l.cbuf0 + 0x38)?,
+    );
+    let rounds = l.mem.read_u32(l.cbuf0 + 0x40)?;
+    let g = l.grid[0] as u64;
+    if g == 0 || rounds == 0 {
+        return Err(bad("SIM: bariera fara grupuri sau fara runde"));
+    }
+    // the program reads gl_NumWorkGroups.x from NVK's root table at 0x0c (listing: c[0x0][0xc])
+    if l.mem.read_u32(l.cbuf0 + 0x0c)? as u64 != g {
+        return Err(bad(
+            "SIM: bariera: numarul grupurilor de la 0x0c difera de grila (programul il citeste de acolo)",
+        ));
+    }
+    if l.mem.read_u32(sync)? != 0 {
+        return Err(bad(
+            "SIM: bariera: contorul nu a fost golit inainte de lansare",
+        ));
+    }
+    // the buffers must exist (a real program would fault on them)
+    l.mem.read_u32(data + 4 * (2 * g - 1))?;
+    l.mem.read_u32(out + 4 * (g - 1))?;
+    let mut wrong = alloc::vec![0u32; g as usize];
+    for k in 1..=rounds {
+        let half = (k as u64 & 1) * g;
+        for w in 0..g {
+            l.mem.write_u32(data + 4 * (half + w), k);
+            let c = l.mem.read_u32(sync)?;
+            l.mem.write_u32(sync, c.wrapping_add(1));
+        }
+        if l.mem.read_u32(sync)? != k.wrapping_mul(g as u32) {
+            return Err(bad("SIM: bariera: contorul nu a ajuns la k*G"));
+        }
+        for i in 0..g {
+            let w = (i + k as u64) % g;
+            if l.mem.read_u32(data + 4 * (half + (w + 1) % g))? != k {
+                wrong[w as usize] += 1;
+            }
+        }
+    }
+    for (w, &n) in wrong.iter().enumerate() {
+        l.mem.write_u32(out + 4 * w as u64, n);
     }
     Ok(())
 }

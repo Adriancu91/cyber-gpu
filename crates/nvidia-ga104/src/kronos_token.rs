@@ -115,6 +115,26 @@ pub fn token_cbuf(list_va: u64, sync_va: u64, n: usize) -> GpuResult<[u8; 256]> 
     Ok(c)
 }
 
+/// NVK's root table: `cs.group_count[3]` at 0x0c / 0x10 / 0x14 (Mesa 25.0.7 `nvk_root_descriptor_table`).
+/// `token.comp` reads `gl_NumWorkGroups.x` from 0x0c (`tools/nak/out/token.sm86.txt`, `c[0x0][0xc]`) for its block
+/// stride and the barrier target (found in session 237 while compiling the barrier probe).
+pub const CBUF_GROUP_COUNT: usize = 0x0c;
+
+/// The program's constant buffer **with the workgroup count** at 0x0c — the one to use. [`token_cbuf`] (kept for
+/// compatibility) leaves 0x0c at 0: on the board `vb += G` would then be `vb += 0` (a hang) and the barrier would
+/// not wait; the SIMULARE model now refuses such a launch.
+pub fn token_cbuf_for(list_va: u64, sync_va: u64, n: usize, groups: u32) -> GpuResult<[u8; 256]> {
+    if groups == 0 {
+        return Err(bad("programul pe simbol: 0 grupuri"));
+    }
+    let mut c = token_cbuf(list_va, sync_va, n)?;
+    for (i, v) in [groups, 1, 1].into_iter().enumerate() {
+        let at = CBUF_GROUP_COUNT + 4 * i;
+        c[at..at + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    Ok(c)
+}
+
 /// How many workgroups: one per SM (all resident: 32 threads and 2 176 B of shared memory each are far below an SM's
 /// limits), capped by `max` (the widest operation needs no more than its grid; more only wait at the barriers).
 pub fn groups_for(gr: &GrShape, max: u32) -> GpuResult<u32> {
