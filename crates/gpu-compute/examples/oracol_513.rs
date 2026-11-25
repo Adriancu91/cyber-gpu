@@ -8,7 +8,8 @@
 //! (`next_u32() % 16384`, 513 symbols per row: inputs = first 512, targets = last 512); AdamW lr 1e-3, betas
 //! (0.9, 0.999), eps 1e-8, weight decay 0.1; clipping at 1.0; 10 steps.
 //!
-//! Run: `cargo run --release -p gpu-compute --example oracol_513 -- [steps]` (single thread, minutes per step).
+//! Run: `cargo run --release -p gpu-compute --example oracol_513 -- [steps] [--mixt]` (single thread, minutes per step;
+//! `--mixt` = the mixed step's oracle, `train::loss_and_grad_mixed` with S = 2^14).
 //! Output: one line per step `pas k: pierderea L norma N secunde S`. Nothing here touches a board.
 
 use gpu_compute::train::{self, AdamW, Batch};
@@ -55,6 +56,10 @@ impl Mt {
 
 const HALF_WIDTH: f64 = 0.034_641_016;
 
+/// The error scale of the board's mixed #513 step (`nvidia_ga104::train_step::LOSS_SCALE_513`, 2^14); written here
+/// as a number so the example needs no driver crate.
+const LOSS_SCALE_513: f32 = 16384.0;
+
 fn start_weights(a: &train::Arch) -> Vec<Vec<f32>> {
     let mut g = Mt::new(1);
     a.tensors()
@@ -76,10 +81,10 @@ fn start_weights(a: &train::Arch) -> Vec<Vec<f32>> {
 }
 
 fn main() {
-    let steps: usize = std::env::args()
-        .nth(1)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(10);
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    // `--mixt`: the board's mixed step (C-157 p.2 after os-445) — the matmul inputs rounded to f16, S = 2^14.
+    let mixed = args.iter().any(|a| a == "--mixt");
+    let steps: usize = args.iter().find_map(|s| s.parse().ok()).unwrap_or(10);
     let a = train::M513;
     let (bsz, tl) = (2usize, 512usize);
     let mut g = Mt::new(0x164);
@@ -109,13 +114,20 @@ fn main() {
             batch: bsz,
             len: tl,
         };
-        let (loss, mut grads) = train::loss_and_grad(&a, &params, &batch).expect("pasul");
+        let (loss, mut grads) = if mixed {
+            train::loss_and_grad_mixed(&a, &params, &batch, LOSS_SCALE_513).expect("pasul mixt")
+        } else {
+            train::loss_and_grad(&a, &params, &batch).expect("pasul")
+        };
         let norm = train::grad_norm(&grads);
         train::clip_grad_norm(&mut grads, 1.0);
         adam.step(&mut params, &grads).expect("adamw");
         println!(
-            "pas {}: pierderea {:.4} norma {:.4} secunde {:.0}",
+            "pas {}{}: pierderea {:.4} norma {:.4} (exact {:.7} / {:.7}) secunde {:.0}",
             k + 1,
+            if mixed { " (mixt)" } else { "" },
+            loss,
+            norm,
             loss,
             norm,
             t0.elapsed().as_secs_f64()

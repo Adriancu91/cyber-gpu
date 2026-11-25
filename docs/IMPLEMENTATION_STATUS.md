@@ -1,5 +1,32 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 238 — 25 noiembrie 2026, ~23:11–00:16 (ora României), în cloud, FĂRĂ placă — **os-445 comparat (pasul mixt rapid #513: 116,9 ms = 8 758 simb/s) + oracolul pasului mixt pe procesor: placa = oracolul mixt pe pașii 1–6 (2,0e-5 / 2,2e-4), deci „DIFERA” din raport e prețul f16 pe o rulare instabilă, nu o greșeală de program**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 237), l-am pus `ocupat`. os-445 rulase la 22:02 → C-157 p.2 (are întâietate).
+Copiile locale vechi aveau istoria nepotrivită; am lucrat pe clone proaspete (nimic șters, nimic rescris). Predicțiile M1–M4 urcate
+**înainte** de rezultatele oracolului (`5e7d87c`, `docs/C-157_P2_OS445_PAS_MIXT.md` §2).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| os-445: alegerea | 147 / 147 pe `mm_tc_v4` (prezis 147) | MĂSURAT; CORECTĂ |
+| os-445: timpul | placa 106,0 ms, pasul 116,9 ms = 8 758 simb/s (prezis 120–140 ms) | MĂSURAT; predicția RATATĂ puțin (mai rapid) |
+| os-445: față de oracolul F32 | DIFERĂ 7,2e-3 / 1,3e-2; pașii 1–6 în toleranța mixtă, abaterea pornește la pasul 7 | MĂSURAT; predicția „aceleași pierderi” RATATĂ |
+| Oracolul mixt (cod) | `train::loss_and_grad_mixed` (f16 la intrările celor 147 de înmulțiri, S = 2¹⁴), `oracol_513 --mixt`; doar adăugări | PASS (compilare, teste) |
+| T246 | modelul mic: aproape de F32, alți biți, pierderea independentă de S, refuzurile; gradientul 7,3e-3 față de 5e-3 prezis | PASS (predicția toleranței RATATĂ, documentată) |
+| Oracolul mixt #513 (10 pași, ~3,5 min/pas) | pasul 1 = **9,8493 / 3,2731, exact placa**; `ORACLE_513_MIXED_SYNTH` | CALCULAT pe procesor |
+| T247 | placa față de oracolul mixt: pașii 1–6 ≤ 2,0e-5 / 2,2e-4 (de 4 ori mai aproape decât de F32); pașii 7–9 5,6e-3 | PASS (M1 da, M2 în mare, M3 parțial ratată) |
+| Verificări | format, clippy, teste pe gazdă, build no_std | PASS (**1 199 de teste**, 8 ignorate) |
+
+**Ce înseamnă:** programele pasului mixt sunt corecte pe placă. Rularea sintetică e instabilă din pasul 7; în pasul mixt chiar ordinea
+sumelor f32 poate întoarce o rotunjire f16, deci comparația ține doar 6 pași. Dacă f16 strică învățarea se vede doar pe text real
+(cererea centrului către OS + Kronos).
+
+**Ce e nou pentru placă:** nimic. Nota `integration/cyber-universe/C-157_P2zi_oracol-mixt.md`: verdictul `--mixt-513` față de
+`ORACLE_513_MIXED_SYNTH` pe pașii 1–6. **Nicio schimbare incompatibilă** (funcțiile publice vechi neschimbate).
+
+**Următorul pas:** proba barierei când o rulează OS-ul (B1–B5); orice test nou pe placă din `rezultate/`; altfel `token.comp` cu
+`token_cbuf_for` în lista de generare (SIMULARE).
+
 ## Sesiunea 237 — 25 noiembrie 2026, ~21:11–22:20 (ora României), în cloud, FĂRĂ placă — **os-443 comparat (`mm_tc*` la treapta 64 KiB): toate predicțiile în bandă, `mm_tc_v4` = 8,28 TFLOP/s; proba barierei pe toată placa COMPILATĂ + în SIMULARE; găsit: `token.comp` ar fi citit numărul grupurilor de la 0x0c (lăsat 0)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 236), l-am pus `ocupat`. os-443 (`--mm-tc-64k`) rulase la 21:05 → comparat întâi,

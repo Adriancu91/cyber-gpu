@@ -857,6 +857,70 @@ pub fn embed_back_rows(
     Ok((d_tok, d_pos))
 }
 
+/// Every element rounded to binary16 and back (the `mm_tc*` input conversion).
+fn round_all_f16(x: &[f32]) -> Vec<f32> {
+    x.iter().map(|&v| crate::mm_tc::round_f16(v)).collect()
+}
+
+/// [`linear`] in the step: F32 (`mix = None`) or with both inputs rounded to f16 (the mixed step).
+fn lin(
+    mix: Option<f32>,
+    x: &[f32],
+    rows: usize,
+    k_in: usize,
+    w: &[f32],
+    out: usize,
+    b: Option<&[f32]>,
+) -> Vec<f32> {
+    match mix {
+        None => linear(x, rows, k_in, w, out, b),
+        Some(_) => linear(&round_all_f16(x), rows, k_in, &round_all_f16(w), out, b),
+    }
+}
+
+/// [`linear_back`] in the step. Mixed (`Some(S)`): dX and dW from `round_f16(dy·S)/S`, f16 x and f16 w; db (the
+/// board's F32 `colsum`) from the unrounded dy.
+#[allow(clippy::too_many_arguments)]
+fn lin_back(
+    mix: Option<f32>,
+    dy: &[f32],
+    x: &[f32],
+    rows: usize,
+    k_in: usize,
+    w: &[f32],
+    out: usize,
+    dw: &mut [f32],
+    db: Option<&mut [f32]>,
+) -> Vec<f32> {
+    let Some(s) = mix else {
+        return linear_back(dy, x, rows, k_in, w, out, dw, db);
+    };
+    let dys: Vec<f32> = dy
+        .iter()
+        .map(|&g| crate::mm_tc::round_f16(g * s) / s)
+        .collect();
+    let dx = linear_back(
+        &dys,
+        &round_all_f16(x),
+        rows,
+        k_in,
+        &round_all_f16(w),
+        out,
+        dw,
+        None,
+    );
+    if let Some(db) = db {
+        for (o, d) in db.iter_mut().enumerate() {
+            let mut acc = 0.0f64;
+            for r in 0..rows {
+                acc += dy[r * out + o] as f64;
+            }
+            *d = acc as f32;
+        }
+    }
+    dx
+}
+
 // ---------------------------------------------------------------- the step
 
 /// What the forward pass keeps for the backward pass.
@@ -867,7 +931,7 @@ struct Forward {
     logits: Vec<f32>,
 }
 
-fn forward(a: &Arch, params: &[Vec<f32>], batch: &Batch) -> GpuResult<Forward> {
+fn forward(a: &Arch, params: &[Vec<f32>], batch: &Batch, mix: Option<f32>) -> GpuResult<Forward> {
     a.check_params(params)?;
     let (bsz, t) = (batch.batch, batch.len);
     need(bsz > 0 && t > 0 && t <= a.ctx, "train: forma lotului")?;
@@ -895,19 +959,19 @@ fn forward(a: &Arch, params: &[Vec<f32>], batch: &Batch) -> GpuResult<Forward> {
     for l in 0..a.layers {
         let w = |off: usize| &params[a.at(l, off)][..];
         let (h1, ln1) = layernorm(&x, n, c, w(LN1_W), w(LN1_B));
-        let qkv = linear(&h1, n, c, w(IN_W), 3 * c, Some(w(IN_B)));
+        let qkv = lin(mix, &h1, n, c, w(IN_W), 3 * c, Some(w(IN_B)));
         let (att, p) = attention(a, &qkv, bsz, t);
-        let y = linear(&att, n, c, w(OUT_W), c, Some(w(OUT_B)));
+        let y = lin(mix, &att, n, c, w(OUT_W), c, Some(w(OUT_B)));
         for (xi, yi) in x.iter_mut().zip(&y) {
             *xi += *yi;
         }
         let (h2, ln2) = layernorm(&x, n, c, w(LN2_W), w(LN2_B));
-        let u = linear(&h2, n, c, w(FC_W), f, Some(w(FC_B)));
+        let u = lin(mix, &h2, n, c, w(FC_W), f, Some(w(FC_B)));
         let act: Vec<f32> = u
             .iter()
             .map(|&ui| gelu_and_grad(ui as f64).0 as f32)
             .collect();
-        let z = linear(&act, n, f, w(PROJ_W), c, Some(w(PROJ_B)));
+        let z = lin(mix, &act, n, f, w(PROJ_W), c, Some(w(PROJ_B)));
         for (xi, zi) in x.iter_mut().zip(&z) {
             *xi += *zi;
         }
@@ -925,7 +989,7 @@ fn forward(a: &Arch, params: &[Vec<f32>], batch: &Batch) -> GpuResult<Forward> {
     }
     let (lnf_w, lnf_b) = a.final_ln();
     let (hf, lnf) = layernorm(&x, n, c, &params[lnf_w], &params[lnf_b]);
-    let logits = linear(&hf, n, c, emb, v, None);
+    let logits = lin(mix, &hf, n, c, emb, v, None);
     Ok(Forward {
         caches,
         hf,
@@ -937,7 +1001,7 @@ fn forward(a: &Arch, params: &[Vec<f32>], batch: &Batch) -> GpuResult<Forward> {
 /// The logits `[batch·len, vocab]` of the forward pass (the tied head's output), for checking the loss program of
 /// the board (C-160 point 4, program 7) on the real model.
 pub fn logits(a: &Arch, params: &[Vec<f32>], batch: &Batch) -> GpuResult<Vec<f32>> {
-    Ok(forward(a, params, batch)?.logits)
+    Ok(forward(a, params, batch, None)?.logits)
 }
 
 /// Softmax + cross-entropy over `rows = targets.len()` rows of `v` logits, in f64: the loss of every row
@@ -978,7 +1042,46 @@ pub fn loss_and_grad(
     params: &[Vec<f32>],
     batch: &Batch,
 ) -> GpuResult<(f32, Vec<Vec<f32>>)> {
-    let (loss, mut grads, dx, d_emb_head) = backward(a, params, batch)?;
+    loss_and_grad_with(a, params, batch, None)
+}
+
+/// C-157 p.2 after os-445: the CPU oracle of the board's **mixed step** (`Plan::step_mixed` + `pack_mixed_fast`) — the
+/// same step as [`loss_and_grad`], but the inputs of every model matmul the board runs on `mm_tc*` (per layer: qkv,
+/// out, fc, proj forward + their dX and dW; then the tied head's logits, dX and dW) rounded to binary16 first, as the
+/// program's `F2F.F16.F32` does ([`crate::mm_tc::round_f16`], nearest-even). The gradients entering a backward matmul
+/// are rounded **scaled**: `round_f16(g·S) / S`, like the board, which carries the error scaled by `loss_scale` and
+/// divides only at the end. Bias gradients (`colsum` on the board, F32) and everything that is not a model matmul
+/// (LayerNorm, GELU, attention, softmax, embeddings) stay as in [`loss_and_grad`]; sums in f64.
+///
+/// What it is **not**: the board's sums (f32 on the tensor cores, its order); only the rounding of the inputs. So the
+/// board against this oracle shows the error of the program's order, the board against [`loss_and_grad`] also the
+/// price of f16. `loss_scale` must be a power of two (then scaling is exact); a value that leaves the f16 range
+/// (|g·S| > 65 504) makes the step fail instead of returning infinities.
+pub fn loss_and_grad_mixed(
+    a: &Arch,
+    params: &[Vec<f32>],
+    batch: &Batch,
+    loss_scale: f32,
+) -> GpuResult<(f32, Vec<Vec<f32>>)> {
+    need(
+        loss_scale.is_finite() && loss_scale > 0.0 && loss_scale.to_bits() & 0x007f_ffff == 0,
+        "pasul mixt: scara erorii trebuie sa fie o putere a lui 2",
+    )?;
+    let (loss, grads) = loss_and_grad_with(a, params, batch, Some(loss_scale))?;
+    need(
+        loss.is_finite() && grads.iter().flatten().all(|g| g.is_finite()),
+        "pasul mixt: o valoare iese din domeniul f16 (scara prea mare)",
+    )?;
+    Ok((loss, grads))
+}
+
+fn loss_and_grad_with(
+    a: &Arch,
+    params: &[Vec<f32>],
+    batch: &Batch,
+    mix: Option<f32>,
+) -> GpuResult<(f32, Vec<Vec<f32>>)> {
+    let (loss, mut grads, dx, d_emb_head) = backward(a, params, batch, mix)?;
     // Embeddings: scatter-add of dx (f64 sums), then the tied head's part.
     let (d_tok, d_pos) = embed_back_rows(
         &dx,
@@ -1002,7 +1105,7 @@ pub fn embed_grad_inputs(
     params: &[Vec<f32>],
     batch: &Batch,
 ) -> GpuResult<(Vec<f32>, Vec<f32>)> {
-    let (_, _, dx, d_emb_head) = backward(a, params, batch)?;
+    let (_, _, dx, d_emb_head) = backward(a, params, batch, None)?;
     Ok((dx, d_emb_head))
 }
 
@@ -1012,13 +1115,14 @@ fn backward(
     a: &Arch,
     params: &[Vec<f32>],
     batch: &Batch,
+    mix: Option<f32>,
 ) -> GpuResult<(f32, Vec<Vec<f32>>, Vec<f32>, Vec<f32>)> {
     let Forward {
         caches,
         hf,
         lnf,
         logits,
-    } = forward(a, params, batch)?;
+    } = forward(a, params, batch, mix)?;
     let (bsz, t) = (batch.batch, batch.len);
     let (c, v) = (a.n_emb, a.vocab);
     let n = bsz * t;
@@ -1037,7 +1141,7 @@ fn backward(
     // Backward.
     let mut grads: Vec<Vec<f32>> = params.iter().map(|p| vec![0.0f32; p.len()]).collect();
     let mut d_emb_head = vec![0.0f32; v * c];
-    let dhf = linear_back(&dlogits, &hf, n, c, emb, v, &mut d_emb_head, None);
+    let dhf = lin_back(mix, &dlogits, &hf, n, c, emb, v, &mut d_emb_head, None);
     let mut dx = {
         let (gw, gb) = grads.split_at_mut(lnf_b);
         layernorm_back(&dhf, &lnf, n, c, &params[lnf_w], &mut gw[lnf_w], &mut gb[0])
@@ -1048,7 +1152,8 @@ fn backward(
         // x = x_mid + proj(gelu(fc(LN2(x_mid))))
         let mut d_proj_w = vec![0.0f32; c * f];
         let mut d_proj_b = vec![0.0f32; c];
-        let dact = linear_back(
+        let dact = lin_back(
+            mix,
             &dx,
             &cache.act,
             n,
@@ -1065,7 +1170,8 @@ fn backward(
             .collect();
         let mut d_fc_w = vec![0.0f32; f * c];
         let mut d_fc_b = vec![0.0f32; f];
-        let dh2 = linear_back(
+        let dh2 = lin_back(
+            mix,
             &du,
             &cache.h2,
             n,
@@ -1084,7 +1190,8 @@ fn backward(
         // x_mid = x_in + out(attn(in(LN1(x_in))))
         let mut d_out_w = vec![0.0f32; c * c];
         let mut d_out_b = vec![0.0f32; c];
-        let datt = linear_back(
+        let datt = lin_back(
+            mix,
             &dx,
             &cache.att,
             n,
@@ -1097,7 +1204,8 @@ fn backward(
         let dqkv = attention_back(a, &datt, &cache.qkv, &cache.p, bsz, t);
         let mut d_in_w = vec![0.0f32; 3 * c * c];
         let mut d_in_b = vec![0.0f32; 3 * c];
-        let dh1 = linear_back(
+        let dh1 = lin_back(
+            mix,
             &dqkv,
             &cache.h1,
             n,
@@ -1365,6 +1473,25 @@ pub const ORACLE_513_SYNTH: [(f32, f32); 10] = [
     (9.9391, 0.9364),
     (9.9929, 0.9346),
     (10.1628, 1.6557),
+];
+
+/// C-157 p.2 after os-445: the CPU oracle of the **mixed** #513 step (`test-placa --mixt-513`, with or without
+/// `--mixt-513-rapid`) on the same synthetic batches and recipe as [`ORACLE_513_SYNTH`] — [`loss_and_grad_mixed`] with
+/// S = 2^14, MEASURED on the processor (cloud, session 238) with `examples/oracol_513.rs -- 10 --mixt`. Rounded to 4
+/// decimals. The board (os-445) matched steps 1–6 within 2.2e-4 relative; from step 7 the run is unstable and the
+/// board's own order of the f32 sums (which can flip an f16 rounding) grows to 5.6e-3, so a verdict should use
+/// steps 1–6 (`docs/C-157_P2_OS445_PAS_MIXT.md`).
+pub const ORACLE_513_MIXED_SYNTH: [(f32, f32); 10] = [
+    (9.8493, 3.2731),
+    (9.8749, 1.1021),
+    (9.8293, 1.0246),
+    (9.9086, 0.9175),
+    (9.8650, 0.8956),
+    (9.8816, 0.8952),
+    (9.8508, 0.9079),
+    (10.0040, 0.9288),
+    (9.9514, 0.9380),
+    (9.9519, 1.0257),
 ];
 
 #[cfg(test)]
