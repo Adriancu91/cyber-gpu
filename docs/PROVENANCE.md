@@ -594,3 +594,7 @@ niciun octet de firmware NVIDIA.
 - **Sesiunea 235 (25 nov 2026), `batch_ram::pack_mixed_fast_via_ram`, T241, `docs/C-157_COPIERE_IN_PARALEL.md`:** cod scris de noi, compus
   din funcțiile noastre `batch_ram::pack_via_ram` (os-397) și `train_step::pack_mixed_fast` (sesiunea 234); cifrele din jurnalul OS-ului
   (os-431, os-437) și costurile pe cuvânt din os-390. Nicio sursă străină nouă, nimic din firmware-ul NVIDIA.
+- **Sesiunea 236 (25 nov 2026), `persistent_study`, T242, `docs/C-157_PROGRAM_PERSISTENT.md`:** aritmetică scrisă de noi pe
+  modelul valurilor (`wave_model`, al nostru) și pe timpii măsurați de OS (os-431, os-346, os-392). Cifre publice NVIDIA (fișa
+  GA104 / ghidul CUDA pentru capacitatea 8.6): L2 4 MB, memoria partajată ≤ 100 KiB pe SM, 64 Ki registre pe SM, 608 GB/s. Nicio sursă
+  străină de cod, nimic din firmware-ul NVIDIA.

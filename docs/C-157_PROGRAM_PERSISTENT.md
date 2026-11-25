@@ -52,3 +52,41 @@ Un program persistent câștigă din trei surse, și doar din ele:
 3. Rezultatul în acest document (secțiunea 5) + recomandarea: ce urmează și ce NU merită.
 
 Nimic nou pentru placă în această sesiune.
+
+## 5. Rezultatul (sesiunea 236, ~21:05; T242, 6/6 pe procesor; cifrele = DEDUS din timpii MĂSURAȚI de OS)
+
+Cod: `nvidia_ga104::persistent_study` (doar adăugare, aritmetică pură), testul `tests/c157_persistent.rs`.
+
+| # | Predicție | Ieșit | Verdict |
+|---|---|---|---|
+| P1 | rezultatele unui strat nu încap în memoria rapidă | memoria rapidă ≈ 4,7 MiB (48 × 100 KiB partajată; L2 4 MiB); încap doar ieșirea LayerNorm și a atenției (3 MiB); **qkv 9 MiB, stratul ascuns 12 MiB nu încap**; la lotul 6 nu încape nimic | CORECTĂ |
+| P2 | golurile lansărilor ≤ 1 % | 483 × 4,3 µs = **2,1 ms = 0,8 %** din 255,9 ms | CORECTĂ |
+| P3 | operațiile mărunte ≤ 3 % | colsum + colsum_part + gelu_tr + vadd + LayerNorm + xent + emb + gnorm = **7,3 ms = 2,8 %** | CORECTĂ |
+| P4a | lansarea „dublă” dX + dW, peste os-431 (`128x128` peste tot): 5–15 % | **19,1 %** (podeaua: −49 ms din 137 ms ai celor 48 de înmulțiri dX/dW); formele dX cu 48 de blocuri lasă 40–57 % din locuri goale; modelul reface cele 6 etichete tipărite de os-431 la 2,2 % (120,8 față de 118,2 ms) | **RATATĂ** (mai mult decât prezis) |
+| P4b | peste alegerea pe formă la 64 KiB: 2–8 % | **3,1 %** (−8,1 ms): alegerea pe formă ia deja −43 din cele −49 ms | CORECTĂ |
+| P5 | la generare golurile = 30–40 % din placă | 87 de lansări × ≤ 3,87 µs = **≤ 336 µs = 31 %** din 1 071 µs | CORECTĂ |
+| P6 | plafonul generării de ~5–7 ori sub placa de azi | greutățile Q8 ale lui #513 citite o dată la 608 GB/s = **170 µs** → placa de azi = **×6,3** podeaua; pe strat 80,1 µs față de 12,4 µs | CORECTĂ |
+
+### Ce înseamnă (pe scurt)
+
+1. **La antrenare, un program persistent pe strat NU merită acum.** Ce poate câștiga singur (goluri + operații mărunte) e
+   ≤ 3,6 % din pas, iar „datele ținute în memoria rapidă” nu se poate: rezultatele mari ale stratului (9–12 MiB) sunt de 2–3 ori
+   mai mari decât toată memoria rapidă a plăcii. Lanțurile pe rânduri (LayerNorm → înmulțire, înmulțire → GELU / adunare) se
+   câștigă mai ieftin prin **lipiri** (le avem deja: `ln_back_res`, `mm_train_gelu`, `mm_tc_gelu`).
+2. **Partea bună a ideii (planificarea locurilor goale) se ia fără program persistent:** întâi **alegerea pe formă** (sesiunea
+   232, nota `C-165_valuri-alegerea-64k.md`: −43 ms), apoi, opțional, o **lansare dublă** dX + dW (același program, blocurile
+   împărțite între două înmulțiri independente) pentru încă ~3 % (−8 ms, podea). Același lucru se va repeta pe `mm_tc_v4`
+   (pasul mixt), unde înmulțirile devin mai scurte și cozile cântăresc mai mult — de măsurat după os-438.
+3. **La generare, persistentul are sens:** ~31 % din timpul plăcii e cost fix de lansare, iar placa e de 6,3 ori peste podeaua
+   lățimii de bandă. Programul există deja (`token.comp`, C-87, compilat, nerulat). Ce lipsește e **dovada barierei pe toată
+   placa** pe RTX 3070 Ti (toate grupurile pe placă deodată + coerența memoriei fără L1). Primul pas propus: o **probă mică a
+   barierei** (un program care doar trece de N bariere și numără), gata de legat în SIMULARE, înainte de a pune `token.comp` pe placă.
+   Estimare (DEDUS): dacă bariera costă ~1–2 µs, un simbol #513 ar câștiga ~150–250 µs pe placă (1 071 → ~820–920 µs).
+
+### Ce NU e dovedit
+
+- Podeaua lansării duble presupune blocuri împachetate perfect; un planificator real pierde ceva. E plafonul, nu predicția.
+- Costul unei bariere pe toată placa pe GA104 nu e măsurat (nici de noi, nici citit într-o sursă oficială).
+- Costul fix al unei lansări la generare e luat ca plafon (cea mai mică lansare măsurată, 3,87 µs, care face și ea puțin lucru).
+
+**Ce e nou pentru placă:** nimic. **Nicio schimbare incompatibilă** (un modul nou și un test).

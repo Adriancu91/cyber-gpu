@@ -134,6 +134,7 @@ pub mod mmu;
 pub mod occupancy;
 pub mod opt_step;
 pub mod packs;
+pub mod persistent_study;
 pub mod probe;
 pub mod push;
 pub mod q8_fused;
