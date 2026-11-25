@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 234 — 25 noiembrie 2026, ~18:22–19:25 (ora României), în cloud, FĂRĂ placă — **pasul mixt cu programele `mm_tc` rapide (`mm_tc_v4` / `mm_tc_pf`) și treapta 64 KiB: `pack_mixed_fast`, gata de legat în SIMULARE**
+## Sesiunea 234 — 25 noiembrie 2026, ~18:22–19:10 (ora României), în cloud, FĂRĂ placă — **pasul mixt cu programele `mm_tc` rapide (`mm_tc_v4` / `mm_tc_pf`) și treapta 64 KiB: `pack_mixed_fast`, gata de legat în SIMULARE**
 
 La pornire GitHub a răspuns 503 cam 5 minute (reîncercat, apoi a mers). Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 233), l-am
 pus `ocupat`. os-438 (`mm_tc_v4` pe placă) nu a rulat încă → nimic de comparat. Am luat punctul 1 din nota centrului 14:40 („`mm_tc`
