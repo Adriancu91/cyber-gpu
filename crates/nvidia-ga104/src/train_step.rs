@@ -3635,6 +3635,167 @@ pub fn pack_mixed_gelu(
     Ok((bytes, qmds))
 }
 
+/// C-157 p.2 (session 234, `docs/C-157_P2_PAS_MIXT_RAPID.md`): where the OS loaded each program of the `mm_tc` family,
+/// for [`pack_mixed_fast`]. 0 = not loaded (then that program is never picked). All non-zero addresses 256-aligned.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TcPrograms {
+    /// `mm_tc` (the fallback; needed only if a launch falls to it).
+    pub tc: u64,
+    /// `mm_tc_pf` (loads ahead; any product `mm_tc` takes).
+    pub pf: u64,
+    /// `mm_tc_v4` (128-bit loads; only products that pass [`crate::mm_tc_v4::fits`]).
+    pub v4: u64,
+    /// `mm_tc_gelu` (needed only if the list holds [`MixedLaunch::TcGelu`]).
+    pub gelu: u64,
+}
+
+/// Which program of the `mm_tc` family one mixed launch got.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TcPick {
+    Tc,
+    Pf,
+    V4,
+    Gelu,
+}
+
+impl TcPick {
+    pub fn name(self) -> &'static str {
+        match self {
+            TcPick::Tc => "mm_tc",
+            TcPick::Pf => "mm_tc_pf",
+            TcPick::V4 => "mm_tc_v4",
+            TcPick::Gelu => "mm_tc_gelu",
+        }
+    }
+}
+
+/// The rule of [`pack_mixed_fast`]: a [`MixedLaunch::Tc`] goes to `mm_tc_v4` if it is loaded and the product fits
+/// (aligned 128-bit loads), else to `mm_tc_pf` if loaded, else to `mm_tc`; a [`MixedLaunch::TcGelu`] to `mm_tc_gelu`;
+/// an F32 launch gets `None`. The three `mm_tc*` do the same arithmetic (same bits in SIMULARE; on the board proven for
+/// `mm_tc_pf` in os-437, `mm_tc_v4` waits for os-438).
+pub fn tc_pick(l: &MixedLaunch, progs: &TcPrograms) -> Option<TcPick> {
+    match l {
+        MixedLaunch::Std(_) => None,
+        MixedLaunch::TcGelu { .. } => Some(TcPick::Gelu),
+        MixedLaunch::Tc { args, .. } => Some(if progs.v4 != 0 && crate::mm_tc_v4::fits(args) {
+            TcPick::V4
+        } else if progs.pf != 0 {
+            TcPick::Pf
+        } else {
+            TcPick::Tc
+        }),
+    }
+}
+
+/// [`pack_mixed_gelu`] with the **fast** `mm_tc` programs ([`tc_pick`]) and, with `step_bytes = Some(s)`, **one**
+/// shared-memory step `s` of the SM for every launch of the list (`MIN = TARGET = s`, as [`pack_with_sm_step`]; refused
+/// before anything is sent if `s` is not 8/16/32/64 KiB or is below one program's shared memory). The control zone
+/// has the same size and the same cbufs as [`pack_mixed_gelu`]; with `pf = v4 = 0` and `None` it is the same bytes.
+/// Returns the zone, the QMD addresses and the pick of every launch (`None` = F32 list launch), for the report rows.
+/// SIMULARE only; that more blocks per SM run at 64 KiB is measured for the F32 list (os-431), DEDUS for `mm_tc*`.
+#[allow(clippy::type_complexity)]
+pub fn pack_mixed_fast(
+    launches: &[MixedLaunch],
+    prog_va: impl Fn(Prog) -> u64,
+    progs: &TcPrograms,
+    step_bytes: Option<u32>,
+    zone_va: u64,
+) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
+    use crate::mm_tc as tc;
+    use crate::mm_tc_gelu as tg;
+    if !zone_va.is_multiple_of(256)
+        || [progs.tc, progs.pf, progs.v4, progs.gelu]
+            .iter()
+            .any(|v| !v.is_multiple_of(256))
+        || launches.is_empty()
+    {
+        return Err(bad("pas-mixt: zona de control"));
+    }
+    let picks: Vec<Option<TcPick>> = launches.iter().map(|l| tc_pick(l, progs)).collect();
+    for p in picks.iter().flatten() {
+        let va = match p {
+            TcPick::Tc => progs.tc,
+            TcPick::Pf => progs.pf,
+            TcPick::V4 => progs.v4,
+            TcPick::Gelu => progs.gelu,
+        };
+        if va == 0 {
+            return Err(bad("pas-mixt: programul mm_tc ales nu e incarcat"));
+        }
+    }
+    let total: u64 = launches.iter().map(MixedLaunch::slot).sum();
+    let mut bytes = alloc::vec![0u8; total as usize];
+    let mut qmds = Vec::with_capacity(launches.len());
+    let mut at = 0usize;
+    for (l, pick) in launches.iter().zip(&picks) {
+        let cb_va = zone_va + at as u64;
+        match l {
+            MixedLaunch::Std(x) => {
+                let pv = prog_va(x.prog);
+                if !pv.is_multiple_of(256) {
+                    return Err(bad("pas-aur: programul nealiniat"));
+                }
+                let q = match step_bytes {
+                    Some(s) => x.qmd_with_sm_step(pv, cb_va, s)?,
+                    None => x.qmd(pv, cb_va)?,
+                };
+                bytes[at..at + 0x100].copy_from_slice(&x.cbuf);
+                bytes[at + 0x100..at + 0x100 + q.len()].copy_from_slice(&q);
+                qmds.push(cb_va + 0x100);
+            }
+            MixedLaunch::Tc { .. } | MixedLaunch::TcGelu { .. } => {
+                let (cb, grid, block, shared, va, regs): ([u8; tc::CBUF_BYTES], _, _, _, _, _) =
+                    match l {
+                        MixedLaunch::Tc { args, .. } => {
+                            let cb = args
+                                .cbuf()
+                                .ok_or(bad("pas-mixt: argumentele mm_tc refuzate"))?;
+                            let (va, regs) = match pick {
+                                Some(TcPick::V4) => (progs.v4, crate::mm_tc_v4::REGISTERS),
+                                Some(TcPick::Pf) => (progs.pf, crate::mm_tc_pf::REGISTERS),
+                                _ => (progs.tc, tc::REGISTERS),
+                            };
+                            (cb, args.grid(), tc::BLOCK, tc::SHARED, va, regs)
+                        }
+                        MixedLaunch::TcGelu { args, .. } => {
+                            let cb = args
+                                .cbuf()
+                                .ok_or(bad("pas-mixt: argumentele mm_tc_gelu refuzate"))?;
+                            (
+                                cb,
+                                args.grid(),
+                                tg::BLOCK,
+                                tg::SHARED,
+                                progs.gelu,
+                                tg::REGISTERS,
+                            )
+                        }
+                        MixedLaunch::Std(_) => unreachable!(),
+                    };
+                let q = ComputeQmd {
+                    program_va: va,
+                    registers: regs,
+                    cbuf0_va: cb_va,
+                    cbuf0_size: tc::CBUF_BYTES as u32,
+                    grid,
+                    block,
+                    release: None,
+                };
+                let q = match step_bytes {
+                    Some(s) => q.to_bytes_with_sm_config(&shared, s)?,
+                    None => q.to_bytes_with_shared(&shared)?,
+                };
+                let c = tc::CBUF_BYTES;
+                bytes[at..at + c].copy_from_slice(&cb);
+                bytes[at + c..at + c + q.len()].copy_from_slice(&q);
+                qmds.push(cb_va + c as u64);
+            }
+        }
+        at += l.slot() as usize;
+    }
+    Ok((bytes, qmds, picks))
+}
+
 /// One figure of the mixed verdict: its name, the deviation, the tolerance written before the run.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MixedFigure {

@@ -37,3 +37,18 @@ singur bloc (32 KiB). Deci azi `--mixt` pe #513 ar rula cu cel mai lent program.
 ## Ce e nou pentru placă
 Nimic nou ca program sau câmp: `mm_tc_pf` (pe placă în os-437), `mm_tc_v4` (în os-438), treapta 64 KiB (os-431). Nou e doar
 **amestecul** lor în pasul mixt — de rulat de OS abia după os-438 (`mm_tc_v4` aceiași biți pe placă).
+
+## Rezultate (sesiunea 234, T240 `crates/nvidia-ga104/tests/sim_c157_mixed_fast.rs`, SIMULARE)
+| Predicție | Ce a ieșit | Verdict |
+|---|---|---|
+| 1. Aceiași biți | mini, 5 pași, 3 planuri (simplu / plăci3 / lipit): rapid la 64 KiB **27 v4** (lipit: 25 v4 + 2 `mm_tc_gelu`), 0 pf, 0 `mm_tc`; „doar pf” 27 pf — pierderile, gradientul pasului 1 și greutățile **bit cu bit** ca `pack_mixed_gelu` | CONFIRMATĂ (drumul, nu placa) |
+| 2. Fără programe rapide | zona octet cu octet = `pack_mixed_gelu` pe cele 3 planuri | CONFIRMATĂ |
+| 3. Lista #513 | lot 2 și lot 6: **147 v4, 0 pf**; lipit: 135 v4 + 12 gelu; zona 499 / 481 KiB, cât cea veche | CONFIRMATĂ |
+| 4. QMD-ul | v4: doar adresa programului, registrele, MIN / TARGET; **dar** lansările F32 fără memorie comună primesc și MAX = 64 KiB (494 de biți pe pas) — exact ce face `pack_with_sm_step` (os-431, deja pe placă) | **PARȚIAL GREȘITĂ** (uitasem MAX) |
+| 5. Greșeli plantate | A + 4 octeți → pf (1 lansare), pasul trece; v4 forțat pe același produs → simulatorul refuză („nealiniat”); treptele 16 și 48 KiB refuzate; `mm_tc` / `mm_tc_gelu` neîncărcat când trebuie → refuz; adresă nealiniată → refuz; listă goală → refuz | CONFIRMATĂ |
+| 6. Timpul (DEDUS) | înmulțirile #513 lot 2 = **0,599 TFLOP/pas** → 582 ms la 1,03 · 218 la 2,75 · 115–136 la 5,2–4,4 · **75 la 8 TFLOP/s**; lot 6: 1,797 TFLOP → 654 / 346–409 / 225 ms | aritmetică |
+
+**Ce înseamnă (DEDUS):** pasul mixt #513 lot 2 cu vechiul `mm_tc` ar fi ~600+ ms (mai rău decât F32, 266,8 ms). Cu `mm_tc_pf` la
+32 KiB ~220 ms doar înmulțirile + ~40–60 ms restul ≈ cât F32 azi. Câștigul real vine doar cu v4 la 64 KiB (~115–136 ms) și, pentru ținta
+centrului, cu ≥ 8 TFLOP/s (~75 ms → pasul ~120–140 ms ≈ 7 500–8 500 simb/s la lot 2). De aceea os-438 (v4 pe placă) și treapta 64 KiB
+pentru `mm_tc*` (nota sesiunii 233) decid dacă merită rulat pasul mixt rapid.

@@ -1,5 +1,30 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 234 — 25 noiembrie 2026, ~18:22–19:25 (ora României), în cloud, FĂRĂ placă — **pasul mixt cu programele `mm_tc` rapide (`mm_tc_v4` / `mm_tc_pf`) și treapta 64 KiB: `pack_mixed_fast`, gata de legat în SIMULARE**
+
+La pornire GitHub a răspuns 503 cam 5 minute (reîncercat, apoi a mers). Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 233), l-am
+pus `ocupat`. os-438 (`mm_tc_v4` pe placă) nu a rulat încă → nimic de comparat. Am luat punctul 1 din nota centrului 14:40 („`mm_tc`
+rapid → apoi pasul mixt #513”): pasul mixt împacheta doar vechiul `mm_tc` (1,03 TFLOP/s). Plan + predicții urcate **înainte** de cod
+(`cc7621f`, `docs/C-157_P2_PAS_MIXT_RAPID.md`).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Cod (doar adăugări) | `train_step::{TcPrograms, TcPick, tc_pick, pack_mixed_fast}`: v4 dacă `fits`, altfel pf, altfel `mm_tc`; o treaptă pentru toată lista | — |
+| P1 aceiași biți | mini, 5 pași, 3 planuri: rapid la 64 KiB (27 v4) și „doar pf” = `pack_mixed_gelu` bit cu bit (pierderi, gradient, greutăți) | PASS (SIMULARE; drumul, nu placa) |
+| P2 | fără programe rapide și fără treaptă: zona octet cu octet ca înainte | PASS |
+| P3 lista #513 | lot 2 și lot 6: 147 / 147 pe `mm_tc_v4`; lipit 135 v4 + 12 gelu; zona cât cea veche | PASS |
+| P4 QMD | v4: adresa, registrele, MIN/TARGET; **predicția a uitat** că lansările F32 fără memorie comună primesc și MAX (ca `--treapta-pas`, os-431) | PARȚIAL GREȘITĂ, testul afirmă ce s-a găsit |
+| P5 greșeli plantate | nealinierea → pf; v4 forțat → simulatorul refuză; treaptă greșită / program lipsă → refuz | PASS |
+| P6 timpul | înmulțirile #513 lot 2 = 0,599 TFLOP/pas → 218 ms la `mm_tc_pf`, 115–136 ms la v4 / 64 KiB prezis, 75 ms la 8 TFLOP/s | DEDUS |
+| Nota pentru OS | `integration/cyber-universe/C-157_P2zf_pas-mixt-rapid.md` | NOT TESTED pe placă |
+| Verificări | format, clippy, teste pe gazdă, build no_std | PASS (**1 170 de teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** niciun program și niciun câmp nou; doar amestecul `mm_tc_v4` / `mm_tc_pf` + treapta 64 KiB în pasul mixt,
+de rulat de OS după os-438. **Nicio schimbare incompatibilă.**
+
+**Următorul pas:** comparația os-438 (Q1–Q4) când vine; apoi `--antrenare-mini --mixt` cu `pack_mixed_fast` când îl leagă OS-ul; dacă
+`mm_tc*` rămân sub 5 TFLOP/s la 2 blocuri → partea fixă a feliei (scrierile în memoria comună).
+
 ## Sesiunea 233 — 25 noiembrie 2026, ~17:11–18:00 (ora României), în cloud, FĂRĂ placă — **os-436 comparat: `mm_tc_pf` pe placă (aceiași biți, 2,75 TFLOP/s) și pasul #513 cu lotul 6 (4 816 simb/s, modelul valurilor +1,5 %); `mm_tc*` merg la 1 bloc pe unitate → propunerea: treapta 64 KiB**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 232, 16:52), l-am pus `ocupat`. Două rapoarte noi de pe placă (ciclul automat
