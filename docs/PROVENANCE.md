@@ -411,6 +411,11 @@ specificație (nimic copiat): `nvk_physical_device.c` (formele „cooperative ma
 `GL_KHR_cooperative_matrix`; articolul Fasi, Higham, Mikaitis, Pranesh (PeerJ CS 2021) pentru ideea ipotezei de adunare. Nicio sursă
 GPL, niciun octet de firmware NVIDIA.
 
+**B1 (sesiunea 223, 25 nov 2026):** `gpu_compute::mma_s8` (oracolul în i64 și modelul modulo 2³²), `MMA16_S8` / `cbuf_s8` / `qmd_s8`
+în `nvidia_ga104::mma16`, modelul `gpu_sim::cmdproc::mma16_s8_on_cpu` și testul T229 sunt scrise de noi. Programul `mma16_s8.sm86.sass` e
+ieșirea Mesa NAK 26.3.1 (MIT) din `mma16_s8.comp` (al nostru, sesiunea 126). Citite ca specificație: PTX ISA (instrucțiunea `mma`, `.s8`/`.s32`,
+`.satfinite`) și whitepaper-ul NVIDIA GA102 (Anexa A, vitezele). Nicio sursă GPL, niciun octet de firmware.
+
 **C-147 punctul 6 (sesiunea 127, 20 nov 2026) — doar studiu, fără cod:** `docs/C-147_PUNCTUL6_LANT.md`. Citite ca specificație (nimic
 copiat, niciun cod scris): NVIDIA `open-gpu-doc` (MIT) commit `9fdf5c40` — `classes/compute/clc6c0qmd.h`, `clc7c0qmd.h`, `clc7c0.h`
 (pozițiile câmpurilor QMD V03_00 și codurile acțiunilor); tinygrad (MIT) commit `5e8b5da9` — `tinygrad/runtime/ops_nv.py` (cum leagă

@@ -1,5 +1,25 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 223 — 25 noiembrie 2026, ~06:11–06:45 (ora României), în cloud, FĂRĂ placă — **B1: NAK scoate int8 pe tensor cores; proba `mma16_s8` modelată, bit cu bit**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 222 terminată 05:38), l-am pus `ocupat`. Niciun raport nou de pe placă după os-418 (laboratorul Kronos are placa de la 07:00), deci am luat punctul următor din coadă: pista B1 (aprobată 24 nov 21:39).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Răspunsul B1 | `mma16_s8.sm86.txt`: două `imma.m16n8k32.i8.i8`, fără `.sat`, 32 registre, 0 partajată | DA — NAK 26.3.1 scoate IMMA pentru SM 8.6 |
+| Verificări | T229a–f scrise înainte de cod (`89ffb36`), `docs/B1_IMMA.md` | — |
+| Cod (doar adăugări) | `gpu_compute::mma_s8` (oracol i64 + model modulo 2³²), `nvidia_ga104::mma16::{MMA16_S8, MMA16_S8_REGISTERS, cbuf_s8, qmd_s8}`, `gpu_sim::cmdproc::{mma16_s8_on_cpu, MMA16_S8_NEEDS}` | — |
+| T229 | `crates/nvidia-ga104/tests/sim_b1_mma16_s8.rs`: D = oracolul **bit cu bit** (întregii nu se rotunjesc), margini, depășire (IPOTEZĂ), lansări greșite refuzate | PASS 6/6 în SIMULARE |
+| Viteza | int8 ≈ ×4 față de f16 cu acumulare f32 (whitepaper GA102, Anexa A) | DEDUS, NOT TESTED |
+| Nota pentru OS | `integration/cyber-universe/B1_mma16-s8.md` — proba pe placă = doar programul `mma16_s8`, după `mm_tc` și cursa cu 5 variante | NOT TESTED (de rulat de OS) |
+| `tools/check.sh` | format, clippy, teste pe gazdă, build no_std | PASS (**1 098 de teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** doar programul `mma16_s8` (SHA-256 `7f6bc59a…c84af`), când îl leagă OS-ul. **Nicio schimbare incompatibilă.**
+
+**Următorul pas:** comparația cursei cu 5 variante (`race_list_full()`) când vine; `mm_tc` / `mm_tc128` după os-352; B1 mai departe: `mm_s8` pe plăci (SIMULARE) după proba `mma16_s8` pe placă.
+
+---
+
 ## Sesiunea 222 — 25 noiembrie 2026, ~05:11–05:40 (ora României), în cloud, FĂRĂ placă — **os-418 comparat: pasul #513 338,4 ms, cât am prezis**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 221 terminată 04:41), l-am pus `ocupat`. Venise os-418 (pasul #513 cu alegerea cursei, 04:33) — comparația are întâietate (C-157 p.2). Clona locală veche avea istoria tăiată (clonare superficială); am lucrat într-o clonă nouă, fără să șterg nimic.

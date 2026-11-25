@@ -10,6 +10,7 @@
 //!   bit-identical to the reference;
 //! - [`mma`]: binary16 conversions and the oracle + tolerance of the first
 //!   tensor-core program (C-147 point 5; SIMULARE only);
+//! - [`mma_s8`]: the bit-exact oracle of the int8 tensor-core probe (B1; SIMULARE only);
 //! - [`rows`]: row-range versions of softmax (causal), attention and
 //!   cross-entropy, so one operator can be split over several cores;
 //!   bit-identical to the reference, no global state;
@@ -33,6 +34,7 @@ pub mod layer;
 pub mod math;
 pub mod mm_tc;
 pub mod mma;
+pub mod mma_s8;
 pub mod model;
 pub mod op;
 pub mod q8;

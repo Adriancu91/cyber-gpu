@@ -3125,6 +3125,55 @@ pub fn mma16_f16_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// B1: what `tools/nak/out2/mma16_s8.sm86.sass` needs: no shared memory, no barrier (one warp; the dump
+/// says `Shared size: 0`, no `BAR.SYNC`).
+pub const MMA16_S8_NEEDS: Needs = Needs {
+    shared_bytes: 0,
+    barriers: 0,
+};
+
+/// B1: the CPU stand-in for `tools/nak/out2/mma16_s8.sm86.sass` (second NAK tool, Mesa 26.3.1; two
+/// `imma.m16n8k32.i8.i8`): cbuf0 a 0x700, b 0x708, c 0x710, d 0x718 (all 16-aligned); one block of 32×1×1;
+/// D = A·B + C (A 16×32 and B 32×16 in i8, C/D 16×16 in i32, row-major). The arithmetic is
+/// `gpu_compute::mma_s8::mma16_s8_wrap`: exact whenever the result fits in i32; the wrap on overflow is a
+/// HYPOTHESIS, not a fact.
+pub fn mma16_s8_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    use gpu_compute::mma_s8 as s8;
+    if l.block != [32, 1, 1] || l.grid != [1, 1, 1] {
+        return Err(bad("SIM: mma16_s8 cere un bloc de 32x1x1"));
+    }
+    let r = |l: &Launch<'_>, o: u64| l.mem.read_u64(l.cbuf0 + MMA16_PUSH_BASE + o);
+    let (a, b, c, d) = (r(l, 0)?, r(l, 8)?, r(l, 0x10)?, r(l, 0x18)?);
+    if [a, b, c, d].contains(&0) || !(a | b | c | d).is_multiple_of(16) {
+        return Err(bad(
+            "SIM: mma16_s8 cere a, b, c, d nenule si aliniate la 16",
+        ));
+    }
+    let bytes = |l: &Launch<'_>, va: u64, n: usize| -> GpuResult<Vec<u8>> {
+        let mut raw = alloc::vec![0u8; n];
+        l.mem.read(va, &mut raw)?;
+        Ok(raw)
+    };
+    let ia: Vec<i8> = bytes(l, a, s8::M * s8::K)?
+        .into_iter()
+        .map(|v| v as i8)
+        .collect();
+    let ib: Vec<i8> = bytes(l, b, s8::K * s8::N)?
+        .into_iter()
+        .map(|v| v as i8)
+        .collect();
+    let ic: Vec<i32> = bytes(l, c, 4 * s8::M * s8::N)?
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|w| i32::from_le_bytes(*w))
+        .collect();
+    let out = s8::mma16_s8_wrap(&ia, &ib, &ic).ok_or_else(|| bad("SIM: mma16_s8 dimensiuni"))?;
+    let raw: Vec<u8> = out.iter().flat_map(|v| v.to_le_bytes()).collect();
+    l.mem.write(d, &raw);
+    Ok(())
+}
+
 /// C-160 point 7: what `tools/nak/out2/mm_tc.sm86.sass` needs — the f16 slices of op(A) (64×32) and op(B)
 /// (32×64) plus the 64×64 f32 block for the end: 4 + 4 + 16 KiB of shared memory, one barrier.
 pub const MM_TC_NEEDS: Needs = Needs {

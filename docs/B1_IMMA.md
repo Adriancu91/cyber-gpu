@@ -53,3 +53,10 @@ din model, nu în aritmetică.
 - PTX ISA, instrucțiunea `mma` cu `.s8` / `.s32` și opțiunea `.satfinite` (documentație publică NVIDIA).
 - NVIDIA Ampere GA102 GPU Architecture Whitepaper, Anexa A:
   https://images.nvidia.com/aem-dam/en-zz/Solutions/geforce/ampere/pdf/NVIDIA-ampere-GA102-GPU-Architecture-Whitepaper-V1.pdf
+
+## Rezultat (sesiunea 223, SIMULARE)
+- T229 **6/6 PASS** din prima, cum am prezis (`crates/nvidia-ga104/tests/sim_b1_mma16_s8.rs`); oracolul `gpu_compute::mma_s8` 3/3.
+- Nota pentru OS: `integration/cyber-universe/B1_mma16-s8.md` (proba pe placă = un singur lucru nou: programul `mma16_s8`;
+  verdict bit cu bit; fără date care depășesc i32). Pe placă doar prin Release-ul OS, după `mm_tc` și cursa cu 5 variante.
+- **Nimic din acestea nu a rulat pe placă.** Viteza int8 (×4 față de f16 cu acumulare f32) e DEDUSĂ din whitepaper, nemăsurată.
+- Următorul pas B1 (după proba pe placă): `mm_s8` pe plăci 64×64 / 128×128 (SIMULARE, oracol bit cu bit), apoi scara pe tensor.

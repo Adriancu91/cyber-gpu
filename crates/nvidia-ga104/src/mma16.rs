@@ -30,10 +30,16 @@ pub const MMA16_F16: &[u8] = include_bytes!("../../../tools/nak/out2/mma16_f16.s
 /// SHA-256 of [`MMA16_F16`] (`sh tools/nak/build2.sh mma16_f16`, identical on two builds).
 pub const MMA16_F16_SHA256: &str =
     "f8c0db68b654372d94ed96c767c7775c32909298a1b77076ddda81a66afa1ef9";
-/// `tools/nak/out2/mma16_s8.sm86.sass` — the int8 probe (two `imma.m16n8k32.i8.i8`); compiled,
-/// **not modelled, not used**: kept so its checksum is fixed for a later step.
+/// SHA-256 of [`MMA16_S8`], `tools/nak/out2/mma16_s8.sm86.sass` — the int8 probe (two
+/// `imma.m16n8k32.i8.i8`). B1 (sesiunea 223): modelled in SIMULARE (`gpu_sim::cmdproc::mma16_s8_on_cpu`,
+/// oracle `gpu_compute::mma_s8`); never sent to a board.
 pub const MMA16_S8_SHA256: &str =
     "7f6bc59aad0871f1164902ad0f19aad5f89d388003f6d3afd5a4551e9e0c84af";
+/// B1: `tools/nak/out2/mma16_s8.sm86.sass` (Mesa NAK 26.3.1, SM 8.6; 148 instructions, 2 368 bytes):
+/// `D[16,16] = A[16,32] · B[32,16] + C[16,16]`, A/B i8, C/D i32, row-major; one warp.
+pub const MMA16_S8: &[u8] = include_bytes!("../../../tools/nak/out2/mma16_s8.sm86.sass");
+/// Registers per thread of [`MMA16_S8`] (dump: `Num GPRs: 32`, `Shared size: 0`).
+pub const MMA16_S8_REGISTERS: u32 = 32;
 /// Registers per thread (dump: `Num GPRs: 32`).
 pub const MMA16_F16_REGISTERS: u32 = 32;
 /// Threads in the one block (`local_size_x`): one warp.
@@ -79,6 +85,26 @@ pub fn qmd(program_va: u64, cbuf_va: u64) -> GpuResult<[u8; nvidia_rm570::QMD_SI
     .to_bytes()
 }
 
+/// B1: the constant buffer of [`MMA16_S8`] — the same layout as [`cbuf`] (NVK 26.3.1 push constants at
+/// 0x700: a, b, c, d; the dump reads A with 4-byte loads, B by byte, C with 8-byte loads).
+pub fn cbuf_s8(a: u64, b: u64, c: u64, d: u64) -> GpuResult<[u8; CBUF_SIZE as usize]> {
+    cbuf(a, b, c, d).map_err(|_| bad("mma16_s8: a, b, c, d nenule si aliniate la 16"))
+}
+
+/// B1: the QMD of [`MMA16_S8`]: one block of 32×1×1, 32 registers, no shared memory.
+pub fn qmd_s8(program_va: u64, cbuf_va: u64) -> GpuResult<[u8; nvidia_rm570::QMD_SIZE]> {
+    ComputeQmd {
+        program_va,
+        registers: MMA16_S8_REGISTERS,
+        cbuf0_va: cbuf_va,
+        cbuf0_size: CBUF_SIZE,
+        grid: [1, 1, 1],
+        block: [MMA16_F16_BLOCK, 1, 1],
+        release: None,
+    }
+    .to_bytes()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,5 +131,12 @@ mod tests {
         );
         assert!(cbuf(0x1008, 0x2000, 0x3000, 0x4000).is_err());
         assert!(cbuf(0, 0x2000, 0x3000, 0x4000).is_err());
+    }
+
+    #[test]
+    fn s8_program_is_the_compiled_one() {
+        assert_eq!(MMA16_S8.len(), 148 * 16);
+        assert_eq!(hex(&sha256(MMA16_S8)), MMA16_S8_SHA256);
+        assert!(cbuf_s8(0x1004, 0x2000, 0x3000, 0x4000).is_err());
     }
 }
