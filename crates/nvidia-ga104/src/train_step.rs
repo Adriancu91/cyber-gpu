@@ -28,6 +28,7 @@ use gpu_compute::train::{self, AdamW, Arch, Recipe};
 use gpu_core::diag::{Event, Journal};
 use gpu_core::error::{GpuError, GpuResult};
 
+use crate::occupancy;
 use crate::qmd::{ComputeQmd, SharedMemory};
 use crate::{
     attn_back as ab, attn_back_tile_2 as abt2, attn_back_tile_3 as abt3,
@@ -583,6 +584,18 @@ impl Prog {
         }
     }
 
+    /// C-165: the program as the occupancy arithmetic sees it (threads = the block's product, shared memory = 0 for a
+    /// program without it).
+    pub fn kernel(self) -> occupancy::Kernel {
+        let b = self.block();
+        occupancy::Kernel {
+            name: self.name(),
+            threads: b[0] * b[1] * b[2],
+            registers: self.registers(),
+            shared_bytes: self.shared().map_or(0, |s| s.bytes),
+        }
+    }
+
     /// Short name for the report (the `.comp` file's name).
     pub fn name(self) -> &'static str {
         match self {
@@ -719,6 +732,32 @@ impl Launch {
             None => q.to_bytes(),
         }
     }
+
+    /// C-165 (`docs/C-165_TREAPTA_PAS.md`): [`Launch::qmd`] with the SM's shared-memory step set to `step_bytes`
+    /// (`MIN = TARGET`, `MAX` 64 KiB). A program without shared memory gets `SHARED_MEMORY_SIZE = 0` and
+    /// `BARRIER_COUNT = 0` as with [`Launch::qmd`]; only its three step fields change (0 today).
+    pub fn qmd_with_sm_step(
+        &self,
+        prog_va: u64,
+        cbuf_va: u64,
+        step_bytes: u32,
+    ) -> GpuResult<[u8; nvidia_rm570::QMD_SIZE]> {
+        let q = ComputeQmd {
+            program_va: prog_va,
+            registers: self.prog.registers(),
+            cbuf0_va: cbuf_va,
+            cbuf0_size: 0x100,
+            grid: self.grid,
+            block: self.prog.block(),
+            release: None,
+        };
+        let s = self.prog.shared().unwrap_or(SharedMemory {
+            bytes: 0,
+            max_bytes: crate::qmd::MAX_SHARED_BYTES,
+            barriers: 0,
+        });
+        q.to_bytes_with_sm_config(&s, step_bytes)
+    }
 }
 
 fn launch(
@@ -751,6 +790,47 @@ pub fn pack(
     prog_va: impl Fn(Prog) -> u64,
     zone_va: u64,
 ) -> GpuResult<(Vec<u8>, Vec<u64>)> {
+    pack_inner(launches, prog_va, zone_va, None)
+}
+
+/// C-165 (`docs/C-165_TREAPTA_PAS.md`): [`pack`] with **one** shared-memory step of the SM for every launch of the
+/// list (`MIN = TARGET = step_bytes`, `MAX` 64 KiB; see [`Launch::qmd_with_sm_step`]); the cbufs, the addresses and
+/// every other QMD field are those of [`pack`]. The step is refused (before anything is sent) if it is not 8/16/32/64
+/// KiB or is below the shared memory of one program of the list. Pick it with [`step_best_sm_step`]. That the board
+/// keeps more blocks per SM with it is DEDUS: the occupancy probe decides whether the OS binds it.
+pub fn pack_with_sm_step(
+    launches: &[Launch],
+    prog_va: impl Fn(Prog) -> u64,
+    zone_va: u64,
+    step_bytes: u32,
+) -> GpuResult<(Vec<u8>, Vec<u64>)> {
+    pack_inner(launches, prog_va, zone_va, Some(step_bytes))
+}
+
+/// C-165: the programs of `launches` (each once, in the order of their first launch) as the occupancy arithmetic
+/// sees them.
+pub fn step_kernels(launches: &[Launch]) -> Vec<occupancy::Kernel> {
+    let mut seen: Vec<Prog> = Vec::new();
+    for l in launches {
+        if !seen.contains(&l.prog) {
+            seen.push(l.prog);
+        }
+    }
+    seen.into_iter().map(Prog::kernel).collect()
+}
+
+/// C-165: [`occupancy::best_step`] over every program of `launches` — the smallest step at which each of them reaches
+/// its limit without shared memory (DEDUS: the limits are the public table for capability 8.6).
+pub fn step_best_sm_step(launches: &[Launch], r: occupancy::Reserve) -> u32 {
+    occupancy::best_step(&occupancy::SM86, &step_kernels(launches), r)
+}
+
+fn pack_inner(
+    launches: &[Launch],
+    prog_va: impl Fn(Prog) -> u64,
+    zone_va: u64,
+    sm_step: Option<u32>,
+) -> GpuResult<(Vec<u8>, Vec<u64>)> {
     if !zone_va.is_multiple_of(256) || launches.is_empty() {
         return Err(bad("pas-aur: zona de control"));
     }
@@ -763,7 +843,10 @@ pub fn pack(
         if !pv.is_multiple_of(256) {
             return Err(bad("pas-aur: programul nealiniat"));
         }
-        let q = l.qmd(pv, cb_va)?;
+        let q = match sm_step {
+            None => l.qmd(pv, cb_va)?,
+            Some(step) => l.qmd_with_sm_step(pv, cb_va, step)?,
+        };
         bytes[at..at + 0x100].copy_from_slice(&l.cbuf);
         bytes[at + 0x100..at + 0x100 + q.len()].copy_from_slice(&q);
         qmds.push(cb_va + 0x100);

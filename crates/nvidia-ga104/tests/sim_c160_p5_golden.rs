@@ -40,6 +40,13 @@ use nvidia_rm570::regs::clc7c0 as c;
 
 /// The small golden model (hub `integrare/kronos/pas_de_aur_mic/reteta.json`).
 const MIC: Arch = train::MIC;
+
+thread_local! {
+    /// T232 (C-165): when set, every submission of this thread packs its list with `pack_with_sm_step` at this step.
+    static SM_STEP: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+    /// T232: the distinct [MIN, TARGET, MAX] step fields the command processor saw on this thread.
+    static SM_SEEN: std::cell::RefCell<Vec<[u32; 3]>> = const { std::cell::RefCell::new(Vec::new()) };
+}
 const B: usize = 2;
 const T: usize = 32;
 
@@ -211,7 +218,10 @@ impl Board {
     /// [`Board::submit`] with the control zone patched first (T187: a QMD without its shared memory); the command
     /// processor's refusal comes back as an error.
     fn try_submit(&mut self, launches: &[Launch], patch: impl Fn(&mut [u8])) -> Result<(), String> {
-        let (mut zone, qmds) = ts::pack(launches, prog_va, ZONE).unwrap();
+        let (mut zone, qmds) = match SM_STEP.with(|c| c.get()) {
+            None => ts::pack(launches, prog_va, ZONE).unwrap(),
+            Some(step) => ts::pack_with_sm_step(launches, prog_va, ZONE, step).unwrap(),
+        };
         patch(&mut zone);
         assert!(zone.len() as u64 <= REC - ZONE, "zona de control prea mare");
         self.cp.mem.write(ZONE, &zone);
@@ -242,6 +252,14 @@ impl Board {
         self.step_ns.push(ns.iter().sum());
         self.first = self.first.wrapping_add(n as u32 + 1);
         self.log.extend(launches.iter().map(|l| l.prog));
+        SM_SEEN.with(|v| {
+            let mut v = v.borrow_mut();
+            for sm in &self.cp.sm_configs {
+                if !v.contains(sm) {
+                    v.push(*sm);
+                }
+            }
+        });
         Ok(())
     }
 }
@@ -3410,6 +3428,125 @@ fn t220_tile_gelu_small_golden_step_is_bit_for_bit() {
             );
             assert!(v.passes(), "{name} {new_k:?}: verdictul");
             assert!(s, "{name} {new_k:?}: nu e bit cu bit");
+        }
+    }
+}
+
+// ------------------------------------------------------------------ T232: one SM step for the whole step (C-165)
+
+/// T232d (`docs/C-165_TREAPTA_PAS.md` P3): the small golden step (SGD and AdamW, 3 steps) and 4 layers, packed with
+/// one shared-memory step for every launch (the list's best step and 64 KiB), give the same bits as `pack`; the
+/// command processor sees exactly one step. SIMULARE: the model has no occupancy — it only checks that the QMDs are
+/// read correctly and the results do not change.
+#[test]
+fn t232d_one_sm_step_for_the_whole_step_same_bits() {
+    let opt_list = |kind: Kind, ar: Arch| {
+        let inputs = read_i32(&dir().join("intrari.i32"));
+        let plan = match kind {
+            Kind::Kept => Plan::new(ar, B, T, &inputs, HEAP).unwrap(),
+            Kind::Tiles3TileSplit => Plan::new_tiles3(ar, B, T, &inputs, HEAP)
+                .unwrap()
+                .with_mm_tile()
+                .with_colsum_split(),
+            _ => unreachable!(),
+        };
+        let params: Vec<Vec<f32>> = ar
+            .tensors()
+            .iter()
+            .map(|t| vec![0.0; t.elements()])
+            .collect();
+        let opt = AdamW::recipe_513(&params);
+        plan.step(Recipe::AdamW513, &opt, 1).unwrap()
+    };
+    let four = Arch { layers: 4, ..MIC };
+    let mut r = rng(232);
+    let params4: Vec<Vec<f32>> = four
+        .tensors()
+        .iter()
+        .map(|s| {
+            let n = s.elements();
+            if s.name.ends_with("ln1.weight")
+                || s.name.ends_with("ln2.weight")
+                || s.name == "ln.weight"
+            {
+                (0..n).map(|_| 1.0 + 0.1 * r()).collect()
+            } else {
+                (0..n).map(|_| 0.3 * r()).collect()
+            }
+        })
+        .collect();
+    let inputs = read_i32(&dir().join("intrari.i32"));
+    let targets = read_i32(&dir().join("tinte.i32"));
+    for kind in [Kind::Kept, Kind::Tiles3TileSplit, Kind::Tiles3BothChoice] {
+        let list = if kind == Kind::Tiles3BothChoice {
+            None
+        } else {
+            Some(opt_list(kind, MIC))
+        };
+        let best = list.as_ref().map(|l| {
+            (
+                ts::step_best_sm_step(l, nvidia_ga104::occupancy::Reserve::None),
+                ts::step_best_sm_step(l, nvidia_ga104::occupancy::Reserve::OneKib),
+            )
+        });
+        let mut steps = vec![64 << 10];
+        if let Some((r0, r1)) = best {
+            println!(
+                "kt t232d {kind:?}: treapta R0 {} KiB, R1 {} KiB",
+                r0 >> 10,
+                r1 >> 10
+            );
+            for s in [r0, r1] {
+                if !steps.contains(&s) {
+                    steps.push(s);
+                }
+            }
+        }
+        for (recipe, ar, params) in [
+            (Recipe::Sgd, MIC, tensors("initiale")),
+            (Recipe::AdamW513, MIC, tensors("initiale")),
+            (Recipe::AdamW513, four, params4.clone()),
+        ] {
+            let run = || {
+                run_plan(
+                    kind,
+                    ar,
+                    (B, T),
+                    &params,
+                    (&inputs, &targets),
+                    recipe,
+                    3,
+                    Fault::None,
+                )
+            };
+            SM_STEP.with(|c| c.set(None));
+            let base = run();
+            for &step in &steps {
+                SM_STEP.with(|c| c.set(Some(step)));
+                SM_SEEN.with(|v| v.borrow_mut().clear());
+                let one = run();
+                SM_STEP.with(|c| c.set(None));
+                let seen = SM_SEEN.with(|v| v.borrow().clone());
+                let unit = step / 4096 + 1;
+                assert_eq!(
+                    seen,
+                    vec![[unit, unit, 17]],
+                    "{kind:?} {recipe:?} {} KiB",
+                    step >> 10
+                );
+                assert_eq!(one.total_per_step, base.total_per_step);
+                assert!(
+                    same_bits(&base.out, &one.out),
+                    "{kind:?} {recipe:?} {} straturi, {} KiB: alti biti",
+                    ar.layers,
+                    step >> 10
+                );
+            }
+            println!(
+                "kt t232d {kind:?} {recipe:?} {} straturi: aceiasi biti la {:?} KiB (SIMULARE)",
+                ar.layers,
+                steps.iter().map(|s| s >> 10).collect::<Vec<_>>()
+            );
         }
     }
 }

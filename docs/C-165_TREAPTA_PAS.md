@@ -49,3 +49,15 @@ programe, aceleași adrese, niciun registru, nicio comandă nouă. Pasul mixt (`
 
 - `docs/C-165_OCUPAREA.md` (aritmetica ocupării, tabelul public al capacității 8.6, codificarea treptei din Mesa NAK, MIT).
 - Studiul centrului: `Cyber-hub/idei/2026-11-25-centru-inmultirea-la-altii.md`.
+
+## 6. Rezultatul (sesiunea 226, SIMULARE)
+
+| | ieșit | față de predicție |
+|---|---|---|
+| P1 | pasul #513 (os-418, 483 lansări, 15 programe): **64 KiB** sub R0 și R1 | în predicție. Motivul: `attn_fwd_tile3` (37 888 B) și `attn_back_tile*_3` (33 024 B) încap doar la 64 KiB; la 64 KiB tot nu ajung la limita lor de registre (1 bloc din 2–3), deci `best_step` cade pe cea mai mare treaptă |
+| P2 | octet cu octet = `pack` în afara celor 3 câmpuri, la 483 QMD-uri; 247 de lansări fără memorie comună (azi 0/0/0) | da |
+| P3 | pasul de aur mic (SGD, AdamW) și 4 straturi, planurile `new` (treapta R0 16 / R1 32 KiB), `new_tiles3` + plăci + `colsum` împărțit, `new_tiles3` + lipiri + variantele cursei: aceiași biți (la `new`: 16 / 32 / 64 KiB; la planurile `_3`: 64 KiB, singura la care încape atenția); o singură treaptă văzută | da |
+| P4 | refuz la 0 / 4 / 12 / 96 / 128 KiB, sub memoria programului, lista goală | da |
+
+Observație (DEDUS): la 64 KiB, `mm_tv_128x128` ar trece de la 1 la 2 blocuri pe unitate; atenția `_3` rămâne la 1 bloc
+(ar avea 2 abia la 96 KiB, pe care `MAX` de azi nu-l permite).

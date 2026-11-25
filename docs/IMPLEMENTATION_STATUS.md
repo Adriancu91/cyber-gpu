@@ -1,5 +1,25 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 226 — 25 noiembrie 2026, ~09:15–09:55 (ora României), în cloud, FĂRĂ placă — **o singură treaptă a memoriei comune pe tot pasul, gata de legat în SIMULARE**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 225 terminată 08:56), l-am pus `ocupat`. Niciun raport nou de pe placă după os-418 (laboratorul Kronos are placa). Am luat punctul (3) din nota centrului de la 07:00: „treapta aleasă automat, aceeași pe tot pasul”. Clona locală veche avea istoria tăiată; am lucrat într-o clonă nouă a ramurii.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Predicții | P1–P4 + T232a–e scrise înainte de cod (`c332bc2`), `docs/C-165_TREAPTA_PAS.md` | — |
+| Cod (doar adăugări) | `train_step::{pack_with_sm_step, step_best_sm_step, step_kernels}`, `Launch::qmd_with_sm_step`, `Prog::kernel`; `pack` neschimbat | — |
+| P1 | pasul #513 (os-418, 483 lansări, 15 programe): treapta **64 KiB** sub R0 și R1 (atenția `_3`, 33–37 KiB pe bloc, încape doar acolo) | DEDUS, în predicție |
+| Găsit | azi 247 din 483 de lansări au MIN/TARGET/MAX = 0, `mm_tv_128x128` 8 KiB, atenția 64 KiB: treapta se schimbă de la o lansare la alta | fapt despre codul nostru |
+| T232 | `tests/sim_c165_treapta_pas.rs` (a, b, c, e) + `t232d` în `sim_c160_p5_golden.rs`: octet cu octet = `pack` în afara celor 3 câmpuri; pasul de aur mic + 4 straturi pe 3 planuri = aceiași biți; o singură treaptă văzută; refuzurile | PASS 5/5 în SIMULARE |
+| Nota pentru OS | `integration/cyber-universe/C-165_treapta-pe-pas.md` — se leagă doar dacă proba ocupării dă H1 | NOT TESTED (de rulat de OS) |
+| `tools/check.sh` | format, clippy, teste pe gazdă, build no_std | PASS (**1 121 de teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** doar valorile câmpurilor `MIN/TARGET/MAX_SM_CONFIG_SHARED_MEM_SIZE`, aceleași pe tot pasul, și doar după proba ocupării. **Nicio schimbare incompatibilă.**
+
+**Următorul pas:** comparațiile când vin (proba ocupării, os-421, os-419 `mm_tc`, os-422 `mma16_s8`); apoi, după ocupare, `mm_tc` cu mai puțină memorie pe bloc și dieta de registre la `128x128` (≤ 80); B1: scara pe bloc Q8_0 după întrebarea pentru Kronos.
+
+---
+
 ## Sesiunea 225 — 25 noiembrie 2026, ~08:14–08:55 (ora României), în cloud, FĂRĂ placă — **B1: `mm_s8`, înmulțirea int8 pe plăci 128×128, gata de legat în SIMULARE**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 224 terminată 07:39), l-am pus `ocupat`. Niciun raport nou de pe placă după os-418 (os-419, os-421, os-422 sunt GATA DE TEST, nerulate; placa e a laboratorului Kronos azi), deci am luat ramura „altfel” din pasul următor: B1 `mm_s8` pe plăci. Unealta NAK a doua (Mesa 26.3.1) a fost refăcută în această sesiune și reproduce exact binarul vechi `mma16_s8`.
