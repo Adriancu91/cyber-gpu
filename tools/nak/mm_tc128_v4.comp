@@ -1,0 +1,183 @@
+// C-157 p.2 (session 231): mm_tc128 with the cure of mm_tc_pf + mm_tc_v4 — the next K-slice read ahead and 128-bit
+// global loads ("citiri de 128 de biti"), on the 128x128 tiles of mm_tc128 (256 threads, 8 subgroups).
+// Why: os-423 showed every load of mm_tc / mm_tc128 waited for its value before the next one (96/96, 128/128, one in
+// flight); mm_tc_v4 (session 230) cut mm_tc's 32 scalar loads per slice to 8 vec4 and reads them while the tensor
+// cores work. A 128x128 tile does twice the tensor-core work per byte read from memory than a 64x64 one, so with the
+// same cure it should go further — IF the registers stay low enough for the blocks to overlap (see the note).
+// Only for ALIGNED products, the same rule as mm_tc_v4 (nvidia_ga104::mm_tc128_v4::fits = mm_tc_v4::fits): the
+// contiguous dimension of each stored matrix (k for A, m for A^T, n for B, k for B^T) is a multiple of 4 and the
+// addresses of A and B are multiples of 16 bytes. Then a vec4 is wholly inside or wholly outside the matrix (tile
+// edges are multiples of 4), so one inside bit per vec4 is enough. The host launches mm_tc128 otherwise.
+// Everything else is mm_tc128: the same values (0 outside) rounded to f16 into the same shared slices (128x32 and
+// 32x128), the same coopMatMulAdd chain per element with K in steps of 16 in order from 0, the same per-subgroup
+// 16x16 scratch store and the same single f32 add of bias[col]. So C is the same bits as mm_tc128 = mm_tc (judged in
+// SIMULARE, T237). Branch-free reads, next slice read after the barrier, zero chosen at the shared store: as mm_tc_v4.
+// Ideas from the public CUTLASS / "How to optimize a CUDA matmul" write-ups and our own mm_tc*.comp; our own code.
+// Compiled with the SECOND NAK tool (tools/nak/build2.sh, Mesa 26.3.1). Nothing here has run on a board.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_shader_subgroup_basic : require
+
+#define BM 128u
+#define BN 128u
+#define BK 32u
+#define THREADS 256u
+#define TA 1u
+#define TB 2u
+#define BIAS 4u
+#define NV ((BM * BK) / (4u * THREADS))  // vec4 loads per thread per slice, for A and for B: 4
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer In4 { vec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+
+// The same 48 bytes as mm_tc: a and b are the same 64-bit addresses, only declared 16-byte aligned.
+layout(push_constant) uniform Args {
+    In4 a;
+    In4 b;
+    Out c;
+    In bias;
+    uint m;
+    uint n;
+    uint k;
+    uint flags;
+} args;
+
+shared float16_t as_[BM * BK];  // op(A) slice, row-major [r][p], stride BK
+shared float16_t bs_[BK * BN];  // op(B) slice, row-major [p][col], stride BN
+shared float cs_[8u * 256u];    // one 16x16 f32 scratch per subgroup, row-major, stride 16
+
+// Vector s of this thread (e = tid + s * 256, 0..1023) covers 4 elements along the stored matrix's rows:
+//   A    (m x k, op = A):   r = e / 8,         p = 4 * (e % 8)   -> op(A)[r][p..p+3]
+//   A^T  (k x m, op = A^T): r = 4 * (e % 32),  p = e / 32        -> op(A)[r..r+3][p]
+//   B    (k x n, op = B):   p = e / 32,        c = 4 * (e % 32)  -> op(B)[p][c..c+3]
+//   B^T  (n x k, op = B^T): p = 4 * (e % 8),   c = e / 8         -> op(B)[p..p+3][c]
+// Outside the matrix the vec4 index is multiplied by 0 (vector 0, always valid); the value is replaced by 0 only at
+// the shared store. Bit s of ia / ib: vector s is inside.
+void load_slice(uint t, uint row0, uint col0, uint tid, bool ta, bool tb,
+                out vec4 ra[NV], out vec4 rb[NV], out uint ia, out uint ib) {
+    ia = 0u;
+    ib = 0u;
+    for (uint s = 0u; s < NV; s++) {
+        uint e = tid + s * THREADS;
+        uint r = mix(e / 8u, 4u * (e % 32u), ta);
+        uint p = mix(4u * (e % 8u), e / 32u, ta);
+        uint gr = row0 + r;
+        uint gp = t + p;
+        uint in_ = uint(gr < args.m) & uint(gp < args.k);
+        ia |= in_ << s;
+        uint at = mix(gr * args.k + gp, gp * args.m + gr, ta);  // a multiple of 4 when fits()
+        ra[s] = args.a.v[(at / 4u) * in_];
+    }
+    for (uint s = 0u; s < NV; s++) {
+        uint e = tid + s * THREADS;
+        uint p = mix(e / 32u, 4u * (e % 8u), tb);
+        uint cl = mix(4u * (e % 32u), e / 8u, tb);
+        uint gp = t + p;
+        uint gc = col0 + cl;
+        uint in_ = uint(gp < args.k) & uint(gc < args.n);
+        ib |= in_ << s;
+        uint at = mix(gp * args.n + gc, gc * args.k + gp, tb);
+        rb[s] = args.b.v[(at / 4u) * in_];
+    }
+}
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint w = tid / 32u;
+    uint lane = tid % 32u;
+    uint wr = (w / 2u) * 32u;
+    uint wc = (w % 2u) * 64u;
+    uint row0 = gl_WorkGroupID.y * BM;
+    uint col0 = gl_WorkGroupID.x * BN;
+    bool ta = (args.flags & TA) != 0u;
+    bool tb = (args.flags & TB) != 0u;
+
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> acc[2][4];
+    for (uint i = 0u; i < 2u; i++) {
+        for (uint j = 0u; j < 4u; j++) {
+            acc[i][j] = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+        }
+    }
+
+    vec4 ra[NV];
+    vec4 rb[NV];
+    uint ia;
+    uint ib;
+    load_slice(0u, row0, col0, tid, ta, tb, ra, rb, ia, ib);
+
+    for (uint t = 0u; t < args.k; t += BK) {
+        for (uint s = 0u; s < NV; s++) {
+            uint e = tid + s * THREADS;
+            uint r = mix(e / 8u, 4u * (e % 32u), ta);
+            uint p = mix(4u * (e % 8u), e / 32u, ta);
+            vec4 v = mix(vec4(0.0), ra[s], bvec4(((ia >> s) & 1u) != 0u));
+            uint step_ = mix(1u, BK, ta);  // along p (A) or along r (A^T)
+            uint base = r * BK + p;
+            as_[base] = float16_t(v.x);
+            as_[base + step_] = float16_t(v.y);
+            as_[base + 2u * step_] = float16_t(v.z);
+            as_[base + 3u * step_] = float16_t(v.w);
+        }
+        for (uint s = 0u; s < NV; s++) {
+            uint e = tid + s * THREADS;
+            uint p = mix(e / 32u, 4u * (e % 8u), tb);
+            uint cl = mix(4u * (e % 32u), e / 8u, tb);
+            vec4 v = mix(vec4(0.0), rb[s], bvec4(((ib >> s) & 1u) != 0u));
+            uint step_ = mix(1u, BN, tb);  // along c (B) or along p (B^T)
+            uint base = p * BN + cl;
+            bs_[base] = float16_t(v.x);
+            bs_[base + step_] = float16_t(v.y);
+            bs_[base + 2u * step_] = float16_t(v.z);
+            bs_[base + 3u * step_] = float16_t(v.w);
+        }
+        barrier();
+        // The next slice's loads go out now and land while the tensor cores work on this one (no branch: see
+        // mm_tc_pf.comp; after the last slice they are all outside, vector 0, not used).
+        load_slice(t + BK, row0, col0, tid, ta, tb, ra, rb, ia, ib);
+        for (uint kk = 0u; kk < BK; kk += 16u) {
+            coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> fa[2];
+            coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> fb[4];
+            for (uint i = 0u; i < 2u; i++) {
+                coopMatLoad(fa[i], as_, (wr + 16u * i) * BK + kk, BK, gl_CooperativeMatrixLayoutRowMajor);
+            }
+            for (uint j = 0u; j < 4u; j++) {
+                coopMatLoad(fb[j], bs_, kk * BN + wc + 16u * j, BN, gl_CooperativeMatrixLayoutRowMajor);
+            }
+            for (uint i = 0u; i < 2u; i++) {
+                for (uint j = 0u; j < 4u; j++) {
+                    acc[i][j] = coopMatMulAdd(fa[i], fb[j], acc[i][j]);
+                }
+            }
+        }
+        barrier();
+    }
+
+    uint sbase = w * 256u;
+    bool has_bias = (args.flags & BIAS) != 0u;
+    for (uint i = 0u; i < 2u; i++) {
+        for (uint j = 0u; j < 4u; j++) {
+            coopMatStore(acc[i][j], cs_, sbase, 16u, gl_CooperativeMatrixLayoutRowMajor);
+            subgroupBarrier();
+            for (uint s = 0u; s < 8u; s++) {
+                uint e = lane + s * 32u;
+                uint gr = row0 + wr + 16u * i + e / 16u;
+                uint gc = col0 + wc + 16u * j + e % 16u;
+                if (gr < args.m && gc < args.n) {
+                    float v = cs_[sbase + e];
+                    if (has_bias) {
+                        v += args.bias.v[gc];
+                    }
+                    args.c.v[gr * args.n + gc] = v;
+                }
+            }
+            subgroupBarrier();
+        }
+    }
+}
