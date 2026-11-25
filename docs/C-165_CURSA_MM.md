@@ -193,3 +193,13 @@ o zonă mică de 16×16 pe subgrup (16 + 8 = 24 KiB de memorie comună, ca `mm_t
    cu și fără TA / TB / BIAS; grila = ⌈N/128⌉ × ⌈M/128⌉; modelul refuză blocuri de 128 sau grila prea mică.
 4. Pe placă (ESTIMARE, de verificat după os-352): între ×1,3 și ×2 față de `mm_tc` 64×64 pe formele mari ale pasului #513
    (aceeași cauză ca în F32: de 2 ori mai puține citiri din memorie pe operație).
+
+**Rezultat (sesiunea 220, T226 4/4 PASS în SIMULARE):**
+- **P1 corect, la limită:** NAK 26.3.1 îl compilează; **128 de registre** (exact pragul), 0 scurgeri (`ldl`/`stl`); 58 688 B de cod;
+  SHA-256 `df5041bd…68f79`, aceeași la două compilări (și `mm_tc` recompilat azi = `f60cd944…`, suma înregistrată).
+- **P2 corect ca raport, greșit ca cifră:** 32 de `HMMA` în listare față de 16 la `mm_tc` (×2, cum am zis), dar un `coopMatMulAdd` de
+  16×16×16 = **două** `HMMA.16816`, deci 32 pe felie de 32, nu 16. Bariere de bloc: 2 pe felie, ca `mm_tc`.
+- **P3 corect:** aceiași biți ca `mm_tc` pe 6 forme cu margini × 8 combinații de opțiuni și pe toate 15 formele pasului #513 (M, N
+  tăiate la 160 / 288, K întreg); modelul refuză blocuri de 128 și grila scurtă. Limita testului: modelul aritmetic e același pentru
+  amândouă, deci testul confirmă lansarea, grila și acoperirea; ordinea adunărilor pe element e DEDUSĂ din cod — placa o confirmă.
+- **P4:** de verificat pe placă, după os-352. Risc nou văzut: 128 de registre × 256 de fire → cel mult 2 blocuri pe unitate de calcul.

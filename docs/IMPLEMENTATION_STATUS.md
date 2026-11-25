@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 220 — 25 noiembrie 2026, ~03:10–04:05 (ora României), în cloud, FĂRĂ placă — **`mm_tc128`: `mm_tc` pe plăci 128×128**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 219 terminată 02:54), l-am pus `ocupat`. Niciun test nou pe placă de comparat (os-417 = proba `64x64k8`, încă nerulată), deci punctul următor din coadă: `mm_tc` pe plăcile care au câștigat cursa os-416.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Predicții | P1–P4 scrise înainte de cod (`1677f42`) | P1, P3 corecte; P2 corectă ca raport (×2 `HMMA`), greșită ca cifră (32 pe felie, nu 16: un `coopMatMulAdd` = două `HMMA.16816`); P4 pe placă |
+| Unealta NAK 2 | Mesa 26.3.1 construit din nou în cloud (~20 min); `mm_tc` recompilat = suma înregistrată `f60cd944…` | PASS (unealta reproduce) |
+| Program | `tools/nak/mm_tc128.comp`: 256 de fire, 128×128 din C pe bloc, 2×4 acumulatori pe subgrup, ieșirea prin câte o zonă de 16×16 pe subgrup (24 KiB) → `out2/mm_tc128.sm86.sass`, SHA-256 `df5041bd…68f79` (identic la două compilări), 128 de registre, 0 scurgeri | PASS (compilare) |
+| Cod | `nvidia_ga104::mm_tc128` (`MM_TC128`, `BLOCK`, `SHARED`, `REGISTERS`, `grid`), `gpu_sim::cmdproc::{mm_tc128_on_cpu, MM_TC128_NEEDS}` | doar adăugări |
+| T226 | `crates/nvidia-ga104/tests/sim_c165_mm_tc128.rs`: aceiași biți ca `mm_tc` (margini × 8 opțiuni; cele 15 forme #513 tăiate pe M, N), refuzuri | SIMULARE — PASS (4/4) |
+| Pe placă | proba „vechi lângă nou” pe qkv după os-352 | NOT TESTED |
+| Note | `docs/C-165_CURSA_MM.md` §„`mm_tc128`”, `integration/cyber-universe/C-165_mm-tc128.md`, `docs/TEST_MATRIX.md`, `docs/PROVENANCE.md` | — |
+| `tools/check.sh` | format, clippy, teste pe gazdă, build no_std | PASS (**1 080 de teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** nimic acum; `mm_tc128` intră doar după ce `mm_tc` trece singur (os-352). **Nicio schimbare incompatibilă.**
+
+**Următorul pas:** comparația pasului #513 cu `mm_tv_128x128` (P6-196, prezis ~341 ms) și a probei os-417 când vin; `mm_tc` / `mm_tc128` după os-352; apoi `mm_tc_gelu` pe 128×128 sau B1 (int8 IMMA: `mma16_s8` deja compilat, de verificat ce lipsește).
+
+---
+
 ## Sesiunea 219 — 25 noiembrie 2026, ~02:14–02:55 (ora României), în cloud, FĂRĂ placă — **os-416: cursa completă comparată, alegerea = `mm_tv_128x128`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 218 terminată 01:43), l-am pus `ocupat`. Venise os-416: cursa completă (15 forme × 4 variante).

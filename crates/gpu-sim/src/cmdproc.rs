@@ -3139,10 +3139,33 @@ pub const MM_TC_NEEDS: Needs = Needs {
 /// `gpu_compute::mm_tc::model` — the tensor-core adder fitted on os-335, a HYPOTHESIS, not a fact. Unknown flags,
 /// a bias flag without a bias, or inputs outside the f16 range are refused (no write).
 pub fn mm_tc_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
-    use gpu_compute::mm_tc;
     if l.block != [128, 1, 1] || l.grid[2] != 1 {
         return Err(bad("SIM: mm_tc cere blocuri de 128x1x1"));
     }
+    mm_tc_tiles_on_cpu(l, 64)
+}
+
+/// C-165 after os-416 (session 220): what `tools/nak/out2/mm_tc128.sm86.sass` needs — the f16 slices of op(A)
+/// (128×32) and op(B) (32×128) plus one 16×16 f32 scratch per subgroup (8 of them): 8 + 8 + 8 KiB, one barrier.
+pub const MM_TC128_NEEDS: Needs = Needs {
+    shared_bytes: (128 * 32 + 32 * 128) * 2 + 8 * 16 * 16 * 4,
+    barriers: 1,
+};
+
+/// C-165 after os-416 (session 220): the CPU stand-in for `tools/nak/out2/mm_tc128.sm86.sass` — `mm_tc`'s job,
+/// cbuf0 and arithmetic (every element: the same chain of tensor-core steps, K in steps of 16 in order from 0, then
+/// one f32 add of the bias) on 128×128 tiles: blocks of 256×1×1, grid (⌈n/128⌉, ⌈m/128⌉, 1). The arithmetic is the
+/// same `gpu_compute::mm_tc::model` as [`mm_tc_on_cpu`] — a HYPOTHESIS fitted on os-335, not a fact.
+pub fn mm_tc128_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [256, 1, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: mm_tc128 cere blocuri de 256x1x1"));
+    }
+    mm_tc_tiles_on_cpu(l, 128)
+}
+
+/// `mm_tc` / `mm_tc128` after the block check: cbuf0, refusals and the product, for C tiles of `tile`×`tile`.
+fn mm_tc_tiles_on_cpu(l: &mut Launch<'_>, tile: usize) -> GpuResult<()> {
+    use gpu_compute::mm_tc;
     if l.mem.read_u64(l.cbuf0)? != 0 {
         return Err(bad(
             "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
@@ -3160,7 +3183,7 @@ pub fn mm_tc_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     if flags & !(mm_tc::TA | mm_tc::TB | mm_tc::BIAS) != 0 {
         return Err(bad("SIM: mm_tc: biti de optiuni necunoscuti"));
     }
-    if (l.grid[0] as usize) < n.div_ceil(64) || (l.grid[1] as usize) < m.div_ceil(64) {
+    if (l.grid[0] as usize) < n.div_ceil(tile) || (l.grid[1] as usize) < m.div_ceil(tile) {
         return Err(bad("SIM: mm_tc: grila nu acopera C (nemodelat)"));
     }
     let x = l.mem.read_f32s(a, m * k)?;
