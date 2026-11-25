@@ -602,3 +602,7 @@ niciun octet de firmware NVIDIA.
   cod scris de noi; bariera = aceeași funcție `grid_sync` ca în `token.comp` (al nostru, C-87). Așezarea `cs.group_count` la 0x0c în
   bufferul constant: citită în sursa Mesa 25.0.7 (MIT), `src/nouveau/vulkan/nvk_cmd_buffer.h` (`struct nvk_root_descriptor_table`),
   confirmată în listarea NAK (`c[0x0][0xc]`). Cifrele T244 = rândurile jurnalului OS-ului (os-443). Nimic din firmware-ul NVIDIA.
+- **Sesiunea 239 (26 nov 2026), `tools/nak/token32.comp`, `kronos_token::{TOKEN32, work_list32, token32_qmd}`, `token32_on_cpu`, T248:**
+  cod scris de noi; corpurile operațiilor = programele noastre separate (`layernorm256`, `q8_fused`, `q8_fused32`, `q8_matvec32`,
+  `argmax`, `embed_dev`) și `token.comp` (C-87); limitele de ocupare = tabelul public al capabilității 8.6 (deja în `occupancy`).
+  Compilat cu Mesa NAK 25.0.7 (MIT), unealta de pe gazdă. Nimic din firmware-ul NVIDIA.

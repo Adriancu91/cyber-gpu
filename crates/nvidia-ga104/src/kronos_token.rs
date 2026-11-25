@@ -100,6 +100,43 @@ pub fn work_list(launches: &[Launch]) -> GpuResult<Vec<u8>> {
     Ok(out)
 }
 
+/// C-157 (session 239, `docs/C-157_TOKEN32.md`): `token32.comp` — `token.comp` plus the programs of today's generation
+/// list (`layernorm256`, `q8_fused`, `q8_fused32`, `q8_matvec32`, `argmax`, `embed_dev`), compiled by Mesa NAK 25.0.7
+/// for SM 8.6 (`tools/nak/out/token32.sm86.txt`). The same list layout, constant buffer and QMD shape as [`TOKEN`].
+pub const TOKEN32: &[u8] = include_bytes!("../../../tools/nak/out/token32.sm86.sass");
+/// Registers per thread NAK reported for `token32` (`Num GPRs`).
+pub const TOKEN32_REGISTERS: u32 = 92;
+
+/// The work list of `launches` for [`TOKEN32`]: every program of [`crate::kronos_layer::Prog`] is an operation of it
+/// (the numbers of [`op_number`]). Refuses what [`work_list`] refuses apart from the program kind.
+pub fn work_list32(launches: &[Launch]) -> GpuResult<Vec<u8>> {
+    if launches.is_empty() {
+        return Err(bad("lista de lucru goala"));
+    }
+    let mut out = Vec::with_capacity(ENTRY * launches.len());
+    for l in launches {
+        if l.cbuf[..CBUF_LIST].iter().any(|&b| b != 0) || l.grid == 0 {
+            return Err(bad(
+                "lista de lucru: bufferul constant foloseste 0x00..0x28 sau grila 0",
+            ));
+        }
+        let mut e = l.cbuf;
+        e[ENTRY_OP..ENTRY_OP + 4].copy_from_slice(&op_number(l.prog).to_le_bytes());
+        e[ENTRY_GRID..ENTRY_GRID + 4].copy_from_slice(&l.grid.to_le_bytes());
+        out.extend_from_slice(&e);
+    }
+    Ok(out)
+}
+
+/// The QMD of the one `token32` launch: `groups` workgroups of 32 threads (the shared memory of [`TOKEN`]).
+pub fn token32_qmd(
+    prog_va: u64,
+    cbuf_va: u64,
+    groups: u32,
+) -> GpuResult<[u8; nvidia_rm570::QMD_SIZE]> {
+    qmd_with(prog_va, cbuf_va, groups, TOKEN32_REGISTERS)
+}
+
 /// The program's constant buffer.
 pub fn token_cbuf(list_va: u64, sync_va: u64, n: usize) -> GpuResult<[u8; 256]> {
     if n == 0 || n > u32::MAX as usize || !list_va.is_multiple_of(16) || !sync_va.is_multiple_of(4)
@@ -151,12 +188,21 @@ pub fn token_qmd(
     cbuf_va: u64,
     groups: u32,
 ) -> GpuResult<[u8; nvidia_rm570::QMD_SIZE]> {
+    qmd_with(prog_va, cbuf_va, groups, TOKEN_REGISTERS)
+}
+
+fn qmd_with(
+    prog_va: u64,
+    cbuf_va: u64,
+    groups: u32,
+    registers: u32,
+) -> GpuResult<[u8; nvidia_rm570::QMD_SIZE]> {
     if groups == 0 {
         return Err(bad("programul pe simbol: 0 grupuri"));
     }
     ComputeQmd {
         program_va: prog_va,
-        registers: TOKEN_REGISTERS,
+        registers,
         cbuf0_va: cbuf_va,
         cbuf0_size: 0x100,
         grid: [groups, 1, 1],
@@ -225,5 +271,36 @@ mod tests {
         // The register count is NAK's, from its dump.
         let dump = include_str!("../../../tools/nak/out/token.sm86.txt");
         assert!(dump.contains(&alloc::format!("Num GPRs: {TOKEN_REGISTERS}\n")));
+        // token32: the same for its own dump; its QMD only differs in the register count.
+        let dump = include_str!("../../../tools/nak/out/token32.sm86.txt");
+        assert!(dump.contains(&alloc::format!("Num GPRs: {TOKEN32_REGISTERS}\n")));
+        assert!(TOKEN32.len() >= 16 && TOKEN32.len().is_multiple_of(16));
+        assert!(token32_qmd(0x10_0000_0000, 0x10_0000_1000, 0).is_err());
+        let (a, b) = (
+            token_qmd(0x10_0000_0000, 0x10_0000_1000, 48).unwrap(),
+            token32_qmd(0x10_0000_0000, 0x10_0000_1000, 48).unwrap(),
+        );
+        assert_ne!(a, b);
+        // Every program kind goes into the token32 list.
+        for p in [
+            Prog::LayerNorm256,
+            Prog::Argmax,
+            Prog::Q8Fused,
+            Prog::Q8Fused32,
+            Prog::Q8Matvec32,
+            Prog::EmbedDev,
+        ] {
+            let l = Launch {
+                prog: p,
+                cbuf: [0u8; 256],
+                grid: 1,
+            };
+            assert!(work_list(core::slice::from_ref(&l)).is_err());
+            let w = work_list32(&[l]).unwrap();
+            assert_eq!(
+                u32::from_le_bytes(w[ENTRY_OP..ENTRY_OP + 4].try_into().unwrap()),
+                op_number(p)
+            );
+        }
     }
 }

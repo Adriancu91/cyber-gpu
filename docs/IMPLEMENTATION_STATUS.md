@@ -1,5 +1,32 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 239 — 26 noiembrie 2026, ~01:11–01:55 (ora României), în cloud, FĂRĂ placă — **`token32`: „un singur program pe simbol” pentru lista de generare de azi (`lipita-ln-32` + argmax + `embed_dev`), COMPILAT + SIMULARE: tot textul (14 poziții) într-o singură lansare = câte o poziție pe sonerie, bit cu bit**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 238), l-am pus `ocupat`. Niciun test nou pe placă de la os-445 (comparat) →
+punctul din coadă lăsat de sesiunea 238: `token.comp` cu `token_cbuf_for` pentru generare. `token.comp` nu știe programele de azi,
+deci am scris `token32.comp` (același buffer constant, aceeași barieră, 13 operații). Ramura locală veche avea altă istorie; am pus
+`g0-g2-fundatie` pe `origin` (copia veche păstrată în ramura locală `backup-local-vechi`; nimic șters, nimic rescris pe GitHub).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Unealta NAK | Mesa 25.0.7 reconstruit; `token.comp` ieșit identic (`ac176819…`) | PASS |
+| `token32.comp` | 7 438 instrucțiuni, 119 008 B, **92 registre**, 0 memorie locală, G din `c[0][0xc]`, citiri `.strong.sys` | COMPILAT, NU RULAT |
+| Listarea față de programele separate | `layernorm256`: aceleași contopiri; sferturile `q8_*32`: aceeași secvență de 17 operații (×2) | VERIFICAT (biții identici = DEDUS) |
+| T248a/b | un simbol + argmax într-o lansare = 25 / 11 lansări separate, bit cu bit, G = 1/7/48 | PASS (SIMULARE) |
+| T248c | 14 poziții (350 de operații) într-o singură lansare = câte o poziție pe sonerie: simboluri, cuvinte argmax, cache-uri K/V | PASS (SIMULARE) |
+| T248d | refuzurile (`token.comp`, operația 13, fără G la 0x0c) | PASS (SIMULARE) |
+| Verificări | format, clippy, teste pe gazdă, build no_std | PASS (**1 203 de teste**, 8 ignorate) |
+
+**Ce înseamnă:** lista de generare de azi poate rula, în SIMULARE, ca o singură lansare. Pe placă nu e dovedit nimic: nici bariera,
+nici viteza. **Risc mare (DEDUS):** la G = 48 fiecare SM are un singur warp → înmulțirile pot fi mai lente decât azi; câștigul cere
+G = 384–768 (treapta 64 KiB) și o barieră ieftină la acel G. Ordinea propusă: proba barierei 48/96 → aceeași probă la 384/768 →
+abia apoi `token32` (oprit implicit). Detalii `docs/C-157_TOKEN32.md`.
+
+**Ce e nou pentru placă:** nimic. Nota `integration/cyber-universe/C-157_P2zj_token32.md`. **Nicio schimbare incompatibilă.**
+
+**Următorul pas:** comparațiile testelor noi de pe placă când vin (proba barierei os-451, `--lot-prin-ram` os-447, două locuri os-449,
+text real F32/mixt); altfel `token32_qmd` cu treapta aleasă (G > 144) + planul probei barierei la G = 384/768, în SIMULARE.
+
 ## Sesiunea 238 — 25 noiembrie 2026, ~23:11–00:16 (ora României), în cloud, FĂRĂ placă — **os-445 comparat (pasul mixt rapid #513: 116,9 ms = 8 758 simb/s) + oracolul pasului mixt pe procesor: placa = oracolul mixt pe pașii 1–6 (2,0e-5 / 2,2e-4), deci „DIFERA” din raport e prețul f16 pe o rulare instabilă, nu o greșeală de program**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 237), l-am pus `ocupat`. os-445 rulase la 22:02 → C-157 p.2 (are întâietate).

@@ -370,3 +370,13 @@ Oracolul: `gpu_compute::train::{embed_rows, embed_back_rows}`. Testul T161. Nota
 | SHA-256 `mm_train_gelu.sm86.sass` | `ee7e3145e1c26dea908f376119ad8f6fef284d392a1428ee8eba5d9b7ad0b053` |
 | Listarea | bucla = `mm_train` (16 `ffma`); epilogul = cele 23 de operații ale lui `gelu_tr` mod 1, aceleași constante, aceeași ordine |
 | Constatare | cu `cdf + u * pdf` NAK contopește altfel decât în `gelu_tr` (acolo Φ e rotunjit separat fiindcă îl folosește și modul 0); `fma(u, pdf, cdf)` scris explicit dă exact secvența lui `gelu_tr` |
+
+## C-157: `token32` — `token.comp` + programele generării de azi (26 nov 2026, sesiunea 239, cloud) — COMPILAT, NU RULAT
+`sh tools/nak/build.sh token32` (Mesa 25.0.7 reconstruit în cloud; `token` a ieșit **identic**, `ac176819…77d8a79c`).
+
+| Ce | Valoare |
+|---|---|
+| Program | `token32.comp`: lista lui `token.comp` cu 13 operații (+ `q8_fused`, `layernorm256` jucat de 32 de fire, `argmax`, `q8_fused32`, `q8_matvec32`, `embed_dev`) |
+| Ieșire | 7 438 de instrucțiuni, **119 008 octeți**, **92 de registre**, 0 memorie locală, 2 176 B partajată |
+| SHA-256 `token32.sm86.sass` | `40d9749cc8074f639ca0eb3fafae9686b2ca4d2491e868b3b2544ec7faa1ad5f` |
+| Listarea | G din `c[0x0][0xc]`; activările `ld.global.strong.sys` (b32 și b128), greutățile `.constant`; `layernorm256` și sferturile cu aceleași contopiri ca programele separate (`docs/C-157_TOKEN32.md` §4) |

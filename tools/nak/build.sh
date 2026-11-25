@@ -50,6 +50,7 @@
 #   sh tools/nak/build.sh mm_tv          # C-165: the race variants of mm_train_tile (mm_tv_*.comp over mm_train_tv.glsl) (session 211)
 #   sh tools/nak/build.sh mm_tv128t512   # C-165: mm_tv_128x128 with 512 threads, 8x4 per thread (register diet, session 227)
 #   sh tools/nak/build.sh grid_barrier   # C-157: the grid-barrier probe for token.comp, reads G from c[0][0xc] (session 237)
+#   sh tools/nak/build.sh token32        # C-157: token.comp + today's generation programs (layernorm256, q8_*32, argmax, embed_dev) (session 239)
 #   sh tools/nak/build.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): apt install glslang-tools spirv-tools libvulkan-dev libdrm-dev
@@ -83,6 +84,9 @@ add64)
     ;;
 grid_barrier)
     exec sh "$0" kernel grid_barrier 28
+    ;;
+token32)
+    exec sh "$0" kernel token32 20
     ;;
 matmul_naive)
     exec sh "$0" kernel matmul_naive 40

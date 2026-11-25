@@ -350,6 +350,83 @@ impl<'a> TokenSim<'a> {
     }
 
     /// Bytes the stale-read model served that differed from memory (0 when the model is off or changed nothing).
+    /// C-157 (session 239): `launches` as ONE launch of `token32.comp` with `groups` workgroups — the work list
+    /// (`kronos_token::work_list32`) and the program in VRAM, the constant buffer (`token_cbuf_for`, or with
+    /// `old_cbuf` the one without the workgroup count), the QMD and the barrier counter (cleared) — one record pair;
+    /// returns the barrier counter after the launch. `tamper = Some((k, op))` plants operation `op` in entry `k`.
+    pub fn submit_token32(
+        &mut self,
+        launches: &[Launch],
+        groups: u32,
+        old_cbuf: bool,
+        tamper: Option<(usize, u32)>,
+    ) -> GpuResult<u32> {
+        use gpu_sim::cmdproc::{TOKEN32_NEEDS, token32_on_cpu};
+        use nvidia_ga104::kronos_token as kt;
+        let list_bytes = kt::work_list32(launches)?;
+        let n = launches.len();
+        let prog = self.r.mem.alloc_mapped(kt::TOKEN32.len() as u64, 0x1000)?;
+        let list = self.r.mem.alloc_mapped(list_bytes.len() as u64, 0x1000)?;
+        let launch = self.r.mem.alloc_mapped(0x1000, 0x1000)?;
+        let (cb, qmd, sync) = (launch.va, launch.va + 256, launch.va + 512);
+        let w = self.r.mem.writer_mut();
+        put_bytes(w, prog.pa, kt::TOKEN32);
+        put_bytes(w, list.pa, &list_bytes);
+        if let Some((k, op)) = tamper {
+            put_bytes(
+                w,
+                list.pa + (kt::ENTRY * k + kt::ENTRY_OP) as u64,
+                &op.to_le_bytes(),
+            );
+        }
+        let c = if old_cbuf {
+            kt::token_cbuf(list.va, sync, n)?
+        } else {
+            kt::token_cbuf_for(list.va, sync, n, groups)?
+        };
+        put_bytes(w, launch.pa, &c);
+        put_bytes(w, launch.pa + 256, &kt::token32_qmd(prog.va, cb, groups)?);
+        put_bytes(w, launch.pa + 512, &[0; 16]);
+        put_bytes(w, self.records.pa, &[0; 32]);
+        let first = self.next_payload;
+        self.next_payload += 0x100;
+        let mut words = vec![0u32; transfer::sequence_words(1)];
+        let mut pb = PushBuf::new(&mut words);
+        transfer::encode_sequence(&mut pb, &[qmd], self.records.va, first)?;
+        let (fence, done) = (self.records.va + 16, first as u64 + 1);
+        self.r
+            .wq
+            .submit_fenced(self.r.mem.writer_mut(), &words, fence, done)?;
+        let mut programs: Vec<(&[u8], ProgramFn, Needs)> = self
+            .models
+            .iter()
+            .map(|&(p, f, needs)| (p.code(), f, needs))
+            .collect();
+        programs.push((kt::TOKEN32, token32_on_cpu, TOKEN32_NEEDS));
+        let mut loads: Vec<(u64, u64)> = self.mappings().iter().map(span).collect();
+        loads.extend([span(&prog), span(&list), span(&launch)]);
+        loads.push((self.host.va, self.host.size));
+        let mut stores = vec![
+            span(&self.blob),
+            span(&self.records),
+            span(&launch),
+            (self.host.va, self.host.size),
+        ];
+        if let Some(rm) = &self.results {
+            loads.push((rm.va, rm.size));
+            stores.push((rm.va, rm.size));
+        }
+        stores.extend(self.caches.iter().flat_map(|(k, c)| [span(k), span(c)]));
+        gpu_runs(&mut self.r, &programs, &loads, &stores)?;
+        let rec = get_bytes(self.r.mem.writer_mut(), self.records.pa, 32);
+        let each = transfer::analyze_sequence(&rec, 1, first)?;
+        self.durations.push(each);
+        self.r.wq.retire(fence, done)?;
+        self.submissions.push(1);
+        let c = get_bytes(self.r.mem.writer_mut(), launch.pa + 512, 4);
+        Ok(u32::from_le_bytes(c[..4].try_into().unwrap()))
+    }
+
     pub fn stale_bytes(&self) -> u64 {
         self.r.cp.as_ref().map_or(0, |c| c.stale_bytes_served())
     }

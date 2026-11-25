@@ -3825,7 +3825,52 @@ pub fn token_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     ran
 }
 
+/// C-157 (session 239, `docs/C-157_TOKEN32.md`): `token32.comp` — the same list, constant buffer and checks as
+/// `token.comp`, with the 13 operations of `kronos_token::op_number`; each runs through its separate program's model
+/// with that program's block size (256 for `layernorm256`, `argmax`, `embed_dev`). What it shows and does not show is
+/// what [`token_on_cpu`] says: the list and the arguments, not the grid barrier on a real SM; and that the 32-thread
+/// bodies of `layernorm256` / `argmax` give the bits of the 256-thread programs is DEDUS from the source and the
+/// listing (`docs/C-157_TOKEN32.md`), not modelled here.
+pub fn token32_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    let was = l.mem.set_in_program(false);
+    let ran = token_ops_with(l, &TOKEN32_OPS);
+    l.mem.set_in_program(was);
+    ran
+}
+
+const TOKEN32_OPS: [(ProgramFn, u32); 13] = [
+    (copy_b128_on_cpu, 256),
+    (q8_matvec_on_cpu, 32),
+    (vadd_on_cpu, 256),
+    (layernorm_on_cpu, 32),
+    (attention_on_cpu, 32),
+    (gelu_on_cpu, 256),
+    (embed_on_cpu, 256),
+    (q8_fused_on_cpu, 32),
+    (layernorm256_on_cpu, 256),
+    (argmax_on_cpu, 256),
+    (q8_fused32_on_cpu, 32),
+    (q8_matvec32_on_cpu, 32),
+    (embed_dev_on_cpu, 256),
+];
+
+/// What `token32.comp` needs: the attention's 2 176 B of shared memory, as `token.comp`.
+pub const TOKEN32_NEEDS: Needs = TOKEN_NEEDS;
+
 fn token_ops(l: &mut Launch<'_>) -> GpuResult<()> {
+    const OPS: [(ProgramFn, u32); 7] = [
+        (copy_b128_on_cpu, 256),
+        (q8_matvec_on_cpu, 32),
+        (vadd_on_cpu, 256),
+        (layernorm_on_cpu, 32),
+        (attention_on_cpu, 32),
+        (gelu_on_cpu, 256),
+        (embed_on_cpu, 256),
+    ];
+    token_ops_with(l, &OPS)
+}
+
+fn token_ops_with(l: &mut Launch<'_>, ops: &[(ProgramFn, u32)]) -> GpuResult<()> {
     if l.block != [32, 1, 1] || l.grid[1] != 1 || l.grid[2] != 1 || l.mem.read_u64(l.cbuf0)? != 0 {
         return Err(bad("SIM: token cere blocuri de 32x1x1, grila 1D, baza 0"));
     }
@@ -3849,21 +3894,12 @@ fn token_ops(l: &mut Launch<'_>) -> GpuResult<()> {
             "SIM: token: contorul barierei nu a fost golit inainte de lansare",
         ));
     }
-    const OPS: [(ProgramFn, u32); 7] = [
-        (copy_b128_on_cpu, 256),
-        (q8_matvec_on_cpu, 32),
-        (vadd_on_cpu, 256),
-        (layernorm_on_cpu, 32),
-        (attention_on_cpu, 32),
-        (gelu_on_cpu, 256),
-        (embed_on_cpu, 256),
-    ];
     let g = l.grid[0];
     for k in 0..n {
         let e = list + 256 * k;
         let op = l.mem.read_u32(e + 0x20)? as usize;
         let grid = l.mem.read_u32(e + 0x24)?;
-        let &(run, block) = OPS
+        let &(run, block) = ops
             .get(op)
             .ok_or(bad("SIM: token: operatie necunoscuta in lista"))?;
         if grid == 0 {
