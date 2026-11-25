@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 236 — 25 noiembrie 2026, ~20:11–21:05 (ora României), în cloud, FĂRĂ placă — **os-438 comparat + studiul „programului persistent” pe un strat (nota centrului 11:55, cererea 2): la antrenare nu merită acum (≤ 3,6 % singur; rezultatele stratului nu încap în memoria rapidă), partea bună = lansarea dublă dX + dW (+3 % peste alegerea pe formă); la generare merită (31 % din placă = cost de lansare) → întâi proba barierei**
+## Sesiunea 236 — 25 noiembrie 2026, ~20:11–20:50 (ora României), în cloud, FĂRĂ placă — **os-438 comparat + studiul „programului persistent” pe un strat (nota centrului 11:55, cererea 2): la antrenare nu merită acum (≤ 3,6 % singur; rezultatele stratului nu încap în memoria rapidă), partea bună = lansarea dublă dX + dW (+3 % peste alegerea pe formă); la generare merită (31 % din placă = cost de lansare) → întâi proba barierei**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 235), l-am pus `ocupat`. Niciun test nou pe placă (os-438 încă nerulat) → am luat
 ultimul punct din ordinea centrului 11:55. Copiile locale vechi erau rămase în urmă; am lucrat pe clone proaspete (nimic șters, nimic
@@ -24,7 +24,7 @@ pas: o **probă mică a barierei pe toată placa** (gata de legat în SIMULARE),
 
 **Ce e nou pentru placă:** nimic. **Nicio schimbare incompatibilă.**
 
-**A doua parte (~20:48–21:05): os-438 a sosit în timpul sesiunii** (ciclul automat 20:18) → comparat (`docs/C-157_P2_OS436.md` §5, T243
+**A doua parte (~20:44–20:50): os-438 a sosit în timpul sesiunii** (ciclul automat 20:18) → comparat (`docs/C-157_P2_OS436.md` §5, T243
 pe procesor, rândurile în `tests/rapoarte/os438-mm-tc-v4.txt`): Q1 CORECTĂ (5 / 5 aceiași biți), **Q2 RATATĂ în sus** (qkv-513 4,73 ms =
 **4,59 TFLOP/s**, ×1,66 față de `mm_tc_pf`, prezis ×1,2–1,4), Q3 RATATĂ (peste pragul ×1,5), Q4 RATATĂ în sus pe seturile mici (×1,31–1,45).
 Citirile de 128 de biți au tăiat și din partea fixă (~2,7 µs pe felie, nu 3,3–3,7). Prezis mai departe (DEDUS): la 64 KiB `mm_tc_v4`
