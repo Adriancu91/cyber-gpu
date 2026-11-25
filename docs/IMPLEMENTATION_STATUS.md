@@ -1,5 +1,25 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 219 — 25 noiembrie 2026, ~02:14–03:30 (ora României), în cloud, FĂRĂ placă — **os-416: cursa completă comparată, alegerea = `mm_tv_128x128`**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 218 terminată 01:43), l-am pus `ocupat`. Venise os-416: cursa completă (15 forme × 4 variante).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Predicții | P1–P6 scrise înainte de cod (`5077594`) | P1, P2, P3, P5 confirmate; **P4 greșită** (înmulțirile izolate 456,2 ms, nu ~420: cursa a mers la 1 785 MHz, pașii la 1 950) |
+| Cursa os-416 | `parse_race` pe rândurile adevărate: 60 de rânduri „=”, 15 forme / 147 de lansări = pasul #513; alegerea **`mm_tv_128x128` pe toate 15** (câștig minim 11,2 %); economia 141 388 µs (OS 141 387) | PASS (pe procesor; timpii = ai plăcii reale, prin OS) |
+| Cod | `MmChoice::all(forme, varianta)`, `RACE_WINNER_513 = 3` | doar adăugări |
+| T225 | `crates/nvidia-ga104/tests/c165_os416.rs` + `tests/rapoarte/os416-cursa.txt` | PASS (3/3) |
+| Predicția pentru placă | pasul #513 cu `mm_tv_128x128` peste tot: **~341 ms ≈ 3 000 simb/s** (interval 325–345), aceiași biți ca oracolul | NOT TESTED (de rulat de OS) |
+| Note | `docs/C-165_CURSA_MM.md` §„os-416”, `integration/cyber-universe/C-165_os416-alegerea.md`, `docs/TEST_MATRIX.md`, `docs/PROVENANCE.md` | — |
+| `tools/check.sh` | format, clippy, teste pe gazdă, build no_std | PASS (**1 074 de teste**, 8 ignorate; build no_std PASS după reinstalarea țintei) |
+
+**Ce e nou pentru placă:** doar legarea în pas a lui `mm_tv_128x128` (programul a trecut deja în cursă cu biții martorului). **Nicio schimbare incompatibilă.**
+
+**Următorul pas:** comparația pasului #513 cu `mm_tv_128x128` când vine (prezis ~341 ms); `mm_tc` (os-352 / os-384, încă nerulate) pe plăci 128×128; apoi pasul mixt pe #513 (`LOSS_SCALE_513`), lotul mare sau B1 (int8 IMMA).
+
+---
+
 ## Sesiunea 218 — 25 noiembrie 2026, ~01:10–01:50 (ora României), în cloud, FĂRĂ placă — **os-414 (A4) + os-415 (`--lipit-placi`) comparate**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 217 terminată 00:58), l-am pus `ocupat`. Veniseră două rulări pe placă:

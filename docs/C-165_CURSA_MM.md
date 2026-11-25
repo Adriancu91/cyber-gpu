@@ -156,3 +156,21 @@ cu ~141 387 µs (DEDUS, din timpii izolați); tabloul: 1 785 MHz, P0, 77 W, nici
 5. `with_mm_choice` cu alegerea mută exact 147 de lansări, același număr de lansări, aceeași arenă (ca T219/T221).
 6. Pe placă (de verificat de OS, nu aici): pasul #513 cu `mm_tv_128x128` peste tot ≈ 474,2 − 141,4 ≈ **333 ms**, interval
    325–345 ms (≈ 2 970–3 150 simb/s), aceiași biți ca oracolul (verdictul ca la os-416).
+
+**Rezultat (sesiunea 219, pe procesor, T225 3/3 PASS):**
+- **P1 corect:** 60 de rânduri cu timp, 0 fără timp, 0 necunoscute, toate „=”; 15 forme, 147 de lansări, aceleași (și în aceeași
+  ordine) ca formele pasului #513 din `Plan::new_tiles3` + `with_mm_tile`.
+- **P2 corect:** `from_race` → toate 15 formele pe `mm_tv_128x128`; câștigul cel mai mic pe o formă = **11,2 %** (768×768×1024),
+  departe de pragul de 3 %; un singur program în plus. Alegerea = `MmChoice::all(forme, RACE_WINNER_513)` (nou, doar adăugări).
+- **P3 corect:** economia noastră din timpii rotunjiți = **141 388 µs**, a OS-ului 141 387 (1 µs diferență).
+- **P4 GREȘITĂ:** suma timpilor martorului izolați × lansări = **456,2 ms = 98 %** din timpul plăcii pe pas (463,7), nu ~420.
+  În pas, profilul os-412 dă `mm_train_tile` = **430,5 ms**. Diferența (+6 %) se potrivește cu ceasul: cursa a mers la **1 785 MHz**
+  (tabloul în timpul cursei, 77 W), pașii la **1 950 MHz** (os-414) — lansările scurte și izolate nu urcă placa la ceasul maxim (DEDUS).
+  Lecția: timpii izolați ai cursei bun pentru *alegere* (raportul dintre variante), nu pentru *cifra absolută* a pasului.
+- **P5 corect:** `with_mm_choice` mută exact cele 147 de înmulțiri pe `mm_tv_128x128`, același număr de lansări, aceeași arenă; nicio
+  lansare nu mai rămâne pe `mm_train` / `mm_train_tile`.
+- **P6 rafinată (de verificat pe placă):** raportul 128×128 / martor din cursă = **0,690**; aplicat pe înmulțirile din pas (430,5 ms)
+  → economia **~133 ms** (nu 141), pasul întreg **~341 ms ≈ 3 000 simb/s** (OS-ul a socotit ~333 ms din timpii izolați).
+  Intervalul 325–345 ms rămâne. Biții: aceiași ca oracolul (ca la os-416, unde toate variantele au dat biții martorului).
+- **Ce rămâne după:** și `mm_tv_128x128` e doar ~2,0 TFLOP/s la 1 785 MHz (~9 % din vârful F32) → frâna e tot în citiri; următorul pas
+  mare e `mm_tc` (os-352 / os-384 încă nerulate) pe aceeași formă de plăci, apoi pasul mixt pe #513 (`LOSS_SCALE_513`).

@@ -349,7 +349,29 @@ impl MmChoice {
         }
         Ok(c)
     }
+
+    /// Every shape of `forms` on `VARIANTS[variant]` (the same refusals as [`MmChoice::set`]) — for a choice the OS
+    /// binds without reading a report at boot, e.g. `MmChoice::all(&forms(&plan.step(..)?), RACE_WINNER_513)`.
+    /// `variant` 0 gives the empty choice (the witness everywhere).
+    pub fn all(forms: &[Form], variant: usize) -> GpuResult<MmChoice> {
+        let mut c = MmChoice::new();
+        if variant >= VARIANTS.len() {
+            return Err(GpuError::InvalidArgument("cursa: varianta nu exista"));
+        }
+        if variant == 0 {
+            return Ok(c);
+        }
+        for f in forms {
+            c.set(f.m, f.n, f.k, f.flags, variant)?;
+        }
+        Ok(c)
+    }
 }
+
+/// C-165, os-416 (25 nov 2026, the full race on the board, read with [`parse_race`] in T225): `mm_tv_128x128` (index 3
+/// in [`VARIANTS`]) was the fastest with the witness's bits on all 15 `mm_train` shapes of the #513 step (×1.13–1.64;
+/// DEDUS step ~474 → ~333 ms). A measured fact of one board run, not a promise for other shapes or boards.
+pub const RACE_WINNER_513: usize = 3;
 
 /// What [`parse_race`] reads back from a report: the race rows, and what it left out.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
