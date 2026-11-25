@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 230 — 25 noiembrie 2026, ~14:11–15:10 (ora României), în cloud, FĂRĂ placă — **`mm_tc_v4`: `mm_tc_pf` cu citiri de 128 de biți, gata pentru placă în SIMULARE; 128 de registre în loc de 248**
+## Sesiunea 230 — 25 noiembrie 2026, ~14:11–14:55 (ora României), în cloud, FĂRĂ placă — **`mm_tc_v4`: `mm_tc_pf` cu citiri de 128 de biți, gata pentru placă în SIMULARE; 128 de registre în loc de 248**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 229 terminată 13:35), l-am pus `ocupat`. Niciun raport nou de pe placă (OS-ul are
 `mm_tc_pf` în lucru). Am luat pasul următor scris: citiri de 128 de biți (coada C-157). Plan + predicții urcate **înainte** de compilare
