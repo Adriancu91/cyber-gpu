@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 222 — 25 noiembrie 2026, ~05:11–06:00 (ora României), în cloud, FĂRĂ placă — **os-418 comparat: pasul #513 338,4 ms, cât am prezis**
+## Sesiunea 222 — 25 noiembrie 2026, ~05:11–05:40 (ora României), în cloud, FĂRĂ placă — **os-418 comparat: pasul #513 338,4 ms, cât am prezis**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 221 terminată 04:41), l-am pus `ocupat`. Venise os-418 (pasul #513 cu alegerea cursei, 04:33) — comparația are întâietate (C-157 p.2). Clona locală veche avea istoria tăiată (clonare superficială); am lucrat într-o clonă nouă, fără să șterg nimic.
 
