@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 227 — 25 noiembrie 2026, ~10:15–11:10 (ora României), în cloud, FĂRĂ placă — **dieta de registre la 128×128: `mm_tv_128x128t512` (54 registre), gata de adăugat în cursă în SIMULARE**
+## Sesiunea 227 — 25 noiembrie 2026, ~10:12–10:45 (ora României), în cloud, FĂRĂ placă — **dieta de registre la 128×128: `mm_tv_128x128t512` (54 registre), gata de adăugat în cursă în SIMULARE**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 226 terminată 09:58), l-am pus `ocupat`. Niciun raport nou de pe placă după os-418 (laboratorul Kronos are placa; os-419, os-421, os-422 și proba ocupării sunt nerulate). Am luat punctul (3) rămas din nota centrului de la 07:00: „`128x128` la ≤ 85 de registre” (pragul corect: ≤ 80). Am lucrat într-o clonă nouă a ramurii (clona locală veche are istoria tăiată; n-am șters nimic din ea).
 
