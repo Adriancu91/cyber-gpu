@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 222 — 25 noiembrie 2026, ~05:11–06:00 (ora României), în cloud, FĂRĂ placă — **os-418 comparat: pasul #513 338,4 ms, cât am prezis**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 221 terminată 04:41), l-am pus `ocupat`. Venise os-418 (pasul #513 cu alegerea cursei, 04:33) — comparația are întâietate (C-157 p.2). Clona locală veche avea istoria tăiată (clonare superficială); am lucrat într-o clonă nouă, fără să șterg nimic.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Verificări | V1–V6 scrise înainte de cod (`0fbbad2`); predicția judecată = a sesiunii 219 (~341 ms) | V1–V5 corecte; pasul 338,4 ms (−0,8 %) |
+| os-418 | `parse_profiles` pe rândurile adevărate: 327 581 µs, 483 lansări, `mm_tv_128x128` 294 946 µs / 147 (90 %); pierderile = os-414 cifră cu cifră | PASS (pe procesor; timpii = ai plăcii reale, prin OS) |
+| Lecția | raportul cursei 0,690 → în pas 0,684: raportul izolat se păstrează, cifra absolută nu (ceasul) | DEDUS, confirmat de os-418 |
+| Unde suntem | 2,03 TFLOP/s ≈ 8,5 % din vârful F32; 7,7 % din Windows/PyTorch bf16 | DEDUS |
+| T228 | `crates/nvidia-ga104/tests/c165_os418.rs` + `tests/rapoarte/os418-pas.txt` | PASS (4/4) |
+| Predicția pentru placă | cursa cu 5 variante → pasul 300–330 ms, aceiași biți | NOT TESTED (de rulat de OS) |
+| Note | `docs/C-165_CURSA_MM.md` §„os-418”, `docs/C-157_P2_COMPARATII.md`, `integration/cyber-universe/C-165_os418-pas.md`, `docs/TEST_MATRIX.md` | — |
+| `tools/check.sh` | format, clippy, teste pe gazdă, build no_std | PASS (**1 088 de teste**, 8 ignorate; build no_std PASS după instalarea țintei) |
+
+**Ce e nou pentru placă:** nimic. **Fără cod nou în crate-uri** (doar testul T228). **Nicio schimbare incompatibilă.**
+
+**Următorul pas:** comparația cursei cu 5 variante (`race_list_full()`) când vine; `mm_tc` / `mm_tc128` după os-352; altfel `mm_tc_gelu` pe 128×128 sau B1 (int8 IMMA). Laboratorul Kronos (C-163) are placa de la 07:00.
+
+---
+
 ## Sesiunea 221 — 25 noiembrie 2026, ~04:14–04:45 (ora României), în cloud, FĂRĂ placă — **os-417 comparat: `mm_tv_64x64k8` se întoarce în cursă**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 220 terminată 04:05), l-am pus `ocupat`. Venise os-417 (proba `64x64k8` cu pagina de pază, 03:48) — comparația are întâietate (C-157 p.2).

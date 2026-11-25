@@ -2,6 +2,16 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-418 — pasul #513 cu alegerea cursei (`--mm-alegere`, 25 nov 2026, 04:33) — sesiunea 222
+Sursa: `rezultate/os-automat/2026-11-25/ciclu-auto-20261125-0433.txt` (rândurile 158–218). Estimarea (sesiunea 219): pasul ~341 ms
+(325–345), înmulțirile ~297 ms, aceiași biți.
+- **Ieșit ca estimat:** pasul **338,4 ms = 3 026 simb/s** (−0,8 % față de predicție), înmulțirile 294,9 ms, aceleași pierderi și norme
+  ca os-414 cifră cu cifră, TRECE = oracolul. Restul plăcii și partea din afara ei neschimbate (+0,1 ms fiecare).
+- **Ieșit altfel:** nimic important. Raportul cursei (0,690) se păstrează în pas (0,684) → o cursă e de ajuns ca să prezicem pasul.
+- **Unde suntem:** 2,03 TFLOP/s ≈ 8,5 % din vârful F32; 7,7 % din viteza Windows/PyTorch (bf16).
+- **Ce tăiem mai departe:** cursa cu 5 variante (prezis 300–330 ms), apoi circuitele speciale (`mm_tc128`) după os-352.
+  Detalii: `docs/C-165_CURSA_MM.md` §„os-418”; nota `integration/cyber-universe/C-165_os418-pas.md`; T228.
+
 ## os-417 — proba `mm_tv_64x64k8` singură, cu pagina de pază (25 nov 2026, 03:48) — sesiunea 221
 Sursa: `rezultate/os-automat/2026-11-25/ciclu-auto-20261125-0348.txt` (rândurile 183–222). Estimarea (sesiunea 216): „termină cu aceiași
 biți → cauza = citirea în avans”; timp neprezis.

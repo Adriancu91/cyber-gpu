@@ -265,3 +265,21 @@ Verdictul OS-ului: TRECE (= oracolul în pașii 1–9).
 5. Pasul întreg (median) în intervalul 325–345 ms și la cel mult 2 % de ~341.
 6. **Înainte, pentru cursa cu 5 variante (`race_list_full()`, de rulat de OS):** cu alegerea nouă, pasul #513 **300–330 ms**
    (−8 … −38 ms față de os-418), aceiași biți. Cifra pe care o urmărim: câte forme trec pe `64x64k8`.
+
+**Rezultat (sesiunea 222, T228 4/4 PASS pe procesor; timpii = ai plăcii reale, prin OS):**
+- **Predicția sesiunii 219 corectă:** pasul întreg **338,4 ms** față de ~341 prezis (−0,8 %), în intervalul 325–345;
+  înmulțirile **294,9 ms** față de ~297 (430,5 × 0,690). Față de os-414: ×0,713 pe pas (474,3 → 338,4 ms; 2 159 → 3 026 simb/s).
+  Predicția OS-ului din timpii izolați (~333 ms) era cu 1,6 % prea optimistă — cum spusesem la P4 (ceasul cursei ≠ ceasul pasului).
+- **V1 corectă:** un profil, 327 581 µs, 483 de lansări; `mm_tv_128x128` 294 946 µs / 147 de lansări = **90,0 %** din placă;
+  `mm_train_tile` nu mai apare.
+- **V2 corectă:** pierderile și normele celor 10 pași = os-414 cifră cu cifră (9,8493 … 10,1739 / 3,2729 … 1,6566).
+- **V3 corectă:** raportul înmulțirilor în pas **0,684** față de 0,690 în cursă (−0,6 %). Lecția nouă: **raportul dintre variante
+  măsurat izolat se păstrează în pas**; doar cifra absolută se schimbă (pas / izolat = 0,945 la martor, 0,936 la `128x128`: ceasul
+  1 950 față de 1 785 MHz și lansările lipite una de alta). De acum, o cursă e de ajuns ca să prezicem pasul: înmulțirile din pas ×
+  raportul din cursă.
+- **V4 corectă:** restul plăcii 32 552 → 32 635 µs (+83 µs); în afara plăcii 10 678 → 10 813 µs (+135 µs). Nimic altceva nu s-a mișcat.
+- **Cât din placă folosim:** 599,1 GFLOP pe pas în înmulțiri / 294,9 ms = **2,03 TFLOP/s ≈ 8,5 %** din vârful F32 la 1 950 MHz
+  (6 144 × 2 × 1,95 GHz ≈ 24,0 TFLOP/s; DEDUS din fișa publică). Față de Windows/PyTorch (~39 300 simb/s, bf16): **7,7 %**.
+- **Ce tăiem mai departe (în ordinea câștigului, DEDUS):** (1) cursa cu 5 variante — V6: pasul 300–330 ms; (2) circuitele speciale
+  (`mm_tc` / `mm_tc128`, după ce `mm_tc` trece singur pe placă, os-352) — singurul drum spre zecile de mii de simboluri pe secundă;
+  (3) restul plăcii (32,6 ms: atenția 20,6, AdamW 4,8, colsum 2,4) și cei 10,8 ms din afara plăcii vin abia după — împreună 13 %.
