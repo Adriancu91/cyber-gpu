@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 232 — 25 noiembrie 2026, ~16:11–17:15 (ora României), în cloud, FĂRĂ placă — **os-423 + os-431 comparate: modelul „valurilor” explică ×1,32; alegerea pe formă la 64 KiB → pasul #513 ~204 ms ≈ 5 000 simb/s (DEDUS)**
+## Sesiunea 232 — 25 noiembrie 2026, ~16:11–16:50 (ora României), în cloud, FĂRĂ placă — **os-423 + os-431 comparate: modelul „valurilor” explică ×1,32; alegerea pe formă la 64 KiB → pasul #513 ~204 ms ≈ 5 000 simb/s (DEDUS)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Coada C-157 p.2 („după fiecare test pe placă”): os-431 (pasul #513 cu
 `--treapta-pas`, 266,8 ms) și proba ocupării os-423 nu aveau încă comparația scrisă. Predicțiile V1–V5 urcate **înainte** de cod
