@@ -159,6 +159,18 @@ pub fn variant_kernel(i: usize) -> Kernel {
     }
 }
 
+/// C-165 (`docs/C-165_DIETA_128.md`): the register diet of `mm_tv_128x128`
+/// ([`crate::mm_train_variants::MM_TV_128X128T512_VARIANT`], 512 threads, 54 registers, 8 KiB) as a [`Kernel`].
+pub fn diet_128_kernel() -> Kernel {
+    let v = &crate::mm_train_variants::MM_TV_128X128T512_VARIANT;
+    Kernel {
+        name: v.name,
+        threads: v.block()[0],
+        registers: v.registers,
+        shared_bytes: v.shared().bytes,
+    }
+}
+
 /// `mm_tc` (128 threads, 64 registers, 24 KiB) as a [`Kernel`].
 pub fn mm_tc_kernel() -> Kernel {
     Kernel {

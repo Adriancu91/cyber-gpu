@@ -1403,6 +1403,16 @@ pub const MM_TV_64X64K8: MmTileGeometry = MmTileGeometry {
     tn: 4,
 };
 
+/// C-165 (`docs/C-165_DIETA_128.md`): `mm_tv_128x128t512` — the register diet of `mm_tv_128x128`: 128 × 128 of C per
+/// block, BK 8, but 512 threads with 8 × 4 results each.
+pub const MM_TV_128X128T512: MmTileGeometry = MmTileGeometry {
+    bm: 128,
+    bn: 128,
+    bk: 8,
+    tm: 8,
+    tn: 4,
+};
+
 /// CPU stand-in for `mm_tv_128x64.sm86.sass` (see [`mm_train_tv_on_cpu`]).
 pub fn mm_tv_128x64_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     mm_train_tv_on_cpu(l, MM_TV_128X64)
@@ -1418,6 +1428,11 @@ pub fn mm_tv_128x128_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
 /// CPU stand-in for `mm_tv_64x64k8.sm86.sass` (see [`mm_train_tv_on_cpu`]).
 pub fn mm_tv_64x64k8_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     mm_train_tv_on_cpu(l, MM_TV_64X64K8)
+}
+
+/// CPU stand-in for `mm_tv_128x128t512.sm86.sass` (see [`mm_train_tv_on_cpu`]).
+pub fn mm_tv_128x128t512_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    mm_train_tv_on_cpu(l, MM_TV_128X128T512)
 }
 
 /// C-165: the CPU model of `tools/nak/mm_train_tv.glsl` for geometry `g`: `mm_train`'s job and cbuf0 on blocks of

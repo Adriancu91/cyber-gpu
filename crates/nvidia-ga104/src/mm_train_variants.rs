@@ -129,6 +129,27 @@ pub const VARIANTS: [Variant; 5] = [
     },
 ];
 
+/// `tools/nak/out/mm_tv_128x128t512.sm86.sass`.
+pub const MM_TV_128X128T512: &[u8] =
+    include_bytes!("../../../tools/nak/out/mm_tv_128x128t512.sm86.sass");
+
+/// C-165 (`docs/C-165_DIETA_128.md`, session 227): the register diet of `mm_tv_128x128` — the same 128 × 128 pieces of
+/// C and the same 8 KiB of shared memory, but 512 threads with 8 × 4 results each: **54 registers** (instead of 90),
+/// so two blocks of 16 warps fit on one SM from the 32 KiB step on (DEDUS, [`crate::occupancy::diet_128_kernel`]).
+/// Same body, same cbuf, **the same bits** (T233, SIMULARE). Kept **outside** [`VARIANTS`] (whose 5 entries and indices
+/// stay as they are); the OS adds it to a race as one more row when it wants to. Nothing about its speed is known.
+pub const MM_TV_128X128T512_VARIANT: Variant = Variant {
+    name: "mm_tv_128x128t512",
+    code: MM_TV_128X128T512,
+    sha256: "2b8045827c75715cb939dccba66ebbb91d042f4e8f8a915d0737d31905c2d03c",
+    registers: 54,
+    bm: 128,
+    bn: 128,
+    bk: 8,
+    tm: 8,
+    tn: 4,
+};
+
 /// C-165 (os-413): the variants kept out of the night race until a board run says otherwise (indices in
 /// [`VARIANTS`], which does not change). `mm_tv_64x64k8` (4) did not finish on the board in os-413 (first shape, the
 /// record never came). Its code ends 16 bytes before the end of its 4 KiB pages and it was the last program mapped,

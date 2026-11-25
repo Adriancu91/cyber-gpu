@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 227 — 25 noiembrie 2026, ~10:15–11:10 (ora României), în cloud, FĂRĂ placă — **dieta de registre la 128×128: `mm_tv_128x128t512` (54 registre), gata de adăugat în cursă în SIMULARE**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 226 terminată 09:58), l-am pus `ocupat`. Niciun raport nou de pe placă după os-418 (laboratorul Kronos are placa; os-419, os-421, os-422 și proba ocupării sunt nerulate). Am luat punctul (3) rămas din nota centrului de la 07:00: „`128x128` la ≤ 85 de registre” (pragul corect: ≤ 80). Am lucrat într-o clonă nouă a ramurii (clona locală veche are istoria tăiată; n-am șters nimic din ea).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Predicții | P1–P4 + T233a–e scrise înainte de compilare și de cod (`91c1e61`), `docs/C-165_DIETA_128.md` | — |
+| Unealta | Mesa 25.0.7 reconstruit în cloud; cele 4 variante vechi `mm_tv_*` ieșite identice | PASS |
+| Programul | `tools/nak/mm_tv_128x128t512.comp`: același corp, placa 128 × 128, 512 fire × (8 × 4) | **54 registre** (P1 ✓), 0 locală, 8 KiB, 28 144 octeți; neprezis: bucla interioară desfăcută (256 `ffma`) |
+| Cod (doar adăugări) | `mm_train_variants::{MM_TV_128X128T512, MM_TV_128X128T512_VARIANT}`, `occupancy::diet_128_kernel`, `gpu_sim::cmdproc::{MM_TV_128X128T512, mm_tv_128x128t512_on_cpu}`; `VARIANTS` neschimbat (5) | — |
+| T233 | `crates/nvidia-ga104/tests/sim_c165_dieta_128.rs`: binar + tabel; margini × 8 opțiuni, −0,0; 15 forme #513 = `mm_tv_128x128`; ocuparea; refuzuri | PASS 5/5 în SIMULARE |
+| Ocuparea | de la 32 KiB: 2 blocuri × 16 grupuri = 32 grupuri pe unitate (față de 16 la `mm_tv_128x128`) | DEDUS (P2 ✓) |
+| Viteza | ×0,8 – ×1,4 față de `mm_tv_128x128` | NOT TESTED |
+| Nota pentru OS | `integration/cyber-universe/C-165_dieta-128.md` — un rând în plus în cursă, pe qkv, la treapta 32/64 KiB | NOT TESTED (de rulat de OS) |
+| `tools/check.sh` | format, clippy, teste pe gazdă, build no_std | PASS (**1 126 de teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** doar programul `mm_tv_128x128t512` (SHA-256 `2b804582…05c2d03c`), când îl pune OS-ul în cursă. **Nicio schimbare incompatibilă.**
+
+**Următorul pas:** comparațiile când vin (proba ocupării, os-421, os-419 `mm_tc`, os-422 `mma16_s8`); apoi `mm_tc` cu mai puțină memorie comună pe bloc; dacă dieta câștigă în cursă → intrarea ei în `MmChoice` / `Prog`.
+
+---
+
 ## Sesiunea 226 — 25 noiembrie 2026, ~09:15–09:55 (ora României), în cloud, FĂRĂ placă — **o singură treaptă a memoriei comune pe tot pasul, gata de legat în SIMULARE**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 225 terminată 08:56), l-am pus `ocupat`. Niciun raport nou de pe placă după os-418 (laboratorul Kronos are placa). Am luat punctul (3) din nota centrului de la 07:00: „treapta aleasă automat, aceeași pe tot pasul”. Clona locală veche avea istoria tăiată; am lucrat într-o clonă nouă a ramurii.
