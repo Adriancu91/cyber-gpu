@@ -1,6 +1,6 @@
 # C-157 — studiul „programului persistent” pe un strat (nota centrului 25 nov 11:55, cererea 2) — plan + predicții, scrise ÎNAINTE de calcule
 
-**Data:** 25 noiembrie 2026, ~20:40 (ora României), sesiunea Cyber-GPU 236, în cloud, FĂRĂ placă. Totul de aici e
+**Data:** 25 noiembrie 2026, ~20:25 (ora României), sesiunea Cyber-GPU 236, în cloud, FĂRĂ placă. Totul de aici e
 **DEDUS** (aritmetică pe timpii pe care i-a MĂSURAT OS-ul pe placă) sau **SIMULARE**; nimic nu rulează pe RTX 3070 Ti.
 
 **Cererea centrului (11:55, studiul `idei/2026-11-25-centru-franele-altora.md`, punctul 2):** „studiu «program persistent» pe
@@ -53,7 +53,7 @@ Un program persistent câștigă din trei surse, și doar din ele:
 
 Nimic nou pentru placă în această sesiune.
 
-## 5. Rezultatul (sesiunea 236, ~21:05; T242, 6/6 pe procesor; cifrele = DEDUS din timpii MĂSURAȚI de OS)
+## 5. Rezultatul (sesiunea 236, ~20:43; T242, 6/6 pe procesor; cifrele = DEDUS din timpii MĂSURAȚI de OS)
 
 Cod: `nvidia_ga104::persistent_study` (doar adăugare, aritmetică pură), testul `tests/c157_persistent.rs`.
 

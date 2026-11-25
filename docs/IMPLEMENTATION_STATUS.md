@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 236 — 25 noiembrie 2026, ~20:11–21:50 (ora României), în cloud, FĂRĂ placă — **studiul „programului persistent” pe un strat (nota centrului 11:55, cererea 2): la antrenare nu merită acum (≤ 3,6 % singur; rezultatele stratului nu încap în memoria rapidă), partea bună = lansarea dublă dX + dW (+3 % peste alegerea pe formă); la generare merită (31 % din placă = cost de lansare) → întâi proba barierei**
+## Sesiunea 236 — 25 noiembrie 2026, ~20:11–20:45 (ora României), în cloud, FĂRĂ placă — **studiul „programului persistent” pe un strat (nota centrului 11:55, cererea 2): la antrenare nu merită acum (≤ 3,6 % singur; rezultatele stratului nu încap în memoria rapidă), partea bună = lansarea dublă dX + dW (+3 % peste alegerea pe formă); la generare merită (31 % din placă = cost de lansare) → întâi proba barierei**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 235), l-am pus `ocupat`. Niciun test nou pe placă (os-438 încă nerulat) → am luat
 ultimul punct din ordinea centrului 11:55. Copiile locale vechi erau rămase în urmă; am lucrat pe clone proaspete (nimic șters, nimic
@@ -16,7 +16,7 @@ rescris). Plan + predicții urcate **înainte** de calcule (`6dd69e1`, `docs/C-1
 | P4b | peste alegerea pe formă la 64 KiB: **3,1 %** (−8 ms; alegerea pe formă ia deja −43 din −49 ms) | PASS (DEDUS) |
 | P5 / P6 | generarea: golurile ≤ 336 µs = 31 % din 1 071 µs; placa = ×6,3 podeaua lățimii de bandă (170 µs) | PASS (DEDUS din MĂSURAT) |
 | T242 | 6 teste pe procesor (`tests/c157_persistent.rs`) | PASS |
-| Verificări | format, clippy, teste pe gazdă, build no_std | PASS |
+| Verificări | format, clippy, teste pe gazdă, build no_std | PASS (**1 182 de teste**, 8 ignorate) |
 
 **Recomandarea:** la antrenare, programul persistent pe strat **nu** e pasul următor — întâi pasul mixt rapid (os-438 → `pack_mixed_fast`),
 alegerea pe formă la 64 KiB, apoi eventual lansarea dublă dX + dW (de remăsurat pe `mm_tc_v4`). La generare persistentul are sens; primul
