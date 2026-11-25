@@ -1,0 +1,63 @@
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM) (placa): modelul vocabular 16384, context 512, E 768, 12 capete, 12 straturi (98032128 greutati), lot 2 x 512, AdamW lr 1e-3, taiere 1,0; loturi sintetice (MT19937, samanta 0x164; nu exista /disk/antrenare/date/index.json sau /usb/antrenare/date/index.json); atentia pe placi gen 3 (attn_fwd_tile3, attn_back_tile0_3, attn_back_tile_3; --placi3); inmultirile pe mm_train_tile (blocuri 256 x 64 x 64; --mm-placi); inmultirile pe varianta aleasa de cursa os-416 (Plan::with_mm_choice; --mm-alegere); colsum impartit pe randuri (colsum_part + colsum; zona de lucru 768 KiB dupa arena; --colsum-impartit); 17 programe (SHA-256 verificate), 483 lansari pe pas in 2 trimiteri (cel mult 255 lansari pe trimitere); arena 2560 MiB in VRAM (VRAM liber 7474 MiB), urcata o data pe bucati de 65536 KiB; 10 pasi; fara oracol (procesorul nu face pasul #513 in timp util): pierderea la pasul 1 ~ ln 16 384, apoi scade
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): alegerea inmultirilor (--mm-alegere, din cursa os-416 citita cu parse_race; cea mai rapida cu aceiasi biti, la >= 3 % castig): 15 forme pe o varianta (15 din cursa, 0 fara rand in cursa -> varianta cea mai des aleasa, mm_tv_128x128); programe in plus: mm_tv_128x128; in cursa, pasul ar fi scazut cu ~141388 us (DEDUS, timpi izolati); 1024x2304x768 f6 -> mm_tv_128x128; 1024x768x768 f6 -> mm_tv_128x128; 1024x3072x768 f6 -> mm_tv_128x128; 1024x768x3072 f6 -> mm_tv_128x128; 1024x16384x768 f2 -> mm_tv_128x128; 16384x768x1024 f1 -> mm_tv_128x128; 1024x768x16384 f0 -> mm_tv_128x128; 1024x3072x768 f0 -> mm_tv_128x128; 768x3072x1024 f1 -> mm_tv_128x128; 1024x768x3072 f0 -> mm_tv_128x128; 3072x768x1024 f1 -> mm_tv_128x128; 1024x768x768 f0 -> mm_tv_128x128; 768x768x1024 f1 -> mm_tv_128x128; 1024x768x2304 f0 -> mm_tv_128x128; 2304x768x1024 f1 -> mm_tv_128x128
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): arena urcata o data RAM -> VRAM: 2560 MiB in 41 bucati, 228 ms (placa)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): treapta pas: 64 KiB pe 483 lansari (--treapta-pas; step_best_sm_step peste 15 programe, rezerva 1 KiB; MIN = TARGET = 64 KiB, MAX = 64 KiB la fiecare lansare a pasului; restul QMD-urilor = pack)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): pasul 1: pierderea 9.8493, norma gradientului 3.2729; placa 270903 us (2 trimiteri), pasul intreg 278298 us
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): pasul 2: pierderea 9.8750, norma gradientului 1.1021; placa 255960 us (2 trimiteri), pasul intreg 266947 us
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): pasul 3: pierderea 9.8293, norma gradientului 1.0242; placa 255889 us (2 trimiteri), pasul intreg 266621 us
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): pasul 4: pierderea 9.9083, norma gradientului 0.9176; placa 255886 us (2 trimiteri), pasul intreg 266889 us
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): pasul 5: pierderea 9.8642, norma gradientului 0.8955; placa 255919 us (2 trimiteri), pasul intreg 266953 us
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): pasul 6: pierderea 9.8817, norma gradientului 0.8962; placa 255896 us (2 trimiteri), pasul intreg 266629 us
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): pasul 7: pierderea 9.8472, norma gradientului 0.8914; placa 255832 us (2 trimiteri), pasul intreg 266847 us
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): pasul 8: pierderea 9.9389, norma gradientului 0.9363; placa 255899 us (2 trimiteri), pasul intreg 266609 us
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): pasul 9: pierderea 9.9930, norma gradientului 0.9346; placa 255865 us (2 trimiteri), pasul intreg 266824 us
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): pasul 10: pierderea 10.1739, norma gradientului 1.6566; placa 255864 us (2 trimiteri), pasul intreg 266801 us
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): pierderea la pornire 9.8493 (ghicit la intamplare: ln 16384 = 9.7041), la ultimul pas 10.1739; greutatile la sfarsit: 98032128 citite, 0 care nu sunt numere
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): timpul pe pas (median, 10 pasi): placa 255896 us = 4001 simboluri/s la antrenare (lot 2 x 512; Windows / PyTorch ~39 300); pasul intreg 266847 us = 3837 simboluri/s
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): ceasurile: placa / pasul intreg = 958 la mie (median; peste 1000 = un ceas gresit); ceasul procesorului: referinta PIT (8254); TSC la pornire 3002043 kHz (3 x 50 ms; in 10 ms 3107186 kHz); acum 3002036 kHz (median din 5 x 50 ms, pornire fata de acum +0 la mie); CPUID 3000000 kHz (pornire fata de CPUID +0 la mie)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): gpu0: kw tabloul in timpul pasilor #513 (rezumat, 10 citiri, mediana (min..max)): ceasul nucleului 1950 MHz (1785..1950), memoria 9501 MHz (9501..9501), incarcarea nucleului 97 % (0..100), puterea 127.7 W (76.9..132.4) din limita 290 W, stari P0 x10, motivele incetinirii vazute niciunul, temperatura 51 grade C (48..53)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): gpu0: kw tabloul in timpul pasilor #513: ceasul nucleului median 1950 MHz = 1101 la mie din ceasul de boost al RTX 3070 Ti (1 770 MHz, fisa publica NVIDIA)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): kt tablou pasi-513 citiri 10
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): kt tablou pasi-513 ceasul nucleului median MHz 1950
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): kt tablou pasi-513 ceasul memoriei median MHz 9501
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): kt tablou pasi-513 incarcarea nucleului mediana % 97
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): kt tablou pasi-513 puterea mediana mW 127777
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): kt tablou pasi-513 puterea maxima mW 132439
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): kt tablou pasi-513 temperatura maxima C 53
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): kt tablou pasi-513 motivele incetinirii (sau pe biti) 0
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): profilul pasului (placa, median pe 10 pasi cititi intregi): 255896 us, 483 lansari
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):  pe etape:
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   inapoi                     171286 us ( 66.9 %, 356 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   inainte                     78566 us ( 30.7 %, 123 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   opt                          5521 us (  2.1 %, 3 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   eroarea                       522 us (  0.2 %, 1 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):  cele mai lungi 8 etichete:
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   inainte:proj                27366 us ( 10.6 %, 12 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   inapoi:fc-dX                27337 us ( 10.6 %, 12 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   inapoi:qkv-dX               20751 us (  8.1 %, 12 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   inapoi:proj-dW              18831 us (  7.3 %, 12 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   inapoi:fc-dW                18536 us (  7.2 %, 12 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   inapoi:qkv-dW               18275 us (  7.1 %, 12 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   inainte:fc                  14817 us (  5.7 %, 12 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   inapoi:proj-dX              14477 us (  5.6 %, 12 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):  pe programe:
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   mm_tv_128x128              223234 us ( 87.2 %, 147 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   attn_back_tile_3             9192 us (  3.5 %, 12 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   attn_fwd_tile3               6207 us (  2.4 %, 12 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   attn_back_tile0_3            5182 us (  2.0 %, 12 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   opt_step                     4786 us (  1.8 %, 1 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   colsum_part                  1572 us (  0.6 %, 73 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   gelu_tr                      1472 us (  0.5 %, 24 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   colsum                        845 us (  0.3 %, 98 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   vadd                          832 us (  0.3 %, 48 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   gnorm                         734 us (  0.2 %, 2 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   ln_back                       654 us (  0.2 %, 25 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   ln_fwd                        581 us (  0.2 %, 25 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   xent                          522 us (  0.2 %, 1 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   emb_back                       51 us (  0.0 %, 2 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM):   emb_fwd                        27 us (  0.0 %, 1 lansari)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): banc antrenare: sistem OS commit eaeeb0a9a66c33b7eb040bea3dc9695f7259d749 | model #513 | lot 2 x 512 | precizie F32 | loturi sintetice MT19937 0x164 | atentia pe placi gen 3 | pasi 10 | ms pe pas 266.847 | simb/s 3837 | placa ms pe pas 255.896 | pierderea 9.8493 9.8750 9.8293 9.9083 9.8642 9.8817 9.8472 9.9389 9.9930 10.1739 | norma 3.2729 1.1021 1.0242 0.9176 0.8955 0.8962 0.8914 0.9363 0.9346 1.6566
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): banc rand tabel: | OS commit eaeeb0a9a66c33b7eb040bea3dc9695f7259d749 | #513 | 2 x 512 | F32 | sintetice MT19937 0x164 | 10 | 266.847 | 3837 | 9.8493 -> 10.1739 |
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): fata de oracolul procesorului (ORACLE_513_SYNTH, loturile sintetice): ACELEASI NUMERE — pasii 1-9: abaterea pierderii 1.6e-5, a normei 9.6e-5 (toleranta 1e-3); pasul 10 doar afisat: 1.1e-3 / 5.2e-4
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): TRECE (pasul #513 cu arena in VRAM = oracolul procesorului in pasii 1-9, toate numerele finite)
+REZULTAT TEST PLACA: kronos: lant: gpu0: rezultat lant: oprit la tur-dupa (2767 scrieri); kronos: PE PLACA: 16 simboluri, fiecare comparat in nucleu cu procesorul (dupa placa, motorul rapid al OS-ului) (lantul intreg + textul in 251500 ms); antrenare mini pe placa (arena in VRAM): TRECE (antrenarea cu arena in VRAM = oracolul); antrenare #513 pe placa (arena in VRAM): TRECE (pasul #513 cu arena in VRAM = oracolul procesorului in pasii 1-9, toate numerele finite)

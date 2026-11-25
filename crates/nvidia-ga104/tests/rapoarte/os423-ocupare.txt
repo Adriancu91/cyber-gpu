@@ -1,0 +1,19 @@
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): proba ocuparii (P6-201, C-165, PREDARE Cyber-GPU 54f5ab8): in locul cursei mari, pe forma qkv (1024x2304x768 f6), 10 rulari din occupancy::PROBE (mm_train_tile 8 KiB, mm_train_tile 16 KiB, mm_train_tile 32 KiB, mm_train_tile 64 KiB, mm_tv_64x64k8 8 KiB, mm_tv_64x64k8 16 KiB, mm_tv_64x64k8 32 KiB, mm_tv_128x128 8 KiB, mm_tv_128x128 16 KiB, mm_tv_128x128 32 KiB); treapta memoriei comune = MIN = TARGET_SM_CONFIG_SHARED_MEM_SIZE din QMD, MAX ca azi; martorul bitilor = prima rulare (lansarea de azi)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): cursa mm (C-165, placa): 1 forme ale lui mm_train din pas (12 lansari) x 10 variante (mm_train_tile, mm_train_tile, mm_train_tile, mm_train_tile, mm_tv_64x64k8, mm_tv_64x64k8, mm_tv_64x64k8, mm_tv_128x128, mm_tv_128x128, mm_tv_128x128); martorul mm_train_tile (trecut pe placa la os-410); C pe o bucata de 64 MiB in VRAM + 256 octeti de paza, umplute cu -12345.0; 8 lansari pe varianta si forma (prima de incalzire), comparate bit cu bit cu martorul
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): cursa mm: programele mapate cu o pagina de paza dupa cod (qmd::program_map_bytes, P6-194)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): ocupare mm_train_tile 8 KiB: 2840.0 us, 1.27 TFLOP/s, 79.4 W, ACEIASI BITI
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): ocupare mm_train_tile 16 KiB: 1569.3 us, 2.30 TFLOP/s, 79.3 W, ACEIASI BITI
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): ocupare mm_train_tile 32 KiB: 1096.6 us, 3.30 TFLOP/s, 79.2 W, ACEIASI BITI
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): ocupare mm_train_tile 64 KiB: 1040.6 us, 3.48 TFLOP/s, 79.1 W, ACEIASI BITI
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): ocupare mm_tv_64x64k8 8 KiB: 1769.1 us, 2.04 TFLOP/s, 79.0 W, ACEIASI BITI
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): ocupare mm_tv_64x64k8 16 KiB: 1114.4 us, 3.25 TFLOP/s, 78.8 W, ACEIASI BITI
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): ocupare mm_tv_64x64k8 32 KiB: 1002.4 us, 3.61 TFLOP/s, 78.6 W, ACEIASI BITI
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): ocupare mm_tv_128x128 8 KiB: 1890.2 us, 1.91 TFLOP/s, 78.1 W, ACEIASI BITI
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): ocupare mm_tv_128x128 16 KiB: 1278.1 us, 2.83 TFLOP/s, 78.1 W, ACEIASI BITI
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): ocupare mm_tv_128x128 32 KiB: 1275.5 us, 2.84 TFLOP/s, 78.1 W, ACEIASI BITI
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): cursa mm: GATA: 10 randuri cu aceiasi biti, 0 diferite; cu castigatoarele pe fiecare forma pasul ar scadea cu ~0 us (din timpii izolati; DEDUS)
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): proba ocuparii: 10 / 10 aceiasi biti
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): proba ocuparii: mm_train_tile: timpul fata de 8 KiB: 8 KiB 1000 la mie, 16 KiB 552 la mie, 32 KiB 386 la mie, 64 KiB 366 la mie
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): proba ocuparii: mm_tv_64x64k8: timpul fata de 8 KiB: 8 KiB 1000 la mie, 16 KiB 629 la mie, 32 KiB 566 la mie
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): proba ocuparii: mm_tv_128x128: timpul fata de 8 KiB: 8 KiB 1000 la mie, 16 KiB 676 la mie, 32 KiB 674 la mie
+kronos: lant: gpu0: kronos --gpu: antrenare #513 pe placa (arena in VRAM): proba ocuparii: H1: mm_train_tile la 64 KiB = 366 la mie din 8 KiB (<= 850): treapta mai mare ajuta, ocuparea era o frana
