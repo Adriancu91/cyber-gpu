@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 229 — 25 noiembrie 2026, ~12:10–13:00 (ora României), în cloud, FĂRĂ placă — **`mm_tc_pf`: `mm_tc` cu citirile în avans, gata pentru placă în SIMULARE; regula strictă a citirilor în zbor**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 228 terminată 11:50), l-am pus `ocupat`. Niciun raport nou de pe placă. Am luat
+pasul următor scris: `mm_tc` cu citirile în avans (coada C-157). Plan + predicții urcate **înainte** de compilare (`66c50fc`,
+`docs/C-157_P2_CITIRI_IN_AVANS.md`). Clona locală veche era „tăiată” (istorie scurtă): am completat-o (`fetch --unshallow`), nimic șters.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Unealta | Mesa 26.3.1 reconstruit în cloud; `mm_tc` recompilat **identic** (SHA `f60cd944…`) | PASS |
+| Programul | `tools/nak/mm_tc_pf.comp`: citiri fără ramificare (selecții, „e înăuntru?” ca biți, indice ×0 în afară, zeroul ales la scriere), felia următoare cerută după barieră; 3 compilări (NAK așteaptă tot la fiecare ramificare; 7 predicate) | **248 registre** (P1 80–112: GREȘIT), 0 locală, 24 KiB, SHA `48defc5d…` |
+| Cod (doar adăugări) | `nvidia_ga104::mm_tc_pf`, `gpu_sim::cmdproc::{mm_tc_pf_on_cpu, MM_TC_PF_NEEDS}` | — |
+| T235 (5 teste) | transcrierea citirilor fir cu fir = aceleași valori în memoria comună ca `mm_tc`, fără citiri în afară; greșeala plantată prinsă; aceiași biți prin procesorul de comenzi; refuzurile | PASS (SIMULARE) |
+| Listarea (T234e, `citiri_seriale.py`) | regula veche: 32 în zbor (P2 ✓); **regula strictă nouă** (numărătoarele de așteptare, 6 la NAK): **5 în zbor** (atenția gen 3: 6; restul înmulțirilor: 1); felia următoare nu se suprapune cu circuitele speciale | MĂSURAT pe text |
+| Predicția de viteză corectată | qkv-513 **~3–5 TFLOP/s** (era 5–10; os-423: 1,03) | NOT TESTED |
+| Nota pentru OS | `integration/cyber-universe/C-157_P2zb_mm-tc-pf.md` — un rând în plus în `--mm-tc` | NOT TESTED (de rulat de OS) |
+| `tools/check.sh` | format, clippy, teste pe gazdă, build no_std | PASS (**1 138 de teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** doar programul `mm_tc_pf` (SHA-256 `48defc5de143bd55c980521cb769844ba6d3986be85564cd8e331c4bd7bfa048`,
+QMD cu 248 registre), când îl pune OS-ul în proba `--mm-tc`. **Nicio schimbare incompatibilă.**
+
+**Următorul pas:** citiri de 128 de biți în `mm_tc_pf` (8 citiri pe felie în loc de 32, când rândurile sunt aliniate) — cu limita de ~5
+în zbor, asta e leacul mai mare; apoi același leac în `mm_tc128` / `mm_s8` / `mm_tv_*`; comparațiile când vin (`mm_tc_pf`, proba ocupării,
+os-421, os-422).
+
+---
+
 ## Sesiunea 228 — 25 noiembrie 2026, ~11:13–11:45 (ora României), în cloud, FĂRĂ placă — **comparația os-423: `mm_tc` corect bit cu bit pe placă, dar lent (1,03 TFLOP/s) — cauza: citirile așteptate una câte una**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 227 terminată 10:46), l-am pus `ocupat`. Raport nou de pe placă: **os-423** (`--mm-tc`,

@@ -3236,6 +3236,19 @@ pub fn mm_tc_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     mm_tc_tiles_on_cpu(l, 64)
 }
 
+/// C-157 p.2 after os-423 (session 229): what `tools/nak/out2/mm_tc_pf.sm86.sass` needs — exactly `mm_tc`'s shared
+/// memory (the f16 slices + the 64×64 f32 tile, 24 KiB) and one barrier; the loads read ahead live in registers.
+pub const MM_TC_PF_NEEDS: Needs = MM_TC_NEEDS;
+
+/// C-157 p.2 after os-423 (session 229): the CPU stand-in for `tools/nak/out2/mm_tc_pf.sm86.sass` — `mm_tc` with the
+/// global loads issued ahead (branch-free, clamped index, zero chosen after the load; the next K-slice read while the
+/// tensor cores work on the current one). The values copied to shared memory, the f16 rounding, the K order and the
+/// bias add are `mm_tc`'s, so the stand-in is [`mm_tc_on_cpu`] (blocks of 128×1×1, 64×64 tiles) — the same
+/// `gpu_compute::mm_tc::model`, a HYPOTHESIS fitted on os-335 and matched bit for bit by `mm_tc` on the board (os-423).
+pub fn mm_tc_pf_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    mm_tc_on_cpu(l)
+}
+
 /// C-165 after os-416 (session 220): what `tools/nak/out2/mm_tc128.sm86.sass` needs — the f16 slices of op(A)
 /// (128×32) and op(B) (32×128) plus one 16×16 f32 scratch per subgroup (8 of them): 8 + 8 + 8 KiB, one barrier.
 pub const MM_TC128_NEEDS: Needs = Needs {

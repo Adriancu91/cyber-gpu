@@ -46,40 +46,39 @@ shared float16_t bs_[BK * BN];  // op(B) slice, row-major [p][col], stride BN
 shared float cs_[BM * BN];      // the finished 64x64 block, row-major, stride BN
 
 // Reads the K-slice starting at t: element s of ra / rb is the value this thread stores at (tid + s * 128) of the
-// slice, exactly as in mm_tc. No branch around a load: outside the matrix the index is clamped to 0 (always a valid
-// element when the slice exists: m, n, k >= 1) and the value is replaced by 0 afterwards, so all 32 loads can be in
-// flight together.
+// slice, exactly as in mm_tc. NO BRANCH anywhere between the loads: NAK waits for every load in flight at a branch
+// (first build of this program, session 229: a `?:` and an `&&` per load were enough to keep 1 load in flight), so
+// the storage-order choices are selects (mix with a bool), the inside test is a 0/1 integer (bitwise and of two
+// comparisons) kept as one bit of a mask (16 live bools would need predicates, which NAK has only 7 of: the second
+// build used them right after each load), outside the matrix the index is multiplied by 0 (element 0, always valid:
+// m, n, k >= 1); the value read there is replaced by 0 only when it is stored to shared memory (the third build
+// chose the zero right after each load in the read before the loop, which made the loads wait again). Called with t >= k too (the read after the last slice): then every element is outside, all reads go to
+// element 0 and give 0, never used.
 void load_slice(uint t, uint row0, uint col0, uint tid, bool ta, bool tb,
-                out float ra[(BM * BK) / THREADS], out float rb[(BK * BN) / THREADS]) {
-    float va[(BM * BK) / THREADS];
-    float vb[(BK * BN) / THREADS];
-    bool ia[(BM * BK) / THREADS];
-    bool ib[(BK * BN) / THREADS];
+                out float ra[(BM * BK) / THREADS], out float rb[(BK * BN) / THREADS], out uint ia, out uint ib) {
+    ia = 0u;  // bit s: element s of the A part is inside (a mask in one register, not 16 predicates)
+    ib = 0u;  // the same for the B part
     for (uint s = 0u; s < (BM * BK) / THREADS; s++) {
         uint e = tid + s * THREADS;
-        uint r = ta ? e % BM : e / BK;
-        uint p = ta ? e / BM : e % BK;
+        uint r = mix(e / BK, e % BM, ta);
+        uint p = mix(e % BK, e / BM, ta);
         uint gr = row0 + r;
         uint gp = t + p;
-        ia[s] = gr < args.m && gp < args.k;
-        uint at = ta ? gp * args.m + gr : gr * args.k + gp;
-        va[s] = args.a.v[ia[s] ? at : 0u];
+        uint in_ = uint(gr < args.m) & uint(gp < args.k);
+        ia |= in_ << s;
+        uint at = mix(gr * args.k + gp, gp * args.m + gr, ta);
+        ra[s] = args.a.v[at * in_];
     }
     for (uint s = 0u; s < (BK * BN) / THREADS; s++) {
         uint e = tid + s * THREADS;
-        uint p = tb ? e % BK : e / BN;
-        uint cl = tb ? e / BK : e % BN;
+        uint p = mix(e / BN, e % BK, tb);
+        uint cl = mix(e % BN, e / BK, tb);
         uint gp = t + p;
         uint gc = col0 + cl;
-        ib[s] = gp < args.k && gc < args.n;
-        uint at = tb ? gc * args.k + gp : gp * args.n + gc;
-        vb[s] = args.b.v[ib[s] ? at : 0u];
-    }
-    for (uint s = 0u; s < (BM * BK) / THREADS; s++) {
-        ra[s] = ia[s] ? va[s] : 0.0;
-    }
-    for (uint s = 0u; s < (BK * BN) / THREADS; s++) {
-        rb[s] = ib[s] ? vb[s] : 0.0;
+        uint in_ = uint(gp < args.k) & uint(gc < args.n);
+        ib |= in_ << s;
+        uint at = mix(gp * args.n + gc, gc * args.k + gp, tb);
+        rb[s] = args.b.v[at * in_];
     }
 }
 
@@ -100,29 +99,31 @@ void main() {
         }
     }
 
-    // The 16 + 16 values of the current slice, read ahead into registers (zeros already chosen).
+    // The 16 + 16 values of the current slice, read ahead into registers, and which of them are inside.
     float ra[(BM * BK) / THREADS];
     float rb[(BK * BN) / THREADS];
-    load_slice(0u, row0, col0, tid, ta, tb, ra, rb);
+    uint ia;
+    uint ib;
+    load_slice(0u, row0, col0, tid, ta, tb, ra, rb, ia, ib);
 
     for (uint t = 0u; t < args.k; t += BK) {
         for (uint s = 0u; s < (BM * BK) / THREADS; s++) {
             uint e = tid + s * THREADS;
-            uint r = ta ? e % BM : e / BK;
-            uint p = ta ? e / BM : e % BK;
-            as_[r * BK + p] = float16_t(ra[s]);
+            uint r = mix(e / BK, e % BM, ta);
+            uint p = mix(e % BK, e / BM, ta);
+            as_[r * BK + p] = float16_t(mix(0.0, ra[s], ((ia >> s) & 1u) != 0u));
         }
         for (uint s = 0u; s < (BK * BN) / THREADS; s++) {
             uint e = tid + s * THREADS;
-            uint p = tb ? e % BK : e / BN;
-            uint cl = tb ? e / BK : e % BN;
-            bs_[p * BN + cl] = float16_t(rb[s]);
+            uint p = mix(e / BN, e % BK, tb);
+            uint cl = mix(e % BN, e / BK, tb);
+            bs_[p * BN + cl] = float16_t(mix(0.0, rb[s], ((ib >> s) & 1u) != 0u));
         }
         barrier();
-        // The next slice's loads go out now and land while the tensor cores work on this one.
-        if (t + BK < args.k) {
-            load_slice(t + BK, row0, col0, tid, ta, tb, ra, rb);
-        }
+        // The next slice's loads go out now and land while the tensor cores work on this one. No `if (t + BK < k)`:
+        // a branch here would make NAK wait for them before the tensor cores start; after the last slice the reads
+        // are all outside (element 0, value 0) and are not used.
+        load_slice(t + BK, row0, col0, tid, ta, tb, ra, rb, ia, ib);
         for (uint kk = 0u; kk < BK; kk += 16u) {
             coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> fa[2];
             coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> fb[2];

@@ -101,3 +101,56 @@ fn t234d_planted_listing() {
         "a = ld.global.b32 [r0] // wr:0\nx = f2f a // wt=000001\nb = ld.global.b32 [r2] // wr:1\n";
     assert_eq!(analyse(text).max_in_flight, 1);
 }
+
+/// Session 229: the STRICT count (same as `citiri_seriale.py` "strict"). A scoreboard is a counter: a wait on it waits
+/// for every operation counted there, so a load stays in flight only until ANY instruction waits on its scoreboard.
+fn strict_in_flight(text: &str) -> usize {
+    let mut out = [0usize; 6];
+    let mut best = 0;
+    for line in text.lines() {
+        if let Some(m) = scoreboard(line, "wt=") {
+            let m: Vec<char> = m.chars().take(6).collect();
+            if m.len() == 6 {
+                for (sb, slot) in out.iter_mut().enumerate() {
+                    if m[5 - sb] == '1' {
+                        *slot = 0;
+                    }
+                }
+            }
+        }
+        if line.contains("ld.global") {
+            if let Some(sb) = scoreboard(line, "wr:")
+                .and_then(|s| s.chars().next())
+                .and_then(|c| c.to_digit(10))
+            {
+                out[sb as usize] += 1;
+            }
+            best = best.max(out.iter().sum());
+        }
+    }
+    best
+}
+
+#[test]
+fn t234e_mm_tc_pf_loads_ahead_and_the_strict_count() {
+    // mm_tc_pf (C-157 p.2, session 229): the loose rule sees the 32 loads of a slice issued together (only the epilogue
+    // bias loads + one per read stay serial)...
+    let pf = listing("out2/mm_tc_pf.sm86.txt");
+    let l = analyse(&pf);
+    assert_eq!((l.total, l.serial, l.max_in_flight), (96, 34, 32));
+    // ...but NAK 26.3.1 gives each load its own scoreboard (6 in all) and waits on the oldest when it needs one, so at
+    // most 5 are in flight at once — the same order as attention gen 3 (6), which passed on the board.
+    assert_eq!(strict_in_flight(&pf), 5);
+    assert_eq!(strict_in_flight(&listing("out/attn_fwd_tile3.sm86.txt")), 6);
+    for name in [
+        "out2/mm_tc.sm86.txt",
+        "out2/mm_tc128.sm86.txt",
+        "out2/mm_s8.sm86.txt",
+        "out/mm_tv_128x128.sm86.txt",
+    ] {
+        assert_eq!(strict_in_flight(&listing(name)), 1, "{name}");
+    }
+    // Planted: two loads on scoreboards 0 and 1; a third waits on 0 (needs it free) -> at most 2 in flight.
+    let text = "a = ld.global.b32 [r0] // wr:0\nb = ld.global.b32 [r2] // wr:1\nc = ld.global.b32 [r4] // wt=000001 wr:0\n";
+    assert_eq!(strict_in_flight(text), 2);
+}

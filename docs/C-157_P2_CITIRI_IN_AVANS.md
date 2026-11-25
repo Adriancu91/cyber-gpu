@@ -28,3 +28,19 @@ comună / bariere, și o căutăm acolo, nu la ocupare.
 
 ## Ce e nou pentru placă
 Doar programul `mm_tc_pf` (SHA-256 notat la compilare). Nicio scriere în registre, niciun firmware, aceeași lansare ca `mm_tc`.
+
+## Rezultatul (sesiunea 229, în cloud) — ce a ieșit față de predicții
+Unealta: Mesa 26.3.1 reconstruit în cloud; `mm_tc` recompilat a ieșit **identic** (SHA `f60cd944…`), deci unealta e aceeași.
+
+| # | Prezis | Ieșit | Verdict |
+|---|---|---|---|
+| — | — | **trei compilări au fost nevoie**: (1) cu `?:` și `&&` la fiecare citire → NAK face ramificări, iar la fiecare ramificare **așteaptă toate citirile în zbor**: tot 1 în zbor; (2) totul cu selecții (`mix`), dar cele 16 + 16 „e înăuntru?” ca valori booleene → NAK are doar 7 registre de predicat și a ales zeroul imediat după fiecare citire; (3) „e înăuntru?” ca biți ai unui singur număr, zeroul ales abia la scrierea în memoria comună → asta e programul | fapt despre NAK 26.3.1 |
+| P1 | 80–112 registre | **248** (0 memorie locală, 16 `hmma` ca `mm_tc`) | **GREȘIT**; 128 × 248 încape tot 2 blocuri pe unitate, cât dă și memoria comună la treapta de 64 KiB |
+| P2 | ≥ 16 în zbor (regula T234) | regula T234: **32 în zbor**, 34 / 96 așteptate (32 = citirile lui `bias` la final + câte una pe felie) | PASS pe regula scrisă |
+| P2′ | — | **regula strictă (nouă)**: un „tabel de așteptare” (scoreboard) e un numărător, iar NAK dă fiecărei citiri unul din cele 6 și îl așteaptă pe cel mai vechi când are nevoie de unul liber → **cel mult 5 citiri în zbor** (atenția gen 3, trecută pe placă: 6). Toate celelalte înmulțiri: 1. Felia următoare e și ea așteptată înainte de circuitele speciale (nu se suprapune cu ele) | MĂSURAT pe text; regula din sesiunea 228 supraestima |
+| P3 | aceiași biți ca `mm_tc` în SIMULARE | T235: transcrierea în Rust a citirilor (fir cu fir, felie cu felie, toate opțiunile, margini) pune **aceleași valori** în memoria comună ca `mm_tc` și nu citește niciodată în afara lui A / B; prin procesorul de comenzi: aceiași biți | PASS (SIMULARE) |
+| P4 | aceiași biți pe placă | — | NOT TESTED |
+| P5 | qkv-513 ~5–10 TFLOP/s | **corectat acum (DEDUS):** cu ~5 în zbor în loc de 1, felia ≈ 32 / 5 ≈ 6–7 așteptări în loc de 32 → **~3–5 TFLOP/s** (×3–5 față de os-423) | NOT TESTED |
+
+Ce urmează pentru mai mult (DEDUS): mai puține citiri, nu mai multe în zbor — citiri de 128 de biți (4 valori pe citire: 8 în loc de
+32 pe felie) când rândurile sunt aliniate; cu aceeași limită de ~5 în zbor, felia ar ajunge la ~2 așteptări.
