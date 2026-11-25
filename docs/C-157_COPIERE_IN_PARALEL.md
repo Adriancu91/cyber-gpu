@@ -94,3 +94,20 @@ Un singur lucru nou pe test: `--antrenare-513 --mixt --lot-prin-ram` = `pack_mix
 `pack_mixed_fast`, aceeași verificare față de oracol; în raport un rând nou cu **timpul în afara plăcii** (pasul întreg −
 placa) și, dacă se poate, împărțit: lotul, lista + împachetarea, trimiterile, rezultatele. Cele două locuri — la testul
 următor.
+
+## 8. Rezultatul (sesiunea 235, ~20:20; cod + test în commit-ul de după `cdec2d6`)
+
+**Corectură la ordinea din Q2 (găsită la scrierea testului, înainte de rulare):** rezultatele pasului N−1 se citesc
+*în timp ce rulează pasul N* (între cele două bucăți), **înainte** de a pregăti pasul N+1 în același loc — altfel
+pregătirea (care rescrie tranzitul locului) le-ar șterge. Asta e și ordinea corectă pentru OS (vezi nota).
+
+| Predicție | Ce a ieșit | Verdict |
+|---|---|---|
+| Q1 | 6 pași mixți rapizi (64 KiB), 6 loturi diferite: prin RAM = prin fereastră **bit cu bit** (pierderi, norme, greutăți); lansări 76 → 83 (+7 copii), zona +7 sloturi; cuvintele lotului prin fereastră pe pas **321 → 0** | PASS (SIMULARE) |
+| Q2 | două locuri, pasul N+1 pregătit între bucățile pasului N, rezultatele N−1 citite în timpul pasului N = pas cu pas **bit cu bit** | PASS (SIMULARE) |
+| Q3 | un singur loc în aceeași ordine: **5 / 6 pierderi** și greutățile alți biți (prinse); tranzit / program de copiere / zonă nealiniate, `mm_tc*` neîncărcat, treapta 12 KiB refuzate înainte de trimitere; fără treaptă, lista din mijloc = exact `pack_mixed_fast` | PASS (SIMULARE) |
+| Q4 | #513 rezident: sus / jos pe pas **20 484 / 4 100 B** (lot 2), **61 444 / 12 292** (lot 6), **81 924 / 16 388** (lot 8) = §3; lista mixtă #513 lot 2: **484 lansări + 7 copii, 147 pe `mm_tc_v4`**, tranzitul 25 088 B | PASS (SIMULARE) |
+| Q5 | în afara plăcii −4–5 ms (lot 2), −11–15 ms (lot 6); cu două locuri pasul întreg ≈ placa + < 0,5 ms | NOT TESTED (DEDUS) |
+
+Test: `crates/nvidia-ga104/tests/sim_c157_copy_parallel.rs` (T241, 4 teste). Nota pentru OS:
+`integration/cyber-universe/C-157_P2zg_lot-prin-ram-mixt.md`.

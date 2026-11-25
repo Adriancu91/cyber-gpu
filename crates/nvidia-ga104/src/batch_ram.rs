@@ -14,7 +14,10 @@ use alloc::vec::Vec;
 
 use gpu_core::error::{GpuError, GpuResult};
 
-use crate::train_step::{Launch, Plan, Prog, SLOT, pack};
+use crate::qmd::{MAX_SHARED_BYTES, SharedMemory};
+use crate::train_step::{
+    Launch, MixedLaunch, Plan, Prog, SLOT, TcPick, TcPrograms, pack, pack_mixed_fast,
+};
 use crate::transfer::{COPY_UNIT, copy_cbuf, copy_qmd};
 
 fn bad(why: &'static str) -> GpuError {
@@ -154,6 +157,64 @@ pub fn pack_via_ram(
         put_copy(&mut bytes, &mut qmds, c)?;
     }
     Ok((bytes, qmds))
+}
+
+/// C-157, center note 25 Nov 11:55 request 1 (`docs/C-157_COPIERE_IN_PARALEL.md`): [`pack_via_ram`] for the **mixed**
+/// step with the fast `mm_tc` programs — the copies in (RAM → arena), the list packed by
+/// [`crate::train_step::pack_mixed_fast`] (same picks: `mm_tc_v4` where it fits, else `mm_tc_pf`), the copies out
+/// (arena → RAM). With `step_bytes = Some(s)` the copies get the same SM shared-memory step `s` as the list, so the whole
+/// submission keeps one step. Returns the zone, the QMD addresses in launch order and the pick of every launch of the
+/// list (as `pack_mixed_fast`; the copies are not in it). SIMULARE only (T241).
+#[allow(clippy::type_complexity)]
+pub fn pack_mixed_fast_via_ram(
+    list: &[MixedLaunch],
+    prog_va: impl Fn(Prog) -> u64,
+    progs: &TcPrograms,
+    step_bytes: Option<u32>,
+    copy_va: u64,
+    zone_va: u64,
+    v: &ViaRam,
+) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
+    if !copy_va.is_multiple_of(256) || !zone_va.is_multiple_of(256) {
+        return Err(bad(
+            "lot prin RAM: programul de copiere sau zona nealiniate",
+        ));
+    }
+    let n_in = v.copies_in.len();
+    let list_va = zone_va + SLOT * n_in as u64;
+    let (list_bytes, list_qmds, picks) =
+        pack_mixed_fast(list, prog_va, progs, step_bytes, list_va)?;
+    let copy_shared = SharedMemory {
+        bytes: 0,
+        max_bytes: MAX_SHARED_BYTES,
+        barriers: 0,
+    };
+    let mut bytes = Vec::with_capacity(extra_launches(v) * SLOT as usize + list_bytes.len());
+    let mut qmds = Vec::with_capacity(extra_launches(v) + list_qmds.len());
+    let put_copy = |bytes: &mut Vec<u8>, qmds: &mut Vec<u64>, c: &RamCopy| -> GpuResult<()> {
+        let at = bytes.len();
+        let cb_va = zone_va + at as u64;
+        let cb = copy_cbuf(c.src, c.dst, c.bytes)?;
+        let qmd = copy_qmd(copy_va, cb_va, c.bytes)?;
+        let q = match step_bytes {
+            Some(s) => qmd.to_bytes_with_sm_config(&copy_shared, s)?,
+            None => qmd.to_bytes()?,
+        };
+        bytes.resize(at + SLOT as usize, 0);
+        bytes[at..at + cb.len()].copy_from_slice(&cb);
+        bytes[at + 0x100..at + 0x100 + q.len()].copy_from_slice(&q);
+        qmds.push(cb_va + 0x100);
+        Ok(())
+    };
+    for c in &v.copies_in {
+        put_copy(&mut bytes, &mut qmds, c)?;
+    }
+    bytes.extend_from_slice(&list_bytes);
+    qmds.extend_from_slice(&list_qmds);
+    for c in &v.copies_out {
+        put_copy(&mut bytes, &mut qmds, c)?;
+    }
+    Ok((bytes, qmds, picks))
 }
 
 /// The per-row losses and the gradient norm from the staging area read back after the wait (`staging` = the

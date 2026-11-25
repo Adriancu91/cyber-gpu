@@ -1,5 +1,33 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 235 — 25 noiembrie 2026, ~19:10–20:15 (ora României), în cloud, FĂRĂ placă — **copierea lotului în paralel cu calculul (nota centrului 11:55, cererea 1): lotul și rezultatele pasului mixt rapid prin RAM fixată + două locuri, gata de legat în SIMULARE**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 234), l-am pus `ocupat`. os-438 nu a rulat încă → nimic de comparat. Am luat
+următorul punct din ordinea centrului (11:55: ocuparea → `mm_tc` → **copierea în paralel + încărcarea dublă** → persistent). Plan +
+predicții urcate **înainte** de cod (`cdec2d6`, `docs/C-157_COPIERE_IN_PARALEL.md`).
+
+**Ce am aflat (MĂSURAT în jurnalele OS + DEDUS):** la #513 se pierd **10,95 ms pe pas** în afara plăcii (lot 2, os-431) și 18,5 ms (lot 6,
+os-437); cea mai mare parte = lotul scris cuvânt cu cuvânt prin fereastra VRAM + pierderile citite la fel. **Motorul de copiere nu ar
+câștiga nimic față de programul de copiere**: 20–80 KiB pe pas trec pe PCIe în 4–16 µs. Câștigul vine din RAM fixată + două locuri.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Cod (doar adăugări) | `batch_ram::pack_mixed_fast_via_ram`: 5 copii RAM → arenă + lista `pack_mixed_fast` + 2 copii arenă → RAM, toate la aceeași treaptă | — |
+| Q1 | mini rezident, 6 loturi, 64 KiB: prin RAM = prin fereastră bit cu bit; +7 lansări; 321 → 0 cuvinte ale lotului prin fereastră | PASS (SIMULARE) |
+| Q2 | două locuri, pasul N+1 pregătit în timpul pasului N = pas cu pas bit cu bit | PASS (SIMULARE) |
+| Q3 | un singur loc în aceeași ordine prins (5/6 pierderi alți biți); nealinieri, program lipsă, treaptă greșită refuzate | PASS |
+| Q4 | #513: 20 484 / 4 100 B pe pas (lot 2), 61 444 / 12 292 (lot 6), 81 924 / 16 388 (lot 8); 147 pe v4 + 7 copii | PASS (SIMULARE) |
+| Q5 | pe placă: −4–5 ms (lot 2), −11–15 ms (lot 6) în afara plăcii; cu două locuri pasul ≈ placa + < 0,5 ms | NOT TESTED (DEDUS) |
+| Corectură la plan | ordinea din Q2: rezultatele N−1 se citesc **înainte** de pregătirea N+1 în același loc (altfel le șterge) | scrisă în doc + notă |
+| Nota pentru OS | `integration/cyber-universe/C-157_P2zg_lot-prin-ram-mixt.md` (pasul 1: `--lot-prin-ram`; pasul 2: două locuri) | NOT TESTED pe placă |
+| Verificări | format, clippy, teste pe gazdă, build no_std | PASS (**1 174 de teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** niciun program și niciun registru nou (programul de copiere din os-397); doar copiile lotului în aceeași
+trimitere cu pasul mixt, la treapta 64 KiB. **Nicio schimbare incompatibilă.**
+
+**Următorul pas:** comparația os-438 (Q1–Q4) când vine; apoi, din ordinea centrului, studiul „programului persistent” pe un strat (după
+`mm_tc` cu ocupare); dacă `mm_tc*` rămân sub 5 TFLOP/s la 2 blocuri → partea fixă a feliei.
+
 ## Sesiunea 234 — 25 noiembrie 2026, ~18:22–19:10 (ora României), în cloud, FĂRĂ placă — **pasul mixt cu programele `mm_tc` rapide (`mm_tc_v4` / `mm_tc_pf`) și treapta 64 KiB: `pack_mixed_fast`, gata de legat în SIMULARE**
 
 La pornire GitHub a răspuns 503 cam 5 minute (reîncercat, apoi a mers). Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 233), l-am
