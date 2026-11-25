@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 235 — 25 noiembrie 2026, ~19:10–20:15 (ora României), în cloud, FĂRĂ placă — **copierea lotului în paralel cu calculul (nota centrului 11:55, cererea 1): lotul și rezultatele pasului mixt rapid prin RAM fixată + două locuri, gata de legat în SIMULARE**
+## Sesiunea 235 — 25 noiembrie 2026, ~19:10–20:02 (ora României), în cloud, FĂRĂ placă — **copierea lotului în paralel cu calculul (nota centrului 11:55, cererea 1): lotul și rezultatele pasului mixt rapid prin RAM fixată + două locuri, gata de legat în SIMULARE**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 234), l-am pus `ocupat`. os-438 nu a rulat încă → nimic de comparat. Am luat
 următorul punct din ordinea centrului (11:55: ocuparea → `mm_tc` → **copierea în paralel + încărcarea dublă** → persistent). Plan +

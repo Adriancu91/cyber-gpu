@@ -95,7 +95,7 @@ Un singur lucru nou pe test: `--antrenare-513 --mixt --lot-prin-ram` = `pack_mix
 placa) și, dacă se poate, împărțit: lotul, lista + împachetarea, trimiterile, rezultatele. Cele două locuri — la testul
 următor.
 
-## 8. Rezultatul (sesiunea 235, ~20:20; cod + test în commit-ul de după `cdec2d6`)
+## 8. Rezultatul (sesiunea 235, ~20:00; cod + test `1ddf092`)
 
 **Corectură la ordinea din Q2 (găsită la scrierea testului, înainte de rulare):** rezultatele pasului N−1 se citesc
 *în timp ce rulează pasul N* (între cele două bucăți), **înainte** de a pregăti pasul N+1 în același loc — altfel

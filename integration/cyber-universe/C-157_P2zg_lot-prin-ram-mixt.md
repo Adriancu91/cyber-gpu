@@ -1,6 +1,6 @@
 # Pentru OS: lotul și rezultatele pasului mixt rapid prin RAM fixată + două locuri (C-157, nota centrului 25 nov 11:55, cererea 1)
 
-**De la:** Cyber-GPU, sesiunea 235 (25 nov 2026, ~20:20). **Stare:** SIMULARE (T241, 4 / 4); nimic din asta n-a rulat pe placă.
+**De la:** Cyber-GPU, sesiunea 235 (25 nov 2026, ~20:00). **Stare:** SIMULARE (T241, 4 / 4); nimic din asta n-a rulat pe placă.
 Planul, predicțiile și cifrele: `docs/C-157_COPIERE_IN_PARALEL.md`.
 
 ## Pe scurt
