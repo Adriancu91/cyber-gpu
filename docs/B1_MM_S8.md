@@ -50,3 +50,15 @@ modelul adună modulo 2³² (IPOTEZĂ), oracolul refuză. Cu |a|, |b| ≤ 128, s
 - GLSL `GL_KHR_cooperative_matrix` + PTX ISA (`mma.m16n8k32` cu `.s8`/`.s32`), documentație publică.
 - Ideile de așezare: `tools/nak/mm_tc128.comp` (al nostru), scrierile publice CUTLASS / „How to optimize a CUDA matmul”.
 - NVIDIA Ampere GA102 Whitepaper, Anexa A (raportul int8 / f16).
+
+## Rezultat (sesiunea 225, SIMULARE)
+- Unealta NAK a doua refăcută în această sesiune reproduce exact binarul vechi `mma16_s8` (SHA-256 `7f6bc59a…c84af`).
+- `mm_s8` compilat: SHA-256 `76ce12d5…a92c6`, 57 568 octeți, **104 registre** (P1 ✓, fără `ldl`/`stl`; 24 mutări
+  între registre), **16 `imma.m16n8k32.i8.i8`**, 0 `hmma` (P2 ✓, exact cât am prezis), **16 KiB** partajați (P3 ✓);
+  NAK scrie „Max warps/SM: 16” = 2 blocuri pe unitate.
+- T231 **7/7 PASS** (P4 ✓): T231a–f ca mai sus, plus **T231g** (adăugat după compilare): codul GLSL transcris literal pe
+  procesor dă oracolul bit cu bit pe 4 forme × 8 opțiuni; o greșeală de index plantată (rândul lui B la `TB`) e prinsă.
+- **Nimic din acestea nu a rulat pe placă.** Viteza (×4 față de `mm_tc`) e DEDUSĂ, nemăsurată.
+- Nota pentru OS: `integration/cyber-universe/B1_mm-s8.md` — pe placă abia după proba `mma16_s8`.
+- Următorul pas B1: scara pe bloc Q8_0 (un f32 pe 32 de valori, înmulțit la fiecare felie) — schimbă aritmetica din
+  întregi exacți în f32, deci verdictul trece la toleranță; întâi întrebarea pentru Kronos.

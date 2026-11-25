@@ -416,6 +416,11 @@ GPL, niciun octet de firmware NVIDIA.
 ieșirea Mesa NAK 26.3.1 (MIT) din `mma16_s8.comp` (al nostru, sesiunea 126). Citite ca specificație: PTX ISA (instrucțiunea `mma`, `.s8`/`.s32`,
 `.satfinite`) și whitepaper-ul NVIDIA GA102 (Anexa A, vitezele). Nicio sursă GPL, niciun octet de firmware.
 
+**B1 pasul 3 (sesiunea 225, 25 nov 2026):** `tools/nak/mm_s8.comp` (al nostru; așezarea după `mm_tc128.comp`, tot al nostru),
+`gpu_compute::mma_s8::{ProductS8, mm_s8_ref, mm_s8_wrap}`, `nvidia_ga104::mm_s8`, `gpu_sim::cmdproc::mm_s8_on_cpu` și testul T231 sunt
+scrise de noi. `mm_s8.sm86.sass` e ieșirea Mesa NAK 26.3.1 (MIT). Idei de așezare pe plăci: scrierile publice CUTLASS / „How to optimize
+a CUDA matmul”; nimic copiat. Nicio sursă GPL, niciun octet de firmware.
+
 **C-147 punctul 6 (sesiunea 127, 20 nov 2026) — doar studiu, fără cod:** `docs/C-147_PUNCTUL6_LANT.md`. Citite ca specificație (nimic
 copiat, niciun cod scris): NVIDIA `open-gpu-doc` (MIT) commit `9fdf5c40` — `classes/compute/clc6c0qmd.h`, `clc7c0qmd.h`, `clc7c0.h`
 (pozițiile câmpurilor QMD V03_00 și codurile acțiunilor); tinygrad (MIT) commit `5e8b5da9` — `tinygrad/runtime/ops_nv.py` (cum leagă

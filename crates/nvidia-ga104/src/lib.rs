@@ -115,6 +115,7 @@ pub mod layernorm256;
 pub mod ln_back;
 pub mod ln_back_res;
 pub mod ln_fwd;
+pub mod mm_s8;
 pub mod mm_tc;
 pub mod mm_tc128;
 pub mod mm_tc_gelu;

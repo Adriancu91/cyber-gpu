@@ -1,0 +1,134 @@
+// B1 step 3 (session 225, docs/B1_MM_S8.md): the int8 matmul on the tensor cores, on 128x128 tiles.
+//   C[M,N] = op(A)[M,K] * op(B)[K,N] (+ bias[N])
+// A and B are signed 8-bit integers, C and bias signed 32-bit integers. The same push constants and flags as
+// mm_tc / mm_tc128 (TA: A stored [K,M]; TB: B stored [N,K], the Q8_0 weight layout; BIAS), the same launch as
+// mm_tc128 (256 threads = 8 subgroups, one 128x128 block of C per workgroup, subgroup w -> the 32x64 piece at rows
+// (w / 2) * 32, columns (w % 2) * 64, as 2 x 4 accumulators of 16x16 i32).
+// K goes in slices of 32 (the m16n8k32 shape of IMMA on SM 8.6, and the Q8_0 block size), zeros outside the
+// matrices. Integer products are exact and i32 addition modulo 2^32 does not depend on the order, so every split
+// gives the same bits as the CPU oracle while the result fits in i32 (the overflow behaviour is a HYPOTHESIS).
+// Shared memory: the i8 slices of op(A) (128x32) and op(B) (32x128) = 8 KiB, plus one 16x16 i32 scratch per
+// subgroup (8 KiB) for the end, as in mm_tc128. Our own code (ideas: our mm_tc128.comp, public CUTLASS write-ups).
+// Compiled with the SECOND NAK tool (tools/nak/build2.sh, Mesa 26.3.1). Nothing here has run on a board.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_shader_subgroup_basic : require
+
+#define BM 128u
+#define BN 128u
+#define BK 32u
+#define THREADS 256u
+#define TA 1u
+#define TB 2u
+#define BIAS 4u
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In8 { int8_t v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer InI { int v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer OutI { int v[]; };
+
+layout(push_constant) uniform Args {
+    In8 a;
+    In8 b;
+    OutI c;
+    InI bias;
+    uint m;
+    uint n;
+    uint k;
+    uint flags;
+} args;
+
+shared int8_t as_[BM * BK];  // op(A) slice, row-major [r][p], stride BK
+shared int8_t bs_[BK * BN];  // op(B) slice, row-major [p][col], stride BN
+shared int cs_[8u * 256u];   // one 16x16 i32 scratch per subgroup, row-major, stride 16
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint w = tid / 32u;
+    uint lane = tid % 32u;
+    uint wr = (w / 2u) * 32u;
+    uint wc = (w % 2u) * 64u;
+    uint row0 = gl_WorkGroupID.y * BM;
+    uint col0 = gl_WorkGroupID.x * BN;
+    bool ta = (args.flags & TA) != 0u;
+    bool tb = (args.flags & TB) != 0u;
+
+    coopmat<int, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> acc[2][4];
+    for (uint i = 0u; i < 2u; i++) {
+        for (uint j = 0u; j < 4u; j++) {
+            acc[i][j] = coopmat<int, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0);
+        }
+    }
+
+    for (uint t = 0u; t < args.k; t += BK) {
+        for (uint s = 0u; s < (BM * BK) / THREADS; s++) {
+            uint e = tid + s * THREADS;
+            // A stored [M,K]: consecutive threads -> consecutive p; stored [K,M] (TA): -> consecutive r.
+            uint r = ta ? e % BM : e / BK;
+            uint p = ta ? e / BM : e % BK;
+            uint gr = row0 + r;
+            uint gp = t + p;
+            int8_t x = int8_t(0);
+            if (gr < args.m && gp < args.k) {
+                x = ta ? args.a.v[gp * args.m + gr] : args.a.v[gr * args.k + gp];
+            }
+            as_[r * BK + p] = x;
+        }
+        for (uint s = 0u; s < (BK * BN) / THREADS; s++) {
+            uint e = tid + s * THREADS;
+            // B stored [K,N]: consecutive threads -> consecutive col; stored [N,K] (TB): -> consecutive p.
+            uint p = tb ? e % BK : e / BN;
+            uint cl = tb ? e / BK : e % BN;
+            uint gp = t + p;
+            uint gc = col0 + cl;
+            int8_t x = int8_t(0);
+            if (gp < args.k && gc < args.n) {
+                x = tb ? args.b.v[gc * args.k + gp] : args.b.v[gp * args.n + gc];
+            }
+            bs_[p * BN + cl] = x;
+        }
+        barrier();
+        coopmat<int8_t, gl_ScopeSubgroup, 16, 32, gl_MatrixUseA> fa[2];
+        coopmat<int8_t, gl_ScopeSubgroup, 32, 16, gl_MatrixUseB> fb[4];
+        for (uint i = 0u; i < 2u; i++) {
+            coopMatLoad(fa[i], as_, (wr + 16u * i) * BK, BK, gl_CooperativeMatrixLayoutRowMajor);
+        }
+        for (uint j = 0u; j < 4u; j++) {
+            coopMatLoad(fb[j], bs_, wc + 16u * j, BN, gl_CooperativeMatrixLayoutRowMajor);
+        }
+        for (uint i = 0u; i < 2u; i++) {
+            for (uint j = 0u; j < 4u; j++) {
+                acc[i][j] = coopMatMulAdd(fa[i], fb[j], acc[i][j]);
+            }
+        }
+        barrier();
+    }
+
+    uint sbase = w * 256u;
+    bool has_bias = (args.flags & BIAS) != 0u;
+    for (uint i = 0u; i < 2u; i++) {
+        for (uint j = 0u; j < 4u; j++) {
+            coopMatStore(acc[i][j], cs_, sbase, 16u, gl_CooperativeMatrixLayoutRowMajor);
+            subgroupBarrier();
+            for (uint s = 0u; s < 8u; s++) {
+                uint e = lane + s * 32u;
+                uint gr = row0 + wr + 16u * i + e / 16u;
+                uint gc = col0 + wc + 16u * j + e % 16u;
+                if (gr < args.m && gc < args.n) {
+                    int v = cs_[sbase + e];
+                    if (has_bias) {
+                        v += args.bias.v[gc];
+                    }
+                    args.c.v[gr * args.n + gc] = v;
+                }
+            }
+            subgroupBarrier();
+        }
+    }
+}

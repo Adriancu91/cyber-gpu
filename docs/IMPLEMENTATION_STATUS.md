@@ -1,5 +1,25 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 225 — 25 noiembrie 2026, ~08:14–08:55 (ora României), în cloud, FĂRĂ placă — **B1: `mm_s8`, înmulțirea int8 pe plăci 128×128, gata de legat în SIMULARE**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 224 terminată 07:39), l-am pus `ocupat`. Niciun raport nou de pe placă după os-418 (os-419, os-421, os-422 sunt GATA DE TEST, nerulate; placa e a laboratorului Kronos azi), deci am luat ramura „altfel” din pasul următor: B1 `mm_s8` pe plăci. Unealta NAK a doua (Mesa 26.3.1) a fost refăcută în această sesiune și reproduce exact binarul vechi `mma16_s8`.
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Predicții | P1–P4 + T231a–f scrise înainte de cod (`bfbe438`), `docs/B1_MM_S8.md` | — |
+| Programul | `tools/nak/mm_s8.comp`: aceleași constante și opțiuni ca `mm_tc`, aceeași lansare ca `mm_tc128`, A/B pe 8 biți, C/bias pe 32 | compilat: 104 registre, 16 `imma`, 0 `hmma`, 16 KiB — P1–P3 ✓ |
+| Cod (doar adăugări) | `gpu_compute::mma_s8::{ProductS8, mm_s8_ref, mm_s8_wrap}`, `nvidia_ga104::mm_s8`, `gpu_sim::cmdproc::{mm_s8_on_cpu, MM_S8_NEEDS}` | — |
+| T231 | `crates/nvidia-ga104/tests/sim_b1_mm_s8.rs`: margini × 8 opțiuni, extreme la K = 3 072, 15 forme #513, refuzuri, forma probei; T231g = codul GLSL transcris literal (greșeală plantată prinsă) | PASS 7/7 în SIMULARE, bit cu bit |
+| Viteza | int8 ≈ ×4 față de `mm_tc` (whitepaper GA102) | DEDUS, NOT TESTED |
+| Nota pentru OS | `integration/cyber-universe/B1_mm-s8.md` — pe placă abia după proba `mma16_s8` | NOT TESTED (de rulat de OS) |
+| `tools/check.sh` | format, clippy, teste pe gazdă, build no_std | PASS (**1 116 de teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** doar programul `mm_s8` (SHA-256 `76ce12d5…a92c6`), când îl leagă OS-ul, după `mma16_s8`. **Nicio schimbare incompatibilă.**
+
+**Următorul pas:** comparațiile când vin (proba ocupării, cursa cu 5 variante os-421, `mm_tc` os-419, `mma16_s8` os-422); dacă ocuparea se confirmă → o treaptă pe tot pasul în `Plan` (`best_step`); B1 mai departe: scara pe bloc Q8_0 (după întrebarea pentru Kronos).
+
+---
+
 ## Sesiunea 224 — 25 noiembrie 2026, ~07:14–07:39 (ora României), în cloud, FĂRĂ placă — **proba ocupării gata de legat (studiul centrului 07:00)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 223 terminată 06:46), l-am pus `ocupat`. Niciun raport nou de pe placă (laboratorul Kronos o are de la 07:00); centrul a cerut la 07:00 părerea noastră și proba ocupării (`idei/2026-11-25-centru-inmultirea-la-altii.md`). Clona locală veche avea istoria tăiată; am lucrat într-o clonă nouă, fără să șterg nimic.

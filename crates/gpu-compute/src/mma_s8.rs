@@ -59,6 +59,87 @@ pub fn mma16_s8_wrap(a: &[i8], b: &[i8], c: &[i32]) -> Option<[i32; M * N]> {
     Some(d)
 }
 
+/// B1 step 3 (`docs/B1_MM_S8.md`): one product of `tools/nak/mm_s8.comp`,
+/// `C[m, n] = op(A)[m, k] · op(B)[k, n] (+ bias[n])` in integers. The flags are
+/// `mm_tc`'s ([`crate::mm_tc::TA`]: A stored [k, m]; [`crate::mm_tc::TB`]: B stored
+/// [n, k]; [`crate::mm_tc::BIAS`]).
+#[derive(Clone, Copy, Debug)]
+pub struct ProductS8<'a> {
+    pub a: &'a [i8],
+    pub b: &'a [i8],
+    /// Read only with [`crate::mm_tc::BIAS`].
+    pub bias: Option<&'a [i32]>,
+    pub m: usize,
+    pub n: usize,
+    pub k: usize,
+    pub flags: u32,
+}
+
+impl ProductS8<'_> {
+    fn valid(&self) -> bool {
+        use crate::mm_tc::{BIAS, TA, TB};
+        self.m > 0
+            && self.n > 0
+            && self.k > 0
+            && self.flags & !(TA | TB | BIAS) == 0
+            && self.a.len() >= self.m * self.k
+            && self.b.len() >= self.k * self.n
+            && (self.flags & BIAS == 0 || self.bias.is_some_and(|b| b.len() >= self.n))
+    }
+
+    fn at_a(&self, r: usize, p: usize) -> i64 {
+        if self.flags & crate::mm_tc::TA != 0 {
+            self.a[p * self.m + r] as i64
+        } else {
+            self.a[r * self.k + p] as i64
+        }
+    }
+
+    fn at_b(&self, p: usize, c: usize) -> i64 {
+        if self.flags & crate::mm_tc::TB != 0 {
+            self.b[c * self.k + p] as i64
+        } else {
+            self.b[p * self.n + c] as i64
+        }
+    }
+
+    fn sums(&self) -> Option<alloc::vec::Vec<i64>> {
+        if !self.valid() {
+            return None;
+        }
+        let bias = self.bias.filter(|_| self.flags & crate::mm_tc::BIAS != 0);
+        let mut out = alloc::vec![0i64; self.m * self.n];
+        for r in 0..self.m {
+            for c in 0..self.n {
+                let mut s = 0i64;
+                for p in 0..self.k {
+                    s += self.at_a(r, p) * self.at_b(p, c);
+                }
+                if let Some(b) = bias {
+                    s += b[c] as i64;
+                }
+                out[r * self.n + c] = s;
+            }
+        }
+        Some(out)
+    }
+}
+
+/// The reference of `mm_s8`: every element in i64; `None` on an invalid product or
+/// if any element leaves i32 (inputs never to be sent to a board until measured).
+pub fn mm_s8_ref(p: &ProductS8<'_>) -> Option<alloc::vec::Vec<i32>> {
+    p.sums()?
+        .into_iter()
+        .map(|s| i32::try_from(s).ok())
+        .collect()
+}
+
+/// The model used by `gpu-sim`: the same sums modulo 2³² (equal to [`mm_s8_ref`]
+/// whenever that is `Some`; on overflow a HYPOTHESIS, the instruction has no `.sat`).
+pub fn mm_s8_wrap(p: &ProductS8<'_>) -> Option<alloc::vec::Vec<i32>> {
+    Some(p.sums()?.into_iter().map(|s| s as i32).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,5 +168,57 @@ mod tests {
     fn wrong_lengths_are_refused() {
         assert_eq!(mma16_s8_ref(&[0; 10], &[0; K * N], &[0; M * N]), None);
         assert_eq!(mma16_s8_wrap(&[0; M * K], &[0; 3], &[0; M * N]), None);
+    }
+
+    #[test]
+    fn mm_s8_on_the_probe_shape_is_the_probe() {
+        let a: alloc::vec::Vec<i8> = (0..M * K).map(|i| (i * 37 % 251) as u8 as i8).collect();
+        let b: alloc::vec::Vec<i8> = (0..K * N).map(|i| (i * 91 % 253) as u8 as i8).collect();
+        let c = [0i32; M * N];
+        let p = ProductS8 {
+            a: &a,
+            b: &b,
+            bias: None,
+            m: M,
+            n: N,
+            k: K,
+            flags: 0,
+        };
+        assert_eq!(
+            mm_s8_ref(&p).unwrap(),
+            mma16_s8_ref(&a, &b, &c).unwrap().to_vec()
+        );
+        // TB: the same B stored [n, k] gives the same C.
+        let bt: alloc::vec::Vec<i8> = (0..N * K).map(|i| b[(i % K) * N + i / K]).collect();
+        let q = ProductS8 {
+            b: &bt,
+            flags: crate::mm_tc::TB,
+            ..p
+        };
+        assert_eq!(mm_s8_ref(&q), mm_s8_ref(&p));
+    }
+
+    #[test]
+    fn mm_s8_overflow_and_refusals() {
+        let a = [1i8; 4];
+        let b = [1i8; 4];
+        let bias = [i32::MAX; 2];
+        let p = ProductS8 {
+            a: &a,
+            b: &b,
+            bias: Some(&bias),
+            m: 2,
+            n: 2,
+            k: 2,
+            flags: crate::mm_tc::BIAS,
+        };
+        assert_eq!(mm_s8_ref(&p), None);
+        assert_eq!(
+            mm_s8_wrap(&p).unwrap(),
+            alloc::vec![i32::MAX.wrapping_add(2); 4]
+        );
+        assert_eq!(mm_s8_ref(&ProductS8 { flags: 8, ..p }), None);
+        assert_eq!(mm_s8_ref(&ProductS8 { bias: None, ..p }), None);
+        assert_eq!(mm_s8_ref(&ProductS8 { k: 0, ..p }), None);
     }
 }

@@ -3239,6 +3239,78 @@ pub fn mm_tc128_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     mm_tc_tiles_on_cpu(l, 128)
 }
 
+/// B1 step 3 (session 225, `docs/B1_MM_S8.md`): what `tools/nak/out2/mm_s8.sm86.sass` needs — the i8 slices of
+/// op(A) (128×32) and op(B) (32×128) plus one 16×16 i32 scratch per subgroup (8 of them): 4 + 4 + 8 KiB, one barrier.
+pub const MM_S8_NEEDS: Needs = Needs {
+    shared_bytes: 128 * 32 + 32 * 128 + 8 * 16 * 16 * 4,
+    barriers: 1,
+};
+
+/// B1 step 3 (session 225): the CPU stand-in for `tools/nak/out2/mm_s8.sm86.sass` (second NAK tool, Mesa 26.3.1;
+/// `imma.m16n8k32.i8.i8`): `C = op(A)·op(B) (+ bias)` with A, B in i8 and C, bias in i32. cbuf0 as `mm_tc`
+/// (a/b/c/bias at 0x700/0x708/0x710/0x718, m/n/k/flags at 0x720/0x724/0x728/0x72c, flags TA/TB/BIAS); blocks of
+/// 256×1×1, grid (⌈n/128⌉, ⌈m/128⌉, 1). The arithmetic is `gpu_compute::mma_s8::mm_s8_wrap`: exact whenever the
+/// result fits in i32, in any order (integers); the wrap on overflow is a HYPOTHESIS, not a fact.
+pub fn mm_s8_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    use gpu_compute::{mm_tc, mma_s8};
+    if l.block != [256, 1, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: mm_s8 cere blocuri de 256x1x1"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
+        ));
+    }
+    let base = l.cbuf0 + MMA16_PUSH_BASE;
+    let a = l.mem.read_u64(base)?;
+    let b = l.mem.read_u64(base + 0x08)?;
+    let c = l.mem.read_u64(base + 0x10)?;
+    let bias_va = l.mem.read_u64(base + 0x18)?;
+    let m = l.mem.read_u32(base + 0x20)? as usize;
+    let n = l.mem.read_u32(base + 0x24)? as usize;
+    let k = l.mem.read_u32(base + 0x28)? as usize;
+    let flags = l.mem.read_u32(base + 0x2c)?;
+    if flags & !(mm_tc::TA | mm_tc::TB | mm_tc::BIAS) != 0 {
+        return Err(bad("SIM: mm_s8: biti de optiuni necunoscuti"));
+    }
+    if (l.grid[0] as usize) < n.div_ceil(128) || (l.grid[1] as usize) < m.div_ceil(128) {
+        return Err(bad("SIM: mm_s8: grila nu acopera C (nemodelat)"));
+    }
+    let i8s = |l: &Launch<'_>, va: u64, len: usize| -> GpuResult<Vec<i8>> {
+        let mut raw = alloc::vec![0u8; len];
+        l.mem.read(va, &mut raw)?;
+        Ok(raw.into_iter().map(|v| v as i8).collect())
+    };
+    let x = i8s(l, a, m * k)?;
+    let y = i8s(l, b, k * n)?;
+    let bias = if flags & mm_tc::BIAS != 0 {
+        let mut raw = alloc::vec![0u8; 4 * n];
+        l.mem.read(bias_va, &mut raw)?;
+        Some(
+            raw.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|w| i32::from_le_bytes(*w))
+                .collect::<Vec<i32>>(),
+        )
+    } else {
+        None
+    };
+    let p = mma_s8::ProductS8 {
+        a: &x,
+        b: &y,
+        bias: bias.as_deref(),
+        m,
+        n,
+        k,
+        flags,
+    };
+    let out = mma_s8::mm_s8_wrap(&p).ok_or_else(|| bad("SIM: mm_s8: intrari invalide"))?;
+    let raw: Vec<u8> = out.iter().flat_map(|v| v.to_le_bytes()).collect();
+    l.mem.write(c, &raw);
+    Ok(())
+}
+
 /// `mm_tc` / `mm_tc128` after the block check: cbuf0, refusals and the product, for C tiles of `tile`×`tile`.
 fn mm_tc_tiles_on_cpu(l: &mut Launch<'_>, tile: usize) -> GpuResult<()> {
     use gpu_compute::mm_tc;
