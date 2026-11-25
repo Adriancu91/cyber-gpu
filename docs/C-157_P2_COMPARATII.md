@@ -2,6 +2,14 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-443 — `mm_tc*` la treapta 64 KiB (`--mm-tc-64k`, 25 nov 2026, 21:05) — sesiunea 237
+Sursa: `rezultate/os-automat/2026-11-25/ciclu-auto-20261125-2105.txt` (rândurile 100–184). Detalii: `docs/C-157_P2_OS436.md` §6, T244.
+- **Ieșit ca prezis, toate:** aceiași biți peste tot (6/6, 6/6, 5/5); qkv-513 `mm_tc` ×1,93 (prezis 1,7–2,0), `mm_tc_pf` ×1,76 =
+  4,85 TFLOP/s (prezis 4,4–5,2), **`mm_tc_v4` ×1,81 = 8,28 TFLOP/s** (prezis 6,9–8,3, la margine); seturile mici neschimbate.
+- **Unde suntem:** cel mai rapid program al nostru pe placă, ×2,3 față de cea mai bună înmulțire F32; trece pragul de 8 TFLOP/s pus
+  pentru pasul mixt rapid. **Ce tăiem mai departe:** rularea pasului mixt rapid (P6-215, deja în `main` la OS) — prezis 72–87 ms de
+  înmulțiri, pasul ~120–140 ms. Nimic nou pentru placă.
+
 ## os-423 — proba `mm_tc` pe placă (`--mm-tc`, circuitele speciale f16 → f32, 25 nov 2026, 10:46) — sesiunea 228
 Sursa: `rezultate/os-automat/2026-11-25/ciclu-auto-20261125-1052.txt` (rândurile 94–104), `rezultate/2026-11-25-workstation-os423-mm-tc/`.
 Predicțiile (scrise înainte, `docs/C-160_P7_MM_TC_PROBA.md`, sesiunea 160): 6/6 în margine (~85 %), bit cu bit modelul (~50 %),
