@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 219 — 25 noiembrie 2026, ~02:14–03:30 (ora României), în cloud, FĂRĂ placă — **os-416: cursa completă comparată, alegerea = `mm_tv_128x128`**
+## Sesiunea 219 — 25 noiembrie 2026, ~02:14–02:55 (ora României), în cloud, FĂRĂ placă — **os-416: cursa completă comparată, alegerea = `mm_tv_128x128`**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 218 terminată 01:43), l-am pus `ocupat`. Venise os-416: cursa completă (15 forme × 4 variante).
 
