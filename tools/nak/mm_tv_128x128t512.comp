@@ -1,0 +1,11 @@
+// C-165 (docs/C-165_DIETA_128.md): the register diet of mm_tv_128x128 — the same 128 x 128 block of C, but 512
+// threads with 8 x 4 results each (instead of 256 with 8 x 8), so that two blocks of 16 warps fit on one SM.
+// Same body, same push constants, same bits.
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#define BM 128u
+#define BN 128u
+#define BK 8u
+#define TM 8u
+#define TN 4u
+#include "mm_train_tv.glsl"
