@@ -3298,6 +3298,43 @@ pub fn mm_tc128_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     mm_tc_tiles_on_cpu(l, 128)
 }
 
+/// C-157 p.2 (session 231, `docs/C-157_P2_MM_TC128_V4.md`): what `tools/nak/out2/mm_tc128_v4.sm86.sass` needs —
+/// exactly `mm_tc128`'s shared memory and one barrier (the 128-bit loads read ahead land in registers).
+pub const MM_TC128_V4_NEEDS: Needs = MM_TC128_NEEDS;
+
+/// C-157 p.2 (session 231): the CPU stand-in for `tools/nak/out2/mm_tc128_v4.sm86.sass` — `mm_tc128` with the next
+/// K-slice read ahead in 128-bit global loads (as `mm_tc_v4`). Valid only for aligned products (the same rule as
+/// [`mm_tc_v4_on_cpu`]); anything else is REFUSED (no write) instead of guessed. For aligned products the values
+/// copied to shared memory are `mm_tc128`'s (T237), so the stand-in is [`mm_tc128_on_cpu`].
+pub fn mm_tc128_v4_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [256, 1, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: mm_tc128_v4 cere blocuri de 256x1x1"));
+    }
+    if !tc_aligned(l)? {
+        return Err(bad(
+            "SIM: mm_tc128_v4: produs nealiniat (randuri multiplu de 4, adrese multiplu de 16)",
+        ));
+    }
+    mm_tc128_on_cpu(l)
+}
+
+/// The alignment rule of the 128-bit programs (`mm_tc_v4`, `mm_tc128_v4`), read from cbuf0 as the board would see it.
+fn tc_aligned(l: &Launch<'_>) -> GpuResult<bool> {
+    let base = l.cbuf0 + MMA16_PUSH_BASE;
+    let a = l.mem.read_u64(base)?;
+    let b = l.mem.read_u64(base + 0x08)?;
+    let m = l.mem.read_u32(base + 0x20)?;
+    let n = l.mem.read_u32(base + 0x24)?;
+    let k = l.mem.read_u32(base + 0x28)?;
+    let flags = l.mem.read_u32(base + 0x2c)?;
+    let a_row = if flags & 1 != 0 { m } else { k };
+    let b_row = if flags & 2 != 0 { k } else { n };
+    Ok(a_row.is_multiple_of(4)
+        && b_row.is_multiple_of(4)
+        && a.is_multiple_of(16)
+        && b.is_multiple_of(16))
+}
+
 /// B1 step 3 (session 225, `docs/B1_MM_S8.md`): what `tools/nak/out2/mm_s8.sm86.sass` needs — the i8 slices of
 /// op(A) (128×32) and op(B) (32×128) plus one 16×16 i32 scratch per subgroup (8 of them): 4 + 4 + 8 KiB, one barrier.
 pub const MM_S8_NEEDS: Needs = Needs {

@@ -1,5 +1,32 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 231 — 25 noiembrie 2026, ~15:11–15:50 (ora României), în cloud, FĂRĂ placă — **`mm_tc128_v4`: `mm_tc128` cu citirile în avans de 128 de biți, gata pentru placă în SIMULARE; 168 de registre → 1 bloc pe unitate**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 230 terminată 14:58), l-am pus `ocupat`. Niciun raport nou de pe placă de comparat
+(os-423 ambele deja comparate). Am luat pasul următor scris: același leac în `mm_tc128` (coada C-157, ordinea centrului 14:40 punctul 1).
+Plan + predicții urcate **înainte** de compilare (`bfbb5db`, `docs/C-157_P2_MM_TC128_V4.md`). Copia locală veche a ramurii nu avea
+istorie comună cu GitHub; am lucrat pe o clonă proaspătă (nimic șters, nimic rescris).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| Unealta | Mesa 26.3.1 reconstruit în cloud; `mm_tc_v4` recompilat **identic** (SHA `488ca341…`) | PASS |
+| Programul | `tools/nak/mm_tc128_v4.comp`: plăcile 128×128 / 256 de fire ale lui `mm_tc128`, 4 + 4 citiri `vec4` pe fir pe felie, felia următoare citită în avans, doar produse aliniate; o singură compilare | **168 registre** (P2 128–176 ✓), 0 locală, 16 `ld…b128`, 32 `hmma`, SHA `8bd6361b…` |
+| Cod (doar adăugări) | `nvidia_ga104::mm_tc128_v4` (`fits` = regula lui `mm_tc_v4`), `gpu_sim::cmdproc::{mm_tc128_v4_on_cpu, MM_TC128_V4_NEEDS}` (refuză produsele nealiniate) | — |
+| T237 (5 teste) | transcrierea citirilor fir cu fir = aceleași valori în memoria comună ca `mm_tc128`, fiecare vector aliniat și întreg; greșeala plantată și formele nealiniate prinse; aceiași biți ca `mm_tc128` și `mm_tc` prin procesorul de comenzi; refuzurile | PASS (SIMULARE) |
+| Listarea (T234g) | 80 de citiri (față de 192 la `mm_tc128`), regula strictă: **5 în zbor** | MĂSURAT pe text |
+| Ocuparea | 168 × 256 registre → **1 bloc = 8 grupuri de fire pe unitate** (`mm_tc_v4`: 16) | calcul |
+| Predicția de viteză | qkv-513 **~4–7 TFLOP/s**, probabil cam cât `mm_tc_v4` (mai puține citiri, ocupare pe jumătate) | NOT TESTED |
+| Nota pentru OS | `integration/cyber-universe/C-157_P2zd_mm-tc128-v4.md` — un rând în plus în `--mm-tc`, după `mm_tc_v4`, **numai când `fits`** | NOT TESTED (de rulat de OS) |
+| `tools/check.sh` | format, clippy, teste pe gazdă, build no_std | PASS (**1 154 de teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** doar programul `mm_tc128_v4` (SHA-256 `8bd6361b65a2975832135fc81d2db402b76fbb3736dce45c60ae817e93352d93`,
+QMD cu 168 registre), când îl pune OS-ul în proba `--mm-tc`, **numai pe produse aliniate**. **Nicio schimbare incompatibilă.**
+
+**Următorul pas:** dacă placa arată că ocuparea a mâncat câștigul — placa 128×64 cu citiri de 128 de biți (mai puține registre,
+2 blocuri); altfel același leac în `mm_s8` / `mm_tv_*`; comparațiile când vin (`mm_tc_pf`, `mm_tc_v4`, `mm_tc128_v4`, os-421, os-422).
+
+---
+
 ## Sesiunea 230 — 25 noiembrie 2026, ~14:11–14:55 (ora României), în cloud, FĂRĂ placă — **`mm_tc_v4`: `mm_tc_pf` cu citiri de 128 de biți, gata pentru placă în SIMULARE; 128 de registre în loc de 248**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 229 terminată 13:35), l-am pus `ocupat`. Niciun raport nou de pe placă (OS-ul are

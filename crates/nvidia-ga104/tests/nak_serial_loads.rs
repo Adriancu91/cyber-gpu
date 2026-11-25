@@ -170,3 +170,20 @@ fn t234f_mm_tc_v4_four_times_fewer_loads() {
     );
     assert_eq!(strict_in_flight(&v4), 5);
 }
+
+#[test]
+fn t234g_mm_tc128_v4_the_same_cure_on_128x128_tiles() {
+    // mm_tc128_v4 (C-157 p.2, session 231): mm_tc128's 128 scalar loads per K-slice pair become 16 of 128 bits (8
+    // before the loop, 8 in it) read ahead; the 64 bias loads of the epilogue stay serial, as in mm_tc128. Strict: 5
+    // in flight, as mm_tc_v4 / mm_tc_pf.
+    let t = listing("out2/mm_tc128_v4.sm86.txt");
+    let l = analyse(&t);
+    assert_eq!((l.total, l.serial), (80, 66));
+    assert_eq!(
+        t.lines()
+            .filter(|x| x.contains("ld.global") && x.contains(".b128"))
+            .count(),
+        16
+    );
+    assert_eq!(strict_in_flight(&t), 5);
+}

@@ -118,6 +118,7 @@ pub mod ln_fwd;
 pub mod mm_s8;
 pub mod mm_tc;
 pub mod mm_tc128;
+pub mod mm_tc128_v4;
 pub mod mm_tc_gelu;
 pub mod mm_tc_pf;
 pub mod mm_tc_probe;
