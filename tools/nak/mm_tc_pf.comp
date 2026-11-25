@@ -1,0 +1,164 @@
+// C-157 p.2 after os-423 (session 229): mm_tc with the global loads issued AHEAD ("citirile in avans").
+// os-423: mm_tc was right bit for bit on the board but slow (1.03 TFLOP/s): the NAK listing shows that each of its 96
+// global loads is waited on before the next one is issued (the `if (inside)` around every load makes a branch per
+// load), so at most 1 load is in flight per thread (tools/nak/citiri_seriale.py, T234).
+// The cure, the same idea as attention gen 3 (which passed on the board): every thread reads its 16 elements of op(A)
+// and 16 of op(B) for a K-slice into REGISTERS with no branch (the index is clamped to element 0 when it falls outside
+// the matrix, the value is replaced by 0 afterwards with a select), and it reads the NEXT slice into those registers
+// while the tensor cores work on the current one (one slice ahead, register double buffering).
+// The arithmetic is UNCHANGED: the same f16 rounding of the same values (0 outside the matrices), the same 64x64
+// tiles, 128 threads, the same coopMatMulAdd chain with K in steps of 16 in order, the same store and the same single
+// f32 add of bias[col]. So C is the same bits as mm_tc (judged in SIMULARE, T235); only the timing may change.
+// Compiled with the SECOND NAK tool (tools/nak/build2.sh, Mesa 26.3.1). Nothing here has run on a board.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_cooperative_matrix : require
+
+#define BM 64u
+#define BN 64u
+#define BK 32u
+#define THREADS 128u
+#define TA 1u
+#define TB 2u
+#define BIAS 4u
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+
+layout(push_constant) uniform Args {
+    In a;
+    In b;
+    Out c;
+    In bias;
+    uint m;
+    uint n;
+    uint k;
+    uint flags;
+} args;
+
+shared float16_t as_[BM * BK];  // op(A) slice, row-major [r][p], stride BK
+shared float16_t bs_[BK * BN];  // op(B) slice, row-major [p][col], stride BN
+shared float cs_[BM * BN];      // the finished 64x64 block, row-major, stride BN
+
+// Reads the K-slice starting at t: element s of ra / rb is the value this thread stores at (tid + s * 128) of the
+// slice, exactly as in mm_tc. No branch around a load: outside the matrix the index is clamped to 0 (always a valid
+// element when the slice exists: m, n, k >= 1) and the value is replaced by 0 afterwards, so all 32 loads can be in
+// flight together.
+void load_slice(uint t, uint row0, uint col0, uint tid, bool ta, bool tb,
+                out float ra[(BM * BK) / THREADS], out float rb[(BK * BN) / THREADS]) {
+    float va[(BM * BK) / THREADS];
+    float vb[(BK * BN) / THREADS];
+    bool ia[(BM * BK) / THREADS];
+    bool ib[(BK * BN) / THREADS];
+    for (uint s = 0u; s < (BM * BK) / THREADS; s++) {
+        uint e = tid + s * THREADS;
+        uint r = ta ? e % BM : e / BK;
+        uint p = ta ? e / BM : e % BK;
+        uint gr = row0 + r;
+        uint gp = t + p;
+        ia[s] = gr < args.m && gp < args.k;
+        uint at = ta ? gp * args.m + gr : gr * args.k + gp;
+        va[s] = args.a.v[ia[s] ? at : 0u];
+    }
+    for (uint s = 0u; s < (BK * BN) / THREADS; s++) {
+        uint e = tid + s * THREADS;
+        uint p = tb ? e % BK : e / BN;
+        uint cl = tb ? e / BK : e % BN;
+        uint gp = t + p;
+        uint gc = col0 + cl;
+        ib[s] = gp < args.k && gc < args.n;
+        uint at = tb ? gc * args.k + gp : gp * args.n + gc;
+        vb[s] = args.b.v[ib[s] ? at : 0u];
+    }
+    for (uint s = 0u; s < (BM * BK) / THREADS; s++) {
+        ra[s] = ia[s] ? va[s] : 0.0;
+    }
+    for (uint s = 0u; s < (BK * BN) / THREADS; s++) {
+        rb[s] = ib[s] ? vb[s] : 0.0;
+    }
+}
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint w = tid / 32u;
+    uint wr = (w / 2u) * 32u;
+    uint wc = (w % 2u) * 32u;
+    uint row0 = gl_WorkGroupID.y * BM;
+    uint col0 = gl_WorkGroupID.x * BN;
+    bool ta = (args.flags & TA) != 0u;
+    bool tb = (args.flags & TB) != 0u;
+
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> acc[2][2];
+    for (uint i = 0u; i < 2u; i++) {
+        for (uint j = 0u; j < 2u; j++) {
+            acc[i][j] = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+        }
+    }
+
+    // The 16 + 16 values of the current slice, read ahead into registers (zeros already chosen).
+    float ra[(BM * BK) / THREADS];
+    float rb[(BK * BN) / THREADS];
+    load_slice(0u, row0, col0, tid, ta, tb, ra, rb);
+
+    for (uint t = 0u; t < args.k; t += BK) {
+        for (uint s = 0u; s < (BM * BK) / THREADS; s++) {
+            uint e = tid + s * THREADS;
+            uint r = ta ? e % BM : e / BK;
+            uint p = ta ? e / BM : e % BK;
+            as_[r * BK + p] = float16_t(ra[s]);
+        }
+        for (uint s = 0u; s < (BK * BN) / THREADS; s++) {
+            uint e = tid + s * THREADS;
+            uint p = tb ? e % BK : e / BN;
+            uint cl = tb ? e / BK : e % BN;
+            bs_[p * BN + cl] = float16_t(rb[s]);
+        }
+        barrier();
+        // The next slice's loads go out now and land while the tensor cores work on this one.
+        if (t + BK < args.k) {
+            load_slice(t + BK, row0, col0, tid, ta, tb, ra, rb);
+        }
+        for (uint kk = 0u; kk < BK; kk += 16u) {
+            coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> fa[2];
+            coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> fb[2];
+            for (uint i = 0u; i < 2u; i++) {
+                coopMatLoad(fa[i], as_, (wr + 16u * i) * BK + kk, BK, gl_CooperativeMatrixLayoutRowMajor);
+            }
+            for (uint j = 0u; j < 2u; j++) {
+                coopMatLoad(fb[j], bs_, kk * BN + wc + 16u * j, BN, gl_CooperativeMatrixLayoutRowMajor);
+            }
+            for (uint i = 0u; i < 2u; i++) {
+                for (uint j = 0u; j < 2u; j++) {
+                    acc[i][j] = coopMatMulAdd(fa[i], fb[j], acc[i][j]);
+                }
+            }
+        }
+        barrier();
+    }
+
+    for (uint i = 0u; i < 2u; i++) {
+        for (uint j = 0u; j < 2u; j++) {
+            coopMatStore(acc[i][j], cs_, (wr + 16u * i) * BN + wc + 16u * j, BN, gl_CooperativeMatrixLayoutRowMajor);
+        }
+    }
+    barrier();
+    for (uint s = 0u; s < (BM * BN) / THREADS; s++) {
+        uint e = tid + s * THREADS;
+        uint r = e / BN;
+        uint cl = e % BN;
+        uint gr = row0 + r;
+        uint gc = col0 + cl;
+        if (gr < args.m && gc < args.n) {
+            float v = cs_[e];
+            if ((args.flags & BIAS) != 0u) {
+                v += args.bias.v[gc];
+            }
+            args.c.v[gr * args.n + gc] = v;
+        }
+    }
+}
