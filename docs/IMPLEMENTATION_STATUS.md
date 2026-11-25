@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 236 — 25 noiembrie 2026, ~20:11–20:45 (ora României), în cloud, FĂRĂ placă — **studiul „programului persistent” pe un strat (nota centrului 11:55, cererea 2): la antrenare nu merită acum (≤ 3,6 % singur; rezultatele stratului nu încap în memoria rapidă), partea bună = lansarea dublă dX + dW (+3 % peste alegerea pe formă); la generare merită (31 % din placă = cost de lansare) → întâi proba barierei**
+## Sesiunea 236 — 25 noiembrie 2026, ~20:11–21:05 (ora României), în cloud, FĂRĂ placă — **os-438 comparat + studiul „programului persistent” pe un strat (nota centrului 11:55, cererea 2): la antrenare nu merită acum (≤ 3,6 % singur; rezultatele stratului nu încap în memoria rapidă), partea bună = lansarea dublă dX + dW (+3 % peste alegerea pe formă); la generare merită (31 % din placă = cost de lansare) → întâi proba barierei**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 235), l-am pus `ocupat`. Niciun test nou pe placă (os-438 încă nerulat) → am luat
 ultimul punct din ordinea centrului 11:55. Copiile locale vechi erau rămase în urmă; am lucrat pe clone proaspete (nimic șters, nimic
@@ -15,8 +15,8 @@ rescris). Plan + predicții urcate **înainte** de calcule (`6dd69e1`, `docs/C-1
 | P4a | lansarea dublă dX + dW peste os-431: prezis 5–15 %, ieșit **19,1 %** (podea); modelul reface 6 etichete os-431 la 2,2 % | RATATĂ (mai mult), testul afirmă ce s-a găsit |
 | P4b | peste alegerea pe formă la 64 KiB: **3,1 %** (−8 ms; alegerea pe formă ia deja −43 din −49 ms) | PASS (DEDUS) |
 | P5 / P6 | generarea: golurile ≤ 336 µs = 31 % din 1 071 µs; placa = ×6,3 podeaua lățimii de bandă (170 µs) | PASS (DEDUS din MĂSURAT) |
-| T242 | 6 teste pe procesor (`tests/c157_persistent.rs`) | PASS |
-| Verificări | format, clippy, teste pe gazdă, build no_std | PASS (**1 182 de teste**, 8 ignorate) |
+| T242 / T243 | 6 teste (`tests/c157_persistent.rs`) + 1 (`tests/c157_os438.rs`) pe procesor | PASS |
+| Verificări | format, clippy, teste pe gazdă, build no_std | PASS (**1 183 de teste**, 8 ignorate) |
 
 **Recomandarea:** la antrenare, programul persistent pe strat **nu** e pasul următor — întâi pasul mixt rapid (os-438 → `pack_mixed_fast`),
 alegerea pe formă la 64 KiB, apoi eventual lansarea dublă dX + dW (de remăsurat pe `mm_tc_v4`). La generare persistentul are sens; primul
@@ -24,8 +24,14 @@ pas: o **probă mică a barierei pe toată placa** (gata de legat în SIMULARE),
 
 **Ce e nou pentru placă:** nimic. **Nicio schimbare incompatibilă.**
 
-**Următorul pas:** comparația os-438 (Q1–Q4) când vine; altfel proba barierei pe toată placa (program NAK mic + modelul în `gpu-sim` +
-notă pentru OS), pentru generarea cu un singur program pe simbol.
+**A doua parte (~20:48–21:05): os-438 a sosit în timpul sesiunii** (ciclul automat 20:18) → comparat (`docs/C-157_P2_OS436.md` §5, T243
+pe procesor, rândurile în `tests/rapoarte/os438-mm-tc-v4.txt`): Q1 CORECTĂ (5 / 5 aceiași biți), **Q2 RATATĂ în sus** (qkv-513 4,73 ms =
+**4,59 TFLOP/s**, ×1,66 față de `mm_tc_pf`, prezis ×1,2–1,4), Q3 RATATĂ (peste pragul ×1,5), Q4 RATATĂ în sus pe seturile mici (×1,31–1,45).
+Citirile de 128 de biți au tăiat și din partea fixă (~2,7 µs pe felie, nu 3,3–3,7). Prezis mai departe (DEDUS): la 64 KiB `mm_tc_v4`
+~6,9–8,3 TFLOP/s; pasul mixt #513 ~72–87 ms de înmulțiri. Nimic nou de cerut OS-ului.
+
+**Următorul pas:** pasul mixt rapid / `--mm-tc-64k` când rulează; altfel proba barierei pe toată placa (program NAK mic + modelul în
+`gpu-sim` + notă pentru OS), pentru generarea cu un singur program pe simbol.
 
 ## Sesiunea 235 — 25 noiembrie 2026, ~19:10–20:02 (ora României), în cloud, FĂRĂ placă — **copierea lotului în paralel cu calculul (nota centrului 11:55, cererea 1): lotul și rezultatele pasului mixt rapid prin RAM fixată + două locuri, gata de legat în SIMULARE**
 
