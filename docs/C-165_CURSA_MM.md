@@ -139,3 +139,20 @@ the end of the shader allocation”, iar comentariul: memoria programelor are ne
 nicio scriere nouă în registre, nicio comandă nouă), apoi rulează `mm_tv_64x64k8` **singur** pe o formă. Dacă termină cu aceiași
 biți: cauza confirmată și varianta se întoarce în cursă. Dacă tot nu termină: cauza e în program (rămâne scoasă; o recompilăm cu
 altă geometrie). Până atunci, cursa se face cu `race_list()`.
+
+## os-416 — cursa completă (15 forme × 4 variante) pe raportul adevărat (sesiunea 219, 25 nov 02:14; în cloud, FĂRĂ placă)
+**Ce a venit de pe placă (prin OS, `rezultate/os-automat/2026-11-25/ciclu-auto-20261125-0135.txt`, rândurile 214–292):** 60 de
+rânduri, toate cu aceiași biți ca martorul; `mm_tv_128x128` cea mai rapidă pe toate 15 formele; OS-ul a socotit că pasul ar scădea
+cu ~141 387 µs (DEDUS, din timpii izolați); tabloul: 1 785 MHz, P0, 77 W, nicio încetinire.
+
+**Predicții (scrise înainte de cod, T225, pe procesor):**
+1. `parse_race` pe rândurile adevărate: 60 de rânduri cu timp, 0 fără timp, 0 necunoscute, 15 forme cu 147 de lansări în total, iar
+   formele și numerele de lansări = cele ale pasului #513 (`Plan::new_tiles3` + `with_mm_tile`), în ordinea pasului.
+2. `MmChoice::from_race`: toate 15 formele pe `mm_tv_128x128` (indicele 3), chiar și cele mici (768×768×1024: −11 %;
+   2304×768×1024: −12 %, peste pragul de 3 %); un singur program în plus: `mm_tv_128x128`.
+3. Economia socotită de noi din timpii rotunjiți la 0,1 µs = cea a OS-ului (141 387 µs) la cel mult ±20 µs.
+4. Suma timpilor martorului (izolat) × lansări ≈ 420 ms ≤ timpul plăcii pe pas (463,7 ms): înmulțirile sunt ~90 % din pas,
+   restul (~40 ms) e atenția, LayerNorm, GELU, AdamW, colsum.
+5. `with_mm_choice` cu alegerea mută exact 147 de lansări, același număr de lansări, aceeași arenă (ca T219/T221).
+6. Pe placă (de verificat de OS, nu aici): pasul #513 cu `mm_tv_128x128` peste tot ≈ 474,2 − 141,4 ≈ **333 ms**, interval
+   325–345 ms (≈ 2 970–3 150 simb/s), aceiași biți ca oracolul (verdictul ca la os-416).
