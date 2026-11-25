@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 221 — 25 noiembrie 2026, ~04:14–05:05 (ora României), în cloud, FĂRĂ placă — **os-417 comparat: `mm_tv_64x64k8` se întoarce în cursă**
+## Sesiunea 221 — 25 noiembrie 2026, ~04:14–04:45 (ora României), în cloud, FĂRĂ placă — **os-417 comparat: `mm_tv_64x64k8` se întoarce în cursă**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 220 terminată 04:05), l-am pus `ocupat`. Venise os-417 (proba `64x64k8` cu pagina de pază, 03:48) — comparația are întâietate (C-157 p.2).
 
