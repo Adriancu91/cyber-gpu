@@ -242,3 +242,26 @@ Exact pe formele cu 768 de coloane `128x128` a câștigat cel mai puțin la os-4
 (și probabil alte forme cu N = 768); `128x128` păstrează capul (16 384) și formele cu N ≥ 2 304, unde are destule blocuri. Dacă
 `64x64k8` ține ~0,62 din martor peste tot, pasul ar mai scădea cu ~15–40 ms față de alegerea os-416 (interval larg: un singur punct
 măsurat).
+
+## os-418 — pasul #513 cu alegerea cursei (`--mm-alegere`, toate 147 de înmulțiri pe `mm_tv_128x128`) (sesiunea 222, 25 nov 05:15; în cloud, FĂRĂ placă)
+**Ce a venit de pe placă (prin OS, `rezultate/os-automat/2026-11-25/ciclu-auto-20261125-0433.txt`, rândurile 158–218, copiate
+neschimbat în `crates/nvidia-ga104/tests/rapoarte/os418-pas.txt`):** lista os-414 (`--placi3 --mm-placi --colsum-impartit`) + o
+singură schimbare: `Plan::with_mm_choice` cu alegerea citită din cursa os-416 (`parse_race`) → toate 15 formele pe `mm_tv_128x128`.
+Verdictul OS-ului: TRECE (= oracolul în pașii 1–9).
+
+**Ce prezisese sesiunea 219 (scris înainte, §„os-416”, P6 rafinată):** raportul cursei 0,690 aplicat pe înmulțirile din pas →
+înmulțirile ~297 ms, pasul întreg **~341 ms** (interval 325–345 ms, ≈ 3 000 simb/s), aceiași biți ca oracolul. Cinste: rezultatul
+(`REZULTAT.md` din hub) l-am văzut înainte să scriu verificările de mai jos; predicția care se judecă e cea a sesiunii 219.
+
+**Verificări pentru azi (scrise înainte de cod, T228, pe procesor, pe rândurile copiate):**
+1. `parse_profiles` citește un profil: 327 581 µs, 483 de lansări (aceleași ca os-414/417); pe programe `mm_tv_128x128` 147 de
+   lansări, iar `mm_train_tile` / `mm_train` nu mai apar.
+2. Pierderile și normele celor 10 pași (rândul `banc antrenare`) = cele din os-414, cifră cu cifră (aceeași ordine a adunărilor pe
+   element în toate variantele, deci aceiași biți).
+3. Raportul înmulțirilor în pas, os-418 / os-417 (294 946 / 431 180 µs), e la cel mult 1 % de raportul cursei (0,690) — adică
+   raportul măsurat izolat (la 1 785 MHz) se păstrează în pas (la 1 950 MHz).
+4. Restul plăcii (fără înmulțiri) neschimbat față de os-417, la cel mult 0,5 ms; partea din afara plăcii (pasul întreg − placa)
+   neschimbată față de os-414, la cel mult 1 ms — singura schimbare a fost programul înmulțirilor.
+5. Pasul întreg (median) în intervalul 325–345 ms și la cel mult 2 % de ~341.
+6. **Înainte, pentru cursa cu 5 variante (`race_list_full()`, de rulat de OS):** cu alegerea nouă, pasul #513 **300–330 ms**
+   (−8 … −38 ms față de os-418), aceiași biți. Cifra pe care o urmărim: câte forme trec pe `64x64k8`.
