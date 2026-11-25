@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 233 — 25 noiembrie 2026, ~17:11–18:00 (ora României), în cloud, FĂRĂ placă — **os-436 comparat: `mm_tc_pf` pe placă (aceiași biți, 2,75 TFLOP/s) și pasul #513 cu lotul 6 (4 816 simb/s, modelul valurilor +1,5 %); `mm_tc*` merg la 1 bloc pe unitate → propunerea: treapta 64 KiB**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 232, 16:52), l-am pus `ocupat`. Două rapoarte noi de pe placă (ciclul automat
+17:02 și 17:07, os-436) → coada C-157 p.2 („după fiecare test pe placă”). Predicțiile pentru os-438 (`mm_tc_v4`, încă nerulat) urcate
+**înainte** (`625ebfe`). Copiile locale vechi nu aveau istorie comună cu GitHub; am lucrat pe clone proaspete (nimic șters, nimic rescris).
+
+| Pas | Ce s-a făcut | Rezultat |
+|---|---|---|
+| `mm_tc_pf` pe placă (P4, P5) | aceiași biți ca `mm_tc` pe 6 / 6 seturi; qkv-513 **2,75 TFLOP/s** (×2,68; prezis 3–5) | P4 PASS (pe placă), P5 puțin sub |
+| De ce nu mai mult (DEDUS) | `mm_tc*` (24 KiB) lansate cu treapta 32 KiB → **1 bloc pe unitate**; 72 de valuri; ~0,30 µs pe așteptare, partea fixă ~57 % din felie | DEDUS din timpi |
+| Predicții os-438 (Q1–Q4) | `mm_tc_v4`: aceiași biți; qkv-513 ~3,4–3,8 TFLOP/s (×1,2–1,4 față de `mm_tc_pf`) | NOT TESTED (scrise înainte) |
+| Lotul 6 × 512 (V6) | modelul valurilor **neschimbat** reface `mm_tv_128x128` la +1,5 %, etichetele ≤ 5,9 % (pragurile V2: 4 % / 7 %) | PASS (pe procesor, timpi ai plăcii) |
+| Predicția V7 | alegerea pe formă la 64 KiB pe lotul 6: înmulțirile ~459 ms, **pasul ~554 ms ≈ 5 540 simb/s** (530–580) | NOT TESTED |
+| T239 (5 teste) | rândurile plăcii; modelul pe lotul 6; lot 6 față de lot 2; alegerea la lotul 6; ocuparea `mm_tc*` (1 bloc la 32 KiB, 2 la 64) + QMD-ul primește 64 KiB | PASS (pe procesor) |
+| Nota pentru OS | `integration/cyber-universe/C-157_P2ze_os436.md`: (1) `mm_tc*` la treapta 64 KiB (×1,6–1,9 prezis), (2) alegerea pe formă pe formele lotului care rulează | NOT TESTED |
+| Verificări | format, clippy, teste pe gazdă, build no_std | PASS (**1 165 de teste**, 8 ignorate) |
+
+**Ce e nou pentru placă:** nimic (treapta 64 KiB e deja folosită din os-431; aceleași programe). **Nicio schimbare incompatibilă** (doar un
+test nou și documente).
+
+**Următorul pas:** comparația os-438 (`mm_tc_v4`, Q1–Q4) când vine; apoi `mm_tc*` la 64 KiB / alegerea pe formă (V4, V7) când OS-ul le leagă;
+apoi partea fixă a felie (scrierile în memoria comună) dacă `mm_tc*` rămân sub 5 TFLOP/s la 2 blocuri.
+
 ## Sesiunea 232 — 25 noiembrie 2026, ~16:11–16:50 (ora României), în cloud, FĂRĂ placă — **os-423 + os-431 comparate: modelul „valurilor” explică ×1,32; alegerea pe formă la 64 KiB → pasul #513 ~204 ms ≈ 5 000 simb/s (DEDUS)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber`, l-am pus `ocupat`. Coada C-157 p.2 („după fiecare test pe placă”): os-431 (pasul #513 cu
