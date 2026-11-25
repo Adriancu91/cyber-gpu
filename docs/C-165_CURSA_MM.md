@@ -203,3 +203,21 @@ o zonă mică de 16×16 pe subgrup (16 + 8 = 24 KiB de memorie comună, ca `mm_t
   tăiate la 160 / 288, K întreg); modelul refuză blocuri de 128 și grila scurtă. Limita testului: modelul aritmetic e același pentru
   amândouă, deci testul confirmă lansarea, grila și acoperirea; ordinea adunărilor pe element e DEDUSĂ din cod — placa o confirmă.
 - **P4:** de verificat pe placă, după os-352. Risc nou văzut: 128 de registre × 256 de fire → cel mult 2 blocuri pe unitate de calcul.
+
+## os-417 — proba `mm_tv_64x64k8` singură, cu pagina de pază (sesiunea 221, 25 nov 04:14; în cloud, FĂRĂ placă)
+**Ce a venit de pe placă (prin OS, `rezultate/os-automat/2026-11-25/ciclu-auto-20261125-0348.txt`, rândurile 214–222, copiate
+neschimbat în `crates/nvidia-ga104/tests/rapoarte/os417-proba64k8.txt`):** după cei 10 pași #513, martorul `mm_train_tile` și
+`mm_tv_64x64k8` pe forma qkv (1 024 × 2 304 × 768, f6), `64x64k8` mapată tot **ultima** (ca la os-413), dar cu `program_map_bytes`
+(o pagină în plus după cod). Un singur lucru schimbat față de os-413.
+
+**Ce prezisese sesiunea 216 (scris înainte, nota `C-165_os413_64x64k8.md`):** termină cu aceiași biți → cauza (citirea în avans)
+confirmată și varianta se întoarce în cursă. Nu prezisesem un timp pentru `64x64k8`.
+
+**Predicții pentru verificarea de azi (scrise înainte de cod, T227):**
+1. `parse_race` citește din os-417 exact 2 rânduri cu timp, amândouă „=”, 0 fără timp, 0 necunoscute; o formă, 12 lansări.
+2. Alegerea din os-417 singur: qkv → `mm_tv_64x64k8` (indicele 4); economia = 12 × (2 839,2 − 1 768,0) µs ≈ 12 854 µs, cât a scris OS-ul.
+3. Rândurile os-416 + os-417 puse împreună (martorul măsurat de două ori: 2 839,4 / 2 839,2 µs, deci același ceas al cursei,
+   1 785 MHz): qkv → `64x64k8` (1 768,0 < 1 890,2 la `128x128`), celelalte 14 forme → `128x128`; programele alegerii: 2.
+4. Pasul #513 din os-417 (`--placi3 --mm-placi --colsum-impartit`, fără alegere) = os-414 (aceeași listă): placa 463,7 ms față de
+   463,6, sub 1 ‰ — pasul e repetabil, deci comparația os-418 cu alegerea `128x128` (prezis ~341 ms) rămâne curată.
+5. `program_page_slack` pentru `mm_tv_64x64k8` cu `program_map_bytes` ≥ 4 096 (față de 16 la os-413).
