@@ -14,6 +14,7 @@
 #   sh tools/nak/build2.sh mm_tc128     # C-165 after os-416: mm_tc on 128x128 tiles, 256 threads, same bits (session 220)
 #   sh tools/nak/build2.sh mm_tc_pf     # C-157 p.2 after os-423: mm_tc with the global loads issued ahead, same bits (session 229)
 #   sh tools/nak/build2.sh mm_tc_v4     # C-157 p.2: mm_tc_pf with 128-bit loads, aligned products only, same bits (session 230)
+#   sh tools/nak/build2.sh mm_tc_v5     # C-157 p.2: mm_tc_v4 with a 12 KiB block (per-warp output staging) -> 4 blocks per SM at 64 KiB, same bits (session 258)
 #   sh tools/nak/build2.sh mm_tc128_v4  # C-157 p.2: mm_tc128 with mm_tc_v4's cure (loads ahead, 128 bits), same bits (session 231)
 #   sh tools/nak/build2.sh mm_s8        # B1 step 3: int8 matmul on the tensor cores, 128x128 tiles, i32 out (session 225)
 #   sh tools/nak/build2.sh attn_back_tile_tc # C-157: attn_back_tile_3's dQ / dK / dV on the tensor cores, f16 inputs (session 243)
@@ -71,6 +72,9 @@ mm_tc_pf)
     ;;
 mm_tc_v4)
     exec sh "$0" kernel mm_tc_v4 48
+    ;;
+mm_tc_v5)
+    exec sh "$0" kernel mm_tc_v5 48
     ;;
 mm_tc128_v4)
     exec sh "$0" kernel mm_tc128_v4 48

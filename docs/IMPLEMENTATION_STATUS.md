@@ -1,5 +1,30 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 258 — 26 noiembrie 2026, ~22:10–23:00 (ora României), în cloud, FĂRĂ placă — **`mm_tc_v5`: `mm_tc_v4` cu blocul de 12 KiB (4 blocuri pe SM la 64 KiB în loc de 2), plan + predicții V1–V8 scrise înainte, compilat și gata de legat în SIMULARE; PREDARE P2zzb**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 257), l-am pus `ocupat`. În hub nu venise nimic nou de comparat (os-470 și
+`token32` încă nerulate) → pasul lăsat de 257: plan + predicții pentru `mm_tc_v4` (79 % din pasul #513). Planul urcat **înainte** de
+cod (`b36873b`). Clona veche era iar despărțită de GitHub; am lucrat într-o clonă nouă (cea veche neatinsă, nimic șters).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Unde e timpul | 147 înmulțiri = 1,797 TFLOP pe pas → 8,30 TFLOP/s în pas = 8,29 în proba qkv-513; 17 % din vârful circuitelor speciale | DEDUS (T268) |
+| De ce | doar 2 blocuri pe SM la 64 KiB (24 KiB pe bloc, din care 16 doar pentru scrierea finală); placa a dat ×1,81 la 1 → 2 și ×1,43 / ×1,59 la 2 → 4 pe alte programe | DEDUS din MĂSURAT |
+| V1 registre / memorie | 128 registre, 0 locală, 12 288 B → 4 blocuri pe SM | PASS (MĂSURAT pe text) |
+| V2 bucla | aceleași `hmma` / citiri / conversii / bariere ca v4; 437 instrucțiuni față de 417 (+4,8 %, 20 `mov`) | PARȚIAL |
+| V3 finalul | 4 `coopMatStore` în zona de 1 KiB; o barieră pe bloc mai puțin | PASS |
+| V4 SIMULARE (T269) | textul buclei = v4; finalul scrie fiecare element o dată (greșeala plantată prinsă); aceiași biți ca `mm_tc` prin procesorul de comenzi; nealiniatele refuzate | PASS (SIMULARE) |
+| V5–V8 pe placă | proba qkv-513 1,59–1,94 ms (11,2–13,7 TFLOP/s); pasul #513 lot 6 188–217 ms (~14 200–16 400 simb/s) | NOT TESTED (scrise înainte) |
+| Verificările întregi | format, clippy, **1 332 PASS** (8 ignorate), no_std | PASS |
+
+**Note:** `docs/C-157_MM_TC_V5_PLAN.md`. **Nou pentru placă:** programul `mm_tc_v5` (SHA-256
+`f34f4f934135b39d4eccb59ef969688864d4bf78938a32eaf23eca594aee23d6`), aceeași lansare ca `mm_tc_v4`, QMD cu 12 KiB.
+PREDARE `integration/cyber-universe/C-157_P2zzb_mm-tc-v5.md`. Nicio schimbare incompatibilă (doar adăugări: `nvidia_ga104::mm_tc_v5`,
+`gpu_sim::cmdproc::{mm_tc_v5_on_cpu, MM_TC_V5_NEEDS}`).
+
+**Următorul pas:** comparațiile os-470 (dS reparat), `token32` (P2zz) și `mm_tc_v5` (P2zzb) când vin; altfel bucla lui v5
+(scrierile f16 împerecheate în memoria comună), plan + predicții întâi.
+
 ## Sesiunea 257 — 26 noiembrie 2026, ~21:11–22:10 (ora României), în cloud, FĂRĂ placă — **comparația os-469 (proba atenției pe circuitele speciale la treapta 64 KiB): toate predicțiile pentru pas confirmate, proba prezice acum pasul (v4 / tc16 ×1,21 față de ×1,20 în os-468), a doua dovadă a ocupării fără rezerva de 1 KiB; PREDARE P2zza**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 256), l-am pus `ocupat`. În hub: **os-469** (20:29, rândul `--atentie-tc-64k`

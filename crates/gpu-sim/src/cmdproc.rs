@@ -3546,6 +3546,30 @@ pub fn mm_tc_v4_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     mm_tc_on_cpu(l)
 }
 
+/// C-157 p.2 after os-468 (session 258, `docs/C-157_MM_TC_V5_PLAN.md`): what `tools/nak/out2/mm_tc_v5.sm86.sass`
+/// needs — the f16 slices of op(A) (64×32) and op(B) (32×64) plus one 16×16 f32 scratch per subgroup (4 of them)
+/// instead of `mm_tc_v4`'s 64×64 f32 block: 4 + 4 + 4 KiB, one barrier.
+pub const MM_TC_V5_NEEDS: Needs = Needs {
+    shared_bytes: (64 * 32 + 32 * 64) * 2 + 4 * 16 * 16 * 4,
+    barriers: 1,
+};
+
+/// C-157 p.2 after os-468 (session 258): the CPU stand-in for `tools/nak/out2/mm_tc_v5.sm86.sass` — `mm_tc_v4`'s K
+/// loop unchanged, the result written through a 16×16 f32 scratch per subgroup (`mm_tc128`'s ending) so the block
+/// needs 12 KiB. The values stored and the single f32 bias add are `mm_tc_v4`'s, so the stand-in is
+/// [`mm_tc_v4_on_cpu`]: blocks of 128×1×1, aligned products only (anything else REFUSED, no write).
+pub fn mm_tc_v5_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [128, 1, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: mm_tc_v5 cere blocuri de 128x1x1"));
+    }
+    if !tc_aligned(l)? {
+        return Err(bad(
+            "SIM: mm_tc_v5: produs nealiniat (randuri multiplu de 4, adrese multiplu de 16)",
+        ));
+    }
+    mm_tc_v4_on_cpu(l)
+}
+
 /// C-165 after os-416 (session 220): what `tools/nak/out2/mm_tc128.sm86.sass` needs — the f16 slices of op(A)
 /// (128×32) and op(B) (32×128) plus one 16×16 f32 scratch per subgroup (8 of them): 8 + 8 + 8 KiB, one barrier.
 pub const MM_TC128_NEEDS: Needs = Needs {

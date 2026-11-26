@@ -634,3 +634,6 @@ niciun octet de firmware NVIDIA.
   matricelor multiplu de 16 octeți”: idee din documentația publică CUDA (`wmma::load_matrix_sync` / `store_matrix_sync`, `ldm`),
   nimic copiat; că o adresă partajată nealiniată oprește firul: documentația publică `cuda-gdb` (lista excepțiilor). Compilat cu
   Mesa NAK 26.3.1 (MIT), pe gazdă. Nimic din firmware-ul NVIDIA.
+- **Sesiunea 258 (26 nov 2026):** `tools/nak/mm_tc_v5.comp` (al nostru): bucla lui `mm_tc_v4.comp` neschimbată, finalul după
+  `mm_tc128.comp` (o zonă 16 × 16 f32 pe grup de fire), tot ale noastre. Nicio sursă nouă din afară; compilat cu Mesa NAK 26.3.1 (MIT),
+  doar unealta pe gazdă.

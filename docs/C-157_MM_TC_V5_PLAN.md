@@ -43,6 +43,9 @@ Din cei 24 KiB ai unui bloc, **16 KiB sunt `cs_`** — placa 64 × 64 de f32, fo
   același lanț `coopMatMulAdd` → **aceiași biți ca `mm_tc` / `mm_tc_v4`**.
 - Aceeași lansare, același cbuf, aceeași regulă `fits` ca `mm_tc_v4`; doar QMD-ul cere 12 KiB.
 
+Observat după scrierea predicțiilor: același final (o zonă 16 × 16 f32 pe grup de fire, `subgroupBarrier` între runde) îl are deja
+`mm_tc128`, care a dat pe placă aceiași biți ca `mm_tc` (os-423). Deci partea nouă a lui v5 e deja încercată pe placă.
+
 Tăiat acum (de reluat după placă): memoria comună dublă (încă 8 KiB → doar 3 blocuri), scrierile f16 împerecheate și citirile
 `ldmatrix` (schimbă bucla; pasul de după, dacă ocuparea nu ajunge).
 
@@ -75,3 +78,19 @@ Coada valurilor nu strică socoteala: la 4 blocuri pe SM doar dW pentru qkv (432
 
 **Nou pentru placă:** încă nimic (doar plan). Când va fi: doar programul `mm_tc_v5`, aceeași lansare; nicio scriere în registre,
 niciun firmware.
+
+## 6. Ce a ieșit (sesiunea 258, în cloud, după predicții)
+
+Unealta: Mesa 26.3.1 reconstruit în cloud; `mm_tc_v4` recompilat a ieșit **identic** (SHA `488ca341…`), deci unealta e aceeași.
+`mm_tc_v5` a ieșit din **prima** compilare: SHA-256 `f34f4f934135b39d4eccb59ef969688864d4bf78938a32eaf23eca594aee23d6`.
+
+| # | Prezis | Ieșit | Verdict |
+|---|---|---|---|
+| V1 | ≤ 128 registre, 0 locală, 12 288 B | **128 registre**, 0 memorie locală, **12 288 B** memorie comună (NAK: „Max warps/SM: 16” = 4 blocuri) | PASS (MĂSURAT pe text) |
+| V2 | bucla ca v4 (±3 %) | aceleași 16 `hmma`, 8 citiri `b128`, 32 `f2f`, 32 scrieri, 24 citiri, 16 `movm`, 2 bariere; **437 instrucțiuni față de 417 (+4,8 %)**: 20 de `mov` în plus (alocatorul de registre, mai strâmtorat) | PARȚIAL — totalul puțin peste bandă |
+| V3 | 4 `coopMatStore` în zonă, fără `bar.sync` pe bloc în plus | 4 `coopMatStore`; **o barieră pe bloc mai puțin** (2 față de 3); 8 sincronizări de grup (`membar.cta`) doar la final | PASS |
+| V4 | SIMULARE: aceiași biți | T269: textul buclei = al lui v4, caracter cu caracter; finalul transcris fir cu fir scrie fiecare element o dată, din zona proprie (greșeala plantată prinsă); prin procesorul de comenzi **aceiași biți ca `mm_tc`** pe toate produsele aliniate × opțiuni; nealiniatele refuzate | PASS (SIMULARE) |
+| V5–V8 | pe placă | — | NOT TESTED |
+
+Cele 20 de `mov` în plus (+4,8 % emitere pe felie) contează puțin cât timp așteptarea domină (emiterea e ~14 % din timp); pot
+mânca ~1–3 % din câștigul de ocupare. Predicțiile V7–V8 rămân cum au fost scrise.
