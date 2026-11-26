@@ -68,7 +68,7 @@ programelor separate, deci nu o poate dovedi. Pe placă: aceleași 16 simboluri 
    768 (doar parametrul G — `grid_barrier` are 19 registre, fără memorie partajată: 16 pe SM încap); (c) abia apoi `token32` cu G ales
    din (b), de sub o opțiune oprită implicit, comparat cu lista de azi (aceleași 16 simboluri) și cu timpul de azi.
    `token32_qmd` lasă treapta implicită (cea mai mică); pentru G > 3·48 OS-ul trebuie să ceară treapta 64 KiB
-   (`ComputeQmd::to_bytes_with_sm_config`) — adăugare pentru atunci, nefăcută azi.
+   (`ComputeQmd::to_bytes_with_sm_config`) — **făcut în sesiunea 240: `token32_qmd_wide`, nota `C-157_TOKEN32_G_MARE.md`**.
 
 ## 6. Cod (doar adăugări)
 

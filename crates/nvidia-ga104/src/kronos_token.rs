@@ -21,7 +21,8 @@ use gpu_core::error::{GpuError, GpuResult};
 
 use crate::gsp::work_queue::GrShape;
 use crate::kronos_layer::{Launch, Prog};
-use crate::qmd::{ComputeQmd, MAX_SHARED_BYTES, SharedMemory};
+use crate::occupancy::{self, Kernel, Reserve, SM86};
+use crate::qmd::{ComputeQmd, MAX_SHARED_BYTES, SM_CONFIG_STEPS, SharedMemory};
 
 fn bad(why: &'static str) -> GpuError {
     GpuError::InvalidArgument(why)
@@ -135,6 +136,85 @@ pub fn token32_qmd(
     groups: u32,
 ) -> GpuResult<[u8; nvidia_rm570::QMD_SIZE]> {
     qmd_with(prog_va, cbuf_va, groups, TOKEN32_REGISTERS)
+}
+
+/// C-157 (session 240, `docs/C-157_TOKEN32_G_MARE.md`): `token32` as the occupancy arithmetic sees it — 32 threads,
+/// [`TOKEN32_REGISTERS`], [`TOKEN_SHARED`] bytes of shared memory.
+pub const TOKEN32_KERNEL: Kernel = Kernel {
+    name: "token32",
+    threads: TOKEN_BLOCK,
+    registers: TOKEN32_REGISTERS,
+    shared_bytes: TOKEN_SHARED,
+};
+
+/// The most `token32` workgroups one SM can keep at once (the 64 KiB step, either reading of the 1 KiB reserve):
+/// 16, the SM's block limit. More than `16 × SMs` workgroups cannot all be resident, and the grid barrier would
+/// wait forever for the ones not started — refused.
+pub fn token32_max_per_sm() -> u32 {
+    let last = SM_CONFIG_STEPS[SM_CONFIG_STEPS.len() - 1];
+    occupancy::blocks_per_sm(&SM86, &TOKEN32_KERNEL, last, Reserve::OneKib).map_or(0, |f| f.blocks)
+}
+
+/// The smallest SM shared-memory step (8/16/32/64 KiB, [`SM_CONFIG_STEPS`]) at which `groups` workgroups of
+/// `token32` are all resident on `sms` SMs — counted with the 1 KiB reserve per block (the stricter reading of
+/// [`Reserve`]): 2 / 5 / 10 / 16 per SM. Refuses `groups` = 0, `sms` = 0 and `groups` > 16 × `sms`. That the board
+/// keeps that many blocks per SM at that step is DEDUS (the occupancy probe and the barrier probe at G = 384 / 768
+/// decide).
+pub fn token32_step_for(groups: u32, sms: u32) -> GpuResult<u32> {
+    if groups == 0 || sms == 0 {
+        return Err(bad("programul pe simbol: 0 grupuri sau niciun SM"));
+    }
+    SM_CONFIG_STEPS
+        .iter()
+        .copied()
+        .find(|&step| {
+            occupancy::blocks_per_sm(&SM86, &TOKEN32_KERNEL, step, Reserve::OneKib)
+                .is_some_and(|f| u64::from(f.blocks) * u64::from(sms) >= u64::from(groups))
+        })
+        .ok_or_else(|| {
+            bad("programul pe simbol: mai multe grupuri decat incap deodata pe placa (16 pe SM)")
+        })
+}
+
+/// `per_sm` `token32` workgroups on each SM GSP-RM reports (1..=16). Refuses anything that would not be resident.
+pub fn token32_groups_for(gr: &GrShape, per_sm: u32) -> GpuResult<u32> {
+    let sms = gr.gpcs * gr.tpc_per_gpc * gr.sm_per_tpc;
+    if sms == 0 {
+        return Err(bad("programul pe simbol: niciun SM raportat"));
+    }
+    if per_sm == 0 || per_sm > token32_max_per_sm() {
+        return Err(bad("programul pe simbol: intre 1 si 16 grupuri pe SM"));
+    }
+    Ok(sms * per_sm)
+}
+
+/// The QMD of the one `token32` launch with the SM step for many workgroups: the step of [`token32_step_for`]
+/// (`MIN = TARGET =` step, `ComputeQmd::to_bytes_with_sm_config`), everything else as [`token32_qmd`]. At the 8 KiB
+/// step (G ≤ 2 × SMs) the bytes are those of [`token32_qmd`]. Refuses G > 16 × SMs.
+pub fn token32_qmd_wide(
+    prog_va: u64,
+    cbuf_va: u64,
+    groups: u32,
+    sms: u32,
+) -> GpuResult<[u8; nvidia_rm570::QMD_SIZE]> {
+    let step = token32_step_for(groups, sms)?;
+    ComputeQmd {
+        program_va: prog_va,
+        registers: TOKEN32_REGISTERS,
+        cbuf0_va: cbuf_va,
+        cbuf0_size: 0x100,
+        grid: [groups, 1, 1],
+        block: [TOKEN_BLOCK, 1, 1],
+        release: None,
+    }
+    .to_bytes_with_sm_config(
+        &SharedMemory {
+            bytes: TOKEN_SHARED,
+            max_bytes: MAX_SHARED_BYTES,
+            barriers: 0,
+        },
+        step,
+    )
 }
 
 /// The program's constant buffer.

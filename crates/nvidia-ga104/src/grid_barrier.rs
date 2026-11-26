@@ -84,6 +84,24 @@ pub fn groups_for(gr: &GrShape, per_sm: u32) -> GpuResult<u32> {
     Ok(sms * per_sm)
 }
 
+/// C-157 (session 240, `docs/C-157_TOKEN32_G_MARE.md`): the second barrier run — the G `token32` would need for
+/// many workgroups. At most 16 per SM (the SM's block limit; 19 registers and no shared memory leave the other limits
+/// far away — `occupancy::SM86`), so every step of the QMD is the same for this program.
+pub const MAX_PER_SM_WIDE: u32 = 16;
+
+/// [`groups_for`] for the wide run: `per_sm` = 8 or 16 (G = 384 / 768 on the 3070 Ti). Only after the first run
+/// (`per_sm` 1 and 2) has passed — the caller's order; this function only refuses other counts.
+pub fn groups_for_wide(gr: &GrShape, per_sm: u32) -> GpuResult<u32> {
+    let sms = gr.gpcs * gr.tpc_per_gpc * gr.sm_per_tpc;
+    if sms == 0 {
+        return Err(bad("proba barierei: niciun SM raportat"));
+    }
+    if per_sm != 8 && per_sm != MAX_PER_SM_WIDE {
+        return Err(bad("proba barierei larga: 8 sau 16 grupuri pe SM"));
+    }
+    Ok(sms * per_sm)
+}
+
 /// The QMD: `groups` workgroups of 32 threads, no shared memory. `registers` = what NAK reported for the program.
 pub fn qmd(
     prog_va: u64,

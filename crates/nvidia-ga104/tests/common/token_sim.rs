@@ -102,6 +102,9 @@ pub struct TokenSim<'a> {
     pub results: Option<SysMapping>,
     /// C-157 point 7: the timestamps of the last doorbell's n + 1 records (record 0, then one after each launch).
     pub last_stamps: Vec<u64>,
+    /// C-157 (session 240): when set, `submit_token32` builds the QMD with `token32_qmd_wide` for this many SMs
+    /// (the SM shared-memory step chosen for G) instead of `token32_qmd`.
+    pub token32_sms: Option<u32>,
 }
 
 impl<'a> TokenSim<'a> {
@@ -280,6 +283,7 @@ impl<'a> TokenSim<'a> {
             driver_words: Vec::new(),
             results,
             last_stamps: Vec::new(),
+            token32_sms: None,
         })
     }
 
@@ -385,7 +389,11 @@ impl<'a> TokenSim<'a> {
             kt::token_cbuf_for(list.va, sync, n, groups)?
         };
         put_bytes(w, launch.pa, &c);
-        put_bytes(w, launch.pa + 256, &kt::token32_qmd(prog.va, cb, groups)?);
+        let q = match self.token32_sms {
+            Some(sms) => kt::token32_qmd_wide(prog.va, cb, groups, sms)?,
+            None => kt::token32_qmd(prog.va, cb, groups)?,
+        };
+        put_bytes(w, launch.pa + 256, &q);
         put_bytes(w, launch.pa + 512, &[0; 16]);
         put_bytes(w, self.records.pa, &[0; 32]);
         let first = self.next_payload;

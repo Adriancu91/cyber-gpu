@@ -1,5 +1,33 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 240 — 26 noiembrie 2026, ~02:11–03:00 (ora României), în cloud, FĂRĂ placă — **`token32` cu G mare: driverul alege treapta memoriei comune după numărul de grupuri (`token32_qmd_wide`) + proba barierei largă (G = 384 / 768) pregătită, în SIMULARE**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 239), l-am pus `ocupat`. Niciun test nou pe placă de la os-445 → punctul din
+coadă lăsat de sesiunea 239: `token32_qmd` cu treapta aleasă pentru G mare + pregătirea probei barierei la G = 384 / 768. Ramura
+locală `g0-g2-fundatie` din acest dosar avea iar istoria veche; am lucrat pe o ramură locală nouă care urmărește
+`origin/g0-g2-fundatie` (nimic șters, nimic rescris pe GitHub).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| `kronos_token::token32_step_for` / `token32_groups_for` / `token32_qmd_wide` / `TOKEN32_KERNEL` | treapta cea mai mică la care toate cele G grupuri încap deodată (cu rezerva de 1 KiB): 2 / 5 / 10 / 16 pe SM; refuz peste 16 × SM-uri | ADĂUGAT |
+| `grid_barrier::groups_for_wide` / `MAX_PER_SM_WIDE` | 8 sau 16 grupuri pe SM (G = 384 / 768) | ADĂUGAT |
+| T249a | treptele pentru G pe 48 de SM-uri (≤96 → 8 KiB … ≤768 → 64 KiB, 769 refuzat) | PASS |
+| T249b | la G ≤ 96 QMD-ul lărgit = exact cel de azi | PASS |
+| T249c | un simbol + argmax cu `token32` la G = 384 / 768 = lansările separate, bit cu bit; modelul vede treapta 9 / 17 în QMD | PASS (SIMULARE) |
+| T249d | proba barierei la G = 384 / 768 (R = 1 și 1 001) TRECE; refuzurile | PASS (SIMULARE) |
+| Verificări | format, clippy, teste pe gazdă, build no_std | PASS (**1 207 de teste**, 8 ignorate) |
+
+**Ce înseamnă:** dacă proba barierei de pe placă (os-451) trece, driverul are deja tot ce trebuie pentru proba largă și pentru
+`token32` cu multe grupuri. Pe placă nu e dovedit nimic: nici că încap 10 / 16 blocuri pe SM, nici bariera cu 768 de grupuri. Nota
+`docs/C-157_TOKEN32_G_MARE.md` (predicțiile scrise înainte, toate 4 DA); harta pentru OS `integration/cyber-universe/C-157_P2zk_token32_G_mare.md`
+(nu e predare: se cere doar după os-451 TRECE).
+
+**Ce e nou pentru placă:** nimic. **Nicio schimbare incompatibilă** (doar adăugări).
+
+**Următorul pas:** comparațiile testelor noi de pe placă când vin (os-451 proba barierei, os-447 `--lot-prin-ram`, os-449 două locuri,
+text real F32/mixt); dacă os-451 TRECE → cererea către OS pentru proba largă (8 și 16 pe SM). Altfel, fără rezultate noi: verificarea
+listării `token32` la treapta 64 KiB nu se schimbă (aceeași compilare) — nu mai e lucru util fără placă pe acest fir.
+
 ## Sesiunea 239 — 26 noiembrie 2026, ~01:11–01:55 (ora României), în cloud, FĂRĂ placă — **`token32`: „un singur program pe simbol” pentru lista de generare de azi (`lipita-ln-32` + argmax + `embed_dev`), COMPILAT + SIMULARE: tot textul (14 poziții) într-o singură lansare = câte o poziție pe sonerie, bit cu bit**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 238), l-am pus `ocupat`. Niciun test nou pe placă de la os-445 (comparat) →
