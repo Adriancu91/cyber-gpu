@@ -82,3 +82,49 @@ testul `crates/gpu-compute/tests/c157_attn_back_tc.rs` (T252a–c) și 2 teste �
   (3) PREDARE către OS cu rândul de test.
 
 **Ce e nou pentru placă:** un program nou compilat (`attn_back_tile_tc`), încă netrimis OS-ului. **Nicio schimbare incompatibilă.**
+
+## 5. Sesiunea 244 — înlocuitorul din `gpu-sim` + opțiunea în pasul mixt (plan și predicții scrise ÎNAINTE de teste)
+
+26 nov 2026, ~06:40, în cloud, fără placă. Tot ce urmează e **SIMULARE** (pe procesor) sau **DEDUS** (aritmetică).
+
+### 5.1 O greșeală găsită în nota de mai sus (sesiunea 243)
+
+Nota spunea „același buffer constant ca `attn_back_tile_3`”. **Nu e adevărat.** Programul e compilat cu a doua unealtă
+(Mesa 26.3.1), care pune argumentele la **0x700** în cbuf 0 (ca la `mm_tc`), nu la 0x28. Dump-ul o arată:
+`ldc c[0x0][+0x700]` … `c[0x0][+0x738]` (qkv, p, dout, ds, dqkv, T, C, H, d, mod). Dacă OS-ul i-ar fi dat buffer-ul
+lui `attn_back_tile_3`, programul ar fi citit modul 0 la 0x738 și ar fi ieșit fără să scrie nimic (dQ, dK, dV vechi /
+zero → antrenare greșită, fără nicio eroare). Nimic nu fusese predat, deci nu s-a stricat nimic.
+
+Reparat (doar în `attn_back_tile_tc`, care nu era folosit de nimeni în afara acestui repo): `PUSH_BASE = 0x700`,
+`CBUF_BYTES = 0x800` (era greșit 0x68), `cbuf(&Args)` și `cbuf_from_f32(&[u8])` (mută octeții 0x28..0x68 la 0x700..0x740).
+Un test nou citește toate locurile `c[0x0]` din dump și verifică că sunt doar 0x0/0x4/0x8 sau 0x700..0x740.
+
+### 5.2 Ce s-a adăugat (doar adăugări în interfața folosită de OS)
+
+- `gpu_sim::cmdproc::attn_back_tile_tc_on_cpu` + `ATTN_BACK_TILE_TC_NEEDS` (32 768 B, 1 barieră): citește la 0x700,
+  calculează cu `gpu_compute::attn_tc::model` (f16, sumatorul potrivit în os-335 — IPOTEZĂ), refuză ce nu modelează.
+- `train_step::MixedLaunch::AttnTc(Launch)` (variantă nouă; OS-ul folosește `MixedLaunch` doar cu `matches!`, deci nu se
+  strică nimic), `train_step::attn_tc_list` (mută lansările `attn_back_tile_3` ale listei mixte pe `attn_back_tile_tc`),
+  `train_step::pack_mixed_fast_attn` (ca `pack_mixed_fast`, plus adresa lui `attn_back_tile_tc`), `TcPick::AttnTc`,
+  `batch_ram::pack_mixed_fast_via_ram_attn`. `pack_mixed_fast` / `pack_mixed_fast_via_ram` rămân aceiași octeți.
+
+### 5.3 Predicțiile (T253, scrise înainte să rulez testele)
+
+- **C1 — înlocuitorul = modelul.** Pe un cap mic și pe forme cu grilă parțială, ce scrie `attn_back_tile_tc_on_cpu` =
+  `attn_tc::model` bit cu bit (doar rândurile și capetele din grilă); modul 0 nu scrie nimic; d > 64 și o intrare
+  peste f16 (1·10⁶ în dS) sunt refuzate.
+- **C2 — drumul în pasul mixt (mini, `new_tiles3`, 2 straturi).** `attn_tc_list` mută exact 2 lansări pe pas (una pe
+  strat); zona de control crește cu 2 × (0x900 − 0x200) = 3 584 B; același număr de QMD-uri. Cu `attn_tc_va = 0` și
+  fără `AttnTc`, `pack_mixed_fast_attn` = `pack_mixed_fast` octet cu octet.
+- **C3 — antrenarea mini în SIMULARE (5 pași, S = `LOSS_SCALE`).** Pierderile rămân finite și scad; biții **diferă**
+  de pasul mixt cu atenția F32 (f16 în dQ, dK, dV), dar puțin: eroarea relativă a pierderilor ≤ 1·10⁻⁴ pe pas, gradientul
+  pasului 1 (normă relativă) între 1·10⁻⁵ și 2·10⁻³, greutățile după pasul 5 ≤ 1·10⁻⁴.
+- **C4 — lista #513 (lot 2, nelipită).** 12 lansări `AttnTc` + 147 `mm_tc_v4`; zona crește cu 12 × 1 792 = 21 504 B;
+  QMD-ul fiecărei `AttnTc`: adresa programului = `attn_tc_va`, 48 de registre, cbuf 0x800, aceeași grilă [8, 12, 2].
+- **C5 — greșelile se prind.** `attn_tc_va = 0` cu `AttnTc` → refuz; `pack_mixed_gelu` / `pack_mixed_fast` cu `AttnTc` →
+  refuz; treapta 16 KiB (sub 32 KiB) → refuz; un cbuf pus greșit la 0x28 (cum spunea nota veche) → placa simulată nu
+  scrie dQ, dK, dV → gradientul pasului 1 diferă vizibil (> 1 %).
+- **C6 — câte blocuri pe SM la treapta 64 KiB (DEDUS, `occupancy`).** Pasul mixt rapid merge la treapta 64 KiB
+  (os-431): `attn_back_tile_3` (33 024 B) → **1 bloc** pe SM (ambele citiri ale rezervei de 1 KiB);
+  `attn_back_tile_tc` (32 768 B) → 2 blocuri fără rezervă, 1 cu rezervă. Deci nota veche („3 blocuri, ca azi”) era
+  la 100 KiB, treaptă pe care nu o folosim; varianta cu 16 KiB ar da 3–4 blocuri la 64 KiB.
