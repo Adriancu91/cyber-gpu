@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 254 — 26 noiembrie 2026, ~17:11–18:10 (ora României), în cloud, FĂRĂ placă — **comparațiile os-462 și os-465 (C-157 punctul 2): tc16 în pas −6,7 ms (prezis 2,2–4,0, cauza = treapta probei), v4 ×1,67 (în bandă, v4pf tăiat), bariera largă W1–W5 confirmate, G = 384 ales pentru `token32`; PREDARE P2zw**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 253), l-am pus `ocupat`. În hub apăruseră **două teste noi pe placă**
+necomparate: os-462 (16:30) și os-465 (16:58) → punctul 2 al cozii, cu întâietate. Clona veche era iar despărțită de GitHub;
+am lucrat într-o clonă nouă a ramurii din GitHub (cea veche neatinsă). Nota: `docs/C-157_OS462_OS465.md`.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| os-462: oracolul mixt cu tc16 în pas | ACELEAȘI NUMERE (pașii 1–6) | PASS (MĂSURAT pe placă de OS) |
+| os-462: câștigul tc16 în pas | −6,66 ms (prezis 2,2–4,0) — predicție GREȘITĂ; cauza: proba la 1 bloc pe SM, pasul la 3–4 (T264) | explicat (DEDUS) |
+| os-465 V6: v4 / v4pf = tc16 | bit cu bit, 4 / 4 seturi aliniate | CONFIRMATĂ (MĂSURAT) |
+| os-465 V7: v4 la `atentie-513-b4` | 0,52 ms (bandă 0,35–0,55); v4pf 0,64 — tăiat | CONFIRMATĂ (MĂSURAT) |
+| os-465 W1–W5: bariera G = 384 / 768 | TREC; 2,03 / 3,11 µs | CONFIRMATE (MĂSURAT) |
+| W6 | G = 384 ales (plafon ~0,16 ms pe simbol); G = 768 tăiat | DEDUS |
+| Rândul lot 6 sărit | ordinea opțiunilor (`--atentie-tc16` după `--doua-locuri`), citit în codul OS | DEDUS, de confirmat de OS |
+| T264 (calcul pe procesor) | 4 / 4 | PASS (CALCUL) |
+| Verificările întregi | format, clippy, **1 301 PASS** (8 ignorate), no_std | PASS |
+
+**Nou pentru placă:** nimic. PREDARE `integration/cyber-universe/C-157_P2zw_os462-os465.md` (rândul corect, doar v4 în P2zv,
+opțional proba atenției la 64 KiB).
+
+**Următorul pas:** `token32` la G = 384 (predicții întâi: înmulțirile generării cu 8 warp-uri pe SM), sub opțiune oprită
+implicit; comparațiile P2zs / P2zt / P2zu / P2zv și rândul lot 6 când vin.
+
 ## Sesiunea 253 — 26 noiembrie 2026, ~16:11–16:55 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile_tc16_v4` / `_v4pf` legate în pasul mixt rapid: varianta rapidă aleasă singură pe formele aliniate, aceiași biți ca tc16 (SIMULARE, T263); PREDARE P2zv**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 252), l-am pus `ocupat`. Niciun test nou pe placă în hub (os-465 cu P2zq /

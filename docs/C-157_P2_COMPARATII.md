@@ -706,3 +706,9 @@ Sursa: `Cyber-hub/rezultate/os-automat/2026-11-22/ciclu-auto-20261122-0506.txt` 
 - **Ce tai:** oprirea fără `INIT(0)` — `gsp::rusd::rusd_stop_poll_only` și `dashboard_at_end_keep_page` (doar adăugări; T140h în SIMULARE: 4 comenzi în loc de 5, niciun `INIT(0)`). Pagina rămâne rezervată până la FLR sau repornire (așa era oricum după refuz). Pe placă: **o comandă mai puțin, nimic nou**; un ASSERT mai puțin pe rulare (așteptat).
 - **P0 înainte de viteza maximă (ieri P5):** NECUNOSCUT. Ipoteză (DEDUS): placa nu coboară încă din P0 după lucrul abia terminat al lanțului (I10–I14 rulează chiar înainte); tabloul arată P8 la 1,7 s după. Proba ieftină: aceeași citire a tabloului și **înainte** de lanț (C-151 punctul 2, în coadă).
 - **Viteza (testul obișnuit):** 94,44 simb/s, driverul 3 087 µs/simbol — ca os-322 (94,84). Estimarea pentru dietă rămâne ~1,3 ms driver; se vede în `os-324`.
+
+## os-462 + os-465 (26 nov 2026, 15:48–16:36) — sesiunea 254
+- **os-462, tc16 în pasul mixt #513 (lot 2):** aceleași numere ca oracolul mixt ✔; câștig **−6,66 ms** (9,17 → 2,51 ms), prezis 2,2–4,0 — prea prudent. Cauza (DEDUS, T264): proba izolată rulează tc16 la treapta de 16 KiB (1 bloc pe SM), pasul la 64 KiB (3–4 blocuri); F32 `_3` are 1 bloc în ambele.
+- **os-465, P2zq:** v4 = v4pf = tc16 bit cu bit (4 / 4 aliniate); v4 **0,52 ms (×1,67)** în banda 0,35–0,55; v4pf 0,64 — pierde chiar la 1 bloc pe SM. **Tai v4pf**; în pas v4 (3 blocuri) față de tc16 (3–4) câștigă doar ~0,2–1 ms (DEDUS).
+- **os-465, P2zr:** W1–W5 toate confirmate; o barieră 2,03 µs la G = 384, 3,11 µs la G = 768. **G ales pentru `token32`: 384** (plafon ~0,16 ms pe simbol); 768 tăiat.
+- **Rândul lot 6 sărit:** ordinea opțiunilor (`--atentie-tc16` trebuie după `--doua-locuri`). Nota întreagă: `docs/C-157_OS462_OS465.md`.
