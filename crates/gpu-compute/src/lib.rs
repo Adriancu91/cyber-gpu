@@ -27,6 +27,7 @@
 
 extern crate alloc;
 
+pub mod attn_tc;
 pub mod card;
 pub mod cpu;
 pub mod kernels;
