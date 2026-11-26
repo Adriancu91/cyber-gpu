@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 249 — 26 noiembrie 2026, ~12:12–12:55 (ora României), în cloud, FĂRĂ placă — **os-459 comparat: proba barierei pe toată placa TRECE, 1,13 µs (B1–B5 toate confirmate); predicțiile W1–W6 pentru proba largă (G = 384 / 768); PREDARE P2zr**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 248), l-am pus `ocupat`. os-459 a venit în hub → comparația are întâietate.
+Comparația și predicțiile pentru pasul următor urcate înainte de test (`57365c7`), nota `docs/C-157_OS459_BARIERA.md`.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| os-459 bariera G = 48 / 96 (MĂSURAT de OS) | TRECE ambele, contoarele 48 048 / 96 096, 0 cuvinte vechi; 48 SM-uri citite corect | CONFIRMAT pe placă |
+| B1–B2 (termină, contorul corect) | exact | CONFIRMATE |
+| B3 o barieră 1–3 µs | 1 126 ns | CONFIRMATĂ |
+| B4 la 96 mai scumpă, sub ×2 | 1 143 ns (×1,015) | CONFIRMATĂ (abia) |
+| B5 / aritmetica generării | 87 de bariere ≈ 0,10 ms față de ~0,34 ms porniri azi (88 de lansări) — dar la G = 48 prea puține warp-uri pe SM | DEDUS |
+| T259 cifrele os-459 prin `barrier_ns` / `judge` + proba largă G = 384 / 768 | trece | PASS (cifre MĂSURATE; proba largă SIMULARE) |
+| W1–W6 proba largă pe placă | — | NOT TESTED (predicții scrise înainte) |
+| Verificările întregi | format, clippy, **1 269 PASS** (8 ignorate), no_std (ținta instalată din nou în cloud) | PASS |
+
+**Ce e nou:** doar un test (T259) și documente. Nimic nou pentru placă, nicio schimbare de interfață. PREDARE
+`integration/cyber-universe/C-157_P2zr_bariera-larga.md`: `test-placa --bariera-larga`, G din `groups_for_wide_sms(48, 8 / 16)`
+(nu `groups_for_wide`, care refuză mereu).
+
+**Următorul pas:** comparațiile când vin (proba P2zq tc16 / v4 / v4pf, proba largă P2zr); altfel `attn_back_tile0_tc` legat în
+pasul mixt rapid (gpu-sim + opțiunea), apoi varianta câștigătoare v4 / v4pf legată; după proba largă: `token32` la G ales (dacă W6 o permite).
+
 ## Sesiunea 248 — 26 noiembrie 2026, ~11:11–12:15 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile_tc16_v4` și `_v4pf`: atenția înapoi f16 cu citiri de 128 de biți (5 în zbor în loc de 2), aceiași biți ca tc16 în SIMULARE; PREDARE P2zq**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 247), l-am pus `ocupat`. Niciun test nou pe placă în hub (os-458 nu e încă) →
