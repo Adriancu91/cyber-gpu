@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 250 — 26 noiembrie 2026, ~13:10–14:25 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile0_tc` legat în pasul mixt rapid: ambele programe „înapoi” ale atenției pot merge pe circuitele speciale (SIMULARE, T260); PREDARE P2zs**
+## Sesiunea 250 — 26 noiembrie 2026, ~13:10–14:00 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile0_tc` legat în pasul mixt rapid: ambele programe „înapoi” ale atenției pot merge pe circuitele speciale (SIMULARE, T260); PREDARE P2zs**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 249), l-am pus `ocupat`. Niciun test nou pe placă în hub de la 12:50 →
 punctul lăsat de sesiunea 249. Planul și predicțiile F1–F7 urcate înainte de cod (`f72a6db`), nota `docs/C-157_ATTN_BACK0_TC_LEGAT.md`.
