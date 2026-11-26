@@ -292,7 +292,8 @@ pub fn run_chain_ready(
     journal: &mut Journal,
     mut run: impl FnMut(&ChainStep, &mut Journal) -> GpuResult<()>,
 ) -> ChainReport {
-    let start_writes = journal.writes();
+    // os-473: totals that never decrease (the ring may drop old writes).
+    let start_writes = journal.writes_total();
     let mut out = Vec::new();
     let mut stopped: Option<(&'static str, String)> = None;
     let mut wrote_something = false;
@@ -338,9 +339,9 @@ pub fn run_chain_ready(
                 continue;
             }
         }
-        let before = journal.writes();
+        let before = journal.writes_total();
         let r = run(s, journal);
-        let wrote = journal.writes() != before;
+        let wrote = journal.writes_total() != before;
         if s.writes_hardware {
             wrote_something = true;
         }
@@ -375,7 +376,7 @@ pub fn run_chain_ready(
     ChainReport {
         steps: out,
         stopped_at: stopped,
-        writes: journal.writes() - start_writes,
+        writes: usize::try_from(journal.writes_total() - start_writes).unwrap_or(usize::MAX),
     }
 }
 
@@ -567,6 +568,53 @@ mod tests {
             Some(&Outcome::Skipped("lantul s-a oprit inainte"))
         );
         assert!(format!("{r}").contains("oprit la pregatire-i6: blocat: WPR2 ridicat"));
+    }
+
+    /// os-473 (SIMULARE): a small ring that fills with the writing steps'
+    /// writes; the read-only cleanup must not be failed by writes falling
+    /// out of the ring, and the count of writes must be the real one.
+    #[test]
+    fn a_full_ring_does_not_fail_a_read_only_step() {
+        let mut j = Journal::new(8);
+        let r = run_chain(WINDOW_CHAIN, true, &mut j, |s, j| {
+            if s.writes_hardware {
+                for i in 0..20 {
+                    j.push(Event::MmioWrite {
+                        bar: 0,
+                        offset: 4 * i,
+                        before: 0,
+                        written: 1,
+                        after: 1,
+                    });
+                }
+            } else {
+                for _ in 0..20 {
+                    j.push(Event::Note("citire"));
+                }
+            }
+            Ok(())
+        });
+        // Nothing failed: the chain stops only at the step blocked in the
+        // plan (I7), before running it — never on "doar-citire".
+        assert!(
+            r.steps
+                .iter()
+                .all(|(_, o)| !matches!(o, Outcome::Failed(_))),
+            "{:?}",
+            r.steps
+        );
+        let ran_writing = r
+            .steps
+            .iter()
+            .filter(|(id, o)| {
+                *o == Outcome::Passed
+                    && WINDOW_CHAIN
+                        .iter()
+                        .any(|s| s.id == *id && s.writes_hardware)
+            })
+            .count();
+        assert!(ran_writing > 0 && j.writes() < 20 * ran_writing);
+        assert_eq!(r.writes, 20 * ran_writing, "the real count, not the ring's");
     }
 
     #[test]

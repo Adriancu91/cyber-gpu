@@ -271,8 +271,11 @@ where
     M: Mmio + ?Sized,
     K: Clock + ?Sized,
 {
-    let writes_before = journal.writes();
-    let len_before = journal.len();
+    // os-473: totals that never decrease. `writes()` / `len()` count only
+    // the ring, which on the workstation was full (4 096 events): old
+    // writes fell out during the tour and it reported a write it never did.
+    let writes_before = journal.writes_total();
+    let pushed_before = journal.pushed();
     let mut facts = Vec::new();
     journal.push(Event::Note(
         "tur de citire (C-54): incepe, 0 scrieri permise",
@@ -466,7 +469,7 @@ where
     // Every register value read in this tour (BAR0 and config), as facts:
     // the comparison sees the raw values too, not only our decoding.
     let mut reads = 0;
-    for e in journal.events().skip(len_before) {
+    for e in journal.events_since(pushed_before) {
         match *e {
             Event::MmioRead {
                 bar: 0,
@@ -485,7 +488,7 @@ where
         }
     }
 
-    if journal.writes() != writes_before {
+    if journal.writes_total() != writes_before {
         return Err(GpuError::NotPermitted(
             "turul de citire a jurnalizat o scriere: rezultat respins",
         ));
@@ -500,6 +503,35 @@ mod tests {
     use super::*;
     use gpu_sim::clock::SimClock;
     use gpu_sim::observed;
+
+    /// os-473 (SIMULARE): the OS ring was full of old writes when the tour
+    /// ran (jurnalele 131, 149, 153, 155, 157: the tour failed exactly when
+    /// writes fell out of the ring). The tour must pass and keep its facts.
+    #[test]
+    fn tour_passes_when_the_full_ring_drops_old_writes() {
+        let mut cfg = observed::observed_config();
+        let mut bar0 = observed::observed_bar0();
+        let mut clock = SimClock::default();
+        let mut j = Journal::new(64);
+        for i in 0..64 {
+            j.push(Event::MmioWrite {
+                bar: 0,
+                offset: 0x110c00 + 4 * i,
+                before: 0,
+                written: 0,
+                after: 0,
+            });
+        }
+        let t = run_tour(&mut cfg, None, &mut bar0, &mut clock, &mut j)
+            .expect("no write in the tour: it must pass");
+        assert!(bar0.writes.is_empty() && cfg.writes == 0);
+        assert_eq!(j.writes_total(), 64, "only the old writes");
+        assert!(j.writes() < 64, "the ring did drop old writes (the case)");
+        assert!(t.reads > 0, "reads are counted although the ring is full");
+        let mut big = Journal::new(4096);
+        let full = run_tour(&mut cfg, None, &mut bar0, &mut clock, &mut big).unwrap();
+        assert_eq!(t.reads, full.reads, "same reads as with a big ring");
+    }
 
     #[test]
     fn tour_on_observed_model_reads_only_and_matches_the_board() {

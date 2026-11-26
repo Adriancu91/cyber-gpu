@@ -214,6 +214,10 @@ pub struct Journal {
     events: VecDeque<Event>,
     cap: usize,
     dropped: u64,
+    /// os-473 (27 Nov 2026): every event ever pushed, kept or dropped.
+    pushed: u64,
+    /// os-473: every write ever pushed, kept or dropped. Never decreases.
+    writes_total: u64,
     sink: Option<fn(&Event)>,
     live: Option<LiveSink>,
     routine: Option<Routine>,
@@ -226,6 +230,8 @@ impl Journal {
             events: VecDeque::new(),
             cap: cap.max(1),
             dropped: 0,
+            pushed: 0,
+            writes_total: 0,
             sink: None,
             live: None,
             routine: None,
@@ -298,6 +304,10 @@ impl Journal {
                 }
             }
         }
+        self.pushed += 1;
+        if is_write(&e) {
+            self.writes_total += 1;
+        }
         if self.events.len() == self.cap {
             self.events.pop_front();
             self.dropped += 1;
@@ -333,18 +343,79 @@ impl Journal {
         self.dropped
     }
     /// Number of writes recorded (config + MMIO). Level-0 probes must keep this at 0.
+    /// Writes among the events still kept (the ring). When the ring is
+    /// full, this number goes DOWN as old writes are dropped — so it must
+    /// not be used to ask "did anything write since ...": use
+    /// [`Self::writes_total`] for that (os-473).
     pub fn writes(&self) -> usize {
-        self.events
-            .iter()
-            .filter(|e| matches!(e, Event::ConfigWrite { .. } | Event::MmioWrite { .. }))
-            .count()
+        self.events.iter().filter(|e| is_write(e)).count()
     }
+
+    /// os-473 (27 Nov 2026): every write pushed since the journal was made,
+    /// dropped ones included. It never decreases, so the difference of two
+    /// readings is the number of writes pushed between them, however full
+    /// the ring is. (On the workstation the OS ring of 4 096 events filled
+    /// up and `writes()` fell while the read tour ran: a false "the tour
+    /// journaled a write".)
+    pub fn writes_total(&self) -> u64 {
+        self.writes_total
+    }
+
+    /// os-473: every event pushed since the journal was made, dropped ones
+    /// included. A mark for [`Self::events_since`].
+    pub fn pushed(&self) -> u64 {
+        self.pushed
+    }
+
+    /// os-473: the events pushed after the mark `pushed_before` (a value of
+    /// [`Self::pushed`]) that are still kept, oldest first. If some of them
+    /// were already dropped, only the kept ones are given.
+    pub fn events_since(&self, pushed_before: u64) -> impl Iterator<Item = &Event> {
+        let new = self.pushed.saturating_sub(pushed_before);
+        let kept_new = usize::try_from(new)
+            .unwrap_or(usize::MAX)
+            .min(self.events.len());
+        self.events.iter().skip(self.events.len() - kept_new)
+    }
+}
+
+fn is_write(e: &Event) -> bool {
+    matches!(e, Event::ConfigWrite { .. } | Event::MmioWrite { .. })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloc::string::ToString;
+
+    #[test]
+    fn writes_total_never_falls_when_the_ring_drops_writes() {
+        // os-473: a full ring of writes, then only reads. `writes()` falls
+        // (the old behaviour the tour tripped on), `writes_total()` does not.
+        let mut j = Journal::new(4);
+        for i in 0..4 {
+            j.push(Event::MmioWrite {
+                bar: 0,
+                offset: i,
+                before: 0,
+                written: 1,
+                after: 1,
+            });
+        }
+        let (w0, t0, p0) = (j.writes(), j.writes_total(), j.pushed());
+        j.push(Event::Note("citire"));
+        j.push(Event::Note("citire"));
+        assert_eq!((w0, j.writes()), (4, 2), "the ring lost two writes");
+        assert_eq!(j.writes_total(), t0, "no write was pushed");
+        assert_eq!(j.pushed() - p0, 2);
+        assert_eq!(j.events_since(p0).count(), 2);
+        // More new events than the ring holds: only the kept ones.
+        for _ in 0..10 {
+            j.push(Event::Note("x"));
+        }
+        assert_eq!(j.events_since(p0).count(), 4);
+        assert_eq!(j.events_since(j.pushed()).count(), 0);
+    }
 
     #[test]
     fn sink_sees_every_event_even_dropped_ones() {

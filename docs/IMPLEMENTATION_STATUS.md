@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 261 — 27 noiembrie 2026, ~01:12–02:00 (ora României), în cloud, FĂRĂ placă — **comparația os-473 (dS pe f16 în pasul mixt rapid #513: corect, ×2,14 ca proba, +2,9 % simb/s) și alarma falsă `tur-dupa` găsită și reparată (inelul jurnalului pierdea scrieri vechi); PREDARE P2zze**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 260), l-am pus `ocupat`. În hub a venit ciclul 00:33 (os-473 = fostul
+„os-472”, `--atentie-ds`) → comparația lui (C-157 p.2, are întâietate). Clona veche avea ramura despărțită de GitHub; am lucrat
+într-o clonă proaspătă a `origin/g0-g2-fundatie` (cea veche n-am atins-o).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| os-473 alegeri + corectitudine | `attn_back_tile0_tc_v4` 12; oracolul mixt: aceleași numere (2,7·10⁻⁵ / 3,2·10⁻⁴); 16 simboluri = procesorul | CONFIRMATE (MĂSURAT de OS) |
+| dS în pas, lot 2 | 5,19 → 2,43 ms (×2,14; proba ×2,16); placa 99,82 → 97,08 ms; pasul 111,45 → 108,32 ms (+2,9 % simb/s) | CONFIRMATĂ regula (DEDUS, T273) |
+| Predicția lot 6 (264–268 ms) | placa a rulat lot 2 | NOT TESTED (cu +0,9 % de la lot 2: ~266 ms, DEDUS) |
+| `tur-dupa: ESEC` | alarmă falsă: `Journal::writes()` număra doar inelul (4 096 în OS), scrierile vechi ieșeau din inel în timpul turului; 9 / 9 jurnale se potrivesc | GĂSIT (DEDUS din jurnale) |
+| Reparația (doar adăugări în `gpu-core`) | `writes_total()`, `pushed()`, `events_since()`; folosite în `read_tour`, `chain`, `vbios_diag` | PASS în SIMULARE (3 teste noi; cu codul vechi testul turului dă mesajul de pe placă) |
+| Verificările întregi | format, clippy, **1 348 PASS** (8 ignorate), no_std | PASS |
+
+**Note:** `docs/C-157_OS473.md`, T273 (`calc_c157_os473.rs`). PREDARE `integration/cyber-universe/C-157_P2zze_os473-tur-dupa.md`.
+**Nou pentru placă: nimic scris în plus** — doar numărătoarea scrierilor e corectă („N scrieri” din rezultatul lanțului va
+crește la numărul real). Interfața: doar adăugări; `writes()` rămâne, cu avertisment în documentație.
+
+**Următorul pas:** comparațiile `mm_tc_v5` (P2zzb) și `token32_v2` (P2zzd) când vin; altfel bucla lui `mm_tc_v5` (scrierile f16
+împerecheate în memoria comună), plan + predicții întâi.
+
 ## Sesiunea 260 — 27 noiembrie 2026, ~00:10–01:30 (ora României), în cloud, FĂRĂ placă — **comparația os-471 (`token32` corect, dar ×3,6 mai lent): două cauze găsite (x citit din L2 la fiecare rând; lista rescrisă întreagă la fiecare simbol), leacurile `token32_v2` și `work_list_changes` gata în SIMULARE; PREDARE P2zzd**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 259), l-am pus `ocupat`. În hub: os-471 (`--token32`) venise la final de

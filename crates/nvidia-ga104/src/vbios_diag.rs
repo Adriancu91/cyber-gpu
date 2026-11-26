@@ -579,7 +579,8 @@ pub fn diagnose<M: Mmio + ?Sized, K: Clock + ?Sized>(
             "fereastra BAR0 prea mica pentru I3 (trebuie 4 MiB)",
         ));
     }
-    let writes_before = journal.writes();
+    // os-473: totals that never decrease (the ring may drop old writes).
+    let writes_before = journal.writes_total();
     let mut rom = Rom::new(bar0, journal, clock, budget_us);
     let r = walk(&mut rom);
     let reads = rom.reads;
@@ -588,7 +589,7 @@ pub fn diagnose<M: Mmio + ?Sized, K: Clock + ?Sized>(
         name: "I3: diagnosticul VBIOS",
         ok,
     });
-    let writes = journal.writes() - writes_before;
+    let writes = usize::try_from(journal.writes_total() - writes_before).unwrap_or(usize::MAX);
     r.map(|mut d| {
         d.prom_reads = reads;
         d.writes = writes;
