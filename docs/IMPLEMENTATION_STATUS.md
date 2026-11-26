@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 256 — 26 noiembrie 2026, ~20:10–21:05 (ora României), în cloud, FĂRĂ placă — **comparația os-468 (v4 în pasul #513 lot 6: aceleași numere, atenția −1,08 ms, pasul neschimbat din deriva plăcii) și predicțiile `token32` la G = 384 / 768, scrise înainte de placă; PREDĂRI P2zy și P2zz**
+## Sesiunea 256 — 26 noiembrie 2026, ~20:10–20:48 (ora României), în cloud, FĂRĂ placă — **comparația os-468 (v4 în pasul #513 lot 6: aceleași numere, atenția −1,08 ms, pasul neschimbat din deriva plăcii) și predicțiile `token32` la G = 384 / 768, scrise înainte de placă; PREDĂRI P2zy și P2zz**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 255), l-am pus `ocupat`. În hub: **os-468** (raportul 20:03, rândul lot 6 cu
 `--atentie-v4`) necomparat → punctul 2 al cozii, cu întâietate. os-467 reluat nu venise. Apoi `token32` (pasul lăsat de 254 / 255).
