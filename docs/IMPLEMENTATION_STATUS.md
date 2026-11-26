@@ -1,5 +1,32 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 243 — 26 noiembrie 2026, ~05:10–06:20 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile_tc`: dQ, dK, dV ai atenției pe circuitele speciale (f16 × f16 → f32) — modelul pe procesor + judecata (SIMULARE: în margine, ~3·10⁻⁴ față de F32) + programul compilat de NAK (48 registre, 0 `ffma`); încă nelegat în pasul de antrenare, nimic predat OS-ului**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 242), l-am pus `ocupat`. Niciun test nou pe placă (os-445, os-447, os-449, os-451
+fără rezultat) → punctul lăsat de sesiunea 242. Plan + predicții B1–B6 urcate înainte de cod (`be02aaa`). Am lucrat pe o ramură nouă
+din `origin/g0-g2-fundatie` (nimic șters, nimic rescris pe GitHub). Unealta NAK 2 (Mesa 26.3.1) construită din nou în cloud;
+`mm_tc_v4` a ieșit identic (aceeași sumă).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| `gpu_compute::attn_tc` (`model`, `model_with`, `Variant`, `head_products`, `head_values`, `judge`) | modelul în ordinea programului (`mma16_hw`, sumatorul os-335) + judecata cu marginea `mm_tc` pe fiecare cap | ADĂUGAT |
+| `tools/nak/attn_back_tile_tc.comp` + `nvidia_ga104::attn_back_tile_tc` | același contract ca `attn_back_tile_3`; 48 registre, 0 memorie locală, 4 `hmma`, 0 `ffma`, 32 768 octeți partajați, SHA `527d8dd1…` | COMPILAT, NU RULAT |
+| T252a B1 | 6 forme, 228 936 de elemente: aceiași biți ca `mm_tc::model` pe produsele întregi | PASS (SIMULARE) — CONFIRMATĂ |
+| T252b B2 / B3 | în margine pe 7 forme (cel mai rău 84 ‰); capul #513 față de F32: dQ 2,99·10⁻⁴, dK 2,92·10⁻⁴, dV 2,80·10⁻⁴ | PASS (SIMULARE) — CONFIRMATĂ |
+| T252c B4 | NaN peste diagonală nu schimbă nimic; 3 greșeli plantate + masca uitată prinse | PASS (SIMULARE) — CONFIRMATĂ |
+| B5 | registre ≤ 64 da (48), dar memoria partajată ține tot 3 blocuri pe SM (nu 4) | PASS (dump) — PE JUMĂTATE |
+| B6 | timpul pe placă (estimat 2,4–4,5 ms față de 9,2) | NOT TESTED |
+| Verificări | format, clippy, teste pe gazdă, build no_std | PASS (**1 228 de teste**, 8 ignorate) |
+
+**Ce înseamnă:** primul program de atenție pe circuitele speciale există și, pe procesor, dă gradienții cu abaterea așteptată de la
+f16 (~3·10⁻⁴). Nota completă: `docs/C-157_ATTN_BACK_TC.md`.
+
+**Ce e nou pentru placă:** un program compilat (`attn_back_tile_tc`), încă netrimis OS-ului (nu e în pasul de antrenare).
+**Nicio schimbare incompatibilă** (doar adăugări).
+
+**Următorul pas:** comparațiile testelor noi de pe placă când vin; altfel (1) `attn_back_tile_tc` cu 16 KiB memorie partajată (placa
+de ieșire în locul plăcilor f16) → până la 5 blocuri pe SM; (2) înlocuitorul în `gpu-sim` + opțiunea în pasul mixt; (3) PREDARE.
+
 ## Sesiunea 242 — 26 noiembrie 2026, ~04:12–05:00 (ora României), în cloud, FĂRĂ placă — **studiul atenției pe circuitele speciale (f16): atenția pasului mixt #513 (20,6 ms, os-431) ar coborî la ~5,3–9,7 ms (DEDUS) = câștig ~11–15 ms, 10–14 % din placă; precizia f16 ~5·10⁻⁴ doar cu scara 2¹⁴ pe gradient (SIMULARE pe procesor)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 241), l-am pus `ocupat`. Niciun test nou pe placă de la os-445 → punctul lăsat

@@ -606,3 +606,7 @@ niciun octet de firmware NVIDIA.
   cod scris de noi; corpurile operațiilor = programele noastre separate (`layernorm256`, `q8_fused`, `q8_fused32`, `q8_matvec32`,
   `argmax`, `embed_dev`) și `token.comp` (C-87); limitele de ocupare = tabelul public al capabilității 8.6 (deja în `occupancy`).
   Compilat cu Mesa NAK 25.0.7 (MIT), unealta de pe gazdă. Nimic din firmware-ul NVIDIA.
+- **C-157 — `attn_back_tile_tc` (sesiunea 243):** `tools/nak/attn_back_tile_tc.comp` (al nostru; cadrul din `attn_back_tile_3.comp`
+  și `mm_tc.comp`, tot ale noastre; ideea plăcilor cu `coopMatMulAdd` din documentația publică CUTLASS / VK_KHR_cooperative_matrix,
+  nicio linie copiată), `crates/gpu-compute/src/attn_tc.rs`, `crates/nvidia-ga104/src/attn_back_tile_tc.rs`, testul
+  `crates/gpu-compute/tests/c157_attn_back_tc.rs` (ale noastre). Compilat cu Mesa NAK 26.3.1 (MIT), pe gazdă.

@@ -48,6 +48,37 @@ de nicio scară în plus: aceleași intrări ca azi.
 - **B6 — timpul (DEDUS, din studiu, neschimbat):** 9,2 ms azi → **~2,4–4,5 ms**, câștig ~4,7–6,8 ms pe pas (4–6 % din placa mixtă).
   Se vede doar pe placă.
 
-## 4. Rezultatul
+## 4. Rezultatul (sesiunea 243, ~06:10; T252 pe procesor = SIMULARE; programul = COMPILAT, NU RULAT)
 
-(se completează după cod)
+| # | prezis | ieșit | verdict |
+|---|---|---|---|
+| B1 | modelul cu ordinea programului = `mm_tc::model` pe produsele întregi, bit cu bit, ≥ 6 forme | **6 forme, 228 936 de elemente, toate aceiași biți** (și cu pașii de zerouri săriți, și fără) | CONFIRMATĂ |
+| B2 | totul în marginea `mm_tc`, cel mai rău < 300 ‰ | `InMargine` pe 7 forme (cele 6 + capul #513); cel mai rău **84 ‰** (T = 17), la #513 **21 ‰** | CONFIRMATĂ |
+| B3 | față de F32 de azi, capul #513: 2·10⁻⁴ … 1·10⁻³ | dQ **2,99·10⁻⁴**, dK **2,92·10⁻⁴**, dV **2,80·10⁻⁴** (toate formele: 2,7–3,5·10⁻⁴) | CONFIRMATĂ |
+| B4 | greșelile plantate se prind; NaN peste diagonală nu schimbă nimic | NaN în dS / P peste diagonală → **aceiași biți**; masca uitată → modelul refuză (pe placă ar ieși NaN); dK fără transpusă, P în loc de dS la dK, ultimul pas de 16 lipsă → toate **`NuTrece`**; dQ și dV neatinse de greșelile din dK | CONFIRMATĂ |
+| B5 | 0 memorie locală, ≤ 64 registre → 4 blocuri pe SM (azi 3), `hmma` 2 pe `coopMatMulAdd`, fără `ffma` | **48 registre**, 0 memorie locală, 0 vărsări, **4 × `hmma.m16n8k16.f32`** (2 `coopMatMulAdd` × 2), **0 `ffma`**, 786 instrucțiuni, 12 576 octeți, `Shared size: 32768`. **Dar** memoria partajată (32 KiB × 4 = 128 KiB > 100 KiB pe SM) ține tot **3 blocuri** pe SM, ca azi; registrele ar permite 5 | PE JUMĂTATE |
+| B6 | 9,2 ms → ~2,4–4,5 ms | — (doar pe placă) | NOT TESTED |
+
+Unealta: Mesa 26.3.1 construită din nou în cloud; `mm_tc_v4` a ieșit **identic** (`488ca341…`), deci aceeași unealtă ca la os-443.
+SHA-256 `attn_back_tile_tc.sm86.sass` = `527d8dd1dc5000c26541561e8c60f59f4b5dab0d034a4d5ee593ae415aed5c65`.
+
+Cod (doar adăugări): `gpu_compute::attn_tc` (`model`, `model_with`, `Variant`, `head_products`, `head_values`, `judge`),
+`nvidia_ga104::attn_back_tile_tc` (octeții, suma, registrele, memoria partajată, grila, `shape_ok`), `tools/nak/attn_back_tile_tc.comp`,
+testul `crates/gpu-compute/tests/c157_attn_back_tc.rs` (T252a–c) și 2 teste în modul (suma, ce spune dump-ul).
+
+### Ce înseamnă (pe scurt)
+
+1. **Programul există și se compilează** pentru placă: aceleași argumente ca `attn_back_tile_3`, deci pentru OS ar fi doar alt program
+   în listă. Pe procesor (SIMULARE) dă dQ, dK, dV cu o abatere de ~3·10⁻⁴ față de F32 — cât costă f16 însăși, ca la înmulțiri.
+2. **Se lucrează doar cu circuitele speciale** în bucle (0 `ffma`), cu 48 de registre în loc de 80.
+3. **Ce am greșit în predicție:** memoria partajată, nu registrele, limitează câte blocuri stau pe SM (3, ca azi). Remediul e mic:
+   placa f32 de ieșire poate folosi locul celor două plăci f16 (16 KiB în total) → până la 5 blocuri pe SM.
+
+### Ce NU e dovedit / ce urmează
+
+- Nimic nu a rulat pe placă; timpul (B6) se vede doar acolo. Modelul presupune sumatorul potrivit în os-335.
+- Încă **nu e legat** în pasul de antrenare (`train_step`) și nu are înlocuitor în `gpu-sim`: fără asta OS-ul nu-l poate încerca.
+  Pașii următori, în ordine: (1) varianta cu 16 KiB memorie partajată; (2) înlocuitorul din `gpu-sim` + opțiunea în pasul mixt;
+  (3) PREDARE către OS cu rândul de test.
+
+**Ce e nou pentru placă:** un program nou compilat (`attn_back_tile_tc`), încă netrimis OS-ului. **Nicio schimbare incompatibilă.**
