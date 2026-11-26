@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 257 — 26 noiembrie 2026, ~21:11–22:10 (ora României), în cloud, FĂRĂ placă — **comparația os-469 (proba atenției pe circuitele speciale la treapta 64 KiB): toate predicțiile pentru pas confirmate, proba prezice acum pasul (v4 / tc16 ×1,21 față de ×1,20 în os-468), a doua dovadă a ocupării fără rezerva de 1 KiB; PREDARE P2zza**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 256), l-am pus `ocupat`. În hub: **os-469** (20:29, rândul `--atentie-tc-64k`
+cerut de noi în P2zw punctul 3) necomparat → punctul 2 al cozii, cu întâietate. os-467 reluat și `token32` nu veniseră.
+Clona veche era iar despărțită de GitHub; am lucrat într-o clonă nouă a ramurii din GitHub (cea veche neatinsă, nimic șters).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| os-469: aceiași biți la 64 KiB | tc 5/5, tc16 5/5, v4 4/4, v4pf 4/4; gărzi neatinse | CONFIRMATĂ (MĂSURAT) |
+| tc16 la 64 KiB | 0,41 ms, prezis ~0,435 (pasul lot 2 × lotul) | CONFIRMATĂ (MĂSURAT) |
+| v4 / v4pf la 64 KiB | 0,34 ms (bandă 0,25–0,40); v4pf 0,45 > tc16 | CONFIRMATE (MĂSURAT) |
+| proba = pasul | v4 / tc16: ×1,21 la probă, ×1,20 în os-468 | CONFIRMATĂ (DEDUS, T267) |
+| ocuparea fără rezerva de 1 KiB (R0) | tc (32 KiB) ×1,67 la 64 KiB = 2 blocuri pe SM, posibil doar fără rezervă | DEDUS (a doua dovadă după os-423) |
+| dS la 64 KiB | 1 bloc pe SM sub ambele citiri → rândul 64 KiB nu-l schimbă; estimarea dS în pas coborâtă la ~3–7 ms | DEDUS, încredere mică |
+| T267 (calcul os-469) | 4 / 4 | PASS (CALCUL) |
+| Verificările întregi | format, clippy, **1 319 PASS** (8 ignorate), no_std | PASS |
+
+**Note:** `docs/C-157_OS469.md`. **Nou pentru placă:** nimic. PREDARE `integration/cyber-universe/C-157_P2zza_os469.md`.
+Nimic schimbat în interfața crate-urilor (doar un test și documente).
+
+**Următorul pas:** comparația os-467 reluat (P2zx, dS) și `token32` (P2zz) când vin; altfel plan + predicții pentru
+`mm_tc_v4` (79 % din pasul #513 lot 6).
+
 ## Sesiunea 256 — 26 noiembrie 2026, ~20:10–20:48 (ora României), în cloud, FĂRĂ placă — **comparația os-468 (v4 în pasul #513 lot 6: aceleași numere, atenția −1,08 ms, pasul neschimbat din deriva plăcii) și predicțiile `token32` la G = 384 / 768, scrise înainte de placă; PREDĂRI P2zy și P2zz**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 255), l-am pus `ocupat`. În hub: **os-468** (raportul 20:03, rândul lot 6 cu
