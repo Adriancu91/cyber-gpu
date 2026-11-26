@@ -136,6 +136,65 @@ pub fn predicted_choice(forms: &[Form], step_bytes: u32) -> GpuResult<(MmChoice,
     Ok((c, total))
 }
 
+/// C-157 session 241 (`docs/C-157_VALURI_V4.md`): rows and columns of C per `mm_tc_v4` block (64 × 64, as `mm_tc`).
+pub const TC_V4_TILE: u32 = 64;
+
+/// The `mm_tc_v4` calibration from os-443: qkv-513 (**6 144 × 2 304 × 768** = 3 456 blocks), per blocks per SM:
+/// (blocks per SM, launch ns, waves) = 4 737 216 ns / 72 waves at 1 block per SM (step 32 KiB), 2 623 680 ns / 36
+/// waves at 2 (step 64 KiB; three 24 KiB blocks never fit). Board clock of the probe (MĂSURAT); everything derived
+/// from it is DEDUS.
+pub const OS443_TC_V4: [(u32, u64, u64); 2] = [(1, 4_737_216, 72), (2, 2_623_680, 36)];
+
+/// The K of the `mm_tc_v4` calibration (qkv-513).
+pub const TC_V4_CAL_K: u64 = 768;
+
+fn tc_v4_cal(b: u32) -> Option<(u64, u64)> {
+    OS443_TC_V4.iter().find(|p| p.0 == b).map(|p| (p.1, p.2))
+}
+
+/// Blocks of one `mm_tc_v4` product C (M × N).
+pub fn tc_v4_blocks(m: u32, n: u32) -> u32 {
+    m.div_ceil(TC_V4_TILE) * n.div_ceil(TC_V4_TILE)
+}
+
+/// ns of one `mm_tc_v4` wave with `b` blocks per SM (1 or 2), at K = [`TC_V4_CAL_K`], rounded down; `None` otherwise.
+pub fn tc_v4_wave_ns(b: u32) -> Option<u64> {
+    tc_v4_cal(b).map(|(t, w)| t / w)
+}
+
+/// Predicted ns of one `mm_tc_v4` product (M, N, K) at `b` blocks per SM (DEDUS): full waves at `b`, the last partial
+/// wave at the occupancy it really has, linear in K — the same rule as [`launch_ns`] (exact fractions, one rounding).
+pub fn tc_v4_launch_ns(m: u32, n: u32, k: u32, b: u32) -> Option<u64> {
+    let g = tc_v4_blocks(m, n);
+    let slots = SMS * b;
+    let (full, rest) = (g / slots, g % slots);
+    let (tb, wb) = tc_v4_cal(b)?;
+    // ns × wb × wr, so both fractions stay exact
+    let (num, den) = if rest != 0 {
+        let (tr, wr) = tc_v4_cal(rest.div_ceil(SMS))?;
+        (
+            (full as u128 * tb as u128 * wr as u128) + (tr as u128 * wb as u128),
+            wb as u128 * wr as u128,
+        )
+    } else {
+        (full as u128 * tb as u128, wb as u128)
+    };
+    Some((num * k as u128 / (den * TC_V4_CAL_K as u128)) as u64)
+}
+
+/// Busy "slot-ns" of one `mm_tc_v4` product at `b` blocks per SM: every block costs one wave's time at its K.
+fn tc_v4_busy(m: u32, n: u32, k: u32, b: u32) -> Option<u128> {
+    let (t, w) = tc_v4_cal(b)?;
+    Some(t as u128 * tc_v4_blocks(m, n) as u128 * k as u128 / (w as u128 * TC_V4_CAL_K as u128))
+}
+
+/// The idle share, in thousandths, of one `mm_tc_v4` launch's slots (1 − busy / (launch time × slots)).
+pub fn tc_v4_idle_permille(m: u32, n: u32, k: u32, b: u32) -> Option<u64> {
+    let offered = tc_v4_launch_ns(m, n, k, b)? as u128 * (SMS * b) as u128;
+    let busy = tc_v4_busy(m, n, k, b)?;
+    Some((1_000 - (busy * 1_000 / offered.max(1)).min(1_000)) as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,5 +214,17 @@ mod tests {
         // 1024 × 2304 × 768 on 128x128 at 2 blocks: 144 blocks = 1 wave of 96 + 48 left (1 block per SM).
         assert_eq!(launch_ns(3, 1024, 2304, 768, 2), Some(637_750 + 630_067));
         assert_eq!(launch_ns(0, 1024, 2304, 768, 6), Some(2 * 520_300));
+    }
+
+    #[test]
+    fn tc_v4_reproduces_os443() {
+        assert_eq!(tc_v4_blocks(6144, 2304), 3456);
+        assert_eq!(tc_v4_launch_ns(6144, 2304, 768, 2), Some(2_623_680));
+        assert_eq!(tc_v4_launch_ns(6144, 2304, 768, 1), Some(4_737_216));
+        assert_eq!(tc_v4_wave_ns(2), Some(72_880));
+        // 768 × 768: 144 blocks = 1 wave of 96 + 48 at 1 per SM (4 737 216 / 72 = 65 794.67)
+        assert_eq!(tc_v4_launch_ns(768, 768, 768, 2), Some(72_880 + 65_794));
+        assert_eq!(tc_v4_idle_permille(1024, 768, 768, 2), Some(0));
+        assert_eq!(tc_v4_wave_ns(3), None);
     }
 }

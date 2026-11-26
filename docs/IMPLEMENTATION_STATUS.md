@@ -1,5 +1,37 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 241 — 26 noiembrie 2026, ~03:11–03:55 (ora României), în cloud, FĂRĂ placă — **valurile `mm_tc_v4` pe pasul mixt #513: placa os-445 (106 ms) = ~73 ms înmulțiri + ~33 ms restul (DEDUS, modelul la −0,1 %); lansarea dublă dX + dW nu mai merită (≤ 0,9 %); profilul pasului mixt gata de legat (`StepProfile::from_mixed`)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 240), l-am pus `ocupat`. Niciun test nou pe placă de la os-445 → punctul lăsat
+deschis de sesiunea 236 (`docs/C-157_PROGRAM_PERSISTENT.md`): „lansarea dublă dX + dW, de remăsurat pe `mm_tc_v4`”. Predicțiile V1–V4
+urcate înainte de cod (`ca5789f`). Ramura locală veche avea iar altă istorie; am pus `g0-g2-fundatie` pe `origin` (copia veche în
+ramura locală `backup-local-vechi`; nimic șters, nimic rescris pe GitHub).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| `wave_model::tc_v4_*` + `OS443_TC_V4` | timpul pe val al `mm_tc_v4` din os-443 (qkv-513 = 6 144 × 2 304 × 768, 36 / 72 de valuri) | ADĂUGAT |
+| `persistent_study::backward_pairs_mixed` / `tc_v4_pair_cost` | perechile dX / dW ale listei mixte, podeaua lansării duble pe v4 | ADĂUGAT |
+| `train_profile::StepProfile::from_mixed` | profilul pasului mixt, fiecare `mm_tc` numit după alegerea lui `pack_mixed_fast` | ADĂUGAT |
+| T250a | calibrarea = rândurile os-443 (citite din raport) | PASS |
+| T250b V1 | înmulțirile pasului mixt: DEDUS 73 339 µs (106 001 − restul os-431 32 662), modelul 73 260 µs (**−0,1 %**) | PASS (DEDUS) |
+| T250c V2 | locurile goale ale valurilor: 1,3 % din înmulțiri | PASS (DEDUS) |
+| T250d V3 | lansarea dublă dX + dW, plafon: 939 µs = 0,9 % din placă | PASS (DEDUS) |
+| T250e V4 | restul 30,8 % din placă; atenția 19,4 % din placă (63 % din rest) | PASS (DEDUS) |
+| T250f | profilul pasului mixt: 484 de lansări, 147 sub `mm_tc_v4`; refuzurile | PASS (SIMULARE, timpi din model) |
+| Verificări | format, clippy, teste pe gazdă, build no_std | PASS (**1 214 teste**, 8 ignorate) |
+
+**Ce înseamnă:** pe pasul mixt, cozile valurilor nu mai contează (plăcile de 64 × 64 umplu valurile) → firul „program persistent /
+lansare dublă la antrenare” se închide. Ce rămâne mare: înmulțirile însele (69 % din placă, ~8,2 TFLOP/s) și atenția F32 (19 %).
+O greșeală a mea, prinsă de test: am luat întâi qkv-513 drept forma pasului (1 024 de rânduri; e 6 144) — modelul ieșea +499 %;
+corectat, notat în `docs/C-157_VALURI_V4.md` §2.
+
+**Ce e nou pentru placă:** nimic. Predare mică opțională: `integration/cyber-universe/C-157_P2zl_profil-pas-mixt.md` (profilul pe
+lansări al pasului mixt, ca DEDUS-ul de aici să devină MĂSURAT). **Nicio schimbare incompatibilă** (doar adăugări).
+
+**Următorul pas:** comparațiile testelor noi de pe placă când vin (os-451 proba barierei, os-447 `--lot-prin-ram`, os-449, text real,
+profilul pasului mixt dacă OS-ul îl leagă); altfel, fără placă: studiul atenției pe circuitele speciale (f16, ca `mm_tc`) — cât ar
+lua din cele ~20,6 ms, cu predicții înainte.
+
 ## Sesiunea 240 — 26 noiembrie 2026, ~02:11–03:00 (ora României), în cloud, FĂRĂ placă — **`token32` cu G mare: driverul alege treapta memoriei comune după numărul de grupuri (`token32_qmd_wide`) + proba barierei largă (G = 384 / 768) pregătită, în SIMULARE**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 239), l-am pus `ocupat`. Niciun test nou pe placă de la os-445 → punctul din

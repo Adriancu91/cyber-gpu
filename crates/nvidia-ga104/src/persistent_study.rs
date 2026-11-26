@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 
 use crate::kronos_perf::PAPER_MB_S;
 use crate::train_profile::ParsedProfile;
-use crate::train_step::Launch;
+use crate::train_step::{Launch, MixedLaunch};
 use crate::wave_model::{self as wm, CAL_K, SMS};
 
 /// L2 cache of the GA104 (public NVIDIA spec sheet: 4 MB).
@@ -189,6 +189,80 @@ pub fn pair_cost(variant: usize, b: u32, p: &Pair) -> Option<PairCost> {
     // work in "slot-ns": every block costs one wave's time at its K
     let busy = wave as u128 * work as u128 / CAL_K as u128;
     let offered = separate_ns as u128 * slots as u128;
+    let idle_permille = (1_000 - (busy * 1_000 / offered.max(1)).min(1_000)) as u64;
+    Some(PairCost {
+        separate_ns,
+        dual_floor_ns,
+        idle_permille,
+    })
+}
+
+/// C-157 session 241 (`docs/C-157_VALURI_V4.md`): the dX / dW pairs of a **mixed** step list (`mm_tc` launches tagged
+/// `inapoi:<name>-dX` / `inapoi:<name>-dW`) for `layer` (`None` = the head, `cap`), in list order.
+pub fn backward_pairs_mixed(list: &[MixedLaunch], layer: Option<u16>) -> Vec<Pair> {
+    let mine: Vec<(&'static str, Product)> = list
+        .iter()
+        .filter_map(|l| match l {
+            MixedLaunch::Tc {
+                args,
+                tag,
+                layer: ly,
+            } if *ly == layer => Some((
+                *tag,
+                Product {
+                    m: args.m,
+                    n: args.n,
+                    k: args.k,
+                },
+            )),
+            _ => None,
+        })
+        .collect();
+    let mut out = Vec::new();
+    for (tag, dx) in &mine {
+        let Some(name) = tag
+            .strip_prefix("inapoi:")
+            .and_then(|t| t.strip_suffix("-dX"))
+        else {
+            continue;
+        };
+        let dw = mine.iter().find(|(t, _)| {
+            t.strip_prefix("inapoi:")
+                .and_then(|t| t.strip_suffix("-dW"))
+                == Some(name)
+        });
+        if let Some((_, dw)) = dw {
+            out.push(Pair {
+                name,
+                dx: *dx,
+                dw: *dw,
+            });
+        }
+    }
+    out
+}
+
+/// [`PairCost`] of `p` on `mm_tc_v4` with `b` blocks per SM ([`wm::tc_v4_launch_ns`]; the dual floor as in
+/// [`pair_cost`], never above the separate launches). `None` if there are no times for `b`.
+pub fn tc_v4_pair_cost(b: u32, p: &Pair) -> Option<PairCost> {
+    let one = |q: &Product| wm::tc_v4_launch_ns(q.m, q.n, q.k, b);
+    let separate_ns = one(&p.dx)? + one(&p.dw)?;
+    let (cal_ns, cal_waves) = wm::OS443_TC_V4
+        .iter()
+        .find(|c| c.0 == b)
+        .map(|c| (c.1, c.2))?;
+    let slots = (SMS * b) as u128;
+    let kcal = wm::TC_V4_CAL_K as u128;
+    let work = wm::tc_v4_blocks(p.dx.m, p.dx.n) as u128 * p.dx.k as u128
+        + wm::tc_v4_blocks(p.dw.m, p.dw.n) as u128 * p.dw.k as u128;
+    // slot-ns of all blocks (one wave's time each, at its K)
+    let busy = cal_ns as u128 * work / (cal_waves as u128 * kcal);
+    let packed = busy.div_ceil(slots);
+    let longest = cal_ns as u128 * p.dx.k.max(p.dw.k) as u128 / (cal_waves as u128 * kcal);
+    // A partial last wave runs at 1 block per SM, cheaper per block than a full 2-block wave, so the packed floor
+    // (every block at the full-wave cost) can exceed the separate launches: then the dual launch wins nothing.
+    let dual_floor_ns = (packed.max(longest) as u64).min(separate_ns);
+    let offered = separate_ns as u128 * slots;
     let idle_permille = (1_000 - (busy * 1_000 / offered.max(1)).min(1_000)) as u64;
     Some(PairCost {
         separate_ns,

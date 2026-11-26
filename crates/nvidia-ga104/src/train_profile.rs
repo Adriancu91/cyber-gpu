@@ -19,7 +19,7 @@ use alloc::vec::Vec;
 
 use gpu_core::error::{GpuError, GpuResult};
 
-use crate::train_step::Launch;
+use crate::train_step::{Launch, MixedLaunch, TcPick};
 use crate::transfer;
 
 fn bad(why: &'static str) -> GpuError {
@@ -78,6 +78,32 @@ impl StepProfile {
         }
         Ok(StepProfile {
             names: list.iter().map(|l| (l.tag, l.prog.name())).collect(),
+            steps: Vec::new(),
+        })
+    }
+
+    /// C-157 session 241 (`docs/C-157_VALURI_V4.md`): the names of a **mixed** step's launches (`Plan::step_mixed`),
+    /// with each `mm_tc` launch named after the program the packer really chose (`picks`, as returned by
+    /// `train_step::pack_mixed_fast`: `mm_tc_v4` / `mm_tc_pf` / `mm_tc_gelu`; `None` = the plain `mm_tc`). The
+    /// per-launch records are the same as for [`Self::from_launches`]. `picks` of another length is refused.
+    pub fn from_mixed(list: &[MixedLaunch], picks: &[Option<TcPick>]) -> GpuResult<Self> {
+        if list.is_empty() {
+            return Err(bad("profil: lista pasului e goala"));
+        }
+        if picks.len() != list.len() {
+            return Err(bad("profil: alegerile mm_tc nu au cate lansari are lista"));
+        }
+        let names = list
+            .iter()
+            .zip(picks)
+            .map(|(l, p)| match (l, p) {
+                (MixedLaunch::Std(_), _) => (l.tag(), l.name()),
+                (_, Some(p)) => (l.tag(), p.name()),
+                (_, None) => (l.tag(), l.name()),
+            })
+            .collect();
+        Ok(StepProfile {
+            names,
             steps: Vec::new(),
         })
     }
