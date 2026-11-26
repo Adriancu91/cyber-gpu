@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 245 — 26 noiembrie 2026, ~07:14–08:15 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile0_tc`: dP = dO·Vᵀ pe circuitele speciale (f16), dot și dS rămân F32 ca azi; modelul pe procesor + judecata + programul compilat; T254 în SIMULARE; încă nelegat, nicio PREDARE**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 244), l-am pus `ocupat`. Niciun test nou pe placă în hub (os-445/447/449/451/456,
+P2zm fără rezultat) → punctul lăsat de sesiunea 244 (atenția înainte / dS pe circuitele speciale). Am ales `attn_back_tile0_3` (dS),
+fiindcă studiul 242 îl dă cel mai încet pe FLOP. Planul și predicțiile E1–E7 urcate înainte de cod (`57b4079`), nota
+`docs/C-157_ATTN_BACK0_TC.md`. Clona locală a ramurii era veche și divergentă: am lucrat pe o ramură locală nouă din GitHub (nimic șters).
+Unealta NAK 2 (Mesa 26.3.1) construită din nou; `mm_tc_v4` și `attn_back_tile_tc16` ies identic.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| E1 aceiași biți | dP în ordinea programului = `mm_tc::model` (6 forme, 136 579 elemente); coada F32 cu dP-ul de azi = dS-ul de azi bit cu bit | PASS (SIMULARE) |
+| E2 margine | dP `InMargine` pe 7 forme, cel mai rău 74 ‰ (#513: 32 ‰) | PASS (SIMULARE) |
+| E3 față de F32 (#513) | dP 2,98·10⁻⁴, dS 3,01·10⁻⁴ (prezis dS > dP — nu, sunt egale) | PASS pe jumătate (SIMULARE) |
+| E4 ambele programe înapoi pe circuite | dQ 4,25·10⁻⁴, dK 4,19·10⁻⁴, dV = B3 bit cu bit | PASS (SIMULARE) |
+| E5 greșeli plantate | NaN peste diagonală: aceiași biți; V netranspus / masca uitată prinse; fără scară 2,95·10⁻³ (prezis ≥ 1·10⁻², GREȘIT) | PASS pe jumătate (SIMULARE) |
+| E6 programul | COMPILAT (NAK 26.3.1): 56 registre, 0 memorie locală, 16 `hmma`, 8 `ffma.ftz` doar în `dot`, 33 024 B partajată, cbuf la 0x700, SHA `95fc392e…` | PASS (compilare) / NOT TESTED pe placă |
+| E7 timpul | prezis 5,2 → ~1,8–3,2 ms (DEDUS) | NOT TESTED |
+| Verificările întregi | `tools/check.sh`: format, clippy, **1 245 PASS** (8 ignorate), no_std | PASS |
+
+**Următorul pas:** înlocuitorul `attn_back_tile0_tc` în `gpu-sim` + opțiunea în pasul mixt rapid (lansările `attn_back_tile0_3` → `attn_back_tile0_tc`,
+ca `attn_tc_list`) + antrenarea mini în SIMULARE cu ambele programe înapoi pe circuite, apoi PREDARE. Dacă vin rezultate de pe placă
+(os-451, P2zm), comparațiile lor au întâietate.
+
 ## Sesiunea 244 — 26 noiembrie 2026, ~06:10–07:00 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile_tc` legat în pasul mixt rapid (în spatele unei alegeri a OS-ului) + înlocuitorul din `gpu-sim` + varianta `attn_back_tile_tc16` (16 KiB); găsită și reparată o greșeală de cbuf (argumentele la 0x700); PREDARE către OS (nota P2zm)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 243), l-am pus `ocupat`. Niciun test nou pe placă (os-445, os-447, os-449, os-451

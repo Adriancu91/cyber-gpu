@@ -1,0 +1,232 @@
+// C-157 (docs/C-157_ATTN_BACK0_TC.md, plan and predictions E1-E7 pushed before this code, commit 57b4079):
+// attn_back_tile0_3's job (mode 0: dP = dO*V^T, dot = sum_j P*dP, dS = P*(dP - dot)*scale) with ONLY the dP product
+// on the tensor cores (every element of dO and V rounded to binary16, float16_t(x), when copied into shared memory;
+// coopMatMulAdd f16 x f16 -> f32, HMMA.16816.F32 on SM 8.6). The dot chain and pass 2 are attn_back_tile0_3's, in
+// the same order (fma over j ascending, the same masks), so with today's F32 dP they would give today's bits.
+// The same arguments, grid [ceil(T/64), H, B], blocks of 256 threads and result places as attn_back_tile0_3.
+// Layout (as attn_back_tile_tc16.comp): 8 subgroups of 32; subgroup w holds 2 accumulators 16x16 of the 64x64 dP
+// tile: rows 16*(w/2), columns 32*(w%2) + 0 / 16.
+//   sm[4096] uint (16 KiB): during the product, words 0..2047 = the dO tile [r][e] in f16 (2 per word, low half
+//     first), words 2048..4095 = the V tile [j][e] in f16; A = dO (row-major), B = V^T (V loaded column-major,
+//     no transposed copy; offsets / strides in words = f16 index / 2). After a barrier that follows the last product,
+//     sm holds the P tile in f32 (attn_back_tile0_3's skewed address sk, as bits).
+//   cs[64 * 65] float: the finished dP tile, rows of 65 (the dot chain reads one row per thread without bank
+//     conflicts, as attn_back_tile0_3's P tile).
+// CPU model and verdict: gpu_compute::attn_tc (back0_model, judge_dp). Nothing here has run on a board.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_cooperative_matrix : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Buf { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args {
+    In qkv; In p; In dout; Buf ds; Out dqkv;
+    uint t; uint c; uint heads; uint d; uint mode; float scale;
+} args;
+
+shared uint sm[64 * 64];
+shared float cs[64 * 65];
+const uint SB = 2048u;
+
+// Skewed tile address of (row, column) (as attn_back_tile0_3).
+uint sk(uint row, uint col) {
+    return row * 64u + ((col + row) & 63u);
+}
+
+void main() {
+    if (args.mode != 0u) {
+        return;
+    }
+    uint T = args.t;
+    uint C = args.c;
+    uint d = args.d;
+    uint b = gl_WorkGroupID.z;
+    uint h = gl_WorkGroupID.y;
+    uint bx = gl_WorkGroupID.x;
+    uint i0 = bx * 64u;
+    uint lid = gl_LocalInvocationID.x;
+    uint tx = lid & 15u;
+    uint ty = lid >> 4u;
+    uint w = lid >> 5u;
+    uint wr = (w >> 1u) * 16u;
+    uint wc = (w & 1u) * 32u;
+    uint ntiles = (T + 63u) / 64u;
+    uint row3 = 3u * C;
+    uint base = (b * args.heads + h) * T * T;
+
+    float dot = 0.0;  // thread lid < 64: the chain of row i0 + lid
+    for (uint jt = 0u; jt <= bx; jt++) {
+        barrier();
+        // dO and V tiles -> f16 pairs (x even, x + 1); the loads first (clamped addresses), the selects after them.
+        [[dont_unroll]] for (uint hh = 0u; hh < 8u; hh += 4u) {
+            float lo[8];
+            float lv[8];
+            [[unroll]] for (uint m = 0u; m < 4u; m++) {
+                uint q = lid + 256u * (hh + m);
+                uint r = q >> 5u;
+                uint x0 = (q & 31u) * 2u;
+                uint i = min(i0 + r, T - 1u);
+                uint jr = min(jt * 64u + r, T - 1u);
+                [[unroll]] for (uint u = 0u; u < 2u; u++) {
+                    uint x = min(x0 + u, d - 1u);
+                    lo[2u * m + u] = args.dout.v[(b * T + i) * C + h * d + x];
+                    lv[2u * m + u] = args.qkv.v[(b * T + jr) * row3 + 2u * C + h * d + x];
+                }
+            }
+            [[unroll]] for (uint m = 0u; m < 4u; m++) {
+                uint q = lid + 256u * (hh + m);
+                uint r = q >> 5u;
+                uint x0 = (q & 31u) * 2u;
+                float16_t va[2];
+                float16_t vb[2];
+                [[unroll]] for (uint u = 0u; u < 2u; u++) {
+                    uint x = x0 + u;
+                    va[u] = float16_t((i0 + r < T && x < d) ? lo[2u * m + u] : 0.0);
+                    vb[u] = float16_t((jt * 64u + r < T && x < d) ? lv[2u * m + u] : 0.0);
+                }
+                sm[q] = packFloat2x16(f16vec2(va[0], va[1]));
+                sm[SB + q] = packFloat2x16(f16vec2(vb[0], vb[1]));
+            }
+        }
+        barrier();
+        coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> acc[2];
+        acc[0] = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+        acc[1] = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+        [[unroll]] for (uint kk = 0u; kk < 64u; kk += 16u) {
+            coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> fa;
+            coopMatLoad(fa, sm, (wr * 64u + kk) / 2u, 32u, gl_CooperativeMatrixLayoutRowMajor);
+            [[unroll]] for (uint j = 0u; j < 2u; j++) {
+                // B[e][jj] = V[jj][e]: column-major from the V tile, column jj at word (jj * 64 + e) / 2
+                coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> fb;
+                coopMatLoad(fb, sm, SB + ((wc + 16u * j) * 64u + kk) / 2u, 32u,
+                            gl_CooperativeMatrixLayoutColumnMajor);
+                acc[j] = coopMatMulAdd(fa, fb, acc[j]);
+            }
+        }
+        [[unroll]] for (uint j = 0u; j < 2u; j++) {
+            coopMatStore(acc[j], cs, wr * 65u + wc + 16u * j, 65u, gl_CooperativeMatrixLayoutRowMajor);
+        }
+        barrier();  // every product done (sm free) and the dP tile complete in cs
+        // dP stored as attn_back_tile0_3 does (F2: below the diagonal j < i0 <= i always).
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint i = i0 + ty + 16u * a;
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                uint j = jt * 64u + tx + 16u * k;
+                if (i < T && (jt < bx || j <= i)) {
+                    args.ds.v[base + i * T + j] = cs[(ty + 16u * a) * 65u + tx + 16u * k];
+                }
+            }
+        }
+        // the P tile into sm (f32 bits, skewed), as attn_back_tile0_3's
+        [[dont_unroll]] for (uint hh = 0u; hh < 16u; hh += 8u) {
+            float lp[8];
+            [[unroll]] for (uint m = 0u; m < 8u; m++) {
+                uint idx = lid + 256u * (hh + m);
+                uint i = i0 + (idx >> 6u);
+                uint j = jt * 64u + (idx & 63u);
+                uint ic = min(i, T - 1u);
+                lp[m] = args.p.v[base + ic * T + min(j, ic)];
+            }
+            [[unroll]] for (uint m = 0u; m < 8u; m++) {
+                uint idx = lid + 256u * (hh + m);
+                uint i = i0 + (idx >> 6u);
+                uint j = jt * 64u + (idx & 63u);
+                sm[sk(idx >> 6u, idx & 63u)] = floatBitsToUint((i < T && j <= i) ? lp[m] : 0.0);
+            }
+        }
+        barrier();
+        if (lid < 64u) {
+            uint pb = lid * 65u;
+            if (jt < bx) {
+                [[dont_unroll]] for (uint jj0 = 0u; jj0 < 64u; jj0 += 4u) {
+                    [[unroll]] for (uint u = 0u; u < 4u; u++) {
+                        dot = fma(uintBitsToFloat(sm[sk(lid, jj0 + u)]), cs[pb + (jj0 + u)], dot);
+                    }
+                }
+            } else {
+                uint i = i0 + lid;
+                [[dont_unroll]] for (uint jj0 = 0u; jj0 < 64u; jj0 += 4u) {
+                    [[unroll]] for (uint u = 0u; u < 4u; u++) {
+                        uint jj = jj0 + u;
+                        uint j = jt * 64u + jj;
+                        if (i < T && j <= i) {
+                            dot = fma(uintBitsToFloat(sm[sk(lid, jj)]), cs[pb + jj], dot);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    barrier();
+    if (lid < 64u) {
+        cs[lid] = dot;
+    }
+    barrier();
+    float dr[4];
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        dr[a] = cs[ty + 16u * a];
+    }
+    // Pass 2: attn_back_tile0_3's, unchanged.
+    for (uint jt = 0u; jt < bx; jt++) {
+        float lds_[16];
+        float lps[16];
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint ic = min(i0 + ty + 16u * a, T - 1u);
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                uint o = base + ic * T + jt * 64u + tx + 16u * k;
+                lds_[a * 4u + k] = args.ds.v[o];
+                lps[a * 4u + k] = args.p.v[o];
+            }
+        }
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint i = i0 + ty + 16u * a;
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                float x = lds_[a * 4u + k] - dr[a];
+                float y = (lps[a * 4u + k] * x) * args.scale;
+                if (i < T) {
+                    args.ds.v[base + i * T + jt * 64u + tx + 16u * k] = y;
+                }
+            }
+        }
+    }
+    {
+        uint jt = bx;
+        float lds_[16];
+        float lps[16];
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint ic = min(i0 + ty + 16u * a, T - 1u);
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                uint o = base + ic * T + min(jt * 64u + tx + 16u * k, ic);
+                lds_[a * 4u + k] = args.ds.v[o];
+                lps[a * 4u + k] = args.p.v[o];
+            }
+        }
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint i = i0 + ty + 16u * a;
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                uint j = jt * 64u + tx + 16u * k;
+                float x = lds_[a * 4u + k] - dr[a];
+                float v = (lps[a * 4u + k] * x) * args.scale;
+                if (i < T && j < T) {
+                    args.ds.v[base + i * T + j] = (j <= i) ? v : 0.0;
+                }
+            }
+        }
+    }
+    for (uint jt = bx + 1u; jt < ntiles; jt++) {
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint i = i0 + ty + 16u * a;
+            [[unroll]] for (uint k = 0u; k < 4u; k++) {
+                uint j = jt * 64u + tx + 16u * k;
+                if (i < T && j < T) {
+                    args.ds.v[base + i * T + j] = 0.0;
+                }
+            }
+        }
+    }
+}

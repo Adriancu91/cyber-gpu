@@ -338,9 +338,274 @@ pub fn judge(
     }
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// C-157, session 245 (`docs/C-157_ATTN_BACK0_TC.md`, plan and predictions E1–E7 pushed before this code, `57b4079`):
+// `attn_back_tile0_tc`, mode 0 of the attention backward with only the dP = dO·Vᵀ product on the tensor cores; the
+// dot chain and dS stay F32, in the order of `layer::attn_back_row_gpu` (the model of today's `attn_back_tile0_3`).
+// ---------------------------------------------------------------------------------------------------------------
+
+/// What the mode-0 model may change ([`Back0Variant::PROGRAM`] is the plan; the rest are planted mistakes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Back0Variant {
+    /// MISTAKE: B = V as stored ([j][e] read as [e][j]) instead of Vᵀ (only meaningful when d = 64 covers the tile).
+    pub v_untransposed: bool,
+    /// MISTAKE: the dot chain runs over every j < T (P read above the diagonal).
+    pub dot_no_mask: bool,
+}
+
+impl Back0Variant {
+    /// The planned program.
+    pub const PROGRAM: Back0Variant = Back0Variant {
+        v_untransposed: false,
+        dot_no_mask: false,
+    };
+}
+
+/// dP of every head, `[B, H, T, T]`, **all** T × T elements (the program computes the tiles on and below the
+/// diagonal; the elements above it inside those tiles are computed and not stored), in the program's order: per
+/// 64 × 64 tile, 16 × 16 accumulators from zero, e in 4 steps of 16 ([`mma::mma16_hw`]). `None` for a bad shape,
+/// d > 64, wrong lengths, or a dO / V value outside binary16.
+pub fn back0_dp_with(
+    s: &AttnShape,
+    qkv: &[f32],
+    dout: &[f32],
+    adder: HwAdder,
+    v: Back0Variant,
+) -> Option<Vec<f32>> {
+    let (nq, no, np) = s.sizes()?;
+    let (t, c, d) = (s.t, s.c, s.d());
+    if d == 0 || d > TILE || qkv.len() != nq || dout.len() != no {
+        return None;
+    }
+    let ntiles = t.div_ceil(TILE);
+    let mut out = alloc::vec![0.0f32; np];
+    let mut ha = [0u16; STEP * STEP];
+    let mut hb = [0u16; STEP * STEP];
+    for b in 0..s.batch {
+        for h in 0..s.heads {
+            let base = (b * s.heads + h) * t * t;
+            for it in 0..ntiles {
+                for jt in 0..=it {
+                    for r0 in (0..TILE).step_by(STEP) {
+                        for c0 in (0..TILE).step_by(STEP) {
+                            let mut acc = [0.0f32; STEP * STEP];
+                            for kk in (0..TILE).step_by(STEP) {
+                                for i in 0..STEP {
+                                    let row = it * TILE + r0 + i;
+                                    for q in 0..STEP {
+                                        let e = kk + q;
+                                        ha[i * STEP + q] = if row < t && e < d {
+                                            h16(dout[(b * t + row) * c + h * d + e])?
+                                        } else {
+                                            0
+                                        };
+                                    }
+                                }
+                                for q in 0..STEP {
+                                    let e = kk + q;
+                                    for j in 0..STEP {
+                                        let col = jt * TILE + c0 + j;
+                                        // B[e][col] = V[col][e]; the mistake reads the tile as stored, V[e][col].
+                                        let (vr, ve) = if v.v_untransposed {
+                                            (jt * TILE + e, c0 + j)
+                                        } else {
+                                            (col, e)
+                                        };
+                                        hb[q * STEP + j] = if vr < t && ve < d && col < t && e < d {
+                                            h16(qkv[(b * t + vr) * 3 * c + 2 * c + h * d + ve])?
+                                        } else {
+                                            0
+                                        };
+                                    }
+                                }
+                                acc = mma::mma16_hw(&ha, &hb, &acc, adder)?;
+                            }
+                            for i in 0..STEP {
+                                let row = it * TILE + r0 + i;
+                                for j in 0..STEP {
+                                    let col = jt * TILE + c0 + j;
+                                    if row < t && col < t {
+                                        out[base + row * t + col] = acc[i * STEP + j];
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Some(out)
+}
+
+/// The F32 tail of mode 0 given dP (`[B, H, T, T]`), in the order of [`crate::layer::attn_back_row_gpu`]:
+/// dot = `ffma.ftz` chain over j ≤ i ascending of P_ij·dP_ij; dS_ij = (P_ij·(dP_ij − dot))·scale for j ≤ i, 0 above.
+/// Returns dS `[B, H, T, T]`.
+pub fn back0_tail(s: &AttnShape, p: &[f32], dp: &[f32], scale: f32, v: Back0Variant) -> Vec<f32> {
+    let t = s.t;
+    let mut ds = alloc::vec![0.0f32; dp.len()];
+    for bh in 0..s.batch * s.heads {
+        for i in 0..t {
+            let row = (bh * t + i) * t;
+            let last = if v.dot_no_mask { t } else { i + 1 };
+            let mut dot = 0.0f32;
+            for j in 0..last {
+                dot = crate::math::fma_f32_ftz(p[row + j], dp[row + j], dot);
+            }
+            for j in 0..=i {
+                let x = crate::math::add_f32_ftz(dp[row + j], -dot);
+                ds[row + j] = crate::layer::mul_ftz(crate::layer::mul_ftz(p[row + j], x), scale);
+            }
+        }
+    }
+    ds
+}
+
+/// The planned `attn_back_tile0_tc` (adder fitted in os-335): dS `[B, H, T, T]`. SIMULARE only.
+pub fn back0_model(
+    s: &AttnShape,
+    qkv: &[f32],
+    p: &[f32],
+    dout: &[f32],
+    scale: f32,
+) -> Option<Vec<f32>> {
+    back0_model_with(s, qkv, p, dout, scale, GA104_OS335, Back0Variant::PROGRAM)
+}
+
+/// [`back0_model`] with a chosen adder and variant.
+pub fn back0_model_with(
+    s: &AttnShape,
+    qkv: &[f32],
+    p: &[f32],
+    dout: &[f32],
+    scale: f32,
+    adder: HwAdder,
+    v: Back0Variant,
+) -> Option<Vec<f32>> {
+    let (_, _, np) = s.sizes()?;
+    if p.len() != np {
+        return None;
+    }
+    let dp = back0_dp_with(s, qkv, dout, adder, v)?;
+    Some(back0_tail(s, p, &dp, scale, v))
+}
+
+/// The dP product of head (b, h) as one whole `mm_tc` product: `[T, T] = dO_h[T, d]·V_hᵀ` (B stored `[T, d]`, flag
+/// [`mm_tc::TB`]), so [`mm_tc::model`] / [`mm_tc::judge`] can judge it with the margin written before os-335.
+pub struct HeadDp {
+    t: usize,
+    d: usize,
+    dout: Vec<f32>,
+    v: Vec<f32>,
+}
+
+impl HeadDp {
+    /// The product.
+    pub fn product(&self) -> Product<'_> {
+        Product {
+            a: &self.dout,
+            b: &self.v,
+            bias: None,
+            m: self.t,
+            n: self.t,
+            k: self.d,
+            flags: mm_tc::TB,
+        }
+    }
+}
+
+/// Builds [`HeadDp`] for head (b, h). `None` for a bad shape or wrong lengths.
+pub fn head_dp(s: &AttnShape, qkv: &[f32], dout: &[f32], b: usize, h: usize) -> Option<HeadDp> {
+    let (nq, no, _) = s.sizes()?;
+    let (t, c, d) = (s.t, s.c, s.d());
+    if b >= s.batch || h >= s.heads || qkv.len() != nq || dout.len() != no {
+        return None;
+    }
+    let mut o = Vec::with_capacity(t * d);
+    let mut v = Vec::with_capacity(t * d);
+    for i in 0..t {
+        o.extend_from_slice(&dout[(b * t + i) * c + h * d..][..d]);
+        v.extend_from_slice(&qkv[(b * t + i) * 3 * c + 2 * c + h * d..][..d]);
+    }
+    Some(HeadDp { t, d, dout: o, v })
+}
+
+/// The `[T, T]` block of head (b, h) out of a `[B, H, T, T]` buffer.
+pub fn head_block(s: &AttnShape, m: &[f32], b: usize, h: usize) -> Vec<f32> {
+    let t = s.t;
+    m[(b * s.heads + h) * t * t..][..t * t].to_vec()
+}
+
+/// Judges a dP `[B, H, T, T]` on every head against [`mm_tc::reference`] with [`mm_tc::margin`], **only on the
+/// elements the program stores** (j ≤ i; the tiles above the diagonal are never computed); the worst verdict.
+pub fn judge_dp(s: &AttnShape, qkv: &[f32], dout: &[f32], dp: &[f32]) -> mm_tc::Verdict {
+    let t = s.t;
+    let mut worst = 0u32;
+    let mut exact = 0usize;
+    for b in 0..s.batch {
+        for h in 0..s.heads {
+            let Some(hd) = head_dp(s, qkv, dout, b, h) else {
+                return mm_tc::Verdict::Invalid;
+            };
+            let pr = hd.product();
+            let Some(r) = mm_tc::reference(&pr) else {
+                return mm_tc::Verdict::Invalid;
+            };
+            let got = head_block(s, dp, b, h);
+            for i in 0..t {
+                for j in 0..=i {
+                    let idx = i * t + j;
+                    let (g, want) = (got[idx], r[idx]);
+                    if !g.is_finite() {
+                        return mm_tc::Verdict::Invalid;
+                    }
+                    let tol = mm_tc::margin(&pr, i, j);
+                    let dist = (g as f64 - want).abs();
+                    if dist > tol {
+                        return mm_tc::Verdict::NuTrece {
+                            index: idx,
+                            got: g,
+                            reference: want,
+                            margin: tol,
+                        };
+                    }
+                    worst = worst.max(mm_tc::permille(dist, tol));
+                    if g.to_bits() == (want as f32).to_bits() {
+                        exact += 1;
+                    }
+                }
+            }
+        }
+    }
+    mm_tc::Verdict::InMargine {
+        worst_permille: worst,
+        exact,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn back0_refuses_wide_heads_and_wrong_lengths() {
+        let s = AttnShape {
+            batch: 1,
+            t: 8,
+            c: 128,
+            heads: 1,
+        };
+        let (nq, no, np) = s.sizes().unwrap();
+        let z = |n| alloc::vec![0.0f32; n];
+        assert!(back0_model(&s, &z(nq), &z(np), &z(no), 1.0).is_none()); // d = 128 > 64
+        let s = AttnShape { c: 64, ..s };
+        let (nq, no, np) = s.sizes().unwrap();
+        assert!(back0_model(&s, &z(nq), &z(np - 1), &z(no), 1.0).is_none());
+        let mut big = z(no);
+        big[0] = 1.0e6; // outside binary16
+        assert!(back0_model(&s, &z(nq), &z(np), &big, 1.0).is_none());
+        assert!(back0_model(&s, &z(nq), &z(np), &z(no), 1.0).is_some());
+    }
 
     #[test]
     fn refuses_wide_heads_and_wrong_lengths() {

@@ -18,6 +18,7 @@
 #   sh tools/nak/build2.sh mm_s8        # B1 step 3: int8 matmul on the tensor cores, 128x128 tiles, i32 out (session 225)
 #   sh tools/nak/build2.sh attn_back_tile_tc # C-157: attn_back_tile_3's dQ / dK / dV on the tensor cores, f16 inputs (session 243)
 #   sh tools/nak/build2.sh attn_back_tile_tc16 # C-157: attn_back_tile_tc in 16 KiB of shared memory, same arithmetic (session 244)
+#   sh tools/nak/build2.sh attn_back_tile0_tc # C-157: attn_back_tile0_3's dP = dO*V^T on the tensor cores, dot / dS F32 (session 245)
 #   sh tools/nak/build2.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): the apt packages listed in build.sh, plus
@@ -80,6 +81,9 @@ attn_back_tile_tc)
 attn_back_tile_tc16)
     exec sh "$0" kernel attn_back_tile_tc16 64
     ;;
+attn_back_tile0_tc)
+    exec sh "$0" kernel attn_back_tile0_tc 64
+    ;;
 kernel)
     NAME=${2:?nume}; PUSH=${3:?octeti push constants}
     OUT=$HERE/out2; TMP=$(mktemp -d); mkdir -p "$OUT"
@@ -103,6 +107,6 @@ kernel)
     rm -rf "$TMP"
     ;;
 *)
-    echo "usage: $0 mesa|mma16_f16|mma16_s8|mm_tc|mm_tc128|mm_tc_gelu|mm_tc_pf|mm_tc_v4|mm_s8|attn_back_tile_tc|attn_back_tile_tc16|kernel <nume> <octeti>" >&2; exit 2
+    echo "usage: $0 mesa|mma16_f16|mma16_s8|mm_tc|mm_tc128|mm_tc_gelu|mm_tc_pf|mm_tc_v4|mm_s8|attn_back_tile_tc|attn_back_tile_tc16|attn_back_tile0_tc|kernel <nume> <octeti>" >&2; exit 2
     ;;
 esac

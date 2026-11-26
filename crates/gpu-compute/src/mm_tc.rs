@@ -225,7 +225,8 @@ pub enum Verdict {
     Invalid,
 }
 
-fn permille(dist: f64, tol: f64) -> u32 {
+/// `dist` in ‰ of `tol` (0 for an exact element, `u32::MAX` when `tol` is 0).
+pub fn permille(dist: f64, tol: f64) -> u32 {
     if dist == 0.0 {
         0
     } else if tol == 0.0 {

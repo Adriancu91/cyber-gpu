@@ -47,6 +47,46 @@ Aici trece doar **produsul** dP pe circuitele speciale; lanțul `dot` și trecer
   la 450–600 GB/s, plus produsul pe circuite ~0,3–1 ms) → câștig **~2–3,4 ms** (2–3 % din placa mixtă). Mai puțin decât studiul
   (3,5–4,2 ms), fiindcă studiul punea și trecerea a doua la viteza `mm_tc_v4`.
 
-## 4. Rezultatul
+## 4. Rezultatul (sesiunea 245, ~08:00; T254 pe procesor = SIMULARE; programul = COMPILAT, NU RULAT)
 
-(se completează după teste)
+| # | prezis | ieșit | verdict |
+|---|---|---|---|
+| E1 | (a) dP în ordinea programului = `mm_tc::model` pe produsul întreg, bit cu bit, ≥ 6 forme; (b) coada F32 cu dP-ul de azi = dS-ul de azi | (a) **6 forme, 136 579 de elemente** (plăcile calculate) aceiași biți; plăcile de deasupra diagonalei nu se calculează (0); (b) **aceiași biți** pe toate cele 6 forme (184 963 de elemente dS) | CONFIRMATĂ |
+| E2 | dP `InMargine`, cel mai rău < 300 ‰ | `InMargine` pe 7 forme; cel mai rău **74 ‰** (T = 17), la #513 **32 ‰** | CONFIRMATĂ |
+| E3 | capul #513: dP 2·10⁻⁴ … 1·10⁻³; dS **mai mare** decât dP, 3·10⁻⁴ … 3·10⁻³ | dP **2,98·10⁻⁴**, dS **3,01·10⁻⁴** (celelalte forme: dP 2,9–3,1·10⁻⁴, dS 2,8–3,4·10⁻⁴) | **PE JUMĂTATE** — intervalele țin, dar dS ≈ dP: scăderea dP − dot nu strică precizia (dot e mic față de dP pe aceste valori) |
+| E4 | ambele programe înapoi pe circuite: dQ, dK 3·10⁻⁴ … 3·10⁻³; dV = B3 bit cu bit | dQ **4,25·10⁻⁴**, dK **4,19·10⁻⁴** (în B3, doar cu `attn_back_tile_tc`: 2,99 / 2,92·10⁻⁴); dV **aceiași biți** ca B3 (2,80·10⁻⁴) pe toate formele | CONFIRMATĂ |
+| E5 | NaN peste diagonală în P → niciun bit; V fără transpusă → `NuTrece`; masca uitată în `dot` → dS diferit; dO fără scară → dS ≥ 1·10⁻² | NaN → aceiași biți; V fără transpusă → `NuTrece` (primul element); masca uitată → dS NaN; **fără scară: 2,95·10⁻³** (cu scară 3,0·10⁻⁴) | **PE JUMĂTATE** — (d) greșită: dO ~ 1·10⁻⁵ încă păstrează ~7 biți ca subnormal f16, deci eroarea crește doar de ~10 ori, nu până la 1 %. Scara rămâne necesară (de 10 ori mai bine), dar nu e „obligatorie” ca la dQ / dK (unde fără scară ieșea 17 %) |
+| E6 | 0 memorie locală, ≤ 64 registre, `hmma` prezent, `ffma` doar în `dot`, partajată ≤ 33 024 B, argumentele la 0x700 | **56 registre** (azi 68), 0 memorie locală, 0 vărsări, **16 × `hmma.m16n8k16.f32`** (bucla de 4 pași desfăcută), **8 `ffma.ftz`, toate în registrul lui `dot`**, `Shared size: 33024`, cbuf citit doar la 0x0–0x8 și 0x700–0x73c | CONFIRMATĂ |
+| E7 | 5,2 ms → ~1,8–3,2 ms | — (doar pe placă) | NOT TESTED |
+
+Unealta: Mesa 26.3.1 construită din nou în cloud; `mm_tc_v4` (`488ca341…`) și `attn_back_tile_tc16` (`8cbbab7e…`) ies
+**identic**, deci aceeași unealtă ca în sesiunile 243–244.
+SHA-256 `attn_back_tile0_tc.sm86.sass` = `95fc392e6de3cf3bc2f5f93a33487e2ebefdedf38951f35ab1a9168540c1ef8d`.
+
+Câte blocuri pe SM (DEDUS): registrele (56 × 256) ar permite 4; memoria partajată (33 024 B, ca azi) ține **1 bloc** la treapta
+64 KiB a pasului mixt rapid, la fel ca `attn_back_tile0_3`. Câștigul de timp vine deci doar din produs (circuitele speciale în loc
+de 1 024 `ffma` pe fir și placă), nu din mai multe blocuri. O variantă cu placa P în f16 n-ar mai păstra biții cozii F32 — nu am
+făcut-o.
+
+Cod (doar adăugări): `gpu_compute::attn_tc::{Back0Variant, back0_dp_with, back0_tail, back0_model, back0_model_with, HeadDp,
+head_dp, head_block, judge_dp}`, `gpu_compute::mm_tc::permille` (era privată, acum publică — adăugare), `nvidia_ga104::attn_back_tile0_tc`
+(octeții, suma, registrele, memoria, `cbuf` la 0x700, grila, `shape_ok`), `tools/nak/attn_back_tile0_tc.comp`, testul
+`crates/gpu-compute/tests/c157_attn_back0_tc.rs` (T254a–c) și 3 teste în modul (suma, ce spune dump-ul, unde citește cbuf-ul).
+
+### Ce înseamnă (pe scurt)
+
+1. **Al doilea program al atenției înapoi are acum varianta pe circuitele speciale** (compilat, nu rulat): calculează dP pe circuitele
+   speciale, restul exact ca azi. Pe procesor (SIMULARE) dS diferă de F32 cu ~3·10⁻⁴, cât costă f16 însăși.
+2. **Ambele programe înapoi pe circuite** dau dQ / dK cu ~4,2·10⁻⁴ față de F32 (doar unul: ~3·10⁻⁴) — tot sub toleranța mixtă 1·10⁻³.
+3. Pentru OS ar fi tot „alt program în listă”, cu buffer-ul constant mutat la 0x700 (ca la `attn_back_tile_tc`).
+
+### Ce NU e dovedit / ce urmează
+
+- Nimic nu a rulat pe placă; timpul (E7) se vede doar acolo. Modelul presupune sumatorul potrivit în os-335.
+- Încă **nu e legat** în pasul mixt și nu are înlocuitor în `gpu-sim`. Pașii următori, în ordine: (1) înlocuitorul din `gpu-sim`
+  + opțiunea în pasul mixt (lansările `attn_back_tile0_3` → `attn_back_tile0_tc`, ca `attn_tc_list`); (2) proba antrenării mini
+  în SIMULARE cu ambele; (3) PREDARE către OS.
+
+Verificările întregi (`tools/check.sh`): **1 245 PASS** (8 ignorate).
+
+**Ce e nou pentru placă:** un program nou compilat (`attn_back_tile0_tc`), încă netrimis OS-ului. **Nicio schimbare incompatibilă.**
