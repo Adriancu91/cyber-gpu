@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 242 — 26 noiembrie 2026, ~04:12–05:00 (ora României), în cloud, FĂRĂ placă — **studiul atenției pe circuitele speciale (f16): atenția pasului mixt #513 (20,6 ms, os-431) ar coborî la ~5,3–9,7 ms (DEDUS) = câștig ~11–15 ms, 10–14 % din placă; precizia f16 ~5·10⁻⁴ doar cu scara 2¹⁴ pe gradient (SIMULARE pe procesor)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 241), l-am pus `ocupat`. Niciun test nou pe placă de la os-445 → punctul lăsat
+de sesiunea 241: studiul atenției pe circuitele speciale, cu predicții înainte (A1–A5, `b8da181`). Ramura locală veche din dosarul
+obișnuit avea iar altă istorie; am lucrat într-o clonă nouă a lui `origin/g0-g2-fundatie` (nimic șters, nimic rescris pe GitHub).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| `attn_tc_study` (`AttnForm`, `M513_ATTN`, `PROGRAMS`, `tc_pair_ps`, `tc_program_ns`, `tc_total_ns`, `f32_memory_ns`, `f32_at_rate_ns`) | modelul pe perechi de plăci 64 × 64 ale celor 6 produse, calibrat pe os-443 (63,26 ns pe pereche) | ADĂUGAT |
+| T251a | os-431: `attn_fwd_tile3` 6 207, `attn_back_tile0_3` 5 182, `attn_back_tile_3` 9 192 µs (citite din raport) | PASS |
+| T251b A1 | 2 718 MFLOP pe strat; azi 1,58 TFLOP/s (înmulțirile F32 ale pasului 2,68; `attn_back_tile0_3` 1,05) | PASS (DEDUS) — CONFIRMATĂ |
+| T251c A2 | P / S / dS în F32: 135 MiB pe strat, 13,5–18,1 % din timpul de azi | PASS (DEDUS) — PE JUMĂTATE |
+| T251d A3 | pe circuitele speciale 5,3–9,7 ms → câștig 10,8–15,2 ms (10,2–14,4 % din placa mixtă); F32 la viteza înmulțirilor F32: câștig 8,4 ms | PASS (DEDUS) — CONFIRMATĂ |
+| T251e A4 | f16 + scara 2¹⁴: eroare 3,9–5,3·10⁻⁴; fără scară dQ / dK 0,17; F32 ~3–6·10⁻⁷ | PASS (SIMULARE pe procesor) — CONFIRMATĂ |
+| A5 | ordinea: `attn_back_tile_3` primul (4,7–6,8 ms), apoi `attn_back_tile0_3` (3,5–4,2) ≈ `attn_fwd_tile3` (2,7–4,2) | PE JUMĂTATE |
+| Verificări | format, clippy, teste pe gazdă, build no_std | PASS (**1 222 de teste**, 8 ignorate) |
+
+**Ce înseamnă:** atenția e singura bucată mare rămasă în afara înmulțirilor și ar câștiga pe f16 de 1,3–1,8 ori mai mult decât o
+rescriere F32; programul f16 înapoi trebuie să primească dO deja înmulțit cu scara (altfel gradienții se strică). Nota completă:
+`docs/C-157_ATENTIE_TC.md`.
+
+**Ce e nou pentru placă:** nimic (studiu, niciun program nou). **Nicio schimbare incompatibilă** (doar adăugări).
+
+**Următorul pas:** comparațiile testelor noi de pe placă când vin (os-451, os-447, os-449, profilul pasului mixt); altfel
+`attn_back_tile_tc` (dQ, dK, dV pe `mma` f16, cu scara), plan + predicții întâi, SIMULARE cu oracolul din T251.
+
 ## Sesiunea 241 — 26 noiembrie 2026, ~03:11–03:55 (ora României), în cloud, FĂRĂ placă — **valurile `mm_tc_v4` pe pasul mixt #513: placa os-445 (106 ms) = ~73 ms înmulțiri + ~33 ms restul (DEDUS, modelul la −0,1 %); lansarea dublă dX + dW nu mai merită (≤ 0,9 %); profilul pasului mixt gata de legat (`StepProfile::from_mixed`)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 240), l-am pus `ocupat`. Niciun test nou pe placă de la os-445 → punctul lăsat
