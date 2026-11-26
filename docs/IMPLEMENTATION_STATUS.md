@@ -1,5 +1,30 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 246 — 26 noiembrie 2026, ~09:10–10:15 (ora României), în cloud, FĂRĂ placă — **răspunsul la nota OS din P6-227: setul `ascutit` iese din marginea `mm_tc` din cauza valorilor f16 subnormale; marginea „pe exponentul nominal” adăugată; T256 în SIMULARE; PREDARE P2zo**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 245), l-am pus `ocupat`. Niciun test nou pe placă în hub. OS-ul (P6-227) a scris
+o predicție ratată pentru noi: setul `ascutit` al probei `--atentie-tc` iese din margine chiar cu modelul nostru. Cauza, planul și
+predicțiile S1–S7 urcate înainte de cod (`e874196`), nota `docs/C-157_ATTN_TC_SUBNORMALE.md`.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| S1 reproducerea | elementul 394, 3,0900992·10⁻⁷ / 3,0901583·10⁻⁷ / marginea 3,647·10⁻¹² — aceleași cifre ca OS-ul | PASS (SIMULARE) |
+| S2 cauza | elementul citește o valoare f16 subnormală; sumatorul os-335 aliniază după exponentul nominal (−14) | PASS (SIMULARE) |
+| S3–S4 marginea nouă (`mm_tc::margin_nominal`, `attn_tc::judge_nominal`) | 5 / 5 seturi în margine (`ascutit` 46 ‰), celelalte identic cu vechea | PASS (SIMULARE) |
+| S5 greșeli plantate | 3 / 3 prinse; „fără mască” se vede doar cu valori deasupra diagonalei (cu 0,5: prinsă) | PASS pe jumătate |
+| S6 scara 2¹⁴ în probă | și vechea margine trece (796 ‰) — preziceam că nu | GREȘITĂ (predicția) |
+| S7 fără subnormale | marginea nouă = vechea bit cu bit | PASS |
+| dP al `attn_back_tile0_tc` pe cele 5 seturi | ambele margini identice (21–40 ‰) | PASS (SIMULARE) |
+| Verificările întregi | format, clippy, **1 255 PASS** (8 ignorate), no_std | PASS |
+
+**Ce e nou:** doar adăugări în `gpu-compute` (`mm_tc::{margin_nominal, judge_nominal, reads_subnormal}`,
+`attn_tc::{judge_nominal, judge_dp_nominal}`); `judge` / `judge_dp` neschimbate. Nimic nou pentru placă. PREDARE
+`integration/cyber-universe/C-157_P2zo_subnormale.md`: OS-ul scrie și verdictul cu marginea nouă lângă cel vechi.
+**Cinste:** marginea nouă e scrisă DUPĂ ratare (corectură, nu predicție); vechiul verdict rămâne raportat.
+
+**Următorul pas:** `attn_back_tile0_tc` legat în pasul mixt rapid (gpu-sim + opțiunea + antrenarea mini în SIMULARE), apoi PREDARE.
+Dacă vin rezultate de pe placă (os-451, os-456 bariera, os-457 P2zm), comparațiile au întâietate.
+
 ## Sesiunea 245 — 26 noiembrie 2026, ~07:14–08:25 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile0_tc`: dP = dO·Vᵀ pe circuitele speciale (f16), dot și dS rămân F32 ca azi; modelul pe procesor + judecata + programul compilat; T254 în SIMULARE; încă nelegat, nicio PREDARE**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 244), l-am pus `ocupat`. Niciun test nou pe placă în hub (os-445/447/449/451/456,

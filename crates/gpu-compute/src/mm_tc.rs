@@ -244,6 +244,52 @@ pub fn permille(dist: f64, tol: f64) -> u32 {
 
 /// Judges `got` (`[m, n]`, row-major) against [`reference`] with [`margin`].
 pub fn judge(p: &Product<'_>, got: &[f32]) -> Verdict {
+    judge_by(p, got, margin)
+}
+
+/// C-157, session 246 (`docs/C-157_ATTN_TC_SUBNORMALE.md`, written AFTER the miss of the `ascutit` set in P6-227):
+/// [`margin`] with every non-zero product's |â·b̂| replaced by `max(|â·b̂|, 2^(eâ + eb̂))`, eâ / eb̂ the binary16
+/// exponents with subnormals counted as −14 — the **nominal** exponent the os-335 adder ([`crate::mma::GA104_OS335`])
+/// aligns a step on. For normal operands `2^(eâ+eb̂) ≤ |â·b̂|`, so without subnormals this equals [`margin`] bit for bit.
+pub fn margin_nominal(p: &Product<'_>, r: usize, c: usize) -> f64 {
+    let mut s = (p.bias_at(c) as f64).abs();
+    for q in 0..p.k {
+        let (ha, hb) = (f32_to_f16(p.op_a(r, q)), f32_to_f16(p.op_b(q, c)));
+        let v = (f16_to_f32(ha) as f64 * f16_to_f32(hb) as f64).abs();
+        if v != 0.0 {
+            let e = h_exp_nominal(ha) + h_exp_nominal(hb);
+            let w = f64::from_bits(((e + 1023) as u64) << 52);
+            s += if w > v { w } else { v };
+        }
+    }
+    (p.k as f64 + 3.0) * s / (1u64 << 23) as f64 + f64::from_bits((1023 - 126) << 52)
+}
+
+/// Unbiased binary16 exponent, subnormals (and zero) as −14.
+fn h_exp_nominal(h: u16) -> i32 {
+    let f = ((h >> 10) & 0x1f) as i32;
+    if f == 0 { -14 } else { f - 15 }
+}
+
+/// [`judge`] with [`margin_nominal`] (session 246; report it BESIDE [`judge`], not instead of it).
+pub fn judge_nominal(p: &Product<'_>, got: &[f32]) -> Verdict {
+    judge_by(p, got, margin_nominal)
+}
+
+/// Whether element (r, c) of `p` reads a non-zero binary16 subnormal in op(A) row r or op(B) column c.
+pub fn reads_subnormal(p: &Product<'_>, r: usize, c: usize) -> bool {
+    let sub = |x: f32| {
+        let h = f32_to_f16(x);
+        (h >> 10) & 0x1f == 0 && h & 0x3ff != 0
+    };
+    (0..p.k).any(|q| sub(p.op_a(r, q)) || sub(p.op_b(q, c)))
+}
+
+fn judge_by(
+    p: &Product<'_>,
+    got: &[f32],
+    margin_of: fn(&Product<'_>, usize, usize) -> f64,
+) -> Verdict {
     let Some(r) = reference(p) else {
         return Verdict::Invalid;
     };
@@ -252,7 +298,7 @@ pub fn judge(p: &Product<'_>, got: &[f32]) -> Verdict {
     }
     let (mut worst, mut exact) = (0u32, 0usize);
     for (idx, (&g, &want)) in got.iter().zip(&r).enumerate() {
-        let tol = margin(p, idx / p.n, idx % p.n);
+        let tol = margin_of(p, idx / p.n, idx % p.n);
         let dist = (g as f64 - want).abs();
         if dist > tol {
             return Verdict::NuTrece {

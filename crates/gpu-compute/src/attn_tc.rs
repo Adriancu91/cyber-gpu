@@ -311,6 +311,32 @@ pub fn judge(
     ds: &[f32],
     got: &[f32],
 ) -> mm_tc::Verdict {
+    judge_with(s, qkv, p, dout, ds, got, mm_tc::judge)
+}
+
+/// [`judge`] with [`mm_tc::judge_nominal`] (the margin that counts binary16 subnormals at their nominal exponent;
+/// session 246, `docs/C-157_ATTN_TC_SUBNORMALE.md`). Report it beside [`judge`], not instead of it.
+pub fn judge_nominal(
+    s: &AttnShape,
+    qkv: &[f32],
+    p: &[f32],
+    dout: &[f32],
+    ds: &[f32],
+    got: &[f32],
+) -> mm_tc::Verdict {
+    judge_with(s, qkv, p, dout, ds, got, mm_tc::judge_nominal)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn judge_with(
+    s: &AttnShape,
+    qkv: &[f32],
+    p: &[f32],
+    dout: &[f32],
+    ds: &[f32],
+    got: &[f32],
+    judge_one: fn(&Product<'_>, &[f32]) -> mm_tc::Verdict,
+) -> mm_tc::Verdict {
     let mut worst = 0u32;
     let mut exact = 0usize;
     for b in 0..s.batch {
@@ -319,7 +345,7 @@ pub fn judge(
                 return mm_tc::Verdict::Invalid;
             };
             for sum in SUMS {
-                match mm_tc::judge(&hp.product(sum), &head_values(s, got, sum, b, h)) {
+                match judge_one(&hp.product(sum), &head_values(s, got, sum, b, h)) {
                     mm_tc::Verdict::InMargine {
                         worst_permille,
                         exact: e,
@@ -539,6 +565,21 @@ pub fn head_block(s: &AttnShape, m: &[f32], b: usize, h: usize) -> Vec<f32> {
 /// Judges a dP `[B, H, T, T]` on every head against [`mm_tc::reference`] with [`mm_tc::margin`], **only on the
 /// elements the program stores** (j ≤ i; the tiles above the diagonal are never computed); the worst verdict.
 pub fn judge_dp(s: &AttnShape, qkv: &[f32], dout: &[f32], dp: &[f32]) -> mm_tc::Verdict {
+    judge_dp_with(s, qkv, dout, dp, mm_tc::margin)
+}
+
+/// [`judge_dp`] with [`mm_tc::margin_nominal`] (session 246). Report it beside [`judge_dp`], not instead of it.
+pub fn judge_dp_nominal(s: &AttnShape, qkv: &[f32], dout: &[f32], dp: &[f32]) -> mm_tc::Verdict {
+    judge_dp_with(s, qkv, dout, dp, mm_tc::margin_nominal)
+}
+
+fn judge_dp_with(
+    s: &AttnShape,
+    qkv: &[f32],
+    dout: &[f32],
+    dp: &[f32],
+    margin_of: fn(&Product<'_>, usize, usize) -> f64,
+) -> mm_tc::Verdict {
     let t = s.t;
     let mut worst = 0u32;
     let mut exact = 0usize;
@@ -559,7 +600,7 @@ pub fn judge_dp(s: &AttnShape, qkv: &[f32], dout: &[f32], dp: &[f32]) -> mm_tc::
                     if !g.is_finite() {
                         return mm_tc::Verdict::Invalid;
                     }
-                    let tol = mm_tc::margin(&pr, i, j);
+                    let tol = margin_of(&pr, i, j);
                     let dist = (g as f64 - want).abs();
                     if dist > tol {
                         return mm_tc::Verdict::NuTrece {

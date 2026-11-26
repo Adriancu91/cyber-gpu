@@ -40,4 +40,26 @@ a pasului mixt (dO e în [−1, 1)). Nu e o greșeală a programului, ci o margi
 
 ## 4. Rezultatul
 
-(se completează după teste)
+Testul T256 (`crates/nvidia-ga104/tests/sim_c157_attn_tc_subnormal.rs`, 6 teste), toate în **SIMULARE**:
+
+| # | Ce a ieșit | Predicția |
+|---|---|---|
+| S1 | `NuTrece` la 394, 3,0900992·10⁻⁷ față de 3,0901583·10⁻⁷, marginea 3,647·10⁻¹² — **aceleași cifre ca OS-ul** | CONFIRMATĂ |
+| S2 | elementul 394 citește o valoare f16 subnormală nenulă (`mm_tc::reads_subnormal`) | CONFIRMATĂ |
+| S3 | marginea nouă: **5 / 5 seturi în margine**; `ascutit` 46 ‰ (cu vechea: în afară) | CONFIRMATĂ |
+| S4 | pe celelalte seturi ‰ identic (46, 45, 40 …), același număr de elemente exacte | CONFIRMATĂ |
+| S5 | dK netranspus, P în loc de dS, ultimul pas uitat: prinse. „Fără mască”: cu zerourile de deasupra diagonalei (ce ține proba) dă aceleași numere — nu se vede; cu 0,5 deasupra diagonalei e prinsă | PE JUMĂTATE (lista mea pusese „fără mască” fără să țină cont de zerouri) |
+| S6 | cu dO × 2¹⁴ în probă, **și marginea veche trece** pe `ascutit`: 796 ‰ (cea nouă 46 ‰) | **GREȘITĂ** (preziceam că nu ajunge) |
+| S7 | fără subnormale, `margin_nominal` = `margin` bit cu bit (768 de elemente); cu o subnormală, mai largă | CONFIRMATĂ |
+| — | dP al lui `attn_back_tile0_tc` (sesiunea 245) pe cele 5 seturi: ambele margini identice, în margine (21–40 ‰) | — |
+
+**Ce propun OS-ului (P6-227), în ordinea preferinței:**
+1. În proba `--atentie-tc`, pe lângă verdictul de azi (`attn_tc::judge`), încă un rând cu `attn_tc::judge_nominal`
+   (marginea care știe de subnormale). Așteptat pe placă, dacă placa = modelul: vechea **4 / 5** (`ascutit` în afară, aceleași cifre),
+   noua **5 / 5**. Dacă placa iese și din marginea nouă, atunci placa nu se poartă ca modelul cu subnormalele — asta ar fi o informație nouă.
+2. Nu schimbați setul și nu puneți scara în probă: cu scara 2¹⁴ vechea margine trece la 796 ‰ (aproape de limită), deci proba ar
+   pierde exact cazul care arată purtarea plăcii la subnormale.
+3. Pasul 2 (`--atentie-tc16` în pasul mixt rapid) poate fi legat independent de asta: pasul mixt are deja scara 2¹⁴.
+
+**Nou pentru placă:** nimic (doar judecata pe procesor). **Compatibilitate:** doar adăugări (`mm_tc::{margin_nominal, judge_nominal,
+reads_subnormal}`, `attn_tc::{judge_nominal, judge_dp_nominal}`); `judge` / `judge_dp` dau exact aceleași verdicte ca înainte.
