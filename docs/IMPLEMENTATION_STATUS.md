@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 256 — 26 noiembrie 2026, ~20:10–21:05 (ora României), în cloud, FĂRĂ placă — **comparația os-468 (v4 în pasul #513 lot 6: aceleași numere, atenția −1,08 ms, pasul neschimbat din deriva plăcii) și predicțiile `token32` la G = 384 / 768, scrise înainte de placă; PREDĂRI P2zy și P2zz**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 255), l-am pus `ocupat`. În hub: **os-468** (raportul 20:03, rândul lot 6 cu
+`--atentie-v4`) necomparat → punctul 2 al cozii, cu întâietate. os-467 reluat nu venise. Apoi `token32` (pasul lăsat de 254 / 255).
+Clona veche era iar despărțită de GitHub (commit-uri vechi din 24 nov, refăcute între timp pe GitHub); am pus ramura pe
+`origin/g0-g2-fundatie`, cea veche păstrată local ca `backup-local-2026-11-24` (nimic șters, nimic urcat din ea).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| os-468: alegerile | 12 × `attn_back_tile_tc16_v4`, 147 × `mm_tc_v4` | CONFIRMATĂ (MĂSURAT) |
+| os-468: aceleași numere ca tc16 | 10 / 10 pierderi și norme = os-465 lot 6 (4 zecimale) | CONFIRMATĂ (MĂSURAT) |
+| os-468: atenția înapoi în pas | 6 475 → 5 393 µs (−1,08 ms, ×1,20), în banda P2zw | CONFIRMATĂ (MĂSURAT) |
+| os-468: pasul întreg mai rapid | +0,28 ms (273,09 ms, 11 256 simb/s) — restul pasului +0,5 % pe programele mari de calcul | NECONFIRMATĂ, explicată (DEDUS: ceasul plăcii) |
+| T265 (calcul os-468) | 3 / 3 | PASS (CALCUL) |
+| `token32` predicțiile T1–T6 | G = 384: 0,90–1,62 ms (central ~1,26, mai lent); G = 768: 0,92–1,10 ms (central ~1,0) | scrise înainte, NOT TESTED |
+| T266 (calcul predicții) | 3 / 3 | PASS (CALCUL) |
+| Verificările întregi | format, clippy, **1 315 PASS** (8 ignorate), no_std | PASS |
+
+**Note:** `docs/C-157_OS468.md`, `docs/C-157_TOKEN32_PREDICTII.md`. **Nou pentru placă:** nimic în P2zy; în P2zz programul
+`token32` (existent din sesiunea 239), o lansare pe simbol, sub `--token32` oprit implicit. PREDĂRI:
+`integration/cyber-universe/C-157_P2zy_os468.md`, `integration/cyber-universe/C-157_P2zz_token32-pe-placa.md`. Nimic schimbat în
+interfața crate-urilor (doar teste și documente).
+
+**Următorul pas:** comparația os-467 reluat (P2zx) când vine; comparația `token32` (P2zz) când vine; altfel, cu atenția
+dQKV la 2 % din pas, următorul câștig mare e în `mm_tc_v4` (79 % din pasul #513 lot 6) — plan + predicții întâi.
+
 ## Sesiunea 255 — 26 noiembrie 2026, ~19:12–20:10 (ora României), în cloud, FĂRĂ placă — **os-467: de ce `attn_back_tile0_tc` nu a terminat pe placă (scrieri de 64 de biți nealiniate în memoria partajată, nu bariera), programele reparate (rânduri de 68) și verificarea nouă a programelor; PREDARE P2zx**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 254), l-am pus `ocupat`. În hub: **os-467 NU A TERMINAT** (18:41, setul 0,
