@@ -3741,6 +3741,53 @@ pub enum TcPick {
     /// C-157 (session 252, `docs/C-157_ATTN_BACK0_TC_V4_LEGAT.md`): a [`MixedLaunch::Attn0Tc`] on
     /// `attn_back_tile0_tc_v4` (128-bit loads / stores; only aligned shapes), only from [`pack_mixed_fast_attn3`].
     Attn0TcV4,
+    /// C-157 (session 253, `docs/C-157_ATTN_BACK_TC16_V4_LEGAT.md`): a [`MixedLaunch::AttnTc`] on
+    /// `attn_back_tile_tc16_v4` (128-bit loads; only aligned shapes), only from [`pack_mixed_fast_attn4`].
+    AttnTc16V4,
+    /// C-157 (session 253): a [`MixedLaunch::AttnTc`] on `attn_back_tile_tc16_v4pf` (128-bit loads, next tile read
+    /// ahead; only aligned shapes), only from [`pack_mixed_fast_attn4`].
+    AttnTc16V4pf,
+}
+
+/// C-157 (session 253, `docs/C-157_ATTN_BACK_TC16_V4_LEGAT.md`): the fast variant of the second tensor-core attention
+/// backward program (dQ, dK, dV) the OS loaded, and where (256-aligned, non-zero), for [`pack_mixed_fast_attn4`]. Only
+/// one: the winner of the board probe P2zq. Both do tc16's arithmetic (the same CPU model) with tc16's shared memory,
+/// grid, block and cbuf; they differ in registers. Only aligned shapes ([`crate::attn_back_tile_tc16_v4::fits_cbuf`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttnTcFast {
+    /// `attn_back_tile_tc16_v4` (72 registers) at this address.
+    V4(u64),
+    /// `attn_back_tile_tc16_v4pf` (104 registers) at this address.
+    V4pf(u64),
+}
+
+impl AttnTcFast {
+    pub fn va(self) -> u64 {
+        match self {
+            AttnTcFast::V4(v) | AttnTcFast::V4pf(v) => v,
+        }
+    }
+
+    pub fn registers(self) -> u32 {
+        match self {
+            AttnTcFast::V4(_) => crate::attn_back_tile_tc16_v4::REGISTERS,
+            AttnTcFast::V4pf(_) => crate::attn_back_tile_tc16_v4pf::REGISTERS,
+        }
+    }
+
+    pub fn shared(self) -> SharedMemory {
+        match self {
+            AttnTcFast::V4(_) => crate::attn_back_tile_tc16_v4::SHARED,
+            AttnTcFast::V4pf(_) => crate::attn_back_tile_tc16_v4pf::SHARED,
+        }
+    }
+
+    pub fn pick(self) -> TcPick {
+        match self {
+            AttnTcFast::V4(_) => TcPick::AttnTc16V4,
+            AttnTcFast::V4pf(_) => TcPick::AttnTc16V4pf,
+        }
+    }
 }
 
 /// C-157 (session 252, `docs/C-157_ATTN_BACK0_TC_V4_LEGAT.md`): where the OS loaded the two tensor-core dS programs
@@ -3805,6 +3852,8 @@ impl TcPick {
             TcPick::AttnTc16 => "attn_back_tile_tc16",
             TcPick::Attn0Tc => "attn_back_tile0_tc",
             TcPick::Attn0TcV4 => "attn_back_tile0_tc_v4",
+            TcPick::AttnTc16V4 => "attn_back_tile_tc16_v4",
+            TcPick::AttnTc16V4pf => "attn_back_tile_tc16_v4pf",
         }
     }
 }
@@ -3935,15 +3984,56 @@ pub fn pack_mixed_fast_attn3(
     step_bytes: Option<u32>,
     zone_va: u64,
 ) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
+    pack_mixed_fast_attn4(
+        launches, prog_va, progs, attn, None, attn0, step_bytes, zone_va,
+    )
+}
+
+/// The rule of [`pack_mixed_fast_attn4`] for one [`MixedLaunch::AttnTc`]: the fast variant when it is loaded and the
+/// launch's arguments (moved to 0x700) pass [`crate::attn_back_tile_tc16_v4::fits_cbuf`], else `None` (the program of
+/// `attn`, as before). Arguments `attn_back_tile_tc` refuses also give `None` (refused later, as before).
+fn attn_fast_pick(l: &MixedLaunch, fast: Option<AttnTcFast>) -> Option<TcPick> {
+    match (l, fast) {
+        (MixedLaunch::AttnTc(x), Some(f)) => match crate::attn_back_tile_tc::cbuf_from_f32(&x.cbuf)
+        {
+            Some(cb) if crate::attn_back_tile_tc16_v4::fits_cbuf(&cb) => Some(f.pick()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// C-157 (session 253, `docs/C-157_ATTN_BACK_TC16_V4_LEGAT.md`): [`pack_mixed_fast_attn3`] with the **fast variant**
+/// of the second attention program: every [`MixedLaunch::AttnTc`] goes to `attn_fast` (`attn_back_tile_tc16_v4` or
+/// `_v4pf`, [`TcPick::AttnTc16V4`] / [`TcPick::AttnTc16V4pf`]) when it is loaded and the shape is aligned
+/// ([`crate::attn_back_tile_tc16_v4::fits_cbuf`]), else to `attn` (refused if `None`). The fast QMD: that variant's
+/// registers, tc16's shared memory (16 KiB, 1 barrier), blocks of 256, the same grid and cbuf; only the program
+/// address and the register count differ from a tc16 QMD. With `attn_fast = None` it is [`pack_mixed_fast_attn3`]
+/// byte for byte. SIMULARE only: nothing of `attn_back_tile_tc16*` has run on the board.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub fn pack_mixed_fast_attn4(
+    launches: &[MixedLaunch],
+    prog_va: impl Fn(Prog) -> u64,
+    progs: &TcPrograms,
+    attn: Option<AttnTcProgram>,
+    attn_fast: Option<AttnTcFast>,
+    attn0: Attn0Programs,
+    step_bytes: Option<u32>,
+    zone_va: u64,
+) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
     use crate::mm_tc as tc;
     use crate::mm_tc_gelu as tg;
     let attn_tc_va = attn.map_or(0, AttnTcProgram::va);
     if attn.is_some() && attn_tc_va == 0 {
         return Err(bad("pas-mixt: attn_back_tile_tc la adresa 0"));
     }
+    let fast_va = attn_fast.map_or(0, AttnTcFast::va);
+    if attn_fast.is_some() && fast_va == 0 {
+        return Err(bad("pas-mixt: attn_back_tile_tc16_v4 la adresa 0"));
+    }
     if !zone_va.is_multiple_of(256)
         || [
-            progs.tc, progs.pf, progs.v4, progs.gelu, attn_tc_va, attn0.tc, attn0.v4,
+            progs.tc, progs.pf, progs.v4, progs.gelu, attn_tc_va, attn0.tc, attn0.v4, fast_va,
         ]
         .iter()
         .any(|v| !v.is_multiple_of(256))
@@ -3954,7 +4044,9 @@ pub fn pack_mixed_fast_attn3(
     let picks: Vec<Option<TcPick>> = launches
         .iter()
         .map(|l| match (tc_pick(l, progs), attn) {
-            (Some(TcPick::AttnTc), Some(a)) => Some(a.pick()),
+            (Some(TcPick::AttnTc), a) => attn_fast_pick(l, attn_fast)
+                .or(a.map(AttnTcProgram::pick))
+                .or(Some(TcPick::AttnTc)),
             (Some(TcPick::Attn0Tc), _) => Some(attn0_pick(l, attn0)),
             (p, _) => p,
         })
@@ -3968,9 +4060,13 @@ pub fn pack_mixed_fast_attn3(
             TcPick::AttnTc | TcPick::AttnTc16 => attn_tc_va,
             TcPick::Attn0Tc => attn0.tc,
             TcPick::Attn0TcV4 => attn0.v4,
+            TcPick::AttnTc16V4 | TcPick::AttnTc16V4pf => fast_va,
         };
         if va == 0 {
             return Err(bad(match p {
+                TcPick::AttnTc | TcPick::AttnTc16 if attn_fast.is_some() => {
+                    "pas-mixt: forma nealiniata pentru attn_back_tile_tc16_v4 si attn_back_tile_tc nu e incarcat"
+                }
                 TcPick::AttnTc | TcPick::AttnTc16 => "pas-mixt: attn_back_tile_tc nu e incarcat",
                 TcPick::Attn0Tc if attn0.v4 != 0 => {
                     "pas-mixt: forma nealiniata pentru attn_back_tile0_tc_v4 si attn_back_tile0_tc nu e incarcat"
@@ -4002,12 +4098,21 @@ pub fn pack_mixed_fast_attn3(
             }
             MixedLaunch::AttnTc(x) => {
                 use crate::attn_back_tile_tc as at_tc;
-                let a = attn.ok_or(bad("pas-mixt: attn_back_tile_tc nu e incarcat"))?;
                 let cb = at_tc::cbuf_from_f32(&x.cbuf)
                     .ok_or(bad("pas-mixt: argumentele attn_back_tile_tc refuzate"))?;
+                // (va, registers, shared) of the program picked for this launch.
+                let (pva, regs, shared) = match (pick, attn_fast) {
+                    (Some(TcPick::AttnTc16V4 | TcPick::AttnTc16V4pf), Some(f)) => {
+                        (f.va(), f.registers(), f.shared())
+                    }
+                    _ => {
+                        let a = attn.ok_or(bad("pas-mixt: attn_back_tile_tc nu e incarcat"))?;
+                        (a.va(), a.registers(), a.shared())
+                    }
+                };
                 let q = ComputeQmd {
-                    program_va: a.va(),
-                    registers: a.registers(),
+                    program_va: pva,
+                    registers: regs,
                     cbuf0_va: cb_va,
                     cbuf0_size: at_tc::CBUF_BYTES as u32,
                     grid: x.grid,
@@ -4015,8 +4120,8 @@ pub fn pack_mixed_fast_attn3(
                     release: None,
                 };
                 let q = match step_bytes {
-                    Some(s) => q.to_bytes_with_sm_config(&a.shared(), s)?,
-                    None => q.to_bytes_with_shared(&a.shared())?,
+                    Some(s) => q.to_bytes_with_sm_config(&shared, s)?,
+                    None => q.to_bytes_with_shared(&shared)?,
                 };
                 let c = at_tc::CBUF_BYTES;
                 bytes[at..at + c].copy_from_slice(&cb);

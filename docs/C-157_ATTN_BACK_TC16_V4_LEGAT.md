@@ -39,3 +39,26 @@ variante, ca OS-ul să încarce doar câștigătoarea după P2zq, fără să mai
 - **W6 — prin RAM.** `pack_mixed_fast_via_ram_attn4` cu `None` = attn3 octet cu octet; cu v4 aceleași alegeri ca fără RAM.
 - **W7 — timpul (DEDUS, doar pe placă).** Cât arată P2zq pentru câștigătoare; estimarea veche ×1,3–2,0 pe acest program la
   `atentie-513-b4`, încredere mică. NOT TESTED.
+
+## 4. Rezultatul (sesiunea 253, ~16:55; T263 pe procesor = SIMULARE; W7 DEDUS)
+
+| # | prezis | ieșit | verdict |
+|---|---|---|---|
+| W1 | attn4 fără varianta rapidă = attn3 octet cu octet | exact așa, pe mini și pe #513 lot 2; nicio alegere rapidă | CONFIRMATĂ |
+| W2 | mini: 2 × varianta rapidă; aceeași lungime; doar adresa + registrele diferă (≤ 20 octeți) | 2 × `AttnTc16V4` (la fel 2 × `AttnTc16V4pf`), zona 94 464 B, **4 octeți** diferiți, toți în cele 2 QMD-uri (adresa + registrele 72 / 104; tc16 avea 48) | CONFIRMATĂ |
+| W3 | antrenarea mini 5 pași, v4 = v4pf = tc16 bit cu bit | **2 301 760 de valori** aceiași biți, cu v4 și cu v4pf, și cu tc16 neîncărcat; pierderea 9,7128 → 8,8200 | CONFIRMATĂ |
+| W4 | #513 lot 2: 12 rapide + 12 dS + 147 `mm_tc_v4`; zona cât attn3; QMD: adresa, 72 / 104 registre, grila tc16 | așa, cu o abatere de montaj: testul a încărcat doar `attn_back_tile0_tc` pentru dS, deci 12 `Attn0Tc` (nu `Attn0TcV4`; alegerea dS e cea din T262, neatinsă); zona 554 240 B; grila [8, 12, 2]; fiecare QMD rapid diferă de cel tc16 în ≤ 10 octeți; toate cbuf-urile trec `fits_cbuf` | CONFIRMATĂ |
+| W5 | nealiniat → tc16; doar rapidă → refuz; adresă nealiniată la 256 sau 0 → refuz; QMD mutat de mână pe v4 → înlocuitorul refuză | exact așa (refuzul: „forma nealiniata pentru attn_back_tile_tc16_v4 si attn_back_tile_tc nu e incarcat”; în pas: „SIM: attn_back_tile_tc16_v4: forma nealiniata”); pasul nealiniat merge pe tc16 până la capăt | CONFIRMATĂ |
+| W6 | prin RAM: fără rapidă = attn3 octet cu octet; cu rapidă aceleași alegeri | exact așa (v4 și v4pf) | CONFIRMATĂ |
+| W7 | cât arată P2zq | — (doar pe placă) | NOT TESTED |
+
+Cod (doar adăugări): `nvidia_ga104::train_step::{AttnTcFast, TcPick::AttnTc16V4, TcPick::AttnTc16V4pf, pack_mixed_fast_attn4}`,
+`nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn4`; `pack_mixed_fast_attn3` / `pack_mixed_fast_via_ram_attn3` cheamă acum
+varianta 4 cu `None` (aceiași octeți, W1 / W6). Test: `crates/nvidia-ga104/tests/sim_c157_attn_tc16_v4_mixed.rs`.
+Nota pentru OS: `integration/cyber-universe/C-157_P2zv_attn-tc16-v4-legat.md`.
+
+### Ce înseamnă (pe scurt)
+
+1. Ambele programe „înapoi” ale atenției au acum varianta rapidă legată în pasul mixt: OS-ul încarcă doar câștigătoarea probei
+   și pasul o alege singur unde formele permit — fără vreo schimbare în rezultat (aceiași biți, în SIMULARE).
+2. Pe placă nu e nimic nou față de P2zq; legarea se folosește doar după ce P2zq arată aceleași cuvinte și un câștig de timp.

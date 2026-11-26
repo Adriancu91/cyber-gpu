@@ -17,7 +17,6 @@ use gpu_core::error::{GpuError, GpuResult};
 use crate::qmd::{MAX_SHARED_BYTES, SharedMemory};
 use crate::train_step::{
     Attn0Programs, Launch, MixedLaunch, Plan, Prog, SLOT, TcPick, TcPrograms, pack,
-    pack_mixed_fast_attn3,
 };
 use crate::transfer::{COPY_UNIT, copy_cbuf, copy_qmd};
 
@@ -252,6 +251,28 @@ pub fn pack_mixed_fast_via_ram_attn3(
     zone_va: u64,
     v: &ViaRam,
 ) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
+    pack_mixed_fast_via_ram_attn4(
+        list, prog_va, progs, attn, None, attn0, step_bytes, copy_va, zone_va, v,
+    )
+}
+
+/// C-157 (session 253, `docs/C-157_ATTN_BACK_TC16_V4_LEGAT.md`): [`pack_mixed_fast_via_ram_attn3`] with the fast
+/// variant of the second attention program, packed by `train_step::pack_mixed_fast_attn4` (an aligned `AttnTc` goes
+/// to `attn_back_tile_tc16_v4` / `_v4pf` when `attn_fast` is loaded). With `attn_fast = None` it is
+/// [`pack_mixed_fast_via_ram_attn3`] byte for byte. SIMULARE only.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub fn pack_mixed_fast_via_ram_attn4(
+    list: &[MixedLaunch],
+    prog_va: impl Fn(Prog) -> u64,
+    progs: &TcPrograms,
+    attn: Option<crate::train_step::AttnTcProgram>,
+    attn_fast: Option<crate::train_step::AttnTcFast>,
+    attn0: Attn0Programs,
+    step_bytes: Option<u32>,
+    copy_va: u64,
+    zone_va: u64,
+    v: &ViaRam,
+) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
     if !copy_va.is_multiple_of(256) || !zone_va.is_multiple_of(256) {
         return Err(bad(
             "lot prin RAM: programul de copiere sau zona nealiniate",
@@ -259,8 +280,9 @@ pub fn pack_mixed_fast_via_ram_attn3(
     }
     let n_in = v.copies_in.len();
     let list_va = zone_va + SLOT * n_in as u64;
-    let (list_bytes, list_qmds, picks) =
-        pack_mixed_fast_attn3(list, prog_va, progs, attn, attn0, step_bytes, list_va)?;
+    let (list_bytes, list_qmds, picks) = crate::train_step::pack_mixed_fast_attn4(
+        list, prog_va, progs, attn, attn_fast, attn0, step_bytes, list_va,
+    )?;
     let copy_shared = SharedMemory {
         bytes: 0,
         max_bytes: MAX_SHARED_BYTES,
