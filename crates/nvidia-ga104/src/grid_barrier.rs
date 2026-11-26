@@ -73,6 +73,10 @@ pub fn cbuf(
 
 /// `per_sm` workgroups on each SM GSP-RM reports (1 or 2): all resident, since a 32-thread workgroup without shared
 /// memory is far below an SM's limits. Anything else is refused — the first run stays at ≤ 2 per SM.
+///
+/// **os-456:** the `GrShape` product is the chip family's design maximum (84 on the RTX 3070 Ti), not its SMs (48);
+/// kept for compatibility (at ≤ 2 per SM even 168 groups are all resident — 16 per SM × 48), but the label „per SM”
+/// is wrong. Use [`groups_for_sms`] with `rmapi::GrCounts::sms`.
 pub fn groups_for(gr: &GrShape, per_sm: u32) -> GpuResult<u32> {
     let sms = gr.gpcs * gr.tpc_per_gpc * gr.sm_per_tpc;
     if sms == 0 {
@@ -91,8 +95,29 @@ pub const MAX_PER_SM_WIDE: u32 = 16;
 
 /// [`groups_for`] for the wide run: `per_sm` = 8 or 16 (G = 384 / 768 on the 3070 Ti). Only after the first run
 /// (`per_sm` 1 and 2) has passed — the caller's order; this function only refuses other counts.
-pub fn groups_for_wide(gr: &GrShape, per_sm: u32) -> GpuResult<u32> {
-    let sms = gr.gpcs * gr.tpc_per_gpc * gr.sm_per_tpc;
+///
+/// **os-456: always refused now** (fails closed). With the design-maximum product (84) the wide run would ask for
+/// 84 × 16 = 1 344 workgroups, more than the 48 SMs hold at once (768): the barrier would wait forever. Use
+/// [`groups_for_wide_sms`] with `rmapi::GrCounts::sms`.
+pub fn groups_for_wide(_gr: &GrShape, _per_sm: u32) -> GpuResult<u32> {
+    Err(bad(
+        "proba barierei larga: numarul de SM din GrShape e maximul de proiect (os-456); foloseste groups_for_wide_sms",
+    ))
+}
+
+/// C-157 after os-456: [`groups_for`] from the SMs GR0 really has (`rmapi::GrCounts::sms`, 48 on the 3070 Ti).
+pub fn groups_for_sms(sms: u32, per_sm: u32) -> GpuResult<u32> {
+    if sms == 0 {
+        return Err(bad("proba barierei: niciun SM raportat"));
+    }
+    if per_sm == 0 || per_sm > MAX_PER_SM {
+        return Err(bad("proba barierei: 1 sau 2 grupuri pe SM"));
+    }
+    Ok(sms * per_sm)
+}
+
+/// C-157 after os-456: the wide run (`per_sm` = 8 or 16) from the SMs GR0 really has.
+pub fn groups_for_wide_sms(sms: u32, per_sm: u32) -> GpuResult<u32> {
     if sms == 0 {
         return Err(bad("proba barierei: niciun SM raportat"));
     }

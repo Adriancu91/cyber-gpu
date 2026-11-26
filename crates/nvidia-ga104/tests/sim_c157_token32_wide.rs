@@ -4,7 +4,8 @@
 //! - P2: `token32_qmd_wide` at G ≤ 96 = the bytes of `token32_qmd`;
 //! - P3: one token of today's list + its argmax with `token32` at G = 384 and 768 (the wide QMD) = the separate
 //!   launches bit for bit, the barrier counter = (n − 1)·G, the model sees TARGET 9 (32 KiB) / 17 (64 KiB);
-//! - P4: the grid-barrier probe at G = 384 and 768 holds; `groups_for_wide` refuses 0, 1, 2, 3, 17 per SM.
+//! - P4: the grid-barrier probe at G = 384 and 768 holds; `groups_for_wide` refuses 0, 1, 2, 3, 17 per SM
+//!   (session 245, after os-456: `groups_for_wide_sms` / `token32_groups_for_sms`; the old entries fail closed).
 //!
 //! The "GPU" is `gpu_sim::cmdproc` with the program models: nothing here says whether the board keeps 10 / 16
 //! `token32` blocks per SM, nor whether its barrier holds with 768 workgroups.
@@ -50,10 +51,14 @@ fn t249a_step_for_groups() {
     assert!(kt::token32_step_for(0, SMS).is_err());
     assert!(kt::token32_step_for(1, 0).is_err());
     assert_eq!(kt::token32_max_per_sm(), 16);
-    assert_eq!(kt::token32_groups_for(&GA104, 8).unwrap(), 384);
-    assert_eq!(kt::token32_groups_for(&GA104, 16).unwrap(), 768);
-    assert!(kt::token32_groups_for(&GA104, 0).is_err());
-    assert!(kt::token32_groups_for(&GA104, 17).is_err());
+    // os-456 (session 245): the GrShape count is the design maximum, so the old entry fails closed; the SM count
+    // comes from `rmapi::GrCounts`.
+    assert!(kt::token32_groups_for(&GA104, 8).is_err());
+    assert_eq!(kt::token32_groups_for_sms(SMS, 8).unwrap(), 384);
+    assert_eq!(kt::token32_groups_for_sms(SMS, 16).unwrap(), 768);
+    assert!(kt::token32_groups_for_sms(SMS, 0).is_err());
+    assert!(kt::token32_groups_for_sms(SMS, 17).is_err());
+    assert!(kt::token32_groups_for_sms(0, 8).is_err());
 }
 
 #[test]
@@ -146,7 +151,7 @@ fn t249d_barrier_probe_wide() {
     const DATA: u64 = 0x30_0000;
     const OUT: u64 = 0x40_0000;
     for per_sm in [8, 16] {
-        let g = gb::groups_for_wide(&GA104, per_sm).unwrap();
+        let g = gb::groups_for_wide_sms(SMS, per_sm).unwrap();
         assert_eq!(g, SMS * per_sm);
         for rounds in [gb::ROUNDS_SHORT, gb::ROUNDS_LONG] {
             let mut mem = GpuMem::default();
@@ -170,7 +175,11 @@ fn t249d_barrier_probe_wide() {
         }
     }
     for bad in [0, 1, 2, 3, 17] {
-        assert!(gb::groups_for_wide(&GA104, bad).is_err(), "{bad} pe SM");
+        assert!(gb::groups_for_wide_sms(SMS, bad).is_err(), "{bad} pe SM");
     }
-    assert!(gb::groups_for_wide(&GrShape { gpcs: 0, ..GA104 }, 8).is_err());
+    assert!(gb::groups_for_wide_sms(0, 8).is_err());
+    // os-456: the old entry fails closed for every count.
+    for per_sm in [8, 16] {
+        assert!(gb::groups_for_wide(&GA104, per_sm).is_err());
+    }
 }

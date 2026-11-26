@@ -184,6 +184,21 @@ pub fn query_gr_info<T: RmTransport + ?Sized>(t: &mut T, u: &UserSpace) -> GpuRe
     rmapi::parse_gr_info(&got)
 }
 
+/// [`query_gr_info`] plus what GR0 really has ([`rmapi::GrCounts`]: enabled TPCs and SMs) from the **same** answer
+/// (one control). C-157 after os-456: use `counts.sms`, never the `LITTER_*` product, to size anything by SMs.
+pub fn query_gr_counts<T: RmTransport + ?Sized>(
+    t: &mut T,
+    u: &UserSpace,
+) -> GpuResult<(GrInfo, rmapi::GrCounts)> {
+    let mut rm = Rm {
+        t,
+        client: u.client,
+        next: u.next_handle,
+    };
+    let got = rm.control(u.subdevice, cmd::KGR_GET_INFO, &rmapi::gr_info_request())?;
+    Ok((rmapi::parse_gr_info(&got)?, rmapi::parse_gr_counts(&got)?))
+}
+
 /// The working client's channel group and its context share (I9d).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ComputeGroup {
@@ -3000,6 +3015,17 @@ mod tests {
         // per TPC (rounded to 0x8000) → × 24 TPC = 0x240000 (to 0x20000).
         let lm = local_memory_size(1, info.shape).unwrap().unwrap();
         assert_eq!((lm.per_tpc, lm.total), (0x1_8000, 0x24_0000));
+    }
+
+    /// C-157 after os-456: the same single control gives the shape and the real counts (SIM: 24 TPCs → 48 SMs).
+    #[test]
+    fn gr_counts_from_the_same_answer() {
+        let (mut d, u) = opened();
+        let n = d.0.log.controls.len();
+        let (info, counts) = query_gr_counts(&mut d, &u).unwrap();
+        assert_eq!(d.0.log.controls[n..], [(c_cmd::KGR_GET_INFO, status::OK)]);
+        assert_eq!(info.shape.gpcs, 6);
+        assert_eq!(counts, rmapi::GrCounts { tpcs: 24, sms: 48 });
     }
 
     /// GSP-RM's refusals come back as its status, never as a shape.

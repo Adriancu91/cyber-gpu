@@ -185,6 +185,11 @@ pub const SIM_GR_INFO: [(u32, u32); 5] = [
     (32, 2),     // LITTER_NUM_SM_PER_TPC
 ];
 
+/// C-157 after os-456: `SHADER_PIPE_SUB_COUNT` (index 9) — the enabled TPCs; 24 = the RTX 3070 Ti's 48 SMs / 2
+/// (public spec). SIM value. (os-456 showed the board's `LITTER_*` are 7 / 6 / 2; [`SIM_GR_INFO`] keeps its older
+/// SIM values 6 / 4 / 2 so the local-memory tests stay as they are.)
+pub const SIM_GR_TPC_COUNT: (u32, u32) = (9, 24);
+
 /// GR context buffers (`NV0080_CTRL_FIFO_GET_ENGINE_CONTEXT_PROPERTIES_ENGINE_ID_*`):
 /// index → (size, alignment). SIM values in the order of magnitude of a GA10x
 /// (MiB for the main image, KiB for the small ones); the board reports its own.
@@ -1230,7 +1235,7 @@ impl FakeRm {
         for i in 0..58 {
             wr32(b, i * 8, i as u32);
         }
-        for (i, v) in SIM_GR_INFO {
+        for (i, v) in SIM_GR_INFO.into_iter().chain([SIM_GR_TPC_COUNT]) {
             wr32(b, i as usize * 8 + 4, v);
         }
         status::OK

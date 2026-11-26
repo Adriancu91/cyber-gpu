@@ -177,8 +177,18 @@ pub fn token32_step_for(groups: u32, sms: u32) -> GpuResult<u32> {
 }
 
 /// `per_sm` `token32` workgroups on each SM GSP-RM reports (1..=16). Refuses anything that would not be resident.
-pub fn token32_groups_for(gr: &GrShape, per_sm: u32) -> GpuResult<u32> {
-    let sms = gr.gpcs * gr.tpc_per_gpc * gr.sm_per_tpc;
+///
+/// **os-456: always refused now** (fails closed): the `GrShape` product is the design maximum (84 on the RTX 3070 Ti,
+/// which has 48 SMs), so 16 per SM would ask for 1 344 workgroups — more than fit at once, a barrier that never opens.
+/// Use [`token32_groups_for_sms`] with `rmapi::GrCounts::sms`.
+pub fn token32_groups_for(_gr: &GrShape, _per_sm: u32) -> GpuResult<u32> {
+    Err(bad(
+        "programul pe simbol: numarul de SM din GrShape e maximul de proiect (os-456); foloseste token32_groups_for_sms",
+    ))
+}
+
+/// C-157 after os-456: `per_sm` `token32` workgroups (1..=16) on the SMs GR0 really has (`rmapi::GrCounts::sms`).
+pub fn token32_groups_for_sms(sms: u32, per_sm: u32) -> GpuResult<u32> {
     if sms == 0 {
         return Err(bad("programul pe simbol: niciun SM raportat"));
     }
@@ -252,8 +262,19 @@ pub fn token_cbuf_for(list_va: u64, sync_va: u64, n: usize, groups: u32) -> GpuR
     Ok(c)
 }
 
+/// C-157 after os-456: [`groups_for`] from the SMs GR0 really has (`rmapi::GrCounts::sms`).
+pub fn groups_for_sms(sms: u32, max: u32) -> GpuResult<u32> {
+    if sms == 0 || max == 0 {
+        return Err(bad("programul pe simbol: niciun SM raportat"));
+    }
+    Ok(sms.min(max))
+}
+
 /// How many workgroups: one per SM (all resident: 32 threads and 2 176 B of shared memory each are far below an SM's
 /// limits), capped by `max` (the widest operation needs no more than its grid; more only wait at the barriers).
+///
+/// **os-456:** the `GrShape` product is the design maximum (84 on the 3070 Ti, 48 SMs): up to 84 workgroups, still all
+/// resident (16 per SM fit), so kept for compatibility; use [`groups_for_sms`].
 pub fn groups_for(gr: &GrShape, max: u32) -> GpuResult<u32> {
     let sms = gr.gpcs * gr.tpc_per_gpc * gr.sm_per_tpc;
     if sms == 0 || max == 0 {

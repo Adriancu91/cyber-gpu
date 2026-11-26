@@ -985,6 +985,48 @@ pub fn parse_gr_info(p: &[u8]) -> GpuResult<GrInfo> {
     })
 }
 
+/// C-157 after os-456 (`docs/C-157_P2_OS456_SM.md`): `NV0080_CTRL_GR_INFO_INDEX_SHADER_PIPE_SUB_COUNT`
+/// (`ctrl0080gr.h`, 570.144, MIT: 0x9) — the TPCs GR0 really has. RM's own UVM code reads this entry as `tpcCount`
+/// (`nv_gpu_ops.c`, 570.144, MIT). The three `LITTER_*` entries [`parse_gr_info`] reads are the chip family's
+/// **design maxima** (os-456 on the RTX 3070 Ti: 7 × 6 × 2 = 84), right for the local memory size (tinygrad's
+/// arithmetic) and **wrong as a count of SMs** (the board has 48).
+pub const GR_INFO_INDEX_SHADER_PIPE_SUB_COUNT: u32 = 0x9;
+
+/// What GR0 really has: enabled TPCs (from GSP-RM) and SMs = TPCs × `LITTER_NUM_SM_PER_TPC`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GrCounts {
+    pub tpcs: u32,
+    pub sms: u32,
+}
+
+/// Reads [`GrCounts`] from the same answer as [`parse_gr_info`] (one control gives both). Refuses what
+/// [`parse_gr_info`] refuses, a TPC count of 0, and a TPC count above the design maximum (GPCs × TPCs per GPC).
+pub fn parse_gr_counts(p: &[u8]) -> GpuResult<GrCounts> {
+    type E = r::NV2080_CTRL_INTERNAL_GR_INFO;
+    let info = parse_gr_info(p)?;
+    let at = GR_INFO_INDEX_SHADER_PIPE_SUB_COUNT as usize * size_of::<E>();
+    let (i, tpcs) = (
+        get_u32(p, at + offset_of!(E, index)),
+        get_u32(p, at + offset_of!(E, data)),
+    );
+    if i != 0 && i != GR_INFO_INDEX_SHADER_PIPE_SUB_COUNT {
+        return Err(GpuError::InvalidArgument(
+            "GR info: intrare cu alt index decat pozitia ei",
+        ));
+    }
+    let g = info.shape;
+    let max = g.gpcs.checked_mul(g.tpc_per_gpc);
+    if tpcs == 0 || max.is_none_or(|m| tpcs > m) {
+        return Err(GpuError::InvalidArgument(
+            "GR info: numarul de TPC lipsa sau peste maximul de proiect",
+        ));
+    }
+    let sms = tpcs
+        .checked_mul(g.sm_per_tpc)
+        .ok_or(GpuError::InvalidArgument("GR info: prea multe SM"))?;
+    Ok(GrCounts { tpcs, sms })
+}
+
 /// One `NV2080_CTRL_GPU_PROMOTE_CTX_BUFFER_ENTRY`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PromoteEntry {

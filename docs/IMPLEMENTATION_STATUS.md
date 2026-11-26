@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 245 — 26 noiembrie 2026, ~07:14–08:15 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile0_tc`: dP = dO·Vᵀ pe circuitele speciale (f16), dot și dS rămân F32 ca azi; modelul pe procesor + judecata + programul compilat; T254 în SIMULARE; încă nelegat, nicio PREDARE**
+## Sesiunea 245 — 26 noiembrie 2026, ~07:14–08:50 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile0_tc`: dP = dO·Vᵀ pe circuitele speciale (f16), dot și dS rămân F32 ca azi; modelul pe procesor + judecata + programul compilat; T254 în SIMULARE; încă nelegat, nicio PREDARE**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 244), l-am pus `ocupat`. Niciun test nou pe placă în hub (os-445/447/449/451/456,
 P2zm fără rezultat) → punctul lăsat de sesiunea 244 (atenția înainte / dS pe circuitele speciale). Am ales `attn_back_tile0_3` (dS),
@@ -18,6 +18,16 @@ Unealta NAK 2 (Mesa 26.3.1) construită din nou; `mm_tc_v4` și `attn_back_tile_
 | E6 programul | COMPILAT (NAK 26.3.1): 56 registre, 0 memorie locală, 16 `hmma`, 8 `ffma.ftz` doar în `dot`, 33 024 B partajată, cbuf la 0x700, SHA `95fc392e…` | PASS (compilare) / NOT TESTED pe placă |
 | E7 timpul | prezis 5,2 → ~1,8–3,2 ms (DEDUS) | NOT TESTED |
 | Verificările întregi | `tools/check.sh`: format, clippy, **1 245 PASS** (8 ignorate), no_std | PASS |
+
+**Partea a doua (~08:05–08:45): os-456 a venit în hub → comparația are întâietate** (`docs/C-157_P2_OS456_SM.md`). Profilul pasului
+a ieșit cum prezisesem (`mm_tc_v4` 73,6 ms față de ~73; atenția 20,5 față de 20,6). **Proba barierei oprită de OS: a citit 84 de SM-uri,
+placa are 48 — greșeala era în codul nostru**: `LITTER_*` sunt maximele de proiect (7 × 6 × 2), iar `grid_barrier` / `kronos_token` le
+foloseau ca număr de SM-uri (simularea avea 6 / 4 / 2 = 48, de aceea testele n-au prins). Reparat prin adăugare: `rmapi::{GR_INFO_INDEX_SHADER_PIPE_SUB_COUNT,
+GrCounts, parse_gr_counts}`, `user_space::query_gr_counts`, `grid_barrier::{groups_for_sms, groups_for_wide_sms}`,
+`kronos_token::{token32_groups_for_sms, groups_for_sms}`, `fake_rm::SIM_GR_TPC_COUNT`. **Schimbare de comportament (fail-closed):**
+`grid_barrier::groups_for_wide` și `kronos_token::token32_groups_for` refuză acum mereu (ar fi putut bloca placa: 84 × 16 = 1 344 > 768
+grupuri care încap); OS-ul nu le folosea. T255 (3 teste) + T249 actualizat: PASS; `tools/check.sh` întreg: **1 249 PASS** (8 ignorate). PREDARE `C-157_P2zn_numarul-de-SM.md`.
+Pe placă: NOT TESTED (predicție: indexul 9 = 24 TPC → 48 SM).
 
 **Următorul pas:** înlocuitorul `attn_back_tile0_tc` în `gpu-sim` + opțiunea în pasul mixt rapid (lansările `attn_back_tile0_3` → `attn_back_tile0_tc`,
 ca `attn_tc_list`) + antrenarea mini în SIMULARE cu ambele programe înapoi pe circuite, apoi PREDARE. Dacă vin rezultate de pe placă
