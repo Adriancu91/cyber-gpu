@@ -153,12 +153,15 @@ pub fn work_list_changes(prev: &[u8], next: &[u8]) -> GpuResult<Vec<(usize, u32)
             "lista de lucru: listele au lungimi diferite (alte operatii) sau nemultiple de 4",
         ));
     }
-    Ok(prev
-        .chunks_exact(4)
-        .zip(next.chunks_exact(4))
+    // Both lengths are multiples of 4 (checked above): `as_chunks` leaves no remainder.
+    let (prev_words, _) = prev.as_chunks::<4>();
+    let (next_words, _) = next.as_chunks::<4>();
+    Ok(prev_words
+        .iter()
+        .zip(next_words)
         .enumerate()
         .filter(|(_, (a, b))| a != b)
-        .map(|(i, (_, b))| (4 * i, u32::from_le_bytes([b[0], b[1], b[2], b[3]])))
+        .map(|(i, (_, b))| (4 * i, u32::from_le_bytes(*b)))
         .collect())
 }
 

@@ -14,6 +14,7 @@ Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 260), l-am pus `ocupat`. Î
 | `tur-dupa: ESEC` | alarmă falsă: `Journal::writes()` număra doar inelul (4 096 în OS), scrierile vechi ieșeau din inel în timpul turului; 9 / 9 jurnale se potrivesc | GĂSIT (DEDUS din jurnale) |
 | Reparația (doar adăugări în `gpu-core`) | `writes_total()`, `pushed()`, `events_since()`; folosite în `read_tour`, `chain`, `vbios_diag` | PASS în SIMULARE (3 teste noi; cu codul vechi testul turului dă mesajul de pe placă) |
 | Verificările întregi | format, clippy, **1 348 PASS** (8 ignorate), no_std | PASS |
+| CI roșu (de la sesiunea 260) | clippy 1.100 din CI respinge `chunks_exact(4)` în `work_list_changes`; trecut pe `as_chunks::<4>()`, același rezultat (T271, T272b) | reparat, CI de verificat |
 
 **Note:** `docs/C-157_OS473.md`, T273 (`calc_c157_os473.rs`). PREDARE `integration/cyber-universe/C-157_P2zze_os473-tur-dupa.md`.
 **Nou pentru placă: nimic scris în plus** — doar numărătoarea scrierilor e corectă („N scrieri” din rezultatul lanțului va
