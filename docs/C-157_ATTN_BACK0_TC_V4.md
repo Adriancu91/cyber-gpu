@@ -58,6 +58,31 @@ deci alți biți, cu judecată nouă).
 Doar programul `attn_back_tile0_tc_v4` (SHA-256 notat la compilare). Nicio scriere în registre GPU, niciun firmware, aceeași
 lansare ca `attn_back_tile0_tc`. Se lansează **numai** când `fits` spune da.
 
-## 4. Rezultate
+## 4. Rezultate (sesiunea 251, după predicții)
 
-(după cod și compilare)
+Unealta NAK 2 (Mesa 26.3.1) construită din nou în cloud; `attn_back_tile0_tc` recompilat iese **identic** (`95fc392e…ef8d`),
+deci comparația de mai jos e pe aceeași unealtă.
+
+| Program | Registre | Partajată | Blocuri / SM (64 KiB) | Citiri globale | Scrieri globale | în zbor (`citiri_seriale.py`) | SHA-256 |
+|---|---|---|---|---|---|---|---|
+| `attn_back_tile0_tc` (azi) | 56 | 33 024 B | 1 | 88 scalare | 64 scalare | cel mult 32, strict 6 (pe 4 octeți) | `95fc392e…ef8d` |
+| **`attn_back_tile0_tc_v4`** | **56** | 33 024 B | 1 | **28 de 128 de biți** | **16 de 128 de biți** | cel mult 8, strict 6 (pe 16 octeți) | `5d5eb75d…72d4` |
+
+Ambele: 0 memorie locală, 0 vărsări, aceleași 16 `hmma.m16n8k16.f32`, aceleași 12 `ldsm`, aceleași 8 `ffma.ftz` ale lanțului
+`dot`; rândurile cu `bra` în listare 115 → 57. Pe fir, pe placă: tc face 32 + 16 citiri scalare la produs și 32 în trecerea a doua;
+v4 face 8 + 4 și 8 citiri de câte 16 octeți — la fel de multe citiri „strict în zbor” (6), dar fiecare aduce de 4 ori mai mult.
+
+| # | prezis | ieșit | verdict |
+|---|---|---|---|
+| U1 | 28 `ld.global….b128`, 0 scalare; 16 `st.global….b128`, 0 scalare | exact 28 și 16, nicio altă citire / scriere globală | CONFIRMATĂ |
+| U2 | 64–88 registre, 0 locală / vărsări, aceleași `hmma` / `ffma.ftz`, 33 024 B | **56** (cât tc: NAK refolosește registrele între cele două faze; GREȘIT, mai jos), restul exact | GREȘITĂ (în bine) |
+| U3 | 1 bloc pe SM la 64 KiB | 1 (memoria partajată e limita) | (calcul) |
+| U4 | aceleași valori în memoria partajată ca tc, vectori aliniați și întregi, ≤ 3 numere peste diagonală | DA pe 6 forme mici (T 16 / 64 / 100 / 132 / 200 / 128, 1–3 capete, 1–2 eșantioane; toate blocurile și plăcile) și #513 (capetele 0 și 11), cu NaN peste diagonala lui P; exact 3 peste diagonală; 2 greșeli plantate prinse | CONFIRMATĂ (SIMULARE, T261) |
+| U5 | dS final = al lui tc bit cu bit; scrieri doar în rândurile blocului, `j < T` | DA pe cele 6 forme (orice dP, orice `dot`); greșeala plantată (vectorul diagonal fără alegere) prinsă | CONFIRMATĂ (SIMULARE, T261) |
+| U6 | aceiași biți prin procesorul de comenzi; nealiniatele refuzate fără scriere | DA pe 6 forme; T 130, d 6, dS + 4 refuzate fără scriere; din proba atenției iau v4 5 / 6 seturi (nu `t130-d64`) | CONFIRMATĂ (SIMULARE, T261) |
+| U7 | pe placă aceleași cuvinte ca tc | — | NOT TESTED |
+| U8 | `atentie-513-b4` ×1,2–1,8 față de tc | — | NOT TESTED |
+
+**Ce rămâne pentru placă:** U7 și U8, în proba „vechi lângă nou” a lui `attn_back_tile0_tc` (PREDARE P2zs pasul 1): v4 după tc,
+pe seturile aliniate, cuvânt cu cuvânt + timpii. Pragul de ×1,15 rămâne. Legarea în pasul mixt (alegerea v4 când `fits`) o fac
+după rezultatul plăcii — azi nu schimb ce e predat în P2zs.

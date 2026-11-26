@@ -1,5 +1,33 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 251 — 26 noiembrie 2026, ~14:11–15:05 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile0_tc_v4`: dS al atenției (dP pe f16) cu citiri și scrieri de 128 de biți, aceiași biți ca `attn_back_tile0_tc` în SIMULARE (T261); PREDARE P2zt**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 250), l-am pus `ocupat`. Niciun test nou pe placă în hub de la 11:13 →
+punctul lăsat de sesiunea 250 (citirile de 128 de biți pentru `attn_back_tile0_tc`). Planul și predicțiile U1–U8 urcate
+înainte de cod (`36a7b52`), nota `docs/C-157_ATTN_BACK0_TC_V4.md`. Clona locală a ramurii era iar veche și fără istorie
+comună cu GitHub: am lucrat pe o ramură locală nouă din GitHub (nimic șters, nimic rescris). Unealta NAK 2 (Mesa 26.3.1)
+construită din nou; `attn_back_tile0_tc` iese identic (`95fc392e…`).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| U1 citiri / scrieri globale | 28 `ld.global.b128` + 16 `st.global.b128`, nicio altă citire / scriere globală (tc: 88 + 64 scalare) | CONFIRMATĂ (listarea NAK) |
+| U2 registre | **56** (prezis 64–88: GREȘIT, în bine — cât tc); 0 locală, 0 vărsări, aceleași 16 `hmma` și 8 `ffma.ftz` | GREȘITĂ (în bine) |
+| U3 blocuri pe SM la 64 KiB | 1 (memoria partajată 33 024 B e limita, ca tc) | DEDUS |
+| U4 citirile fir cu fir = ale lui tc în memoria partajată | 6 forme mici + #513 (capetele 0 și 11), NaN peste diagonală, ≤ 3 numere peste ea, 2 greșeli plantate prinse | PASS (SIMULARE) |
+| U5 scrierea dP + trecerea a doua fir cu fir | dS final = al lui tc bit cu bit pe 6 forme; scrieri doar în rândurile blocului, `j < T`; greșeala plantată prinsă | PASS (SIMULARE) |
+| U6 prin procesorul de comenzi | v4 = tc bit cu bit pe 6 forme; T 130, d 6, adrese nealiniate refuzate fără scriere; 5 / 6 seturi ale probei | PASS (SIMULARE) |
+| U7–U8 pe placă (aceleași cuvinte; ×1,2–1,8 la `atentie-513-b4`) | — | NOT TESTED |
+| Verificările întregi | format, clippy, **1 285 PASS** (8 ignorate), no_std (ținta instalată din nou în cloud) | PASS |
+
+**Ce e nou:** doar adăugări — `nvidia_ga104::attn_back_tile0_tc_v4` (program, `fits`, `fits_cbuf`, `cbuf`, `grid`),
+`gpu_sim::cmdproc::{attn_back_tile0_tc_v4_on_cpu, ATTN_BACK_TILE0_TC_V4_NEEDS}`, `tools/nak/attn_back_tile0_tc_v4.comp`, intrarea
+în `tools/nak/build2.sh`. Nicio schimbare de interfață. Nou pentru placă: programul `attn_back_tile0_tc_v4` (SHA-256
+`5d5eb75d…72d4`), doar în proba „vechi lângă nou”. PREDARE `integration/cyber-universe/C-157_P2zt_attn0-tc-v4.md`.
+
+**Următorul pas:** comparațiile când vin (P2zq tc16 / v4 / v4pf, P2zr proba largă, P2zs + P2zt atenția dS pe circuite);
+altfel varianta câștigătoare v4 / v4pf legată în pas (după P2zq) sau `attn_back_tile0_tc_v4` legat (după P2zt); după P2zr:
+`token32` la G ales.
+
 ## Sesiunea 250 — 26 noiembrie 2026, ~13:10–14:00 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile0_tc` legat în pasul mixt rapid: ambele programe „înapoi” ale atenției pot merge pe circuitele speciale (SIMULARE, T260); PREDARE P2zs**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 249), l-am pus `ocupat`. Niciun test nou pe placă în hub de la 12:50 →

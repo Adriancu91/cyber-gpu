@@ -1,0 +1,230 @@
+// C-157 (docs/C-157_ATTN_BACK0_TC_V4.md, session 251; plan and predictions U1-U8 pushed before this code, 36a7b52):
+// attn_back_tile0_tc with 128-bit global loads AND stores (vec4), the same lesson as attn_back_tile_tc16_v4 (os-457:
+// the attention programs wait on scalar loads most of the time). Thread vector s (e = lid + 256 s) covers row
+// r = e / 16, columns x = 4 (e % 16) .. x + 3 of a 64 x 64 tile.
+// Only for ALIGNED shapes (nvidia_ga104::attn_back_tile0_tc_v4::fits): T and d multiples of 4 and the addresses of qkv,
+// p, dout, ds multiples of 16 bytes; then every vec4 is aligned and wholly inside its row (T % 4 == 0: a vector is
+// wholly inside j < T or wholly outside). The host launches attn_back_tile0_tc otherwise.
+// Everything else is attn_back_tile0_tc: the same f16 values in the same words of sm, the same products, the same
+// P tile (f32 bits, skewed), the same dot chain, the same per-element arithmetic in pass 2 (each thread keeps its rows
+// ty + 16 a, so dr[a] is unchanged; its columns become 4 tx .. 4 tx + 3). So the SAME final bits in dS.
+// Read / write differences (not value differences):
+//  - on the diagonal tile a vector may read up to 3 numbers above the diagonal of P / dS, in the same row (dropped by
+//    a select, never multiplied);
+//  - dP on the diagonal tile is stored as a whole vector (also above the diagonal, only j < T); pass 2 then writes 0
+//    there, as today. The same thread writes and later reads those words, in its own block's rows.
+// Compiled with the SECOND NAK tool (tools/nak/build2.sh, Mesa 26.3.1). Nothing here has run on a board.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_cooperative_matrix : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer In4 { vec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer Buf4 { vec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+// The same 64 bytes as attn_back_tile0_tc: the same 64-bit addresses, the inputs only declared 16-byte aligned.
+layout(push_constant) uniform Args {
+    In4 qkv; In4 p; In4 dout; Buf4 ds; Out dqkv;
+    uint t; uint c; uint heads; uint d; uint mode; float scale;
+} args;
+
+shared uint sm[64 * 64];
+shared float cs[64 * 65];
+const uint SB = 2048u;
+#define NV 4u  // vec4 per thread per 64 x 64 tile: 64 * 64 / (4 * 256)
+
+// Skewed tile address of (row, column) (as attn_back_tile0_3 / attn_back_tile0_tc).
+uint sk(uint row, uint col) {
+    return row * 64u + ((col + row) & 63u);
+}
+
+void main() {
+    if (args.mode != 0u) {
+        return;
+    }
+    uint T = args.t;
+    uint C = args.c;
+    uint d = args.d;
+    uint b = gl_WorkGroupID.z;
+    uint h = gl_WorkGroupID.y;
+    uint bx = gl_WorkGroupID.x;
+    uint i0 = bx * 64u;
+    uint lid = gl_LocalInvocationID.x;
+    uint tx = lid & 15u;
+    uint ty = lid >> 4u;
+    uint w = lid >> 5u;
+    uint wr = (w >> 1u) * 16u;
+    uint wc = (w & 1u) * 32u;
+    uint ntiles = (T + 63u) / 64u;
+    uint row3 = 3u * C;
+    uint base = (b * args.heads + h) * T * T;
+    uint x4 = tx * 4u;  // this thread's 4 columns in every tile (vector s: row ty + 16 s)
+
+    float dot = 0.0;  // thread lid < 64: the chain of row i0 + lid
+    for (uint jt = 0u; jt <= bx; jt++) {
+        barrier();
+        // dO and V tiles -> f16 pairs: all 8 loads first (a vector with nothing kept reads vector 0, always valid),
+        // the selects after them (attn_back_tile0_tc's per-element conditions: row < T and x < d).
+        vec4 ro[NV];
+        vec4 rv[NV];
+        uint keep = 0u;
+        [[unroll]] for (uint s = 0u; s < NV; s++) {
+            uint r = ty + 16u * s;
+            uint i = i0 + r;
+            uint jr = jt * 64u + r;
+            uint ino = uint(i < T) & uint(x4 < d);
+            uint inv = uint(jr < T) & uint(x4 < d);
+            ro[s] = args.dout.v[(((b * T + i) * C + h * d + x4) >> 2u) * ino];
+            rv[s] = args.qkv.v[(((b * T + jr) * row3 + 2u * C + h * d + x4) >> 2u) * inv];
+            keep |= ino << s;
+            keep |= inv << (4u + s);
+        }
+        [[unroll]] for (uint s = 0u; s < NV; s++) {
+            uint r = ty + 16u * s;
+            bool ko = ((keep >> s) & 1u) != 0u;
+            bool kv = ((keep >> (4u + s)) & 1u) != 0u;
+            vec4 o = ro[s];
+            vec4 v = rv[s];
+            uint q = r * 32u + (x4 >> 1u);
+            sm[q] = packFloat2x16(f16vec2(float16_t(ko ? o.x : 0.0), float16_t(ko ? o.y : 0.0)));
+            sm[q + 1u] = packFloat2x16(f16vec2(float16_t(ko ? o.z : 0.0), float16_t(ko ? o.w : 0.0)));
+            sm[SB + q] = packFloat2x16(f16vec2(float16_t(kv ? v.x : 0.0), float16_t(kv ? v.y : 0.0)));
+            sm[SB + q + 1u] = packFloat2x16(f16vec2(float16_t(kv ? v.z : 0.0), float16_t(kv ? v.w : 0.0)));
+        }
+        barrier();
+        coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> acc[2];
+        acc[0] = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+        acc[1] = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+        [[unroll]] for (uint kk = 0u; kk < 64u; kk += 16u) {
+            coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> fa;
+            coopMatLoad(fa, sm, (wr * 64u + kk) / 2u, 32u, gl_CooperativeMatrixLayoutRowMajor);
+            [[unroll]] for (uint j = 0u; j < 2u; j++) {
+                coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> fb;
+                coopMatLoad(fb, sm, SB + ((wc + 16u * j) * 64u + kk) / 2u, 32u,
+                            gl_CooperativeMatrixLayoutColumnMajor);
+                acc[j] = coopMatMulAdd(fa, fb, acc[j]);
+            }
+        }
+        [[unroll]] for (uint j = 0u; j < 2u; j++) {
+            coopMatStore(acc[j], cs, wr * 65u + wc + 16u * j, 65u, gl_CooperativeMatrixLayoutRowMajor);
+        }
+        barrier();  // every product done (sm free) and the dP tile complete in cs
+        // the P tile loads first (row ic = i clamped is not needed: a vector with nothing kept reads vector 0)
+        vec4 rp[NV];
+        uint kp = 0u;
+        [[unroll]] for (uint s = 0u; s < NV; s++) {
+            uint i = i0 + ty + 16u * s;
+            uint j = jt * 64u + x4;
+            uint inp = uint(i < T) & uint(j <= i);
+            rp[s] = args.p.v[((base + i * T + j) >> 2u) * inp];
+            kp |= inp << s;
+        }
+        // dP stored as vectors: rows i < T, columns j < T (whole vectors; on the diagonal tile also above it, zeroed
+        // by pass 2 as today)
+        [[unroll]] for (uint s = 0u; s < NV; s++) {
+            uint r = ty + 16u * s;
+            uint i = i0 + r;
+            uint j = jt * 64u + x4;
+            if (i < T && j < T) {
+                uint cr = r * 65u + x4;
+                args.ds.v[(base + i * T + j) >> 2u] = vec4(cs[cr], cs[cr + 1u], cs[cr + 2u], cs[cr + 3u]);
+            }
+        }
+        // the P tile into sm (f32 bits, skewed): attn_back_tile0_tc's values, 0 where i >= T or j > i
+        [[unroll]] for (uint s = 0u; s < NV; s++) {
+            uint r = ty + 16u * s;
+            uint i = i0 + r;
+            uint j = jt * 64u + x4;
+            bool kept = ((kp >> s) & 1u) != 0u;
+            vec4 pv = rp[s];
+            sm[sk(r, x4)] = floatBitsToUint(kept ? pv.x : 0.0);
+            sm[sk(r, x4 + 1u)] = floatBitsToUint((kept && j + 1u <= i) ? pv.y : 0.0);
+            sm[sk(r, x4 + 2u)] = floatBitsToUint((kept && j + 2u <= i) ? pv.z : 0.0);
+            sm[sk(r, x4 + 3u)] = floatBitsToUint((kept && j + 3u <= i) ? pv.w : 0.0);
+        }
+        barrier();
+        if (lid < 64u) {
+            uint pb = lid * 65u;
+            if (jt < bx) {
+                [[dont_unroll]] for (uint jj0 = 0u; jj0 < 64u; jj0 += 4u) {
+                    [[unroll]] for (uint u = 0u; u < 4u; u++) {
+                        dot = fma(uintBitsToFloat(sm[sk(lid, jj0 + u)]), cs[pb + (jj0 + u)], dot);
+                    }
+                }
+            } else {
+                uint i = i0 + lid;
+                [[dont_unroll]] for (uint jj0 = 0u; jj0 < 64u; jj0 += 4u) {
+                    [[unroll]] for (uint u = 0u; u < 4u; u++) {
+                        uint jj = jj0 + u;
+                        uint j = jt * 64u + jj;
+                        if (i < T && j <= i) {
+                            dot = fma(uintBitsToFloat(sm[sk(lid, jj)]), cs[pb + jj], dot);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    barrier();
+    if (lid < 64u) {
+        cs[lid] = dot;
+    }
+    barrier();
+    float dr[4];
+    [[unroll]] for (uint a = 0u; a < 4u; a++) {
+        dr[a] = cs[ty + 16u * a];
+    }
+    // Pass 2: attn_back_tile0_tc's arithmetic per element, on vectors. Tiles left of the diagonal: every vector is in.
+    for (uint jt = 0u; jt < bx; jt++) {
+        vec4 lds_[4];
+        vec4 lps[4];
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint ic = min(i0 + ty + 16u * a, T - 1u);
+            uint o = (base + ic * T + jt * 64u + x4) >> 2u;
+            lds_[a] = args.ds.v[o];
+            lps[a] = args.p.v[o];
+        }
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint i = i0 + ty + 16u * a;
+            vec4 x = lds_[a] - vec4(dr[a]);
+            vec4 y = (lps[a] * x) * args.scale;
+            if (i < T) {
+                args.ds.v[(base + i * T + jt * 64u + x4) >> 2u] = y;
+            }
+        }
+    }
+    {
+        uint jt = bx;
+        uint j = jt * 64u + x4;
+        vec4 lds_[4];
+        vec4 lps[4];
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint ic = min(i0 + ty + 16u * a, T - 1u);
+            uint o = ((base + ic * T + j) >> 2u) * uint(j < T);
+            lds_[a] = args.ds.v[o];
+            lps[a] = args.p.v[o];
+        }
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint i = i0 + ty + 16u * a;
+            vec4 x = lds_[a] - vec4(dr[a]);
+            vec4 v = (lps[a] * x) * args.scale;
+            if (i < T && j < T) {
+                args.ds.v[(base + i * T + j) >> 2u] =
+                    vec4((j <= i) ? v.x : 0.0, (j + 1u <= i) ? v.y : 0.0, (j + 2u <= i) ? v.z : 0.0,
+                         (j + 3u <= i) ? v.w : 0.0);
+            }
+        }
+    }
+    for (uint jt = bx + 1u; jt < ntiles; jt++) {
+        uint j = jt * 64u + x4;
+        [[unroll]] for (uint a = 0u; a < 4u; a++) {
+            uint i = i0 + ty + 16u * a;
+            if (i < T && j < T) {
+                args.ds.v[(base + i * T + j) >> 2u] = vec4(0.0);
+            }
+        }
+    }
+}

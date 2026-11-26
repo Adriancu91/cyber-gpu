@@ -623,3 +623,8 @@ niciun octet de firmware NVIDIA.
   `crates/gpu-sim/src/cmdproc.rs`, testul `crates/nvidia-ga104/tests/sim_c157_attn_tc16_v4.rs` — scrise de noi. Că NAK așteaptă
   toate citirile în zbor la o ramificare: aflat din listarea NAK a programului nostru (`tools/nak/citiri_seriale.py`).
   Compilat cu Mesa NAK 26.3.1 (MIT), pe gazdă. Nimic din firmware-ul NVIDIA.
+- **C-157 — `attn_back_tile0_tc_v4` (sesiunea 251):** `tools/nak/attn_back_tile0_tc_v4.comp` (al nostru, din
+  `attn_back_tile0_tc.comp` și ideea citirilor de 128 de biți din `attn_back_tile_tc16_v4.comp` / `mm_tc_v4.comp`, tot ale
+  noastre), `crates/nvidia-ga104/src/attn_back_tile0_tc_v4.rs`, `attn_back_tile0_tc_v4_on_cpu` în `crates/gpu-sim/src/cmdproc.rs`,
+  testul `crates/nvidia-ga104/tests/sim_c157_attn0_tc_v4.rs` — scrise de noi. Compilat cu Mesa NAK 26.3.1 (MIT), pe gazdă.
+  Nimic din firmware-ul NVIDIA.
