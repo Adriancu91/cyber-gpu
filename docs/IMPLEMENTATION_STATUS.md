@@ -28,7 +28,7 @@ incompatibilă** pentru OS (o variantă nouă în `MixedLaunch` / `TcPick`; OS-u
 și-a schimbat valoarea (0x68 → 0x800), dar nu era folosit în afara repo-ului.
 
 **Următorul pas:** comparațiile testelor de pe placă când vin (os-451, os-447, os-449, apoi proba P2zm); altfel atenția înainte
-(`attn_fwd_tile3`, ~?) sau dS (`attn_back_tile0_3`) pe circuitele speciale — întâi studiul cât ar câștiga, cu predicții.
+(`attn_fwd_tile3`) sau dS (`attn_back_tile0_3`) pe circuitele speciale — întâi studiul cât ar câștiga, cu predicții.
 
 ## Sesiunea 243 — 26 noiembrie 2026, ~05:10–06:20 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile_tc`: dQ, dK, dV ai atenției pe circuitele speciale (f16 × f16 → f32) — modelul pe procesor + judecata (SIMULARE: în margine, ~3·10⁻⁴ față de F32) + programul compilat de NAK (48 registre, 0 `ffma`); încă nelegat în pasul de antrenare, nimic predat OS-ului**
 
