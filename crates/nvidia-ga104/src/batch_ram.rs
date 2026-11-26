@@ -16,7 +16,7 @@ use gpu_core::error::{GpuError, GpuResult};
 
 use crate::qmd::{MAX_SHARED_BYTES, SharedMemory};
 use crate::train_step::{
-    Launch, MixedLaunch, Plan, Prog, SLOT, TcPick, TcPrograms, pack, pack_mixed_fast,
+    Launch, MixedLaunch, Plan, Prog, SLOT, TcPick, TcPrograms, pack, pack_mixed_fast_attn,
 };
 use crate::transfer::{COPY_UNIT, copy_cbuf, copy_qmd};
 
@@ -175,6 +175,24 @@ pub fn pack_mixed_fast_via_ram(
     zone_va: u64,
     v: &ViaRam,
 ) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
+    pack_mixed_fast_via_ram_attn(list, prog_va, progs, None, step_bytes, copy_va, zone_va, v)
+}
+
+/// C-157 (session 244, `docs/C-157_ATTN_BACK_TC.md` §5): [`pack_mixed_fast_via_ram`] for a list that may hold
+/// `MixedLaunch::AttnTc` (`train_step::attn_tc_list`), packed by `train_step::pack_mixed_fast_attn` with
+/// the tensor-core attention program `attn` (`None` only when the list has none). With `None` and no `AttnTc` it is
+/// [`pack_mixed_fast_via_ram`] byte for byte. SIMULARE only.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub fn pack_mixed_fast_via_ram_attn(
+    list: &[MixedLaunch],
+    prog_va: impl Fn(Prog) -> u64,
+    progs: &TcPrograms,
+    attn: Option<crate::train_step::AttnTcProgram>,
+    step_bytes: Option<u32>,
+    copy_va: u64,
+    zone_va: u64,
+    v: &ViaRam,
+) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
     if !copy_va.is_multiple_of(256) || !zone_va.is_multiple_of(256) {
         return Err(bad(
             "lot prin RAM: programul de copiere sau zona nealiniate",
@@ -183,7 +201,7 @@ pub fn pack_mixed_fast_via_ram(
     let n_in = v.copies_in.len();
     let list_va = zone_va + SLOT * n_in as u64;
     let (list_bytes, list_qmds, picks) =
-        pack_mixed_fast(list, prog_va, progs, step_bytes, list_va)?;
+        pack_mixed_fast_attn(list, prog_va, progs, attn, step_bytes, list_va)?;
     let copy_shared = SharedMemory {
         bytes: 0,
         max_bytes: MAX_SHARED_BYTES,

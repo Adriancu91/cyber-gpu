@@ -1,0 +1,147 @@
+// C-157 (docs/C-157_ATTN_BACK_TC.md section 6, session 244): attn_back_tile_tc with 16 KiB of shared memory instead
+// of 32 KiB, so more blocks fit on an SM at the 64 KiB step of the fast mixed step (DEDUS: 3-4 instead of 1-2).
+// The SAME arithmetic as attn_back_tile_tc.comp (same tiles, same f16 rounding float16_t(x), same coopMatMulAdd
+// order, same skipped zero steps, same guards): only where things live in shared memory changes.
+//   - one array sm[4096] of uint (16 KiB): words 0..2047 hold the f16 tile sa (2 per word, low half first),
+//     words 2048..4095 the f16 tile sb; the f32 result tile cs (4096 floats) is the WHOLE array, written only
+//     after a barrier that follows the last product of the pass (it overwrites sa / sb, which are re-filled after
+//     the next pass's first barrier).
+//   - each thread converts and writes 2 neighbouring elements (x even, x+1) as one word (packFloat2x16).
+//   - coopMatLoad from the uint array into f16 matrices: offset and stride in uint words (SPV_KHR_cooperative_matrix:
+//     in units of the pointed-to element), i.e. the f16 index / 2.
+// Expected: the same bits as attn_back_tile_tc on every input (the board test: compare word for word).
+// Nothing here has run on a board.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_cooperative_matrix : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Buf { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+layout(push_constant) uniform Args {
+    In qkv; In p; In dout; Buf ds; Out dqkv;
+    uint t; uint c; uint heads; uint d; uint mode; float scale;
+} args;
+
+// words 0..2047: sa (dQ: dS [t][j]; dK: dS [i][t]; dV: P [i][t]); words 2048..4095: sb (dQ: K [j][e]; dK: Q [i][e];
+// dV: dO [i][e]); after the last product of a pass: the f32 result [t][e] over all 4096 words.
+shared uint sm[64 * 64];
+const uint SB = 2048u;
+
+void main() {
+    if (args.mode != 1u) {
+        return;
+    }
+    uint T = args.t;
+    uint C = args.c;
+    uint d = args.d;
+    uint b = gl_WorkGroupID.z;
+    uint h = gl_WorkGroupID.y;
+    uint bx = gl_WorkGroupID.x;
+    uint t0 = bx * 64u;
+    uint lid = gl_LocalInvocationID.x;
+    uint w = lid >> 5u;
+    uint wr = (w >> 1u) * 16u;
+    uint wc = (w & 1u) * 32u;
+    uint ntiles = (T + 63u) / 64u;
+    uint row3 = 3u * C;
+    uint base = (b * args.heads + h) * T * T;
+
+    // pass 0: dQ, pass 1: dK (dS with Q), pass 2: dV (P with dO)
+    [[dont_unroll]] for (uint pass = 0u; pass < 3u; pass++) {
+        coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> acc[2];
+        acc[0] = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+        acc[1] = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+        In srcs = In((pass == 2u) ? uint64_t(args.p) : uint64_t(args.ds));
+        In srcb = In((pass == 2u) ? uint64_t(args.dout) : uint64_t(args.qkv));
+        uint strb = (pass == 2u) ? C : row3;
+        uint offb = (pass == 0u) ? C : 0u;
+        uint first = (pass == 0u) ? 0u : bx;
+        uint last = (pass == 0u) ? bx : ntiles - 1u;
+        for (uint kt = first; kt <= last; kt++) {
+            barrier();
+            [[dont_unroll]] for (uint hh = 0u; hh < 8u; hh++) {
+                // One pair (x even, x + 1) of sa and of sb per thread: the 4 loads first (clamped), the selects after.
+                uint q = lid + 256u * hh;
+                uint r = q >> 5u;
+                uint x0 = (q & 31u) * 2u;
+                float ls[2];
+                float lb[2];
+                [[unroll]] for (uint m = 0u; m < 2u; m++) {
+                    uint x = x0 + m;
+                    if (pass == 0u) {
+                        uint tc = min(t0 + r, T - 1u);
+                        ls[m] = srcs.v[base + tc * T + min(kt * 64u + x, tc)];
+                    } else {
+                        uint ic = min(kt * 64u + r, T - 1u);
+                        ls[m] = srcs.v[base + ic * T + min(t0 + x, ic)];
+                    }
+                    uint kr = min(kt * 64u + r, T - 1u);
+                    lb[m] = srcb.v[(b * T + kr) * strb + offb + h * d + min(x, d - 1u)];
+                }
+                float16_t va[2];
+                float16_t vb[2];
+                [[unroll]] for (uint m = 0u; m < 2u; m++) {
+                    uint x = x0 + m;
+                    bool keep;
+                    if (pass == 0u) {
+                        uint tp = t0 + r;
+                        keep = tp < T && kt * 64u + x <= tp;
+                    } else {
+                        uint i = kt * 64u + r;
+                        keep = i < T && t0 + x <= i;
+                    }
+                    va[m] = float16_t(keep ? ls[m] : 0.0);
+                    uint kr = kt * 64u + r;
+                    vb[m] = float16_t((kr < T && x < d) ? lb[m] : 0.0);
+                }
+                sm[q] = packFloat2x16(f16vec2(va[0], va[1]));
+                sm[SB + q] = packFloat2x16(f16vec2(vb[0], vb[1]));
+            }
+            barrier();
+            // the 16-steps of this tile for this subgroup (all of them off the diagonal)
+            uint k0 = 0u;
+            uint k1 = 64u;
+            if (kt == bx) {
+                if (pass == 0u) {
+                    k1 = wr + 16u;
+                } else {
+                    k0 = wr;
+                }
+            }
+            for (uint kk = k0; kk < k1; kk += 16u) {
+                coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> fa;
+                if (pass == 0u) {
+                    coopMatLoad(fa, sm, (wr * 64u + kk) / 2u, 32u, gl_CooperativeMatrixLayoutRowMajor);
+                } else {
+                    coopMatLoad(fa, sm, (kk * 64u + wr) / 2u, 32u, gl_CooperativeMatrixLayoutColumnMajor);
+                }
+                [[unroll]] for (uint j = 0u; j < 2u; j++) {
+                    coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> fb;
+                    coopMatLoad(fb, sm, SB + (kk * 64u + wc + 16u * j) / 2u, 32u, gl_CooperativeMatrixLayoutRowMajor);
+                    acc[j] = coopMatMulAdd(fa, fb, acc[j]);
+                }
+            }
+        }
+        // the result of this pass: accumulators -> sm (as f32, after every subgroup is done with sa / sb) -> dqkv
+        barrier();
+        [[unroll]] for (uint j = 0u; j < 2u; j++) {
+            coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> res = acc[j];
+            coopMatStore(res, sm, wr * 64u + wc + 16u * j, 64u, gl_CooperativeMatrixLayoutRowMajor);
+        }
+        barrier();
+        [[unroll]] for (uint s = 0u; s < 16u; s++) {
+            uint e = lid + 256u * s;
+            uint r = e >> 6u;
+            uint x = e & 63u;
+            uint tp = t0 + r;
+            if (tp < T && x < d) {
+                args.dqkv.v[(b * T + tp) * row3 + pass * C + h * d + x] = uintBitsToFloat(sm[e]);
+            }
+        }
+    }
+}

@@ -2091,6 +2091,119 @@ pub fn attn_back_tile_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// C-157 (session 244, `docs/C-157_ATTN_BACK_TC.md` §5): what `tools/nak/out2/attn_back_tile_tc.sm86.sass` needs —
+/// two f16 tiles 64 × 64 and the f32 result tile 64 × 64 (32 768 bytes, the dump's `Shared size`) and one barrier.
+pub const ATTN_BACK_TILE_TC_NEEDS: Needs = Needs {
+    shared_bytes: 2 * 64 * 64 * 2 + 64 * 64 * 4,
+    barriers: 1,
+};
+
+/// Where NVK 26.3.1 puts the push constants of the second-tool programs in cbuf 0 (`attn_back_tile_tc` dump:
+/// `c[0x0][+0x700]` … `c[0x0][+0x738]`).
+const ATTN_TC_PUSH_BASE: u64 = 0x700;
+
+/// C-157 (session 244): the CPU stand-in for `tools/nak/out2/attn_back_tile_tc.sm86.sass` — mode 1 of the attention
+/// backward (dQ = dS·K, dK = dSᵀ·Q, dV = Pᵀ·dO) on the tensor cores, blocks of 256. **cbuf0 is NOT `attn_back`'s:**
+/// the second NAK tool (Mesa 26.3.1) reads the arguments at 0x700 — qkv/p/dout/ds/dqkv at 0x700/0x708/0x710/0x718/0x720,
+/// T 0x728, C 0x72c, H 0x730, d 0x734, mode 0x738 (the dump). A mode other than 1 makes the program exit at once:
+/// nothing is written. Grid [⌈T/64⌉, ≤ H, ≤ B]: every element (b, h, position < min(T, 64·x), e) of dQ | dK | dV is
+/// `gpu_compute::attn_tc::model` — the inputs rounded to binary16, the tensor-core adder fitted on os-335 (a
+/// HYPOTHESIS, not a fact). d > 64, a grid past H or past ⌈T/64⌉, d ≠ C / H, or an input the program would read that is
+/// not a finite binary16 (on the board it would become ±inf / NaN) are refused (no write) instead of guessed.
+pub fn attn_back_tile_tc_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    use gpu_compute::layer::{ATTN_TILE_MAX_D, AttnShape};
+    if l.block != [256, 1, 1] {
+        return Err(bad("SIM: attn_back_tile_tc cere blocuri de 256x1x1"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 || l.mem.read_u32(l.cbuf0 + 0x8)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0..0x8) diferita de 0, nemodelata",
+        ));
+    }
+    let base = l.cbuf0 + ATTN_TC_PUSH_BASE;
+    let r64 = |l: &Launch<'_>, o: u64| l.mem.read_u64(base + o);
+    let r32 = |l: &Launch<'_>, o: u64| l.mem.read_u32(base + o);
+    if r32(l, 0x38)? != 1 {
+        return Ok(());
+    }
+    let (qkv, p, dout, ds, dqkv) = (
+        r64(l, 0x00)?,
+        r64(l, 0x08)?,
+        r64(l, 0x10)?,
+        r64(l, 0x18)?,
+        r64(l, 0x20)?,
+    );
+    let (t, c, heads, d) = (
+        r32(l, 0x28)? as usize,
+        r32(l, 0x2c)? as usize,
+        r32(l, 0x30)? as usize,
+        r32(l, 0x34)? as usize,
+    );
+    let [gx, gy, gz] = l.grid.map(|g| g as usize);
+    if heads == 0 || d == 0 || d * heads != c || t == 0 {
+        return Err(bad(
+            "SIM: attn_back_tile_tc: d != C/H sau forma goala, nemodelat",
+        ));
+    }
+    if d > ATTN_TILE_MAX_D {
+        return Err(bad(
+            "SIM: attn_back_tile_tc: d > 64 (placile partajate), nemodelat",
+        ));
+    }
+    if gy > heads || gx > t.div_ceil(64) {
+        return Err(bad(
+            "SIM: attn_back_tile_tc: grila trece de H / T, nemodelata",
+        ));
+    }
+    if gz == 0 || gy == 0 || gx == 0 {
+        return Ok(());
+    }
+    let s = AttnShape {
+        batch: gz,
+        t,
+        c,
+        heads,
+    };
+    let (nq, no, np) = s
+        .sizes()
+        .ok_or_else(|| bad("SIM: attn_back_tile_tc: forma prea mare"))?;
+    let qkv_v = l.mem.read_f32s(qkv, nq)?;
+    let p_v = l.mem.read_f32s(p, np)?;
+    let dout_v = l.mem.read_f32s(dout, no)?;
+    let ds_v = l.mem.read_f32s(ds, np)?;
+    let out = gpu_compute::attn_tc::model(&s, &qkv_v, &p_v, &dout_v, &ds_v).ok_or_else(|| {
+        bad("SIM: attn_back_tile_tc: o intrare nu e f16 finit (pe placa ar iesi inf / NaN), nemodelat")
+    })?;
+    let positions = t.min(64 * gx);
+    for b in 0..gz {
+        for tp in 0..positions {
+            let r = b * t + tp;
+            for part in 0..3 {
+                for h in 0..gy {
+                    let at = r * 3 * c + part * c + h * d;
+                    l.mem.write_f32s(dqkv + 4 * at as u64, &out[at..at + d]);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// C-157 (session 244, `docs/C-157_ATTN_BACK_TC.md` §6): what `tools/nak/out2/attn_back_tile_tc16.sm86.sass` needs —
+/// one array of 4 096 words (16 384 bytes) and one barrier.
+pub const ATTN_BACK_TILE_TC16_NEEDS: Needs = Needs {
+    shared_bytes: 64 * 64 * 4,
+    barriers: 1,
+};
+
+/// C-157 (session 244): the CPU stand-in for `tools/nak/out2/attn_back_tile_tc16.sm86.sass` — the same arithmetic as
+/// `attn_back_tile_tc` in 16 KiB of shared memory (only where the tiles live changes), so the stand-in is
+/// [`attn_back_tile_tc_on_cpu`]: the same cbuf (arguments at 0x700), the same `gpu_compute::attn_tc::model` — a
+/// HYPOTHESIS. That the board gives the same words for both programs is what the board test checks.
+pub fn attn_back_tile_tc16_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    attn_back_tile_tc_on_cpu(l)
+}
+
 /// The CPU stand-in for C-160 point 7's `attn_back_tile0.sm86.sass` (`docs/C-160_P7_ATENTIA_INAPOI_MOD0_PE_PLACI.md`):
 /// mode 0 (the rows of dS) of the attention backward on 64-row tiles, blocks of 256; the cbuf0 of `attn_back`
 /// (qkv/p/dout/ds at 0x28/0x30/0x38/0x40, T 0x50, C 0x54, H 0x58, d 0x5c, mode 0x60, scale 0x64). A mode other than 0

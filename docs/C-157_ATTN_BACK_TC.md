@@ -128,3 +128,42 @@ Un test nou citește toate locurile `c[0x0]` din dump și verifică că sunt doa
   (os-431): `attn_back_tile_3` (33 024 B) → **1 bloc** pe SM (ambele citiri ale rezervei de 1 KiB);
   `attn_back_tile_tc` (32 768 B) → 2 blocuri fără rezervă, 1 cu rezervă. Deci nota veche („3 blocuri, ca azi”) era
   la 100 KiB, treaptă pe care nu o folosim; varianta cu 16 KiB ar da 3–4 blocuri la 64 KiB.
+
+### 5.4 Rezultatul C1–C6 (T253, SIMULARE; C6 DEDUS)
+
+| # | prezis | ieșit | verdict |
+|---|---|---|---|
+| C1 | înlocuitorul = `attn_tc::model` bit cu bit; modul 0 nimic; d > 64 și f16 depășit refuzate | **135 864 de elemente** pe 5 forme (și grilă parțială) aceiași biți, nimic scris în afara grilei; modul 0 nimic; ambele refuzate | CONFIRMATĂ |
+| C2 | 2 lansări mutate, zona + 3 584 B, fără `AttnTc` aceiași octeți | 2 `AttnTc`, zona 87 296 → 90 880 B (+3 584), aceiași octeți | CONFIRMATĂ |
+| C3 | pierderi ≤ 1·10⁻⁴, gradient 1·10⁻⁵ … 2·10⁻³, greutăți ≤ 1·10⁻⁴, biți diferiți | pierderea 9,7191 → 8,8299 (scade); pierderi **1,2·10⁻⁶**, gradient **1,9·10⁻⁴**, greutăți **3,8·10⁻⁴**; biți diferiți | **PE JUMĂTATE** — greutățile au ieșit de ~4× peste predicție (AdamW face din diferențe mici pe gradienți aproape de zero pași întregi de lr); rămân sub toleranța pasului mixt față de PyTorch (1·10⁻³) |
+| C4 | 12 `AttnTc` + 147 `mm_tc_v4`, zona + 21 504 B, QMD: adresa, 48 registre, grila [8, 12, 2] | exact așa | CONFIRMATĂ |
+| C5 | refuzurile; cbuf la 0x28 → gradient greșit > 1 % | toate refuzurile; cbuf la 0x28 → programul simulat nu scrie nimic, iar **pasul e refuzat** (lansarea următoare citește memorie nescrisă) — prins mai devreme decât prezisesem | CONFIRMATĂ (altfel decât prezis) |
+| C6 | la 64 KiB: `attn_back_tile_3` 1 / 1, `attn_back_tile_tc` 2 / 1, 16 KiB → 3–4 | (1, 1), (2, 1), **(4, 3)** | CONFIRMATĂ |
+
+## 6. `attn_back_tile_tc16` — aceeași aritmetică în 16 KiB (sesiunea 244)
+
+**Ce.** `tools/nak/attn_back_tile_tc16.comp`: plăcile f16 sa / sb stau câte două într-un cuvânt de 32 de biți
+(`packFloat2x16`, rotunjire la cel mai apropiat par — dump-ul: `f2fp.pack_ab` fără sufix = RNE, verificat în sursa NAK),
+iar placa f32 de ieșire se scrie **peste ele** după o barieră (toate subgrupurile au terminat produsele). Încărcarea
+plăcilor în circuite (`coopMatLoad` din tabloul de cuvinte): pasul și deplasarea sunt în cuvinte (sursa NAK,
+`nak_nir_lower_cmat.c`: „stride is in elements of the pointed to type”), adică indicele f16 / 2. Nimic altceva nu se schimbă.
+
+**Compilat** (Mesa NAK 26.3.1, aceeași unealtă — `attn_back_tile_tc` și `mm_tc_v4` ies identic): **48 registre, 16 384 B
+partajată**, 0 memorie locală, 0 vărsări, 4 `hmma`, aceleași `ldsm` / `movm` ca programul de 32 KiB, 0 `ffma`, 785 instrucțiuni.
+SHA-256 `attn_back_tile_tc16.sm86.sass` = `8cbbab7ed17988f5c6030fbb3ffcee7163f24a47a670a9ae4ae91b7be8ee5286`.
+(Compilarea s-a făcut înainte să scriu predicțiile de mai jos; ele privesc doar testele.)
+
+**Predicții (scrise înainte de teste):**
+- **D1** — în SIMULARE, pasul mixt mini cu `attn_back_tile_tc16` = cu `attn_back_tile_tc`, bit cu bit (același model —
+  verifică doar drumul: alegerea, QMD-ul, refuzurile).
+- **D2** — lista #513: 12 `AttnTc16`, QMD cu 16 384 B partajată și 48 registre; același cbuf ca la 32 KiB.
+- **D3** — cu lotul prin RAM: `pack_mixed_fast_via_ram_attn(…, None, …)` = `pack_mixed_fast_via_ram` octet cu octet.
+- **D4 (doar pe placă)** — `attn_back_tile_tc16` dă **aceleași cuvinte** ca `attn_back_tile_tc` pe orice intrare.
+  Timpul: 1 → 3–4 blocuri pe SM la treapta 64 KiB (DEDUS); câștigul față de 9,2 ms (`attn_back_tile_3`) rămâne de măsurat.
+
+**Rezultat D1–D3 (T253d, SIMULARE):** D1 mini cu `tc16` = cu `tc` bit cu bit (pierderi, gradient, greutăți) — CONFIRMATĂ (verifică
+drumul, nu placa); D2 #513: 12 `attn_back_tile_tc16`, QMD 16 384 B / 48 registre, același cbuf ca la 32 KiB, aceeași zonă — CONFIRMATĂ;
+D3 prin RAM: `None` = packer-ul vechi octet cu octet, `tc16` ales, lista cu `AttnTc` refuzată de packer-ul vechi — CONFIRMATĂ.
+D4 (aceleași cuvinte pe placă, timpul) — NOT TESTED. Verificările întregi: 1 238 PASS (8 ignorate).
+
+**PREDARE** către OS: `integration/cyber-universe/C-157_P2zm_atentia-tc.md` (proba „vechi lângă nou” întâi, apoi opțiunea în pasul mixt).

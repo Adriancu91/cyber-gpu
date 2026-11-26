@@ -610,3 +610,10 @@ niciun octet de firmware NVIDIA.
   și `mm_tc.comp`, tot ale noastre; ideea plăcilor cu `coopMatMulAdd` din documentația publică CUTLASS / VK_KHR_cooperative_matrix,
   nicio linie copiată), `crates/gpu-compute/src/attn_tc.rs`, `crates/nvidia-ga104/src/attn_back_tile_tc.rs`, testul
   `crates/gpu-compute/tests/c157_attn_back_tc.rs` (ale noastre). Compilat cu Mesa NAK 26.3.1 (MIT), pe gazdă.
+- **C-157 — `attn_back_tile_tc16`, înlocuitorii din `gpu-sim`, `attn_tc_list` / `pack_mixed_fast_attn` (sesiunea 244):**
+  `tools/nak/attn_back_tile_tc16.comp` (al nostru, din `attn_back_tile_tc.comp`), `crates/nvidia-ga104/src/attn_back_tile_tc16.rs`,
+  `crates/gpu-sim/src/cmdproc.rs` (`attn_back_tile_tc*_on_cpu`), `train_step.rs`, `batch_ram.rs`, testul
+  `crates/nvidia-ga104/tests/sim_c157_attn_tc_mixed.rs` — scrise de noi. Locul argumentelor (0x700) citit din listarea NAK a
+  programului nostru; cum socotește NAK pasul lui `coopMatLoad` dintr-un tablou de alt tip și ce înseamnă `f2fp.pack_ab` fără
+  sufix: citit (ca specificație, nimic copiat) în sursa Mesa 26.3.1, MIT — `src/nouveau/compiler/nak_nir_lower_cmat.c` și
+  `src/nouveau/compiler/nak/ir.rs`. Nimic din firmware-ul NVIDIA.

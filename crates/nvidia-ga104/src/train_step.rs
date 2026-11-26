@@ -3364,6 +3364,11 @@ pub enum MixedLaunch {
         tag: &'static str,
         layer: Option<u16>,
     },
+    /// C-157 (session 244, `docs/C-157_ATTN_BACK_TC.md` §5): an `attn_back_tile_3` launch of the list (mode 1: dQ,
+    /// dK, dV) moved to `attn_back_tile_tc` (tensor cores, f16 inputs) — the same [`Launch`] (arguments, grid, tag),
+    /// packed with its arguments at 0x700 of a 0x800-byte cbuf ([`crate::attn_back_tile_tc::cbuf_from_f32`]). Made only
+    /// by [`attn_tc_list`]; packed only by [`pack_mixed_fast_attn`] (the other packers refuse it).
+    AttnTc(Launch),
 }
 
 /// Bytes of one `mm_tc` launch in the control zone: the cbuf (0x800) then the QMD (0x100).
@@ -3375,12 +3380,13 @@ impl MixedLaunch {
             MixedLaunch::Std(l) => l.prog.name(),
             MixedLaunch::Tc { .. } => "mm_tc",
             MixedLaunch::TcGelu { .. } => "mm_tc_gelu",
+            MixedLaunch::AttnTc(_) => "attn_back_tile_tc",
         }
     }
 
     pub fn tag(&self) -> &'static str {
         match self {
-            MixedLaunch::Std(l) => l.tag,
+            MixedLaunch::Std(l) | MixedLaunch::AttnTc(l) => l.tag,
             MixedLaunch::Tc { tag, .. } | MixedLaunch::TcGelu { tag, .. } => tag,
         }
     }
@@ -3389,9 +3395,31 @@ impl MixedLaunch {
     pub fn slot(&self) -> u64 {
         match self {
             MixedLaunch::Std(_) => SLOT,
-            MixedLaunch::Tc { .. } | MixedLaunch::TcGelu { .. } => SLOT_TC,
+            MixedLaunch::Tc { .. } | MixedLaunch::TcGelu { .. } | MixedLaunch::AttnTc(_) => SLOT_TC,
         }
     }
+}
+
+/// C-157 (session 244, `docs/C-157_ATTN_BACK_TC.md` §5): the mixed list with every `attn_back_tile_3` launch (mode 1:
+/// dQ, dK, dV) moved to [`MixedLaunch::AttnTc`] (`attn_back_tile_tc`); everything else unchanged, same order. A
+/// launch whose cbuf `attn_back_tile_tc` would refuse (mode ≠ 1, workgroup base ≠ 0) is refused here, before anything
+/// is sent. Only `_3` plans ([`Plan::new_tiles3`] …) have `attn_back_tile_3` launches; on other lists this is the
+/// identity. The numbers are NOT the F32 list's (f16 inputs): SIMULARE only (`gpu_sim::cmdproc::attn_back_tile_tc_on_cpu`).
+pub fn attn_tc_list(list: Vec<MixedLaunch>) -> GpuResult<Vec<MixedLaunch>> {
+    list.into_iter()
+        .map(|l| match l {
+            MixedLaunch::Std(x) if x.prog == Prog::AttnBackTile3 => {
+                crate::attn_back_tile_tc::cbuf_from_f32(&x.cbuf).ok_or(bad(
+                    "pas-mixt: lansarea attn_back_tile_3 refuzata de attn_back_tile_tc",
+                ))?;
+                if x.grid.contains(&0) {
+                    return Err(bad("pas-mixt: grila attn_back_tile_tc goala"));
+                }
+                Ok(MixedLaunch::AttnTc(x))
+            }
+            other => Ok(other),
+        })
+        .collect()
 }
 
 fn mm_args_of(l: &Launch) -> mm::Args {
@@ -3574,6 +3602,11 @@ pub fn pack_mixed_gelu(
     {
         return Err(bad("pas-mixt: mm_tc_gelu fara adresa"));
     }
+    if launches.iter().any(|l| matches!(l, MixedLaunch::AttnTc(_))) {
+        return Err(bad(
+            "pas-mixt: lista are attn_back_tile_tc: foloseste pack_mixed_fast_attn",
+        ));
+    }
     let total: u64 = launches.iter().map(MixedLaunch::slot).sum();
     let mut bytes = alloc::vec![0u8; total as usize];
     let mut qmds = Vec::with_capacity(launches.len());
@@ -3610,6 +3643,7 @@ pub fn pack_mixed_gelu(
                 bytes[at + c..at + c + q.len()].copy_from_slice(&q);
                 qmds.push(cb_va + c as u64);
             }
+            MixedLaunch::AttnTc(_) => unreachable!(),
             MixedLaunch::TcGelu { args, .. } => {
                 let cb = args
                     .cbuf()
@@ -3656,6 +3690,49 @@ pub enum TcPick {
     Pf,
     V4,
     Gelu,
+    /// C-157 (session 244): a [`MixedLaunch::AttnTc`] on `attn_back_tile_tc` (32 KiB), only from [`pack_mixed_fast_attn`].
+    AttnTc,
+    /// C-157 (session 244): a [`MixedLaunch::AttnTc`] on `attn_back_tile_tc16` (16 KiB), only from [`pack_mixed_fast_attn`].
+    AttnTc16,
+}
+
+/// C-157 (session 244, `docs/C-157_ATTN_BACK_TC.md` §5–6): which tensor-core attention program the OS loaded, and
+/// where, for [`pack_mixed_fast_attn`]. Both do the same arithmetic (the same CPU model); they differ in shared memory.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttnTcProgram {
+    /// `attn_back_tile_tc` (48 registers, 32 768 bytes shared) at this address.
+    Tc(u64),
+    /// `attn_back_tile_tc16` (48 registers, 16 384 bytes shared) at this address.
+    Tc16(u64),
+}
+
+impl AttnTcProgram {
+    pub fn va(self) -> u64 {
+        match self {
+            AttnTcProgram::Tc(v) | AttnTcProgram::Tc16(v) => v,
+        }
+    }
+
+    pub fn registers(self) -> u32 {
+        match self {
+            AttnTcProgram::Tc(_) => crate::attn_back_tile_tc::REGISTERS,
+            AttnTcProgram::Tc16(_) => crate::attn_back_tile_tc16::REGISTERS,
+        }
+    }
+
+    pub fn shared(self) -> SharedMemory {
+        match self {
+            AttnTcProgram::Tc(_) => crate::attn_back_tile_tc::SHARED,
+            AttnTcProgram::Tc16(_) => crate::attn_back_tile_tc16::SHARED,
+        }
+    }
+
+    pub fn pick(self) -> TcPick {
+        match self {
+            AttnTcProgram::Tc(_) => TcPick::AttnTc,
+            AttnTcProgram::Tc16(_) => TcPick::AttnTc16,
+        }
+    }
 }
 
 impl TcPick {
@@ -3665,6 +3742,8 @@ impl TcPick {
             TcPick::Pf => "mm_tc_pf",
             TcPick::V4 => "mm_tc_v4",
             TcPick::Gelu => "mm_tc_gelu",
+            TcPick::AttnTc => "attn_back_tile_tc",
+            TcPick::AttnTc16 => "attn_back_tile_tc16",
         }
     }
 }
@@ -3677,6 +3756,7 @@ pub fn tc_pick(l: &MixedLaunch, progs: &TcPrograms) -> Option<TcPick> {
     match l {
         MixedLaunch::Std(_) => None,
         MixedLaunch::TcGelu { .. } => Some(TcPick::Gelu),
+        MixedLaunch::AttnTc(_) => Some(TcPick::AttnTc),
         MixedLaunch::Tc { args, .. } => Some(if progs.v4 != 0 && crate::mm_tc_v4::fits(args) {
             TcPick::V4
         } else if progs.pf != 0 {
@@ -3701,26 +3781,60 @@ pub fn pack_mixed_fast(
     step_bytes: Option<u32>,
     zone_va: u64,
 ) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
+    pack_mixed_fast_attn(launches, prog_va, progs, None, step_bytes, zone_va)
+}
+
+/// C-157 (session 244, `docs/C-157_ATTN_BACK_TC.md` §5): [`pack_mixed_fast`] for a list that may hold
+/// [`MixedLaunch::AttnTc`] ([`attn_tc_list`]): `attn` = which tensor-core attention program the OS loaded and where
+/// (256-aligned, non-zero; `None` only when the list has no `AttnTc`). An `AttnTc` launch takes [`SLOT_TC`] bytes:
+/// its cbuf (0x800, arguments at 0x700) then its QMD (that program's registers and shared memory, 1 barrier, blocks of
+/// 256, the same grid); its pick is [`AttnTcProgram::pick`]. With `None` and no `AttnTc` it is [`pack_mixed_fast`]
+/// byte for byte.
+/// SIMULARE only: nothing of `attn_back_tile_tc` has run on the board.
+#[allow(clippy::type_complexity)]
+pub fn pack_mixed_fast_attn(
+    launches: &[MixedLaunch],
+    prog_va: impl Fn(Prog) -> u64,
+    progs: &TcPrograms,
+    attn: Option<AttnTcProgram>,
+    step_bytes: Option<u32>,
+    zone_va: u64,
+) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
     use crate::mm_tc as tc;
     use crate::mm_tc_gelu as tg;
+    let attn_tc_va = attn.map_or(0, AttnTcProgram::va);
+    if attn.is_some() && attn_tc_va == 0 {
+        return Err(bad("pas-mixt: attn_back_tile_tc la adresa 0"));
+    }
     if !zone_va.is_multiple_of(256)
-        || [progs.tc, progs.pf, progs.v4, progs.gelu]
+        || [progs.tc, progs.pf, progs.v4, progs.gelu, attn_tc_va]
             .iter()
             .any(|v| !v.is_multiple_of(256))
         || launches.is_empty()
     {
         return Err(bad("pas-mixt: zona de control"));
     }
-    let picks: Vec<Option<TcPick>> = launches.iter().map(|l| tc_pick(l, progs)).collect();
+    let picks: Vec<Option<TcPick>> = launches
+        .iter()
+        .map(|l| match (tc_pick(l, progs), attn) {
+            (Some(TcPick::AttnTc), Some(a)) => Some(a.pick()),
+            (p, _) => p,
+        })
+        .collect();
     for p in picks.iter().flatten() {
         let va = match p {
             TcPick::Tc => progs.tc,
             TcPick::Pf => progs.pf,
             TcPick::V4 => progs.v4,
             TcPick::Gelu => progs.gelu,
+            TcPick::AttnTc | TcPick::AttnTc16 => attn_tc_va,
         };
         if va == 0 {
-            return Err(bad("pas-mixt: programul mm_tc ales nu e incarcat"));
+            return Err(bad(if matches!(p, TcPick::AttnTc | TcPick::AttnTc16) {
+                "pas-mixt: attn_back_tile_tc nu e incarcat"
+            } else {
+                "pas-mixt: programul mm_tc ales nu e incarcat"
+            }));
         }
     }
     let total: u64 = launches.iter().map(MixedLaunch::slot).sum();
@@ -3742,6 +3856,29 @@ pub fn pack_mixed_fast(
                 bytes[at..at + 0x100].copy_from_slice(&x.cbuf);
                 bytes[at + 0x100..at + 0x100 + q.len()].copy_from_slice(&q);
                 qmds.push(cb_va + 0x100);
+            }
+            MixedLaunch::AttnTc(x) => {
+                use crate::attn_back_tile_tc as at_tc;
+                let a = attn.ok_or(bad("pas-mixt: attn_back_tile_tc nu e incarcat"))?;
+                let cb = at_tc::cbuf_from_f32(&x.cbuf)
+                    .ok_or(bad("pas-mixt: argumentele attn_back_tile_tc refuzate"))?;
+                let q = ComputeQmd {
+                    program_va: a.va(),
+                    registers: a.registers(),
+                    cbuf0_va: cb_va,
+                    cbuf0_size: at_tc::CBUF_BYTES as u32,
+                    grid: x.grid,
+                    block: at_tc::BLOCK,
+                    release: None,
+                };
+                let q = match step_bytes {
+                    Some(s) => q.to_bytes_with_sm_config(&a.shared(), s)?,
+                    None => q.to_bytes_with_shared(&a.shared())?,
+                };
+                let c = at_tc::CBUF_BYTES;
+                bytes[at..at + c].copy_from_slice(&cb);
+                bytes[at + c..at + c + q.len()].copy_from_slice(&q);
+                qmds.push(cb_va + c as u64);
             }
             MixedLaunch::Tc { .. } | MixedLaunch::TcGelu { .. } => {
                 let (cb, grid, block, shared, va, regs): ([u8; tc::CBUF_BYTES], _, _, _, _, _) =
@@ -3770,7 +3907,7 @@ pub fn pack_mixed_fast(
                                 tg::REGISTERS,
                             )
                         }
-                        MixedLaunch::Std(_) => unreachable!(),
+                        MixedLaunch::Std(_) | MixedLaunch::AttnTc(_) => unreachable!(),
                     };
                 let q = ComputeQmd {
                     program_va: va,
