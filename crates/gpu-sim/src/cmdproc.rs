@@ -2204,6 +2204,44 @@ pub fn attn_back_tile_tc16_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     attn_back_tile_tc_on_cpu(l)
 }
 
+/// C-157 (session 248, `docs/C-157_ATTN_BACK_TC16_V4.md`): what `tools/nak/out2/attn_back_tile_tc16_v4.sm86.sass`
+/// needs — exactly `attn_back_tile_tc16`'s 16 KiB and one barrier (the 128-bit loads read ahead land in registers).
+pub const ATTN_BACK_TILE_TC16_V4_NEEDS: Needs = ATTN_BACK_TILE_TC16_NEEDS;
+
+/// C-157 (session 248): the CPU stand-in for `tools/nak/out2/attn_back_tile_tc16_v4.sm86.sass` — `attn_back_tile_tc16`
+/// with 128-bit global loads and the next tile read ahead. Valid only for aligned shapes: T and d multiples of 4 and
+/// qkv / p / dout / dS at multiples of 16 bytes (read from cbuf0 at 0x700, as the board would see them); anything else
+/// would be a misaligned 128-bit load on the board, so the model REFUSES it (no write) instead of guessing. For
+/// aligned shapes the values put in shared memory are tc16's (T258), so the stand-in is [`attn_back_tile_tc_on_cpu`]
+/// (a mode other than 1 still exits at once, before any load).
+pub fn attn_back_tile_tc16_v4_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    let base = l.cbuf0 + ATTN_TC_PUSH_BASE;
+    if l.mem.read_u32(base + 0x38)? == 1 {
+        let mut aligned = true;
+        for o in [0x00, 0x08, 0x10, 0x18] {
+            aligned &= l.mem.read_u64(base + o)?.is_multiple_of(16);
+        }
+        let t = l.mem.read_u32(base + 0x28)?;
+        let d = l.mem.read_u32(base + 0x34)?;
+        if !aligned || !t.is_multiple_of(4) || !d.is_multiple_of(4) {
+            return Err(bad(
+                "SIM: attn_back_tile_tc16_v4: forma nealiniata (T, d multiplu de 4, adrese multiplu de 16)",
+            ));
+        }
+    }
+    attn_back_tile_tc_on_cpu(l)
+}
+
+/// C-157 (session 248): what `tools/nak/out2/attn_back_tile_tc16_v4pf.sm86.sass` needs — tc16's 16 KiB, one barrier.
+pub const ATTN_BACK_TILE_TC16_V4PF_NEEDS: Needs = ATTN_BACK_TILE_TC16_NEEDS;
+
+/// C-157 (session 248): the CPU stand-in for `tools/nak/out2/attn_back_tile_tc16_v4pf.sm86.sass` —
+/// `attn_back_tile_tc16_v4` with the next tile read ahead of the products: the same loads (only issued earlier), the
+/// same alignment rule and refusals, the same values, so the stand-in is [`attn_back_tile_tc16_v4_on_cpu`].
+pub fn attn_back_tile_tc16_v4pf_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    attn_back_tile_tc16_v4_on_cpu(l)
+}
+
 /// The CPU stand-in for C-160 point 7's `attn_back_tile0.sm86.sass` (`docs/C-160_P7_ATENTIA_INAPOI_MOD0_PE_PLACI.md`):
 /// mode 0 (the rows of dS) of the attention backward on 64-row tiles, blocks of 256; the cbuf0 of `attn_back`
 /// (qkv/p/dout/ds at 0x28/0x30/0x38/0x40, T 0x50, C 0x54, H 0x58, d 0x5c, mode 0x60, scale 0x64). A mode other than 0

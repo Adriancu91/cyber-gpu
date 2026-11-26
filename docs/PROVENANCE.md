@@ -617,3 +617,9 @@ niciun octet de firmware NVIDIA.
   programului nostru; cum socotește NAK pasul lui `coopMatLoad` dintr-un tablou de alt tip și ce înseamnă `f2fp.pack_ab` fără
   sufix: citit (ca specificație, nimic copiat) în sursa Mesa 26.3.1, MIT — `src/nouveau/compiler/nak_nir_lower_cmat.c` și
   `src/nouveau/compiler/nak/ir.rs`. Nimic din firmware-ul NVIDIA.
+- **C-157 — `attn_back_tile_tc16_v4` / `attn_back_tile_tc16_v4pf` (sesiunea 248):** `tools/nak/attn_back_tile_tc16_v4.comp` și
+  `attn_back_tile_tc16_v4pf.comp` (ale noastre, din `attn_back_tile_tc16.comp` și ideea citirilor din `mm_tc_v4.comp`, tot ale
+  noastre), `crates/nvidia-ga104/src/attn_back_tile_tc16_v4{,pf}.rs`, `attn_back_tile_tc16_v4{,pf}_on_cpu` în
+  `crates/gpu-sim/src/cmdproc.rs`, testul `crates/nvidia-ga104/tests/sim_c157_attn_tc16_v4.rs` — scrise de noi. Că NAK așteaptă
+  toate citirile în zbor la o ramificare: aflat din listarea NAK a programului nostru (`tools/nak/citiri_seriale.py`).
+  Compilat cu Mesa NAK 26.3.1 (MIT), pe gazdă. Nimic din firmware-ul NVIDIA.

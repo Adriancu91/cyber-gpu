@@ -68,6 +68,8 @@ pub mod attn_back_tile_3;
 pub mod attn_back_tile_4;
 pub mod attn_back_tile_tc;
 pub mod attn_back_tile_tc16;
+pub mod attn_back_tile_tc16_v4;
+pub mod attn_back_tile_tc16_v4pf;
 pub mod attn_fwd;
 pub mod attn_fwd128;
 pub mod attn_fwd_tile;

@@ -1,5 +1,32 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 248 — 26 noiembrie 2026, ~11:11–12:15 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile_tc16_v4` și `_v4pf`: atenția înapoi f16 cu citiri de 128 de biți (5 în zbor în loc de 2), aceiași biți ca tc16 în SIMULARE; PREDARE P2zq**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 247), l-am pus `ocupat`. Niciun test nou pe placă în hub (os-458 nu e încă) →
+punctul lăsat de sesiunea 247. Planul și predicțiile V1–V7 urcate înainte de cod (`d512aca`), nota `docs/C-157_ATTN_BACK_TC16_V4.md`.
+Clona locală a ramurii era iar veche și divergentă: am lucrat pe o ramură locală nouă din GitHub (nimic șters, nimic rescris).
+Unealta NAK 2 (Mesa 26.3.1) construită din nou; `attn_back_tile_tc16` iese identic (`8cbbab7e…`).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Compilarea (descoperire) | o alegere între citiri devenise ramificare → NAK aștepta toate citirile la ea (tot 2 în zbor); mutată înaintea citirilor → **5 în zbor** | PASS (compilare) |
+| `attn_back_tile_tc16_v4` | 8 `ld.global.128`, **72 registre** (3 blocuri / SM, ca tc16), 16 KiB, 0 locală, SHA `b19c8451…` | PASS (compilare) / NOT TESTED pe placă |
+| `attn_back_tile_tc16_v4pf` (+ placa următoare citită înainte) | 16 `ld.global.128`, **104 registre** (2 blocuri / SM), SHA `3ba898a9…` | PASS (compilare) / NOT TESTED pe placă |
+| V1 16 citiri de 128 de biți | v4pf 16, v4 8 | CONFIRMATĂ (v4pf) |
+| V2 72–96 registre | v4pf 104 | GREȘITĂ (de aici varianta v4 cu 72) |
+| V4 aceleași valori în memoria partajată ca tc16, vectori aliniați și în buffer | 6 forme + #513, NaN peste diagonală, 2 greșeli plantate prinse | PASS (SIMULARE, T258) |
+| V5 aceiași biți prin procesorul de comenzi; nealiniatele refuzate | v4 = v4pf = tc16 pe 6 forme; T 130 / d 6 / adrese + 4 refuzate fără scriere; proba OS: 5 / 6 seturi încap | PASS (SIMULARE, T258) |
+| V6–V7 aceleași cuvinte și timpul pe placă (prezis 0,35–0,55 ms la b4 față de 0,87) | — | NOT TESTED |
+| Verificările întregi | `tools/check.sh`: format, clippy, **1 268 PASS** (8 ignorate), no_std | PASS |
+
+**Ce e nou:** doar adăugări — `nvidia_ga104::attn_back_tile_tc16_v4` (`fits`, `fits_cbuf`, `cbuf`, `grid`, `shape_ok`, constantele),
+`nvidia_ga104::attn_back_tile_tc16_v4pf` (la fel), în `gpu-sim` `attn_back_tile_tc16_v4{,pf}_on_cpu` + `ATTN_BACK_TILE_TC16_V4{,PF}_NEEDS`.
+Nou pentru placă: cele două programe, lansate numai când `fits`. PREDARE `integration/cyber-universe/C-157_P2zq_attn-tc16-v4.md`
+(proba „vechi lângă nou”: tc16 / v4 / v4pf, cuvintele și timpul).
+
+**Următorul pas:** comparațiile când vin (os-458 bariera, proba P2zq); altfel `attn_back_tile0_tc` legat în pasul mixt rapid
+(gpu-sim + opțiunea), cu aceeași lecție (alegerile uniforme scoase dintre citiri), apoi varianta câștigătoare v4 / v4pf legată.
+
 ## Sesiunea 247 — 26 noiembrie 2026, ~10:14–11:05 (ora României), în cloud, FĂRĂ placă — **comparația os-457 (atenția înapoi pe circuitele f16): corectitudinea = modelul pe toate cifrele; viteza sub predicție (o greșeală de formă a noastră + ~8 așteptări de citiri pe pas de placă); PREDARE P2zp**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 246), l-am pus `ocupat`. os-457 a venit în hub → comparația are întâietate.

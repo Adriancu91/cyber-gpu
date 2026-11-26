@@ -51,6 +51,35 @@ principală (atunci: L1 / cozile de memorie când stau 3 blocuri pe SM — urmă
 Doar programul `attn_back_tile_tc16_v4` (SHA-256 notat la compilare). Nicio scriere în registre, niciun firmware, aceeași
 lansare ca tc16. Se lansează **numai** când `fits` spune da.
 
-## 4. Rezultate
+## 4. Rezultate (sesiunea 248, după predicții)
 
-(se completează după cod și teste)
+**Compilarea a schimbat planul: au ieșit două programe, nu unul.** Prima compilare (citiri de 128 de biți + placa următoare citită
+înainte, într-un singur program) a dat **104 registre** (V2 prezicea 72–96 — GREȘIT) și, mai rău, listarea arăta că NAK **aștepta
+toate citirile în zbor la fiecare ramificare**: alegerea „trecerea 0 sau nu” pentru rândul / coloana plăcii, scrisă între citiri,
+devenise o ramificare (`bra !up0`, cu `wt=` pe citirile plecate), deci tot ~2 citiri în zbor (`citiri_seriale.py`). Am mutat alegerea
+o dată pe placă, înaintea citirilor (aceleași valori) — de aici **5 citiri în zbor** (regula strictă). Apoi am păstrat ambele variante,
+ca placa să spună care e mai bună:
+
+| Program | Ce face | Registre | Blocuri / SM (64 KiB) | `ld.global.128` | în zbor (strict) | SHA-256 |
+|---|---|---|---|---|---|---|
+| `attn_back_tile_tc16` (azi) | 32 citiri scalare pe fir pe placă | 48 | 3 | 0 (6 scalare în cod, buclă) | 2 | `8cbbab7e…` (recompilat identic) |
+| **`attn_back_tile_tc16_v4`** | 4 + 4 citiri de 128 de biți, toate plecate înainte de prima folosire | **72** | **3** | 8 | **5** | `b19c8451…5a86` |
+| **`attn_back_tile_tc16_v4pf`** | ca v4 + placa următoare citită înainte de produse | **104** | **2** | 16 | **5** | `3ba898a9…f853` |
+
+Ambele: 16 384 B partajată, 0 memorie locală, 0 vărsări în memorie, aceleași `hmma` / `ldsm` / `movm` ca tc16, 0 `ffma`, argumentele
+la 0x700. La v4, condițiile `keep` pe element se calculează la citire, ca biți într-un singur cuvânt (mai puține registre ținute).
+
+| # | prezis | ieșit | verdict |
+|---|---|---|---|
+| V1 | 16 `ld.global….128`, nicio citire scalară | v4pf: 16, nicio altă citire globală; v4 (fără citirea înainte): 8 | CONFIRMATĂ (v4pf) |
+| V2 | 72–96 registre, 0 locală / vărsări | v4pf **104** (GREȘIT); v4 72; ambele 0 locală, 0 vărsări în memorie | GREȘITĂ pentru varianta prezisă |
+| V3 | ≤ 80 → 3 blocuri; 88–96 → 2 | v4 3 blocuri, v4pf 2 | (calcul) |
+| V4 | aceleași valori în memoria partajată ca tc16, vectori aliniați și întregi, ≤ 3 numere peste diagonală | DA pe 6 forme mici (toate blocurile / trecerile / plăcile) și #513 (capetele 0 și 11), cu NaN peste diagonală; citirea în avans după ultima placă tot în buffer; exact 3 peste diagonală la #513; 2 greșeli plantate prinse | CONFIRMATĂ (SIMULARE, T258) |
+| V5 | aceiași biți ca tc16 prin procesorul de comenzi; nealiniatele refuzate | v4 și v4pf = tc16 bit cu bit pe 6 forme; T 130, d 6, dS + 4 refuzate fără scriere; din probă iau v4 5 / 6 seturi (nu `t130-d64`) | CONFIRMATĂ (SIMULARE, T258) |
+| V6 | pe placă aceleași cuvinte ca tc16 | — | NOT TESTED |
+| V7 | `atentie-513-b4` 0,35–0,55 ms | — | NOT TESTED |
+
+**Predicție nouă pentru timp (scrisă acum, înainte de placă, DEDUS):** v4 ≈ v4pf, ambele în banda V7 (0,35–0,55 ms); dacă diferă,
+**v4 (3 blocuri) mai rapid decât v4pf (2 blocuri)** — încredere 55 %. Pragul de ×1,3 față de tc16 rămâne.
+
+Verificările întregi: vezi `docs/IMPLEMENTATION_STATUS.md`, sesiunea 248.
