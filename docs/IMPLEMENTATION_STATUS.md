@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 253 — 26 noiembrie 2026, ~16:11–17:35 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile_tc16_v4` / `_v4pf` legate în pasul mixt rapid: varianta rapidă aleasă singură pe formele aliniate, aceiași biți ca tc16 (SIMULARE, T263); PREDARE P2zv**
+## Sesiunea 253 — 26 noiembrie 2026, ~16:11–16:55 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile_tc16_v4` / `_v4pf` legate în pasul mixt rapid: varianta rapidă aleasă singură pe formele aliniate, aceiași biți ca tc16 (SIMULARE, T263); PREDARE P2zv**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 252), l-am pus `ocupat`. Niciun test nou pe placă în hub (os-465 cu P2zq /
 P2zr încă în CI la OS) → punctul lăsat de sesiunea 252: legarea variantei rapide a programului al doilea, pregătită pentru
