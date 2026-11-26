@@ -1,5 +1,32 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 252 — 26 noiembrie 2026, ~15:10–15:45 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile0_tc_v4` legat în pasul mixt rapid: v4 ales singur pe formele aliniate, aceiași biți ca tc (SIMULARE, T262); PREDARE P2zu**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 251), l-am pus `ocupat`. Niciun test nou pe placă în hub de la 11:13 →
+punctul lăsat de sesiunea 251 (legarea lui `attn_back_tile0_tc_v4`, gata pentru când vine P2zt). Planul și predicțiile V1–V7
+urcate înainte de cod (`140df52`), nota `docs/C-157_ATTN_BACK0_TC_V4_LEGAT.md`. Clona locală era iar pe un HEAD detașat, cu o
+ramură locală veche; am lucrat pe ramura refăcută din GitHub (ramura veche păstrată local ca `old-local-196`, nimic șters).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| V1 fără v4 = attn2 octet cu octet | mini și #513 lot 2 | PASS (SIMULARE) |
+| V2 mini cu ambele încărcate | 2 × `Attn0TcV4`; zona la fel de lungă; 2 octeți diferiți, doar adresa programului | PASS (SIMULARE) |
+| V3 antrenarea mini 5 pași, v4 față de tc | 2 301 760 de valori aceiași biți (și cu doar v4 încărcat) | PASS (SIMULARE) |
+| V4 lista #513 lot 2 | 12 `Attn0TcV4` + 12 `AttnTc16` + 147 `mm_tc_v4`; QMD v4, 56 registre, [8, 12, 2] | PASS (SIMULARE) |
+| V5 forma nealiniată | cade pe tc; doar v4 → refuz; v4 nealiniat → refuz; QMD mutat de mână pe v4 → înlocuitorul refuză | PASS (SIMULARE) |
+| V6 prin RAM | v4 = 0 = attn2 octet cu octet; cu v4 aceleași alegeri | PASS (SIMULARE) |
+| V7 timpul pe placă (×1,2–1,8 pe dS) | — | NOT TESTED |
+| Verificările întregi | format, clippy, **1 291 PASS** (8 ignorate), no_std | PASS |
+
+**Ce e nou:** doar adăugări — `train_step::{Attn0Programs, TcPick::Attn0TcV4, pack_mixed_fast_attn3}`,
+`batch_ram::pack_mixed_fast_via_ram_attn3`; `pack_mixed_fast_attn2` / `pack_mixed_fast_via_ram_attn2` cheamă acum varianta 3 cu
+`v4 = 0` (aceiași octeți). Varianta nouă în `TcPick` strică doar un `match` complet; OS-ul folosește `TcPick` cu liste explicite
+(`fast_picks_text`) și `matches!` (verificat azi). Nou pentru placă: nimic față de P2zt. PREDARE
+`integration/cyber-universe/C-157_P2zu_attn0-tc-v4-legat.md` (de folosit doar după ce P2zt trece pe placă).
+
+**Următorul pas:** comparațiile când vin (P2zq tc16 / v4 / v4pf, P2zr proba largă, P2zs + P2zt atenția dS pe circuite);
+altfel varianta câștigătoare v4 / v4pf a programului al doilea legată la fel (alegere pe formă, după P2zq); după P2zr: `token32` la G ales.
+
 ## Sesiunea 251 — 26 noiembrie 2026, ~14:11–15:05 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile0_tc_v4`: dS al atenției (dP pe f16) cu citiri și scrieri de 128 de biți, aceiași biți ca `attn_back_tile0_tc` în SIMULARE (T261); PREDARE P2zt**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 250), l-am pus `ocupat`. Niciun test nou pe placă în hub de la 11:13 →

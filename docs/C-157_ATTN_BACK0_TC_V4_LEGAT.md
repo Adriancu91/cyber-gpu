@@ -36,3 +36,26 @@ Legătura se face acum în SIMULARE, ca să fie gata când vine proba P2zt; în 
   din `gpu-sim` refuză (pe placă ar fi o greșeală de acces).
 - **V6 — prin RAM.** `pack_mixed_fast_via_ram_attn3` cu `v4 = 0` = attn2 octet cu octet; cu v4 aceleași alegeri ca fără RAM.
 - **V7 — timpul (DEDUS, doar pe placă).** Ca la P2zt: ×1,2–1,8 pe programul dS la `atentie-513-b4`. NOT TESTED.
+
+## 4. Rezultatul (sesiunea 252, ~15:45; T262 pe procesor = SIMULARE; V7 DEDUS)
+
+| # | prezis | ieșit | verdict |
+|---|---|---|---|
+| V1 | attn3 cu v4 = 0 = attn2 octet cu octet | exact așa, pe lista mini și pe #513 lot 2; nicio alegere v4 | CONFIRMATĂ |
+| V2 | mini: 2 × `Attn0TcV4`; aceeași lungime; doar adresa programului diferă (≤ 16 octeți) | 2 × `Attn0TcV4`, zona 94 464 B ca attn2, **2 octeți** diferiți, ambii în câmpul adresei din cele 2 QMD-uri | CONFIRMATĂ |
+| V3 | antrenarea mini 5 pași, v4 = tc bit cu bit | **2 301 760 de valori** (pierderi, gradientul pasului 1, greutăți) aceiași biți; la fel cu doar v4 încărcat; pierderea 9,7191 → 8,8299 | CONFIRMATĂ |
+| V4 | #513 lot 2: 12 `Attn0TcV4` + 12 `AttnTc16` + 147 `mm_tc_v4`; zona cât attn2; QMD v4, 56 registre, [8, 12, 2] | exact așa; zona 554 240 B; toate cele 12 cbuf-uri trec `fits_cbuf` | CONFIRMATĂ |
+| V5 | forma nealiniată → tc; doar v4 → refuz; v4 nealiniat la 256 → refuz; QMD mutat de mână pe v4 → înlocuitorul refuză | exact așa (refuzul: „forma nealiniata pentru attn_back_tile0_tc_v4 si attn_back_tile0_tc nu e incarcat”; în pas: „SIM: attn_back_tile0_tc_v4: forma nealiniata”); pasul nealiniat merge pe tc până la capăt | CONFIRMATĂ |
+| V6 | prin RAM: v4 = 0 = attn2 octet cu octet; cu v4 aceleași alegeri | exact așa | CONFIRMATĂ |
+| V7 | ×1,2–1,8 pe programul dS la `atentie-513-b4` | — (doar pe placă, prin P2zt) | NOT TESTED |
+
+Cod (doar adăugări): `nvidia_ga104::train_step::{Attn0Programs, TcPick::Attn0TcV4, pack_mixed_fast_attn3}`,
+`nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn3`; `pack_mixed_fast_attn2` / `pack_mixed_fast_via_ram_attn2` cheamă
+acum varianta 3 cu `v4 = 0` (aceiași octeți, V1 / V6). Test: `crates/nvidia-ga104/tests/sim_c157_attn0_tc_v4_mixed.rs`.
+
+### Ce înseamnă (pe scurt)
+
+1. Când OS-ul încarcă ambele programe dS, pasul mixt alege singur varianta rapidă acolo unde formele permit și o păstrează pe cea
+   veche în rest — fără vreo schimbare în rezultat (aceiași biți, în SIMULARE).
+2. Pe placă nu e nimic nou față de P2zt; legarea se folosește doar după ce P2zt arată aceleași cuvinte și un câștig de timp.
+   Nota pentru OS: `integration/cyber-universe/C-157_P2zu_attn0-tc-v4-legat.md`.

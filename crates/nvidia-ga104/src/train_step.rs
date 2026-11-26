@@ -3738,6 +3738,21 @@ pub enum TcPick {
     /// C-157 (session 250): a [`MixedLaunch::Attn0Tc`] on `attn_back_tile0_tc` (33 024 bytes shared), only from
     /// [`pack_mixed_fast_attn2`].
     Attn0Tc,
+    /// C-157 (session 252, `docs/C-157_ATTN_BACK0_TC_V4_LEGAT.md`): a [`MixedLaunch::Attn0Tc`] on
+    /// `attn_back_tile0_tc_v4` (128-bit loads / stores; only aligned shapes), only from [`pack_mixed_fast_attn3`].
+    Attn0TcV4,
+}
+
+/// C-157 (session 252, `docs/C-157_ATTN_BACK0_TC_V4_LEGAT.md`): where the OS loaded the two tensor-core dS programs
+/// of the attention backward, for [`pack_mixed_fast_attn3`] (256-aligned; 0 = not loaded). An
+/// [`MixedLaunch::Attn0Tc`] goes to `v4` when it is loaded and [`crate::attn_back_tile0_tc_v4::fits_cbuf`] says yes,
+/// else to `tc`. Both do the same arithmetic (the same CPU model) with the same QMD; only the program address differs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Attn0Programs {
+    /// `attn_back_tile0_tc` (any shape `attn_back_tile0_tc` takes).
+    pub tc: u64,
+    /// `attn_back_tile0_tc_v4` (only aligned shapes).
+    pub v4: u64,
 }
 
 /// C-157 (session 244, `docs/C-157_ATTN_BACK_TC.md` §5–6): which tensor-core attention program the OS loaded, and
@@ -3789,6 +3804,7 @@ impl TcPick {
             TcPick::AttnTc => "attn_back_tile_tc",
             TcPick::AttnTc16 => "attn_back_tile_tc16",
             TcPick::Attn0Tc => "attn_back_tile0_tc",
+            TcPick::Attn0TcV4 => "attn_back_tile0_tc_v4",
         }
     }
 }
@@ -3874,6 +3890,51 @@ pub fn pack_mixed_fast_attn2(
     step_bytes: Option<u32>,
     zone_va: u64,
 ) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
+    pack_mixed_fast_attn3(
+        launches,
+        prog_va,
+        progs,
+        attn,
+        Attn0Programs {
+            tc: attn0_va,
+            v4: 0,
+        },
+        step_bytes,
+        zone_va,
+    )
+}
+
+/// The rule of [`pack_mixed_fast_attn3`] for one [`MixedLaunch::Attn0Tc`]: `attn_back_tile0_tc_v4` when it is loaded
+/// and the launch's arguments (moved to 0x700) pass [`crate::attn_back_tile0_tc_v4::fits_cbuf`], else
+/// `attn_back_tile0_tc`. Arguments `attn_back_tile0_tc` refuses also give [`TcPick::Attn0Tc`] (refused later, as before).
+fn attn0_pick(l: &MixedLaunch, attn0: Attn0Programs) -> TcPick {
+    match l {
+        MixedLaunch::Attn0Tc(x) if attn0.v4 != 0 => {
+            match crate::attn_back_tile0_tc::cbuf_from_f32(&x.cbuf) {
+                Some(cb) if crate::attn_back_tile0_tc_v4::fits_cbuf(&cb) => TcPick::Attn0TcV4,
+                _ => TcPick::Attn0Tc,
+            }
+        }
+        _ => TcPick::Attn0Tc,
+    }
+}
+
+/// C-157 (session 252, `docs/C-157_ATTN_BACK0_TC_V4_LEGAT.md`): [`pack_mixed_fast_attn2`] with **two** dS programs:
+/// every [`MixedLaunch::Attn0Tc`] goes to `attn0.v4` (`attn_back_tile0_tc_v4`, [`TcPick::Attn0TcV4`]) when it is
+/// loaded and the shape is aligned ([`crate::attn_back_tile0_tc_v4::fits_cbuf`]), else to `attn0.tc`
+/// ([`TcPick::Attn0Tc`]; refused if not loaded). The QMD is the same for both (56 registers, 33 024 bytes shared,
+/// 1 barrier, blocks of 256, the same grid and cbuf); only the program address differs. With `attn0.v4 = 0` it is
+/// [`pack_mixed_fast_attn2`] byte for byte. SIMULARE only: nothing of `attn_back_tile0_tc*` has run on the board.
+#[allow(clippy::type_complexity)]
+pub fn pack_mixed_fast_attn3(
+    launches: &[MixedLaunch],
+    prog_va: impl Fn(Prog) -> u64,
+    progs: &TcPrograms,
+    attn: Option<AttnTcProgram>,
+    attn0: Attn0Programs,
+    step_bytes: Option<u32>,
+    zone_va: u64,
+) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
     use crate::mm_tc as tc;
     use crate::mm_tc_gelu as tg;
     let attn_tc_va = attn.map_or(0, AttnTcProgram::va);
@@ -3882,7 +3943,7 @@ pub fn pack_mixed_fast_attn2(
     }
     if !zone_va.is_multiple_of(256)
         || [
-            progs.tc, progs.pf, progs.v4, progs.gelu, attn_tc_va, attn0_va,
+            progs.tc, progs.pf, progs.v4, progs.gelu, attn_tc_va, attn0.tc, attn0.v4,
         ]
         .iter()
         .any(|v| !v.is_multiple_of(256))
@@ -3894,6 +3955,7 @@ pub fn pack_mixed_fast_attn2(
         .iter()
         .map(|l| match (tc_pick(l, progs), attn) {
             (Some(TcPick::AttnTc), Some(a)) => Some(a.pick()),
+            (Some(TcPick::Attn0Tc), _) => Some(attn0_pick(l, attn0)),
             (p, _) => p,
         })
         .collect();
@@ -3904,12 +3966,16 @@ pub fn pack_mixed_fast_attn2(
             TcPick::V4 => progs.v4,
             TcPick::Gelu => progs.gelu,
             TcPick::AttnTc | TcPick::AttnTc16 => attn_tc_va,
-            TcPick::Attn0Tc => attn0_va,
+            TcPick::Attn0Tc => attn0.tc,
+            TcPick::Attn0TcV4 => attn0.v4,
         };
         if va == 0 {
             return Err(bad(match p {
                 TcPick::AttnTc | TcPick::AttnTc16 => "pas-mixt: attn_back_tile_tc nu e incarcat",
-                TcPick::Attn0Tc => "pas-mixt: attn_back_tile0_tc nu e incarcat",
+                TcPick::Attn0Tc if attn0.v4 != 0 => {
+                    "pas-mixt: forma nealiniata pentru attn_back_tile0_tc_v4 si attn_back_tile0_tc nu e incarcat"
+                }
+                TcPick::Attn0Tc | TcPick::Attn0TcV4 => "pas-mixt: attn_back_tile0_tc nu e incarcat",
                 _ => "pas-mixt: programul mm_tc ales nu e incarcat",
             }));
         }
@@ -3962,7 +4028,11 @@ pub fn pack_mixed_fast_attn2(
                 let cb = a0::cbuf_from_f32(&x.cbuf)
                     .ok_or(bad("pas-mixt: argumentele attn_back_tile0_tc refuzate"))?;
                 let q = ComputeQmd {
-                    program_va: attn0_va,
+                    program_va: if *pick == Some(TcPick::Attn0TcV4) {
+                        attn0.v4
+                    } else {
+                        attn0.tc
+                    },
                     registers: a0::REGISTERS,
                     cbuf0_va: cb_va,
                     cbuf0_size: a0::CBUF_BYTES as u32,
