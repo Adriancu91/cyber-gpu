@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 259 — 26–27 noiembrie 2026, ~23:11–00:30 (ora României), în cloud, FĂRĂ placă — **comparația os-470 (dS al atenției pe circuitele speciale, programele reparate): corectitudinea exact ca în SIMULARE, v4 ×2,16 față de F32; predicția pentru os-472 scrisă înainte; PREDARE P2zzc**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 258), l-am pus `ocupat`. În hub: **os-470** (22:54, `--atentie-tc0 --atentie-tc0-v4`)
+TRECE → punctul 2 al cozii (comparația) are întâietate. Clona locală avea iar ramura despărțită de GitHub; am lucrat pe o ramură
+nouă din `origin/g0-g2-fundatie` (ramura veche neatinsă, nimic șters).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Programele reparate (P2zx) termină | ambele, pe toate seturile; cauza os-467 confirmată | MĂSURAT (OS) |
+| dS = modelul / v4 = tc | 86 690 / 86 690 și 138 432 / 138 432 cuvinte; abaterea față de F32 ≤ 2,84·10⁻⁴ | MĂSURAT (OS), = SIMULARE |
+| E7 / Z5 (timpul lui tc) | ×1,46 față de F32, prezis ×1,63–2,89 → ~10 % sub bandă | NECONFIRMATĂ (mic) |
+| P2zt (v4 față de tc) | ×1,47, prezis ×1,2–1,8 → v4 ×2,16 față de F32 | CONFIRMATĂ |
+| 1 bloc pe SM pentru dS, probă și pas | toate trei programele, la treapta proprie și la 64 KiB | PASS (T270, CALCUL) |
+| Predicția os-472 | dS în pas 13,4 → 5,9–6,4 ms; pasul lot 6 264–268 ms (~11 490–11 630 simb/s) | NOT TESTED (scrisă înainte) |
+| Verificările întregi | format, clippy, **1 335 PASS** (8 ignorate), no_std | PASS |
+
+**Note:** `docs/C-157_OS470.md`, `docs/C-157_P2_COMPARATII.md` (secțiunea os-470), T270. PREDARE
+`integration/cyber-universe/C-157_P2zzc_os470.md`. **Nou pentru placă: nimic.** Nicio schimbare de interfață (doar un test nou).
+
+**Următorul pas:** comparațiile `token32` (os-471), os-472 (`--atentie-ds`) și `mm_tc_v5` (P2zzb) când vin; altfel bucla lui v5
+(scrierile f16 împerecheate în memoria comună), plan + predicții întâi.
+
 ## Sesiunea 258 — 26 noiembrie 2026, ~22:10–23:00 (ora României), în cloud, FĂRĂ placă — **`mm_tc_v5`: `mm_tc_v4` cu blocul de 12 KiB (4 blocuri pe SM la 64 KiB în loc de 2), plan + predicții V1–V8 scrise înainte, compilat și gata de legat în SIMULARE; PREDARE P2zzb**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 257), l-am pus `ocupat`. În hub nu venise nimic nou de comparat (os-470 și

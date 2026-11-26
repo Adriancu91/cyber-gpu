@@ -2,6 +2,15 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-470 — dS al atenției pe circuitele speciale, programele reparate (`--atentie-tc0 --atentie-tc0-v4`, 26 nov 2026, 22:54) — sesiunea 259
+Sursa: `rezultate/os-automat/2026-11-26/ciclu-auto-20261126-2254.txt` (rândurile 108–134, 217–218). Detalii: `docs/C-157_OS470.md`, T270.
+- **Corectitudinea exact ca în SIMULARE:** ambele programe termină (cauza os-467 = scrierile nealiniate, confirmată); tc = modelul
+  86 690 / 86 690 cuvinte, v4 = tc 138 432 / 138 432; abaterea față de F32 ≤ 2,84·10⁻⁴.
+- **Viteza:** tc ×1,46 față de F32 (E7 prezisese ×1,63–2,89 — sub bandă); v4 ×1,47 față de tc (prezis ×1,2–1,8) → v4 ×2,16 față de F32.
+  Citirile scalare ale lui tc mai țineau ~30 % din timp; v4 le-a tăiat.
+- **Prezis pentru os-472 (scris înainte):** dS în pas 13,4 → 5,9–6,4 ms, pasul lot 6 ~264–268 ms. **Ce tai:** alte variante dS;
+  urmează înmulțirile (`mm_tc_v5`). Nimic nou pentru placă.
+
 ## os-457 — atenția înapoi pe circuitele f16 (`--atentie-tc`, 26 nov 2026, 09:43) — sesiunea 247
 Sursa: `rezultate/os-automat/2026-11-26/ciclu-auto-20261126-0943.txt` (rândurile 103–113, 193–195). Detalii: `docs/C-157_P2_OS457_ATTN_TC.md`, T257.
 - **Corectitudinea exact ca în SIMULARE:** 4 / 5 cu marginea veche (`ascutit`, subnormale f16), tc16 = tc 5 / 5; T257 reface pe procesor
