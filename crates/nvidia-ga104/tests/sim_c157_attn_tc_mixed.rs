@@ -1,7 +1,7 @@
 //! C-157 — T253, SIMULARE: `attn_back_tile_tc` (dQ, dK, dV of the attention on the tensor cores, f16 inputs) as a
 //! CPU stand-in in `gpu-sim` and as an option of the **fast mixed step** (`train_step::attn_tc_list` +
 //! `train_step::pack_mixed_fast_attn`). Plan and predictions C1–C6 written before these tests
-//! (`docs/C-157_ATTN_BACK_TC.md` §5, commit `408b73f`).
+//! (`docs/C-157_ATTN_BACK_TC.md` §5, commit `8853a1a`).
 //!
 //! Honesty: the stand-in is `gpu_compute::attn_tc::model`, a HYPOTHESIS of what the program computes (the
 //! tensor-core adder fitted in os-335). Nothing here runs on the RTX 3070 Ti; block counts are DEDUS.

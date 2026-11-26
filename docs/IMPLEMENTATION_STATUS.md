@@ -1,5 +1,35 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 244 — 26 noiembrie 2026, ~06:10–07:00 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile_tc` legat în pasul mixt rapid (în spatele unei alegeri a OS-ului) + înlocuitorul din `gpu-sim` + varianta `attn_back_tile_tc16` (16 KiB); găsită și reparată o greșeală de cbuf (argumentele la 0x700); PREDARE către OS (nota P2zm)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 243), l-am pus `ocupat`. Niciun test nou pe placă (os-445, os-447, os-449, os-451
+fără rezultat) → punctul lăsat de sesiunea 243. Predicțiile C1–C6 urcate înainte de teste (`8853a1a`). Clona locală veche era rămasă
+în urmă: am lucrat într-o clonă nouă a ramurii (nimic șters, nimic rescris pe GitHub). Unealta NAK 2 (Mesa 26.3.1) construită din nou
+(a lipsit `LLVMSPIRVLib` la prima încercare, instalat); `attn_back_tile_tc` și `mm_tc_v4` au ieșit identic.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Greșeala din nota 243 | programul citește argumentele la **0x700** (cbuf 0x800), nu la 0x28; reparat `attn_back_tile_tc::{PUSH_BASE, CBUF_BYTES, cbuf, cbuf_from_f32}` + test pe toate citirile `c[0x0]` din dump | REPARAT (nimic nu fusese predat) |
+| `gpu_sim::cmdproc::attn_back_tile_tc_on_cpu` / `_tc16_on_cpu` + `NEEDS` | înlocuitorii pe procesor = `attn_tc::model` (IPOTEZĂ, sumatorul os-335) | ADĂUGAT |
+| `train_step::{MixedLaunch::AttnTc, attn_tc_list, AttnTcProgram, pack_mixed_fast_attn, TcPick::AttnTc/AttnTc16}`, `batch_ram::pack_mixed_fast_via_ram_attn` | opțiunea în pasul mixt rapid; vechile packere aceiași octeți | ADĂUGAT (doar adăugări) |
+| `tools/nak/attn_back_tile_tc16.comp` + `nvidia_ga104::attn_back_tile_tc16` | aceeași aritmetică în 16 KiB; 48 registre, 0 memorie locală, 4 `hmma`, 0 `ffma`, SHA `8cbbab7e…` | COMPILAT, NU RULAT |
+| T253 C1, C2, C4, C6 | înlocuitorul = modelul (135 864 de elemente); drumul mini / #513 (12 `AttnTc` + 147 `mm_tc_v4`); blocuri pe SM la 64 KiB (1/1, 2/1, 4/3, DEDUS) | PASS (SIMULARE) — CONFIRMATE |
+| T253 C3 | mini 5 pași față de atenția F32: pierderi 1,2·10⁻⁶, gradient 1,9·10⁻⁴, greutăți 3,8·10⁻⁴ (prezis ≤ 1·10⁻⁴) | PASS (SIMULARE) — PE JUMĂTATE |
+| T253 C5, D1–D3 | refuzurile + cbuf-ul la 0x28 prinse; `tc16` = `tc` pe drum, QMD 16 KiB, prin RAM | PASS (SIMULARE) — CONFIRMATE |
+| Pe placă: aceleași cuvinte `tc16` = `tc`, timpul (~9,2 ms → 2,4–4,5 ms) | — | NOT TESTED |
+| Verificări | format, clippy, teste pe gazdă, build no_std | PASS (**1 238 de teste**, 8 ignorate) |
+
+**Ce înseamnă:** OS-ul poate acum încerca atenția înapoi pe circuitele speciale în pasul mixt rapid (2 programe noi, o opțiune oprită
+implicit). Proba propusă întâi: „vechi lângă nou” (F32, `tc`, `tc16` pe aceleași intrări). Nota: `docs/C-157_ATTN_BACK_TC.md` §5–6,
+pentru OS `integration/cyber-universe/C-157_P2zm_atentia-tc.md`.
+
+**Ce e nou pentru placă:** 2 programe (`attn_back_tile_tc`, `attn_back_tile_tc16`); niciun registru GPU nou. **Nicio schimbare
+incompatibilă** pentru OS (o variantă nouă în `MixedLaunch` / `TcPick`; OS-ul nu le potrivește exhaustiv). `attn_back_tile_tc::CBUF_BYTES`
+și-a schimbat valoarea (0x68 → 0x800), dar nu era folosit în afara repo-ului.
+
+**Următorul pas:** comparațiile testelor de pe placă când vin (os-451, os-447, os-449, apoi proba P2zm); altfel atenția înainte
+(`attn_fwd_tile3`, ~?) sau dS (`attn_back_tile0_3`) pe circuitele speciale — întâi studiul cât ar câștiga, cu predicții.
+
 ## Sesiunea 243 — 26 noiembrie 2026, ~05:10–06:20 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile_tc`: dQ, dK, dV ai atenției pe circuitele speciale (f16 × f16 → f32) — modelul pe procesor + judecata (SIMULARE: în margine, ~3·10⁻⁴ față de F32) + programul compilat de NAK (48 registre, 0 `ffma`); încă nelegat în pasul de antrenare, nimic predat OS-ului**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 242), l-am pus `ocupat`. Niciun test nou pe placă (os-445, os-447, os-449, os-451
