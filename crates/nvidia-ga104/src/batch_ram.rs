@@ -16,7 +16,7 @@ use gpu_core::error::{GpuError, GpuResult};
 
 use crate::qmd::{MAX_SHARED_BYTES, SharedMemory};
 use crate::train_step::{
-    Launch, MixedLaunch, Plan, Prog, SLOT, TcPick, TcPrograms, pack, pack_mixed_fast_attn,
+    Launch, MixedLaunch, Plan, Prog, SLOT, TcPick, TcPrograms, pack, pack_mixed_fast_attn2,
 };
 use crate::transfer::{COPY_UNIT, copy_cbuf, copy_qmd};
 
@@ -181,13 +181,40 @@ pub fn pack_mixed_fast_via_ram(
 /// C-157 (session 244, `docs/C-157_ATTN_BACK_TC.md` §5): [`pack_mixed_fast_via_ram`] for a list that may hold
 /// `MixedLaunch::AttnTc` (`train_step::attn_tc_list`), packed by `train_step::pack_mixed_fast_attn` with
 /// the tensor-core attention program `attn` (`None` only when the list has none). With `None` and no `AttnTc` it is
-/// [`pack_mixed_fast_via_ram`] byte for byte. SIMULARE only.
+/// [`pack_mixed_fast_via_ram`] byte for byte. SIMULARE only. A list with `MixedLaunch::Attn0Tc` is refused (as by
+/// `pack_mixed_fast_attn`): use [`pack_mixed_fast_via_ram_attn2`].
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn pack_mixed_fast_via_ram_attn(
     list: &[MixedLaunch],
     prog_va: impl Fn(Prog) -> u64,
     progs: &TcPrograms,
     attn: Option<crate::train_step::AttnTcProgram>,
+    step_bytes: Option<u32>,
+    copy_va: u64,
+    zone_va: u64,
+    v: &ViaRam,
+) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
+    if list.iter().any(|l| matches!(l, MixedLaunch::Attn0Tc(_))) {
+        return Err(bad(
+            "pas-mixt: lista are attn_back_tile0_tc: foloseste pack_mixed_fast_via_ram_attn2",
+        ));
+    }
+    pack_mixed_fast_via_ram_attn2(
+        list, prog_va, progs, attn, 0, step_bytes, copy_va, zone_va, v,
+    )
+}
+
+/// C-157 (session 250, `docs/C-157_ATTN_BACK0_TC_LEGAT.md`): [`pack_mixed_fast_via_ram_attn`] for a list that may
+/// also hold `MixedLaunch::Attn0Tc` (`train_step::attn0_tc_list`), packed by `train_step::pack_mixed_fast_attn2` with
+/// `attn_back_tile0_tc` at `attn0_va` (0 = not loaded). With `attn0_va = 0` and no `Attn0Tc` it is
+/// [`pack_mixed_fast_via_ram_attn`] byte for byte. SIMULARE only.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub fn pack_mixed_fast_via_ram_attn2(
+    list: &[MixedLaunch],
+    prog_va: impl Fn(Prog) -> u64,
+    progs: &TcPrograms,
+    attn: Option<crate::train_step::AttnTcProgram>,
+    attn0_va: u64,
     step_bytes: Option<u32>,
     copy_va: u64,
     zone_va: u64,
@@ -201,7 +228,7 @@ pub fn pack_mixed_fast_via_ram_attn(
     let n_in = v.copies_in.len();
     let list_va = zone_va + SLOT * n_in as u64;
     let (list_bytes, list_qmds, picks) =
-        pack_mixed_fast_attn(list, prog_va, progs, attn, step_bytes, list_va)?;
+        pack_mixed_fast_attn2(list, prog_va, progs, attn, attn0_va, step_bytes, list_va)?;
     let copy_shared = SharedMemory {
         bytes: 0,
         max_bytes: MAX_SHARED_BYTES,

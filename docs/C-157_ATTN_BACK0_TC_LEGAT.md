@@ -48,3 +48,33 @@ sesiunea 244 a legat `attn_back_tile_tc` (T253), **doar prin adăugări**.
 - **F6 — câte blocuri pe SM la 64 KiB (DEDUS, `occupancy`).** `attn_back_tile0_tc` = **1** (memoria partajată, ca
   `attn_back_tile0_3`); registrele ar permite 4.
 - **F7 — timpul (DEDUS, doar pe placă):** cel din sesiunea 245 (E7): 5,2 ms → ~1,8–3,2 ms pe pas #513. NOT TESTED.
+
+## 4. Rezultatul (sesiunea 250, ~14:00; T260 pe procesor = SIMULARE; F6–F7 DEDUS)
+
+| # | prezis | ieșit | verdict |
+|---|---|---|---|
+| F1 | înlocuitorul = `back0_model` bit cu bit în grilă, nimic în afară; mod 1 nimic; d > 64 și V peste f16 refuzate | **6 forme, 1 159 591 de elemente dS** aceiași biți (inclusiv o grilă parțială și B 2 × T 512); în afara grilei neatins; mod 1 nimic; ambele refuzuri, nimic scris | CONFIRMATĂ |
+| F2 | o lansare pe strat; identitatea pe lista simplă; zona + 2 × 1 792 B; adresa 0 = `pack_mixed_fast_attn` octet cu octet; ambele mutări 2 + 2 | exact așa; ambele mutări: zona 87 296 → 94 464 B (+ 4 × 1 792); mutările se compun în orice ordine | CONFIRMATĂ |
+| F3 | mini, ambele pe circuite față de F32: pierderi ≤ 1·10⁻⁴; gradientul **2·10⁻⁴ … 8·10⁻⁴**; greutăți ≤ 1·10⁻³; față de doar `AttnTc` ≤ 6·10⁻⁴, biți diferiți | pierderea 9,7191 → 8,8299 (scade); pierderi **3,9·10⁻⁶**; gradientul **1,938·10⁻⁴**; greutăți **4,1·10⁻⁴**; față de doar `AttnTc` **8,1·10⁻⁵**, biți diferiți; doar `Attn0Tc` față de F32: **5,7·10⁻⁵** | **PE JUMĂTATE** — gradientul a ieșit chiar sub interval: pe modelul mini d = 16 (un singur pas f16 de 16 în dP), iar eroarea lui dP aproape nu se adaugă la cea a lui dQ / dK (ambele ≈ doar `AttnTc`: 1,938 față de 1,938·10⁻⁴). Creșterea ×1,4 de la capul #513 (d = 64) nu se vede la d = 16 |
+| F4 | #513 lot 2: 12 `Attn0Tc` + 12 `AttnTc` + 147 `mm_tc_v4`; zona + 43 008 B; QMD 56 registre, grila [8, 12, 2], T = 512, mod 0 | exact așa (cu `tc16` pentru programul al doilea); cbuf-ul gol până la 0x700 | CONFIRMATĂ |
+| F5 | refuzurile; argumentele lăsate la 0x28 → refuz în înlocuitor | toate refuzurile (adresa 0, nealiniată, `pack_mixed_fast_attn` / `pack_mixed_fast` / `pack_mixed_gelu` / `pack_mixed`, treapta 32 KiB, mod 1 în locul lui mod 0); la 0x28 pasul 1 refuzat: „d != C/H sau forma goala” | CONFIRMATĂ |
+| F6 | 64 KiB: 1 bloc pe SM (ca `attn_back_tile0_3`); registrele ar permite 4 | (1, 1), (1, 1); doar registrele: 4 | CONFIRMATĂ |
+| F7 | 5,2 → ~1,8–3,2 ms pe pas #513 | — (doar pe placă) | NOT TESTED |
+
+În plus (G1): drumul „prin RAM” (`batch_ram::pack_mixed_fast_via_ram_attn2`, pentru `--lot-prin-ram`) — cu adresa 0 aceiași
+octeți ca `pack_mixed_fast_via_ram_attn`; cu ambele mutări aceleași alegeri ca fără RAM; varianta veche refuză lista nouă.
+
+Cod (doar adăugări): `gpu_sim::cmdproc::{attn_back_tile0_tc_on_cpu, ATTN_BACK_TILE0_TC_NEEDS}`,
+`nvidia_ga104::train_step::{MixedLaunch::Attn0Tc, attn0_tc_list, TcPick::Attn0Tc, pack_mixed_fast_attn2}`,
+`nvidia_ga104::batch_ram::pack_mixed_fast_via_ram_attn2`; `pack_mixed_fast_attn` / `pack_mixed_fast_via_ram_attn` au acum
+o singură regulă nouă: refuză o listă cu `Attn0Tc` (înainte nu putea exista). Test: `crates/nvidia-ga104/tests/sim_c157_attn0_tc_mixed.rs`
+(T260 F1–F6 + G1). O variantă nouă într-o enumerare publică strică doar un `match` complet; OS-ul folosește `MixedLaunch` /
+`TcPick` numai cu `matches!` și liste explicite (verificat în `cyber-universe` azi), deci nimic nu se strică acolo.
+
+### Ce înseamnă (pe scurt)
+
+1. **Ambele programe „înapoi” ale atenției pot merge acum pe circuitele speciale în pasul mixt rapid** (SIMULARE): OS-ul
+   cheamă `attn_tc_list` + `attn0_tc_list` și `pack_mixed_fast_attn2` cu adresa programului nou.
+2. Pe modelul mic, al doilea program pe circuite aproape nu schimbă nimic față de primul singur (8·10⁻⁵); sub toleranța pasului mixt.
+3. Pe placă: nou e doar programul `attn_back_tile0_tc` (56 registre, 33 024 B partajați, o barieră). Întâi proba „vechi lângă nou”
+   (nota `integration/cyber-universe/C-157_P2zs_attn0-tc.md`), apoi opțiunea în pas.

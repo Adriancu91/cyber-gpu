@@ -2242,6 +2242,92 @@ pub fn attn_back_tile_tc16_v4pf_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     attn_back_tile_tc16_v4_on_cpu(l)
 }
 
+/// C-157 (session 250, `docs/C-157_ATTN_BACK0_TC_LEGAT.md`): what `tools/nak/out2/attn_back_tile0_tc.sm86.sass` needs —
+/// the dump's `Shared size: 33024` (the f16 dO / V tiles, then the f32 dP tile 64 × 65; as `attn_back_tile0_3`) and one
+/// barrier.
+pub const ATTN_BACK_TILE0_TC_NEEDS: Needs = Needs {
+    shared_bytes: 33_024,
+    barriers: 1,
+};
+
+/// C-157 (session 250, `docs/C-157_ATTN_BACK0_TC_LEGAT.md`): the CPU stand-in for
+/// `tools/nak/out2/attn_back_tile0_tc.sm86.sass` — mode 0 of the attention backward (dP = dO·Vᵀ on the tensor cores,
+/// dot and dS in F32), blocks of 256. **cbuf0 is NOT `attn_back`'s:** the arguments sit at 0x700 (qkv / p / dout / ds at
+/// 0x700 / 0x708 / 0x710 / 0x718, T 0x728, C 0x72c, H 0x730, d 0x734, mode 0x738, scale 0x73c; the dump). A mode
+/// other than 0 makes the program exit at once: nothing is written. Grid [⌈T/64⌉, ≤ H, ≤ B]: every row
+/// (b, h, i < min(T, 64·x)) of dS is `gpu_compute::attn_tc::back0_model` — dO and V rounded to binary16, the
+/// tensor-core adder fitted on os-335 (a HYPOTHESIS, not a fact). d > 64, a grid past H or past ⌈T/64⌉, d ≠ C / H, or a
+/// dO / V value that is not a finite binary16 are refused (no write) instead of guessed.
+pub fn attn_back_tile0_tc_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    use gpu_compute::layer::{ATTN_TILE_MAX_D, AttnShape};
+    if l.block != [256, 1, 1] {
+        return Err(bad("SIM: attn_back_tile0_tc cere blocuri de 256x1x1"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 || l.mem.read_u32(l.cbuf0 + 0x8)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0..0x8) diferita de 0, nemodelata",
+        ));
+    }
+    let base = l.cbuf0 + ATTN_TC_PUSH_BASE;
+    let r64 = |l: &Launch<'_>, o: u64| l.mem.read_u64(base + o);
+    let r32 = |l: &Launch<'_>, o: u64| l.mem.read_u32(base + o);
+    if r32(l, 0x38)? != 0 {
+        return Ok(());
+    }
+    let (qkv, p, dout, ds) = (r64(l, 0x00)?, r64(l, 0x08)?, r64(l, 0x10)?, r64(l, 0x18)?);
+    let (t, c, heads, d) = (
+        r32(l, 0x28)? as usize,
+        r32(l, 0x2c)? as usize,
+        r32(l, 0x30)? as usize,
+        r32(l, 0x34)? as usize,
+    );
+    let scale = f32::from_bits(r32(l, 0x3c)?);
+    let [gx, gy, gz] = l.grid.map(|g| g as usize);
+    if heads == 0 || d == 0 || d * heads != c || t == 0 {
+        return Err(bad(
+            "SIM: attn_back_tile0_tc: d != C/H sau forma goala, nemodelat",
+        ));
+    }
+    if d > ATTN_TILE_MAX_D {
+        return Err(bad(
+            "SIM: attn_back_tile0_tc: d > 64 (placile partajate), nemodelat",
+        ));
+    }
+    if gy > heads || gx > t.div_ceil(64) {
+        return Err(bad(
+            "SIM: attn_back_tile0_tc: grila trece de H / T, nemodelata",
+        ));
+    }
+    if gz == 0 || gy == 0 || gx == 0 {
+        return Ok(());
+    }
+    let s = AttnShape {
+        batch: gz,
+        t,
+        c,
+        heads,
+    };
+    let (nq, no, np) = s
+        .sizes()
+        .ok_or_else(|| bad("SIM: attn_back_tile0_tc: forma prea mare"))?;
+    let qkv_v = l.mem.read_f32s(qkv, nq)?;
+    let p_v = l.mem.read_f32s(p, np)?;
+    let dout_v = l.mem.read_f32s(dout, no)?;
+    let out = gpu_compute::attn_tc::back0_model(&s, &qkv_v, &p_v, &dout_v, scale).ok_or_else(|| {
+        bad("SIM: attn_back_tile0_tc: o intrare nu e f16 finit (pe placa ar iesi inf / NaN), nemodelat")
+    })?;
+    let rows = t.min(64 * gx);
+    for b in 0..gz {
+        for h in 0..gy {
+            for i in 0..rows {
+                let at = ((b * heads + h) * t + i) * t;
+                l.mem.write_f32s(ds + 4 * at as u64, &out[at..at + t]);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The CPU stand-in for C-160 point 7's `attn_back_tile0.sm86.sass` (`docs/C-160_P7_ATENTIA_INAPOI_MOD0_PE_PLACI.md`):
 /// mode 0 (the rows of dS) of the attention backward on 64-row tiles, blocks of 256; the cbuf0 of `attn_back`
 /// (qkv/p/dout/ds at 0x28/0x30/0x38/0x40, T 0x50, C 0x54, H 0x58, d 0x5c, mode 0x60, scale 0x64). A mode other than 0

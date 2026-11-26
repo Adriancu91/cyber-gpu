@@ -1,5 +1,32 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 250 — 26 noiembrie 2026, ~13:10–14:25 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile0_tc` legat în pasul mixt rapid: ambele programe „înapoi” ale atenției pot merge pe circuitele speciale (SIMULARE, T260); PREDARE P2zs**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 249), l-am pus `ocupat`. Niciun test nou pe placă în hub de la 12:50 →
+punctul lăsat de sesiunea 249. Planul și predicțiile F1–F7 urcate înainte de cod (`f72a6db`), nota `docs/C-157_ATTN_BACK0_TC_LEGAT.md`.
+Clona locală era iar pe un HEAD detașat; am lucrat pe ramura locală refăcută din GitHub (nimic șters, nimic rescris).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| F1 înlocuitorul `attn_back_tile0_tc_on_cpu` = `back0_model` | 6 forme, 1 159 591 de elemente dS aceiași biți; în afara grilei neatins; refuzurile | PASS (SIMULARE) |
+| F2 drumul pe lista mini (`attn0_tc_list`, `pack_mixed_fast_attn2`) | o lansare pe strat; adresa 0 = vechiul octet cu octet; se compune cu `attn_tc_list` | PASS (SIMULARE) |
+| F3 antrenarea mini, ambele programe pe circuite față de F32 | pierderi 3,9·10⁻⁶, gradient 1,94·10⁻⁴ (prezis 2–8·10⁻⁴: **GREȘITĂ**, chiar sub), greutăți 4,1·10⁻⁴ (< 1·10⁻³) | PASS (SIMULARE; predicția pe jumătate) |
+| F4 lista #513 lot 2 | 12 `Attn0Tc` + 12 `AttnTc16` + 147 `mm_tc_v4`, zona + 43 008 B, QMD 56 registre, grila [8, 12, 2] | PASS (SIMULARE) |
+| F5 greșelile plantate | toate refuzate (inclusiv argumentele lăsate la 0x28) | PASS (SIMULARE) |
+| F6 blocuri pe SM la 64 KiB | 1 (ca `attn_back_tile0_3`) | DEDUS |
+| G1 prin RAM (`pack_mixed_fast_via_ram_attn2`) | adresa 0 = vechiul; alegerile ca fără RAM | PASS (SIMULARE) |
+| F7 timpul pe placă (5,2 → ~1,8–3,2 ms pe pas) | — | NOT TESTED |
+| Verificările întregi | format, clippy, **1 276 PASS** (8 ignorate), no_std (ținta instalată din nou în cloud) | PASS |
+
+**Ce e nou:** doar adăugări — `gpu_sim::cmdproc::{attn_back_tile0_tc_on_cpu, ATTN_BACK_TILE0_TC_NEEDS}`,
+`train_step::{MixedLaunch::Attn0Tc, attn0_tc_list, TcPick::Attn0Tc, pack_mixed_fast_attn2}`, `batch_ram::pack_mixed_fast_via_ram_attn2`.
+Variantele noi în `MixedLaunch` / `TcPick` strică doar un `match` complet (am completat unul într-un test de-al nostru); OS-ul
+le folosește doar cu `matches!` (verificat azi). Nou pentru placă: programul `attn_back_tile0_tc` (exista din sesiunea 245), predat acum.
+PREDARE `integration/cyber-universe/C-157_P2zs_attn0-tc.md`: întâi proba vechi lângă nou, apoi opțiunea în pas.
+
+**Următorul pas:** comparațiile când vin (proba P2zq tc16 / v4 / v4pf, proba largă P2zr, P2zs); altfel varianta câștigătoare
+v4 / v4pf legată (după P2zq) sau `attn_back_tile0_tc` cu citiri de 128 de biți (aceeași lecție ca v4); după P2zr: `token32` la G ales.
+
 ## Sesiunea 249 — 26 noiembrie 2026, ~12:12–12:55 (ora României), în cloud, FĂRĂ placă — **os-459 comparat: proba barierei pe toată placa TRECE, 1,13 µs (B1–B5 toate confirmate); predicțiile W1–W6 pentru proba largă (G = 384 / 768); PREDARE P2zr**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 248), l-am pus `ocupat`. os-459 a venit în hub → comparația are întâietate.
