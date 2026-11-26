@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 247 — 26 noiembrie 2026, ~10:14–11:05 (ora României), în cloud, FĂRĂ placă — **comparația os-457 (atenția înapoi pe circuitele f16): corectitudinea = modelul pe toate cifrele; viteza sub predicție (o greșeală de formă a noastră + ~8 așteptări de citiri pe pas de placă); PREDARE P2zp**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 246), l-am pus `ocupat`. os-457 a venit în hub → comparația are întâietate.
+Predicțiile R1–R3 urcate înainte de test (`19358ab`), nota `docs/C-157_P2_OS457_ATTN_TC.md`. Clona locală a ramurii era iar veche și
+divergentă: am lucrat pe ramura din GitHub (nimic șters, nimic rescris pe GitHub).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| os-457 corectitudinea (MĂSURAT de OS) | 4 / 5 în margine (vechea), tc16 = tc 5 / 5, abaterea ≤ 3,02·10⁻⁴ — ca SIMULAREA | CONFIRMAT pe placă |
+| R1 abaterea față de F32, model vs placă | 5 / 5 aceleași cifre | PASS (SIMULARE) |
+| R2 cel mai rău ‰, model vs placă | 4 / 4 identic; `ascutit` același element, valoare, referință, margine | PASS (SIMULARE) |
+| R3 marginea nouă (`judge_nominal`) | 5 / 5 | PASS (SIMULARE); pe placă DEDUS |
+| os-457 viteza la b4 | tc16 0,87 / tc 1,16 / `_3` 1,59 ms; prezis (corectat la lotul 4) 0,40–0,75 | SUB PREDICȚIE |
+| Cauza vitezei | greșeala de formă în rândul nostru (lotul 2 lângă b4) + ~8 așteptări de citiri pe pas de placă (~8–14 µs / pas) | DEDUS |
+| Verificările întregi | `tools/check.sh`: format, clippy, **1 256 PASS** (8 ignorate), no_std | PASS |
+
+**Ce e nou:** doar un test (T257) și documente. Nimic nou pentru placă, nicio schimbare de interfață. PREDARE
+`integration/cyber-universe/C-157_P2zp_os457.md`: rândul cu marginea nouă (P2zo) + tc16 se poate lega deja în pasul mixt (DEDUS
+~2,2–4,0 ms câștig pe pas).
+
+**Următorul pas:** `attn_back_tile_tc16_v4` (citiri de 128 de biți + placa următoare citită peste produse, aceiași biți ca tc16;
+predicții scrise înainte de cod), apoi `attn_back_tile0_tc` legat în pasul mixt. Dacă vin rezultate de pe placă (os-458 bariera), au întâietate.
+
 ## Sesiunea 246 — 26 noiembrie 2026, ~09:10–10:15 (ora României), în cloud, FĂRĂ placă — **răspunsul la nota OS din P6-227: setul `ascutit` iese din marginea `mm_tc` din cauza valorilor f16 subnormale; marginea „pe exponentul nominal” adăugată; T256 în SIMULARE; PREDARE P2zo**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 245), l-am pus `ocupat`. Niciun test nou pe placă în hub. OS-ul (P6-227) a scris

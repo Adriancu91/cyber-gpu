@@ -72,3 +72,15 @@ deci dS și intrările diferă puțin; de aceea R1–R2 cer potrivire la cifrele
   restul ±3 ‰; `ascutit` iese din margine la **același element 394, cu aceeași valoare 3,0900992·10⁻⁷**.
 - **R3 — marginea nouă (`judge_nominal`, sesiunea 246)** pe ieșirea modelului: 5 / 5 în margine. Fiindcă placa a dat aceleași cuvinte
   la tc și tc16 și aceleași cifre ca modelul, verdictul plăcii cu marginea nouă ar fi tot 5 / 5 (DEDUS; îl scrie OS-ul, nota P2zo).
+
+### Rezultatul R1–R3 (T257, `crates/nvidia-ga104/tests/sim_c157_os457_attn_tc.rs`, SIMULARE)
+
+| # | prezis | ieșit | verdict |
+|---|---|---|---|
+| R1 | aceleași cifre ca placa pe ≥ 4 / 5, toate ±0,02·10⁻⁴ | **5 / 5 identice**: 2,77 / 2,87 / 2,76 / 2,76 / 3,02·10⁻⁴ | CONFIRMATĂ |
+| R2 | același ‰ pe ≥ 3 / 4; `ascutit` la elementul 394 cu 3,0900992·10⁻⁷ | **4 / 4 identice** (86 / 46 / 45 / 40 ‰); `ascutit`: elementul 394, 3,0900992·10⁻⁷, referința 3,090158315899316·10⁻⁷ și marginea 3,646918216634182·10⁻¹² — **toate cifrele ca pe placă** | CONFIRMATĂ |
+| R3 | marginea nouă 5 / 5 | **5 / 5** (`ascutit` 46 ‰, celelalte identic cu vechea) | CONFIRMATĂ |
+
+**Ce înseamnă:** pe toate cifrele pe care OS-ul le-a tipărit, placa și modelul nostru de pe procesor se potrivesc complet; diferențele
+de P din atenția înainte nu ajung în aceste cifre. Cu marginea nouă (P2zo) proba ar ieși **TRECE 5 / 5** (DEDUS: verdictul îl
+scrie OS-ul pe placă). Partea de corectitudine a atenției înapoi pe f16 e închisă; rămâne viteza (§3).

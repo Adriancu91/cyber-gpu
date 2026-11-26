@@ -2,6 +2,15 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-457 — atenția înapoi pe circuitele f16 (`--atentie-tc`, 26 nov 2026, 09:43) — sesiunea 247
+Sursa: `rezultate/os-automat/2026-11-26/ciclu-auto-20261126-0943.txt` (rândurile 103–113, 193–195). Detalii: `docs/C-157_P2_OS457_ATTN_TC.md`, T257.
+- **Corectitudinea exact ca în SIMULARE:** 4 / 5 cu marginea veche (`ascutit`, subnormale f16), tc16 = tc 5 / 5; T257 reface pe procesor
+  toate cifrele plăcii (abaterea 5 / 5, ‰ 4 / 4, elementul 394 cu aceeași valoare). Cu marginea nouă: 5 / 5 (DEDUS).
+- **Viteza sub predicție:** tc16 0,87 ms, tc 1,16 ms, `_3` 1,59 ms la b4 (×1,83 / ×1,38). Predicția noastră avea o greșeală de formă
+  (cifra lotului 2 lângă setul lotului 4); corectată: 0,40–0,75 ms → tc16 ×1,2–2,2 peste. Cauza (DEDUS): ~8 așteptări de citiri pe pas
+  de placă (8 runde de 4 citiri scalare). **Ce tai:** `attn_back_tile_tc16_v4` (citiri de 128 de biți + citirea înainte); OS-ul poate
+  lega deja tc16 (~2,2–4,0 ms câștig pe pas, DEDUS).
+
 ## os-443 — `mm_tc*` la treapta 64 KiB (`--mm-tc-64k`, 25 nov 2026, 21:05) — sesiunea 237
 Sursa: `rezultate/os-automat/2026-11-25/ciclu-auto-20261125-2105.txt` (rândurile 100–184). Detalii: `docs/C-157_P2_OS436.md` §6, T244.
 - **Ieșit ca prezis, toate:** aceiași biți peste tot (6/6, 6/6, 5/5); qkv-513 `mm_tc` ×1,93 (prezis 1,7–2,0), `mm_tc_pf` ×1,76 =
