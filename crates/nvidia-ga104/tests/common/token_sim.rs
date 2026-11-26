@@ -105,6 +105,8 @@ pub struct TokenSim<'a> {
     /// C-157 (session 240): when set, `submit_token32` builds the QMD with `token32_qmd_wide` for this many SMs
     /// (the SM shared-memory step chosen for G) instead of `token32_qmd`.
     pub token32_sms: Option<u32>,
+    /// C-157 (session 260): send `token32_v2` instead of `token32` (the same model in `gpu-sim`).
+    pub token32_v2: bool,
 }
 
 impl<'a> TokenSim<'a> {
@@ -284,6 +286,7 @@ impl<'a> TokenSim<'a> {
             results,
             last_stamps: Vec::new(),
             token32_sms: None,
+            token32_v2: false,
         })
     }
 
@@ -369,12 +372,17 @@ impl<'a> TokenSim<'a> {
         use nvidia_ga104::kronos_token as kt;
         let list_bytes = kt::work_list32(launches)?;
         let n = launches.len();
-        let prog = self.r.mem.alloc_mapped(kt::TOKEN32.len() as u64, 0x1000)?;
+        let code = if self.token32_v2 {
+            kt::TOKEN32_V2
+        } else {
+            kt::TOKEN32
+        };
+        let prog = self.r.mem.alloc_mapped(code.len() as u64, 0x1000)?;
         let list = self.r.mem.alloc_mapped(list_bytes.len() as u64, 0x1000)?;
         let launch = self.r.mem.alloc_mapped(0x1000, 0x1000)?;
         let (cb, qmd, sync) = (launch.va, launch.va + 256, launch.va + 512);
         let w = self.r.mem.writer_mut();
-        put_bytes(w, prog.pa, kt::TOKEN32);
+        put_bytes(w, prog.pa, code);
         put_bytes(w, list.pa, &list_bytes);
         if let Some((k, op)) = tamper {
             put_bytes(
@@ -410,7 +418,7 @@ impl<'a> TokenSim<'a> {
             .iter()
             .map(|&(p, f, needs)| (p.code(), f, needs))
             .collect();
-        programs.push((kt::TOKEN32, token32_on_cpu, TOKEN32_NEEDS));
+        programs.push((code, token32_on_cpu, TOKEN32_NEEDS));
         let mut loads: Vec<(u64, u64)> = self.mappings().iter().map(span).collect();
         loads.extend([span(&prog), span(&list), span(&launch)]);
         loads.push((self.host.va, self.host.size));

@@ -721,3 +721,10 @@ Sursa: `Cyber-hub/rezultate/os-automat/2026-11-22/ciclu-auto-20261122-0506.txt` 
 - **os-465, P2zq:** v4 = v4pf = tc16 bit cu bit (4 / 4 aliniate); v4 **0,52 ms (×1,67)** în banda 0,35–0,55; v4pf 0,64 — pierde chiar la 1 bloc pe SM. **Tai v4pf**; în pas v4 (3 blocuri) față de tc16 (3–4) câștigă doar ~0,2–1 ms (DEDUS).
 - **os-465, P2zr:** W1–W5 toate confirmate; o barieră 2,03 µs la G = 384, 3,11 µs la G = 768. **G ales pentru `token32`: 384** (plafon ~0,16 ms pe simbol); 768 tăiat.
 - **Rândul lot 6 sărit:** ordinea opțiunilor (`--atentie-tc16` trebuie după `--doua-locuri`). Nota întreagă: `docs/C-157_OS462_OS465.md`.
+
+## os-471 `--token32` (26 nov 2026, 23:17) — sesiunea 260
+- **Corectitudine:** T1, T2 confirmate — aceleași 16 simboluri, amprenta `0x6c8501f0`, contorul 18 / 18, la G = 384 și 768.
+- **Viteza:** T3–T6 NECONFIRMATE — placa 3 859 / 4 339 µs (lista 1 069), driverul 4 576 µs (lista 1 010). Munca de ×5,1 / ×5,7, nu ×1–2.
+- **Cauze (DEDUS, T271):** x citit de fiecare rând din L2 (`ld.strong.sys`, ~390 MB / simbol, ×4,55 trafic → explică ~89 %) și lista
+  întreagă (5 632 cuvinte) scrisă la fiecare simbol (se schimbă 38). Leacuri: `token32_v2` (citiri prin L1, T272) și
+  `work_list_changes`; PREDARE P2zzd. Nota întreagă: `docs/C-157_OS471.md`.

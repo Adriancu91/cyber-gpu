@@ -1,0 +1,501 @@
+// C-157 after os-471 (session 260, `docs/C-157_OS471.md`): `token32` with ONE change — the reads of what earlier
+// operations wrote (x of the products, q and the K/V caches of the attention, the residual and bias, x / g / b of
+// layernorm256, the logits of argmax, the argmax slot of embed_dev) go through `readonly` buffers (`ld.constant`,
+// through the SM's L1) instead of `coherent` (`ld.strong.sys`, L2 every time). Writes stay `coherent`. Correct because
+// every workgroup crosses `grid_sync` between two operations, whose memoryBarrierBuffer() NAK compiles with `cctl`
+// around `membar` (L1 written back and invalidated), so no line read before the barrier survives it. On the board,
+// os-471 showed `token32` ~3.6x slower than the separate launches; the listing says each ROW re-read its x from L2.
+// The arithmetic is the one of `token32` (same operations in the same order; checked in the listing).
+//
+// C-157 (session 239): "one program per token" for TODAY's generation list — `token.comp` (C-87) extended with the
+// programs the board has run since os-346: the new LayerNorm (`layernorm256`), the glued products and the logits on
+// quarter blocks (`q8_fused32`, `q8_matvec32`), the argmax on the board (`argmax`), the embedding with the token read
+// from the argmax slot (`embed_dev`), and the old glued product (`q8_fused`). `token.comp` itself is unchanged.
+//
+// The list is the one of `token.comp`: 256 bytes per operation = the separate launch's constant buffer (arguments from
+// 0x28, the same layout) + the operation at 0x20 (`kronos_token::op_number`: 0 copy, 1 q8_matvec, 2 vadd,
+// 3 layernorm, 4 attention, 5 gelu, 6 embed, 7 q8_fused, 8 layernorm256, 9 argmax, 10 q8_fused32, 11 q8_matvec32,
+// 12 embed_dev) and its grid at 0x24. G workgroups of 32 threads take the blocks vb = wg, wg + G, ...; a grid barrier
+// between two operations (thread 0 adds 1 to the counter at `sync`, waits for k·G). Correct only if all G
+// workgroups are resident at once (G ≤ the SM count) — the driver chooses G (`kronos_token::groups_for`).
+//
+// Why the results are those of the separate launches (written before compiling; the listing is checked after):
+// - 32-thread programs (q8_matvec, layernorm, attention, q8_fused, q8_fused32, q8_matvec32): the same body, the same
+//   block number, the same 32 threads;
+// - 256-thread element-wise programs (copy, vadd, gelu, embed, embed_dev): each element gets the same operations; the
+//   256 elements of a block are done in 8 rounds of 32;
+// - layernorm256 (one block of 256 threads = 8 warps): lane t plays thread 32·w + t of warp w, w = 0..7, in order:
+//   its own sum over k = 0..3 (from 0.0), the same butterfly inside the warp (shuffle xor 16..1), and the 8 warp sums
+//   added in the order w = 0..7 starting from warp 0's — exactly the additions of layernorm256.comp. x, g, b are read
+//   again from memory instead of kept in registers (the same values: nothing writes them during the operation);
+// - argmax: the largest finite logit with the lowest index on a tie and the count of non-finite ones are exact and
+//   do not depend on which thread saw which element, so 32 threads give the 4 words of the 256-thread program.
+// Everything an operation reads that another workgroup wrote before the barrier (activations, the K/V caches, the
+// argmax slot) goes through `coherent` buffers (L2, not the SM's L1); the weights and the list are read-only.
+//
+// Push constants: list 0x28, sync 0x30, n (operations) 0x38; NVK puts gl_NumWorkGroups.x at c[0][0xc] — the driver
+// must write G there (`kronos_token::token_cbuf_for`).
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Words { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) coherent buffer CW { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) coherent buffer F { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) coherent buffer F4 { vec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) coherent buffer C { uvec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) coherent buffer Sync { uint v[]; };
+// session 260: the same buffers for reads through L1. NAK 25.0.7 (`from_nir.rs`, load_global) has only two kinds of
+// global load: `.constant` when the access may be reordered (a `readonly` buffer) and `.strong.sys` otherwise — no
+// weak load — so these are `readonly`: valid only between two grid barriers (an operation never reads what the same
+// operation writes), the `cctl` (IVAll) after each barrier dropping what L1 held. Checked in the listing.
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer FL { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer F4L { vec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer CWL { uint v[]; };
+layout(push_constant) uniform Args { Words list; Sync sync; uint n; } args;
+
+shared float sc[512];
+shared float parts[32];
+
+const uint NONE = 0xffffffffu;
+
+uint E;        // word index of the current entry in the list
+uint w(uint k) { return args.list.v[E + k]; }
+uint64_t a(uint i) { return uint64_t(w(10u + 2u * i)) | (uint64_t(w(11u + 2u * i)) << 32); }
+// the first 32-bit argument after `na` addresses
+uint u(uint na, uint i) { return w(10u + 2u * na + i); }
+float f(uint na, uint i) { return uintBitsToFloat(u(na, i)); }
+
+float tree_sum(float v, uint t) {
+    parts[t] = v;
+    barrier();
+    for (uint s = 16u; s > 0u; s >>= 1u) {
+        if (t < s) {
+            parts[t] = parts[t] + parts[t + s];
+        }
+        barrier();
+    }
+    float r = parts[0];
+    barrier();
+    return r;
+}
+
+// The reduction tree of q8_matvec / q8_fused / their quarter versions: stride 16, 8, 4, 2, 1; the sum in parts[0].
+void tree_parts(float part, uint t) {
+    parts[t] = part;
+    barrier();
+    for (uint stride = 16u; stride > 0u; stride >>= 1u) {
+        if (t < stride) {
+            parts[t] = parts[t] + parts[t + stride];
+        }
+        barrier();
+    }
+}
+
+float qb(int word, int j) {
+    return float(bitfieldExtract(word, 8 * j, 8));
+}
+
+float gelu(float x) {
+    float z = x * 0.70710678118654752;
+    float aa = abs(z);
+    float tt = 1.0 / (1.0 + 0.3275911 * aa);
+    float p = tt * (0.254829592 + tt * (-0.284496736 + tt * (1.421413741 + tt * (-1.453152027 + tt * 1.061405429))));
+    float e = 1.0 - p * exp(-aa * aa);
+    float erf = z < 0.0 ? -e : e;
+    return 0.5 * x * (1.0 + erf);
+}
+
+void op_copy(uint vb, uint t) {
+    C src = C(a(0u)); C dst = C(a(1u)); uint n = u(2u, 0u);
+    for (uint j = 0u; j < 8u; j++) {
+        uint i = vb * 256u + j * 32u + t;
+        if (i < n) dst.v[i] = src.v[i];
+    }
+}
+
+void op_q8_matvec(uint row, uint t) {
+    Words wt = Words(a(0u)); F x = F(a(1u)); F y = F(a(2u));
+    uint rows = u(3u, 0u), blocks = u(3u, 1u);
+    float part = 0.0;
+    if (row < rows) {
+        uint base = row * blocks * 9u;
+        for (uint b = t; b < blocks; b += 32u) {
+            uint wb = base + b * 9u;
+            float scale = uintBitsToFloat(wt.v[wb]);
+            float s = 0.0;
+            for (uint k = 0u; k < 8u; k++) {
+                int q4 = int(wt.v[wb + 1u + k]);
+                uint xi = b * 32u + k * 4u;
+                for (uint j = 0u; j < 4u; j++) {
+                    float q = float(bitfieldExtract(q4, int(8u * j), 8));
+                    s += q * x.v[xi + j];
+                }
+            }
+            part += scale * s;
+        }
+    }
+    tree_parts(part, t);
+    if (t == 0u && row < rows) {
+        y.v[row] = parts[0];
+    }
+    barrier();
+}
+
+void op_vadd(uint vb, uint t) {
+    F pa = F(a(0u)); F pb = F(a(1u)); F pc = F(a(2u)); uint n = u(3u, 0u);
+    for (uint j = 0u; j < 8u; j++) {
+        uint i = vb * 256u + j * 32u + t;
+        if (i < n) pc.v[i] = pa.v[i] + pb.v[i];
+    }
+}
+
+void op_layernorm(uint t) {
+    F x = F(a(0u)); F g = F(a(1u)); F b = F(a(2u)); F y = F(a(3u));
+    uint n = u(4u, 0u); float inv_n = f(4u, 1u); float eps = f(4u, 2u);
+    float s = 0.0;
+    for (uint i = t; i < n; i += 32u) {
+        s += x.v[i];
+    }
+    float mean = tree_sum(s, t) * inv_n;
+    float q = 0.0;
+    for (uint i = t; i < n; i += 32u) {
+        float d = x.v[i] - mean;
+        q += d * d;
+    }
+    float inv = inversesqrt(tree_sum(q, t) * inv_n + eps);
+    for (uint i = t; i < n; i += 32u) {
+        y.v[i] = (x.v[i] - mean) * inv * g.v[i] + b.v[i];
+    }
+}
+
+void op_attention(uint h, uint t) {
+    FL q = FL(a(0u)); FL kc = FL(a(1u)); FL vc = FL(a(2u)); F o = F(a(3u));
+    uint n_pos = u(4u, 0u), n_emb = u(4u, 1u), d = u(4u, 2u); float scale = f(4u, 3u);
+    uint base = h * d;
+    float m = -3.402823466e38;
+    for (uint s = t; s < n_pos; s += 32u) {
+        float dot = 0.0;
+        for (uint c = 0u; c < d; c++) {
+            dot += q.v[base + c] * kc.v[s * n_emb + base + c];
+        }
+        float v = dot * scale;
+        sc[s] = v;
+        m = max(m, v);
+    }
+    parts[t] = m;
+    barrier();
+    for (uint st = 16u; st > 0u; st >>= 1u) {
+        if (t < st) {
+            parts[t] = max(parts[t], parts[t + st]);
+        }
+        barrier();
+    }
+    m = parts[0];
+    barrier();
+    float sum = 0.0;
+    for (uint s = t; s < n_pos; s += 32u) {
+        float e = exp(sc[s] - m);
+        sc[s] = e;
+        sum += e;
+    }
+    parts[t] = sum;
+    barrier();
+    for (uint st = 16u; st > 0u; st >>= 1u) {
+        if (t < st) {
+            parts[t] = parts[t] + parts[t + st];
+        }
+        barrier();
+    }
+    float inv = 1.0 / parts[0];
+    barrier();
+    for (uint c = t; c < d; c += 32u) {
+        float acc = 0.0;
+        for (uint s = 0u; s < n_pos; s++) {
+            acc += sc[s] * vc.v[s * n_emb + base + c];
+        }
+        o.v[base + c] = acc * inv;
+    }
+    barrier();
+}
+
+void op_gelu(uint vb, uint t) {
+    F px = F(a(0u)); F py = F(a(1u)); uint n = u(2u, 0u);
+    for (uint j = 0u; j < 8u; j++) {
+        uint i = vb * 256u + j * 32u + t;
+        if (i < n) {
+            py.v[i] = gelu(px.v[i]);
+        }
+    }
+}
+
+float q8_value(Words row, uint i) {
+    uint b = i / 32u, j = i % 32u;
+    float s = uintBitsToFloat(row.v[b * 9u]);
+    int q4 = int(row.v[b * 9u + 1u + j / 4u]);
+    return s * float(bitfieldExtract(q4, int(8u * (j % 4u)), 8));
+}
+
+void op_embed(uint vb, uint t) {
+    Words tok = Words(a(0u)); Words pos = Words(a(1u)); F x = F(a(2u)); uint n = u(3u, 0u);
+    for (uint j = 0u; j < 8u; j++) {
+        uint i = vb * 256u + j * 32u + t;
+        if (i < n) x.v[i] = q8_value(tok, i) + q8_value(pos, i);
+    }
+}
+
+// The tail of q8_fused / q8_fused32 (thread 0 only): bias, residual, GELU, the K/V copies.
+void fused_tail(uint row, float sum, uint na) {
+    FL bias = FL(a(2u)); FL res = FL(a(3u)); F y = F(a(4u)); F kk = F(a(5u)); F vv = F(a(6u));
+    uint flags = u(na, 2u), split = u(na, 3u);
+    float v = sum + bias.v[row];
+    if ((flags & 1u) != 0u) {
+        v = res.v[row] + v;
+    }
+    if ((flags & 2u) != 0u) {
+        v = gelu(v);
+    }
+    y.v[row] = v;
+    if ((flags & 4u) != 0u && row >= split) {
+        if (row < 2u * split) {
+            kk.v[row - split] = v;
+        } else if (row < 3u * split) {
+            vv.v[row - 2u * split] = v;
+        }
+    }
+}
+
+void op_q8_fused(uint row, uint t) {
+    Words wt = Words(a(0u)); F x = F(a(1u));
+    uint rows = u(7u, 0u), blocks = u(7u, 1u);
+    float part = 0.0;
+    if (row < rows) {
+        uint base = row * blocks * 9u;
+        for (uint b = t; b < blocks; b += 32u) {
+            uint wb = base + b * 9u;
+            float scale = uintBitsToFloat(wt.v[wb]);
+            float s = 0.0;
+            for (uint k = 0u; k < 8u; k++) {
+                int q4 = int(wt.v[wb + 1u + k]);
+                uint xi = b * 32u + k * 4u;
+                for (uint j = 0u; j < 4u; j++) {
+                    float q = float(bitfieldExtract(q4, int(8u * j), 8));
+                    s += q * x.v[xi + j];
+                }
+            }
+            part += scale * s;
+        }
+    }
+    tree_parts(part, t);
+    if (t == 0u && row < rows) {
+        fused_tail(row, parts[0], 7u);
+    }
+    barrier();
+}
+
+// q8_matvec32's quarter-block sum of one row (thread t's part).
+float quarter_part(Words wt, F4L x, uint row, uint rows, uint blocks, uint t) {
+    float part = 0.0;
+    if (row < rows) {
+        uint base = row * blocks * 9u;
+        uint units = blocks * 4u;
+        for (uint un = t; un < units; un += 32u) {
+            uint b = un >> 2u;
+            uint k = un & 3u;
+            uint wb = base + b * 9u;
+            float scale = uintBitsToFloat(wt.v[wb]);
+            int q0 = int(wt.v[wb + 1u + 2u * k]);
+            int q1 = int(wt.v[wb + 2u + 2u * k]);
+            vec4 xa = x.v[b * 8u + 2u * k];
+            vec4 xb = x.v[b * 8u + 2u * k + 1u];
+            float s = qb(q0, 0) * xa.x;
+            s += qb(q0, 1) * xa.y;
+            s += qb(q0, 2) * xa.z;
+            s += qb(q0, 3) * xa.w;
+            s += qb(q1, 0) * xb.x;
+            s += qb(q1, 1) * xb.y;
+            s += qb(q1, 2) * xb.z;
+            s += qb(q1, 3) * xb.w;
+            part += scale * s;
+        }
+    }
+    return part;
+}
+
+void op_q8_fused32(uint row, uint t) {
+    uint rows = u(7u, 0u), blocks = u(7u, 1u);
+    tree_parts(quarter_part(Words(a(0u)), F4L(a(1u)), row, rows, blocks, t), t);
+    if (t == 0u && row < rows) {
+        fused_tail(row, parts[0], 7u);
+    }
+    barrier();
+}
+
+void op_q8_matvec32(uint row, uint t) {
+    F y = F(a(2u));
+    uint rows = u(3u, 0u), blocks = u(3u, 1u);
+    tree_parts(quarter_part(Words(a(0u)), F4L(a(1u)), row, rows, blocks, t), t);
+    if (t == 0u && row < rows) {
+        y.v[row] = parts[0];
+    }
+    barrier();
+}
+
+float warp_sum(float v) {
+    v = v + subgroupShuffleXor(v, 16u);
+    v = v + subgroupShuffleXor(v, 8u);
+    v = v + subgroupShuffleXor(v, 4u);
+    v = v + subgroupShuffleXor(v, 2u);
+    v = v + subgroupShuffleXor(v, 1u);
+    return v;
+}
+
+void op_layernorm256(uint t) {
+    FL x = FL(a(0u)); FL g = FL(a(1u)); FL b = FL(a(2u)); F y = F(a(3u));
+    uint n = u(4u, 0u); float inv_n = f(4u, 1u); float eps = f(4u, 2u);
+    if (n == 0u) {
+        return; // the same for every thread (the separate program writes nothing either)
+    }
+    float r = 0.0;
+    for (uint wp = 0u; wp < 8u; wp++) {
+        float s = 0.0;
+        for (uint k = 0u; k < 4u; k++) {
+            uint i = 32u * wp + t + 256u * k;
+            if (i < n) {
+                s += x.v[i];
+            }
+        }
+        s = warp_sum(s);
+        r = wp == 0u ? s : r + s;
+    }
+    float mean = r * inv_n;
+    float rq = 0.0;
+    for (uint wp = 0u; wp < 8u; wp++) {
+        float q = 0.0;
+        for (uint k = 0u; k < 4u; k++) {
+            uint i = 32u * wp + t + 256u * k;
+            if (i < n) {
+                float d = x.v[i] - mean;
+                q += d * d;
+            }
+        }
+        q = warp_sum(q);
+        rq = wp == 0u ? q : rq + q;
+    }
+    float inv = inversesqrt(rq * inv_n + eps);
+    for (uint wp = 0u; wp < 8u; wp++) {
+        for (uint k = 0u; k < 4u; k++) {
+            uint i = 32u * wp + t + 256u * k;
+            if (i < n) {
+                y.v[i] = (x.v[i] - mean) * inv * g.v[i] + b.v[i];
+            }
+        }
+    }
+}
+
+uint key_of(float fl) {
+    uint b = floatBitsToUint(fl);
+    if (b == 0x80000000u) {
+        b = 0u;
+    }
+    return (b & 0x80000000u) != 0u ? ~b : (b | 0x80000000u);
+}
+
+uint bits_of(uint k) {
+    if (k == 0u) {
+        return 0xff800000u;
+    }
+    return (k & 0x80000000u) != 0u ? (k & 0x7fffffffu) : ~k;
+}
+
+bool beats(uint k2, uint i2, uint k1, uint i1) {
+    return k2 > k1 || (k2 == k1 && i2 < i1);
+}
+
+void op_argmax(uint t) {
+    FL lg = FL(a(0u)); C res = C(a(1u)); uint n = u(2u, 0u);
+    uint bk = 0u;
+    uint bi = NONE;
+    uint cnt = 0u;
+    for (uint i = t; i < n; i += 32u) {
+        float v = lg.v[i];
+        if ((floatBitsToUint(v) & 0x7f800000u) == 0x7f800000u) {
+            cnt += 1u;
+        } else {
+            uint kk = key_of(v);
+            if (kk > bk) { // a lane's indices grow: strict > keeps the lowest
+                bk = kk;
+                bi = i;
+            }
+        }
+    }
+    for (uint s = 16u; s > 0u; s >>= 1u) {
+        uint ok = subgroupShuffleXor(bk, s);
+        uint oi = subgroupShuffleXor(bi, s);
+        cnt += subgroupShuffleXor(cnt, s);
+        if (beats(ok, oi, bk, bi)) {
+            bk = ok;
+            bi = oi;
+        }
+    }
+    if (t == 0u) {
+        res.v[0] = uvec4(cnt == 0u ? bi : NONE, bits_of(bk), cnt, n);
+    }
+}
+
+void op_embed_dev(uint vb, uint t) {
+    uint64_t tok = a(0u); CWL res = CWL(a(1u)); Words pos = Words(a(2u)); F x = F(a(3u));
+    uint n = u(4u, 0u), vocab = u(4u, 1u), stride = u(4u, 2u);
+    uint idx = res.v[0];
+    for (uint j = 0u; j < 8u; j++) {
+        uint i = vb * 256u + j * 32u + t;
+        if (i < n) {
+            if (idx < vocab) {
+                Words row = Words(tok + uint64_t(idx) * uint64_t(stride));
+                x.v[i] = q8_value(row, i) + q8_value(pos, i);
+            } else {
+                x.v[i] = uintBitsToFloat(0x7fc00000u);
+            }
+        }
+    }
+}
+
+void grid_sync(uint k, uint t) {
+    memoryBarrierBuffer();
+    barrier();
+    if (t == 0u) {
+        atomicAdd(args.sync.v[0], 1u);
+        uint target = k * gl_NumWorkGroups.x;
+        while (atomicAdd(args.sync.v[0], 0u) < target) {
+        }
+    }
+    barrier();
+    memoryBarrierBuffer();
+}
+
+void main() {
+    uint t = gl_LocalInvocationID.x;
+    uint g = gl_NumWorkGroups.x;
+    for (uint k = 0u; k < args.n; k++) {
+        E = k * 64u;
+        uint op = w(8u), grid = w(9u);
+        for (uint vb = gl_WorkGroupID.x; vb < grid; vb += g) {
+            if (op == 0u) op_copy(vb, t);
+            else if (op == 1u) op_q8_matvec(vb, t);
+            else if (op == 2u) op_vadd(vb, t);
+            else if (op == 3u) op_layernorm(t);
+            else if (op == 4u) op_attention(vb, t);
+            else if (op == 5u) op_gelu(vb, t);
+            else if (op == 6u) op_embed(vb, t);
+            else if (op == 7u) op_q8_fused(vb, t);
+            else if (op == 8u) op_layernorm256(t);
+            else if (op == 9u) op_argmax(t);
+            else if (op == 10u) op_q8_fused32(vb, t);
+            else if (op == 11u) op_q8_matvec32(vb, t);
+            else if (op == 12u) op_embed_dev(vb, t);
+        }
+        if (k + 1u < args.n) grid_sync(k + 1u, t);
+    }
+}

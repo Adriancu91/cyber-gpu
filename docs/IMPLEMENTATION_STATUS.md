@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 260 — 27 noiembrie 2026, ~00:10–01:30 (ora României), în cloud, FĂRĂ placă — **comparația os-471 (`token32` corect, dar ×3,6 mai lent): două cauze găsite (x citit din L2 la fiecare rând; lista rescrisă întreagă la fiecare simbol), leacurile `token32_v2` și `work_list_changes` gata în SIMULARE; PREDARE P2zzd**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 259), l-am pus `ocupat`. În hub: os-471 (`--token32`) venise la final de
+259 → comparația lui. os-472 și `mm_tc_v5` încă nerulate. Clona locală avea iar ramura despărțită de GitHub (3 commit-uri vechi ale
+sesiunii 196, al căror cod e deja în `origin` sub alte commit-uri); am pus ramura pe `origin/g0-g2-fundatie`.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| T1, T2 (biții, bariera) | aceleași 16 simboluri, amprenta `0x6c8501f0`, contorul 18 / 18 la G = 384 și 768 | CONFIRMATE (MĂSURAT de OS) |
+| T3–T6 (viteza) | placa 3,86 / 4,34 ms (lista 1,07); driverul 4,6 ms (lista 1,0); G = 768 mai lent | NECONFIRMATE |
+| Cauza 1: x din L2 la fiecare rând | ~390 MB / simbol pe lângă ~110 MB greutăți → ×4,55 → ~3,44 ms, 89 % din cele măsurate | DEDUS (T271, CALCUL) |
+| Cauza 2: lista întreagă la fiecare simbol | 5 632 cuvinte × ~0,63 µs = cele +3,57 ms; se schimbă doar 38 | DEDUS (T271) |
+| `work_list_changes` (bibliotecă, adăugare) | cuvintele schimbate refac exact lista nouă; refuză lungimi diferite | PASS (T271, T272b) |
+| Unealta NAK reconstruită | `token32` identic (`40d9749c…`) | PASS |
+| `token32_v2` compilat | 7 438 instr., 92 registre, IR identic cu `token32` în afară de 173 citiri `.strong.sys` → `.constant`; `cctl` IVAll după barieră | PASS (T272a, listare) |
+| `token32_v2` = lansările separate | E 768, 3 poziții, G = 384 / 768, aceiași biți, contorul corect | PASS în SIMULARE (T272b) |
+| Viteza v2 / driverul cu schimbări (V3–V5) | prezis 0,9–1,75 ms la 384; driverul ~0,9–1,2 ms | NOT TESTED (scrisă înainte) |
+| Verificările întregi | format, clippy, **1 341 PASS** (8 ignorate), no_std | PASS |
+
+**Note:** `docs/C-157_OS471.md`, `docs/C-157_P2_COMPARATII.md` (secțiunea os-471), T271, T272. PREDARE
+`integration/cyber-universe/C-157_P2zzd_token32-v2.md`. **Nou pentru placă: programul `token32_v2` (sub opțiune oprită implicit).**
+Doar adăugări (`TOKEN32_V2`, `TOKEN32_V2_REGISTERS`, `TOKEN32_V2_SHA256`, `work_list_changes`).
+
+**Următorul pas:** comparațiile os-472 (`--atentie-ds`), `mm_tc_v5` (P2zzb) și `token32_v2` (P2zzd) când vin; altfel bucla lui
+`mm_tc_v5` (scrierile f16 împerecheate în memoria comună), plan + predicții întâi.
+
 ## Sesiunea 259 — 26–27 noiembrie 2026, ~23:11–00:30 (ora României), în cloud, FĂRĂ placă — **comparația os-470 (dS al atenției pe circuitele speciale, programele reparate): corectitudinea exact ca în SIMULARE, v4 ×2,16 față de F32; predicția pentru os-472 scrisă înainte; PREDARE P2zzc**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 258), l-am pus `ocupat`. În hub: **os-470** (22:54, `--atentie-tc0 --atentie-tc0-v4`)

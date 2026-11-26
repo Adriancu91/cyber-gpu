@@ -108,6 +108,20 @@ pub const TOKEN32: &[u8] = include_bytes!("../../../tools/nak/out/token32.sm86.s
 /// Registers per thread NAK reported for `token32` (`Num GPRs`).
 pub const TOKEN32_REGISTERS: u32 = 92;
 
+/// C-157 after os-471 (session 260, `docs/C-157_OS471.md`): `token32_v2.comp` — [`TOKEN32`] with the reads of what
+/// earlier operations wrote (x of the products, q and K/V of the attention, residual, bias, LayerNorm inputs, logits,
+/// the argmax slot) as `ld.global.constant` (through L1) instead of `ld.global.strong.sys`; the NAK IR is instruction
+/// for instruction that of [`TOKEN32`] apart from those loads (same arithmetic, same order, 7 438 instructions,
+/// 92 registers, the same shared memory), so the same list, constant buffer, QMDs ([`token32_qmd`],
+/// [`token32_qmd_wide`]) and groups apply. Correct only because every operation is separated by the grid barrier,
+/// whose `cctl` (IVAll) drops L1 — DEDUS from the listing; on the board: the same 16 tokens and fingerprint.
+pub const TOKEN32_V2: &[u8] = include_bytes!("../../../tools/nak/out/token32_v2.sm86.sass");
+/// Registers per thread NAK reported for `token32_v2` (`Num GPRs`) — the same as [`TOKEN32_REGISTERS`].
+pub const TOKEN32_V2_REGISTERS: u32 = 92;
+/// SHA-256 of [`TOKEN32_V2`] (the OS checks it before sending, as for `token32`).
+pub const TOKEN32_V2_SHA256: &str =
+    "5f4d22a0d01f35d2bd3b88f0e43e492acede1a1a8d912b80fc0712d012f11171";
+
 /// The work list of `launches` for [`TOKEN32`]: every program of [`crate::kronos_layer::Prog`] is an operation of it
 /// (the numbers of [`op_number`]). Refuses what [`work_list`] refuses apart from the program kind.
 pub fn work_list32(launches: &[Launch]) -> GpuResult<Vec<u8>> {
@@ -127,6 +141,25 @@ pub fn work_list32(launches: &[Launch]) -> GpuResult<Vec<u8>> {
         out.extend_from_slice(&e);
     }
     Ok(out)
+}
+
+/// C-157 after os-471 (session 260, `docs/C-157_OS471.md`): the 32-bit words where the work list `next` differs from
+/// `prev` (byte offset, new word), in order. The OS wrote the whole list (88 × 256 B = 5 632 words at #513) before
+/// every token; consecutive tokens change only a few words (the position, the token), so writing only these keeps
+/// the driver's part near today's list. Both lists must have the same length (same operations), a multiple of 4.
+pub fn work_list_changes(prev: &[u8], next: &[u8]) -> GpuResult<Vec<(usize, u32)>> {
+    if prev.len() != next.len() || !next.len().is_multiple_of(4) || next.is_empty() {
+        return Err(bad(
+            "lista de lucru: listele au lungimi diferite (alte operatii) sau nemultiple de 4",
+        ));
+    }
+    Ok(prev
+        .chunks_exact(4)
+        .zip(next.chunks_exact(4))
+        .enumerate()
+        .filter(|(_, (a, b))| a != b)
+        .map(|(i, (_, b))| (4 * i, u32::from_le_bytes([b[0], b[1], b[2], b[3]])))
+        .collect())
 }
 
 /// The QMD of the one `token32` launch: `groups` workgroups of 32 threads (the shared memory of [`TOKEN`]).

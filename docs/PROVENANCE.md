@@ -637,3 +637,8 @@ niciun octet de firmware NVIDIA.
 - **Sesiunea 258 (26 nov 2026):** `tools/nak/mm_tc_v5.comp` (al nostru): bucla lui `mm_tc_v4.comp` neschimbată, finalul după
   `mm_tc128.comp` (o zonă 16 × 16 f32 pe grup de fire), tot ale noastre. Nicio sursă nouă din afară; compilat cu Mesa NAK 26.3.1 (MIT),
   doar unealta pe gazdă.
+- **Sesiunea 260 (27 nov 2026):** `tools/nak/token32_v2.comp` (al nostru: `token32.comp` cu citirile prin buffere `readonly`),
+  `kronos_token::{TOKEN32_V2, work_list_changes}`, testele T271 / T272 (ale noastre). Ce face NAK cu citirile globale și cu bariera
+  (`.constant` / `.strong.sys`; `cctl` WBAll / IVAll în jurul `membar`) — citit în sursa Mesa 25.0.7
+  `src/nouveau/compiler/nak/from_nir.rs` (MIT), ca specificație, nimic copiat. Compilat cu Mesa NAK 25.0.7 (MIT), pe gazdă. Nimic din
+  firmware-ul NVIDIA.
