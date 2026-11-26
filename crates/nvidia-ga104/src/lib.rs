@@ -144,6 +144,7 @@ pub mod opt_step;
 pub mod packs;
 pub mod persistent_study;
 pub mod probe;
+pub mod program_lint;
 pub mod push;
 pub mod q8_fused;
 pub mod q8_fused32;

@@ -19,9 +19,9 @@ pub const ATTN_BACK_TILE0_TC_V4: &[u8] =
     include_bytes!("../../../tools/nak/out2/attn_back_tile0_tc_v4.sm86.sass");
 /// SHA-256 of [`ATTN_BACK_TILE0_TC_V4`] (`sh tools/nak/build2.sh attn_back_tile0_tc_v4`; checked by a test).
 pub const ATTN_BACK_TILE0_TC_V4_SHA256: &str =
-    "5d5eb75d41ca49e864d806753b1781851257b06c25c0ddc06b79eadc0fd272d4";
+    "0bbe619e5911131cc4c87c996839562df74f58eda1181c6916bc96fdd277d2ff";
 /// Registers per thread (NAK dump `attn_back_tile0_tc_v4.sm86.txt`: `Num GPRs: 56`, as `attn_back_tile0_tc`). One
-/// block per SM at the 64 KiB step whatever the registers: the shared memory (33 024 B) is the limit, as for
+/// block per SM at the 64 KiB step whatever the registers: the shared memory (33 792 B since os-467) is the limit, as for
 /// `attn_back_tile0_tc`.
 pub const REGISTERS: u32 = 56;
 /// 128-bit global loads in the program (NAK dump: 8 dO / V + 4 P + 8 + 8 in pass 2; no other global load;
@@ -32,7 +32,7 @@ pub const LOADS_128: usize = 28;
 pub const STORES_128: usize = 16;
 /// Threads per block: 256, as `attn_back_tile0_tc`.
 pub const BLOCK: [u32; 3] = crate::attn_back_tile0_tc::BLOCK;
-/// Shared memory: exactly `attn_back_tile0_tc`'s (33 024 B, one barrier).
+/// Shared memory: exactly `attn_back_tile0_tc`'s (33 792 B since os-467: dP rows of 68, one barrier).
 pub const SHARED: SharedMemory = crate::attn_back_tile0_tc::SHARED;
 /// Size of constant buffer 0 (as `attn_back_tile0_tc`: arguments at 0x700).
 pub const CBUF_BYTES: usize = crate::attn_back_tile0_tc::CBUF_BYTES;
@@ -133,7 +133,7 @@ mod tests {
         );
     }
 
-    /// U1–U2 (docs/C-157_ATTN_BACK0_TC_V4.md): every global load and store is 128 bits, 33 024 B shared, 0 local
+    /// U1–U2 (docs/C-157_ATTN_BACK0_TC_V4.md): every global load and store is 128 bits, 33 792 B shared (os-467), 0 local
     /// memory, 0 spills, the same tensor-core products and the same `ffma.ftz` dot chain as `attn_back_tile0_tc`; the
     /// arguments read at 0x700.
     #[test]

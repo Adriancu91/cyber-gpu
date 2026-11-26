@@ -628,3 +628,9 @@ niciun octet de firmware NVIDIA.
   noastre), `crates/nvidia-ga104/src/attn_back_tile0_tc_v4.rs`, `attn_back_tile0_tc_v4_on_cpu` în `crates/gpu-sim/src/cmdproc.rs`,
   testul `crates/nvidia-ga104/tests/sim_c157_attn0_tc_v4.rs` — scrise de noi. Compilat cu Mesa NAK 26.3.1 (MIT), pe gazdă.
   Nimic din firmware-ul NVIDIA.
+- **C-157 — os-467, reparația `attn_back_tile0_tc` / `_v4` și verificarea programelor (sesiunea 255):**
+  `crates/nvidia-ga104/src/program_lint.rs`, testul `crates/nvidia-ga104/tests/lint_c157_os467.rs`, rândurile de 68 din
+  `tools/nak/attn_back_tile0_tc{,_v4}.comp` — scrise de noi. Cauza citită în listarea NAK a programului nostru. Regula „pasul
+  matricelor multiplu de 16 octeți”: idee din documentația publică CUDA (`wmma::load_matrix_sync` / `store_matrix_sync`, `ldm`),
+  nimic copiat; că o adresă partajată nealiniată oprește firul: documentația publică `cuda-gdb` (lista excepțiilor). Compilat cu
+  Mesa NAK 26.3.1 (MIT), pe gazdă. Nimic din firmware-ul NVIDIA.

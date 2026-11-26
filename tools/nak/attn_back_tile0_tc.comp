@@ -10,7 +10,7 @@
 //     first), words 2048..4095 = the V tile [j][e] in f16; A = dO (row-major), B = V^T (V loaded column-major,
 //     no transposed copy; offsets / strides in words = f16 index / 2). After a barrier that follows the last product,
 //     sm holds the P tile in f32 (attn_back_tile0_3's skewed address sk, as bits).
-//   cs[64 * 65] float: the finished dP tile, rows of 65 (the dot chain reads one row per thread without bank
+//   cs[64 * ROW] float: the finished dP tile, rows of ROW = 68 (os-467; was 65, which the dot chain read without bank
 //     conflicts, as attn_back_tile0_3's P tile).
 // CPU model and verdict: gpu_compute::attn_tc (back0_model, judge_dp). Nothing here has run on a board.
 #version 460
@@ -30,7 +30,11 @@ layout(push_constant) uniform Args {
 } args;
 
 shared uint sm[64 * 64];
-shared float cs[64 * 65];
+// os-467: rows of ROW = 68 floats (272 bytes, a multiple of 16). With rows of 65 NAK stored the dP accumulators with
+// 64-bit shared stores at 4 mod 8 addresses for half of the lanes (misaligned: the block never ended on the board).
+// 68 keeps every coopMatStore row 16-byte aligned (docs/C-157_OS467_ATTN0_TC_BLOCAJ.md); the arithmetic is unchanged.
+const uint ROW = 68u;
+shared float cs[64 * ROW];
 const uint SB = 2048u;
 
 // Skewed tile address of (row, column) (as attn_back_tile0_3).
@@ -109,7 +113,7 @@ void main() {
             }
         }
         [[unroll]] for (uint j = 0u; j < 2u; j++) {
-            coopMatStore(acc[j], cs, wr * 65u + wc + 16u * j, 65u, gl_CooperativeMatrixLayoutRowMajor);
+            coopMatStore(acc[j], cs, wr * ROW + wc + 16u * j, ROW, gl_CooperativeMatrixLayoutRowMajor);
         }
         barrier();  // every product done (sm free) and the dP tile complete in cs
         // dP stored as attn_back_tile0_3 does (F2: below the diagonal j < i0 <= i always).
@@ -118,7 +122,7 @@ void main() {
             [[unroll]] for (uint k = 0u; k < 4u; k++) {
                 uint j = jt * 64u + tx + 16u * k;
                 if (i < T && (jt < bx || j <= i)) {
-                    args.ds.v[base + i * T + j] = cs[(ty + 16u * a) * 65u + tx + 16u * k];
+                    args.ds.v[base + i * T + j] = cs[(ty + 16u * a) * ROW + tx + 16u * k];
                 }
             }
         }
@@ -141,7 +145,7 @@ void main() {
         }
         barrier();
         if (lid < 64u) {
-            uint pb = lid * 65u;
+            uint pb = lid * ROW;
             if (jt < bx) {
                 [[dont_unroll]] for (uint jj0 = 0u; jj0 < 64u; jj0 += 4u) {
                     [[unroll]] for (uint u = 0u; u < 4u; u++) {

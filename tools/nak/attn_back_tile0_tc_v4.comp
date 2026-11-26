@@ -32,7 +32,11 @@ layout(push_constant) uniform Args {
 } args;
 
 shared uint sm[64 * 64];
-shared float cs[64 * 65];
+// os-467: rows of ROW = 68 floats (272 bytes, a multiple of 16). With rows of 65 NAK stored the dP accumulators with
+// 64-bit shared stores at 4 mod 8 addresses for half of the lanes (misaligned: the block never ended on the board).
+// 68 keeps every coopMatStore row 16-byte aligned (docs/C-157_OS467_ATTN0_TC_BLOCAJ.md); the arithmetic is unchanged.
+const uint ROW = 68u;
+shared float cs[64 * ROW];
 const uint SB = 2048u;
 #define NV 4u  // vec4 per thread per 64 x 64 tile: 64 * 64 / (4 * 256)
 
@@ -109,7 +113,7 @@ void main() {
             }
         }
         [[unroll]] for (uint j = 0u; j < 2u; j++) {
-            coopMatStore(acc[j], cs, wr * 65u + wc + 16u * j, 65u, gl_CooperativeMatrixLayoutRowMajor);
+            coopMatStore(acc[j], cs, wr * ROW + wc + 16u * j, ROW, gl_CooperativeMatrixLayoutRowMajor);
         }
         barrier();  // every product done (sm free) and the dP tile complete in cs
         // the P tile loads first (row ic = i clamped is not needed: a vector with nothing kept reads vector 0)
@@ -129,7 +133,7 @@ void main() {
             uint i = i0 + r;
             uint j = jt * 64u + x4;
             if (i < T && j < T) {
-                uint cr = r * 65u + x4;
+                uint cr = r * ROW + x4;
                 args.ds.v[(base + i * T + j) >> 2u] = vec4(cs[cr], cs[cr + 1u], cs[cr + 2u], cs[cr + 3u]);
             }
         }
@@ -147,7 +151,7 @@ void main() {
         }
         barrier();
         if (lid < 64u) {
-            uint pb = lid * 65u;
+            uint pb = lid * ROW;
             if (jt < bx) {
                 [[dont_unroll]] for (uint jj0 = 0u; jj0 < 64u; jj0 += 4u) {
                     [[unroll]] for (uint u = 0u; u < 4u; u++) {

@@ -2243,10 +2243,10 @@ pub fn attn_back_tile_tc16_v4pf_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
 }
 
 /// C-157 (session 250, `docs/C-157_ATTN_BACK0_TC_LEGAT.md`): what `tools/nak/out2/attn_back_tile0_tc.sm86.sass` needs —
-/// the dump's `Shared size: 33024` (the f16 dO / V tiles, then the f32 dP tile 64 × 65; as `attn_back_tile0_3`) and one
-/// barrier.
+/// the dump's `Shared size: 33792` (the f16 dO / V tiles, then the f32 dP tile 64 × 68; os-467: rows of 65 = 33 024 B
+/// stopped the board, `docs/C-157_OS467_ATTN0_TC_BLOCAJ.md`) and one barrier.
 pub const ATTN_BACK_TILE0_TC_NEEDS: Needs = Needs {
-    shared_bytes: 33_024,
+    shared_bytes: 33_792,
     barriers: 1,
 };
 
@@ -2329,7 +2329,7 @@ pub fn attn_back_tile0_tc_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
 }
 
 /// C-157 (session 251, `docs/C-157_ATTN_BACK0_TC_V4.md`): what `tools/nak/out2/attn_back_tile0_tc_v4.sm86.sass` needs —
-/// exactly `attn_back_tile0_tc`'s 33 024 bytes and one barrier (the 128-bit loads land in registers).
+/// exactly `attn_back_tile0_tc`'s 33 792 bytes and one barrier (the 128-bit loads land in registers).
 pub const ATTN_BACK_TILE0_TC_V4_NEEDS: Needs = ATTN_BACK_TILE0_TC_NEEDS;
 
 /// C-157 (session 251, `docs/C-157_ATTN_BACK0_TC_V4.md`): the CPU stand-in for

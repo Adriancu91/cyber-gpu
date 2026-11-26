@@ -18,16 +18,24 @@ pub const ATTN_BACK_TILE0_TC: &[u8] =
     include_bytes!("../../../tools/nak/out2/attn_back_tile0_tc.sm86.sass");
 /// SHA-256 of [`ATTN_BACK_TILE0_TC`] (`sh tools/nak/build2.sh attn_back_tile0_tc`; checked by a test, in the note).
 pub const ATTN_BACK_TILE0_TC_SHA256: &str =
-    "95fc392e6de3cf3bc2f5f93a33487e2ebefdedf38951f35ab1a9168540c1ef8d";
+    "f904a08bd110296b38cbee87f4cc5af597f2f0ea8a911c4789c48fd40981b8e2";
 /// Registers per thread (NAK dump `attn_back_tile0_tc.sm86.txt`: `Num GPRs: 56`; `attn_back_tile0_3` has 68).
 pub const REGISTERS: u32 = 56;
 /// Threads per block: 256, as `attn_back_tile0_3`.
 pub const BLOCK: [u32; 3] = crate::attn_back_tile0::BLOCK;
 /// The largest head width.
 pub const MAX_D: u32 = crate::attn_back_tile0::MAX_D;
-/// Shared memory: the f16 dO / V tiles (16 KiB, later the f32 P tile) and the f32 dP tile 64 × 65 = 33 024 bytes,
-/// the same as `attn_back_tile0_3` (the dump's `Shared size`); one barrier.
-pub const SHARED: SharedMemory = crate::attn_back_tile0_3::SHARED;
+/// Shared memory: the f16 dO / V tiles (16 KiB, later the f32 P tile) and the f32 dP tile 64 × 68 = 33 792 bytes (the
+/// dump's `Shared size`); one barrier. **os-467** (`docs/C-157_OS467_ATTN0_TC_BLOCAJ.md`): the first build kept
+/// `attn_back_tile0_3`'s rows of 65 (33 024 B); NAK stored the dP accumulators with 64-bit shared stores, half of them at
+/// `4 mod 8` addresses, and the block never ended on the board. Rows of 68 (272 B, a multiple of 16) keep every store
+/// aligned; the arithmetic and its order are unchanged (same bits). Still 1 block per SM at the 64 KiB step.
+pub const SHARED: SharedMemory = SharedMemory {
+    bytes: 33_792,
+    ..crate::attn_back_tile0_3::SHARED
+};
+/// The row stride (in `float`s) of the dP tile in shared memory (os-467: 65 before, misaligned 64-bit stores).
+pub const DP_ROW: u32 = 68;
 /// Where the second NAK tool puts the push constants in cbuf 0 (the dump reads `c[0x0][0x700]` … `c[0x0][0x73c]`).
 pub const PUSH_BASE: usize = crate::attn_back_tile_tc::PUSH_BASE;
 /// Size of constant buffer 0 (as `attn_back_tile_tc`).
@@ -107,6 +115,20 @@ mod tests {
                 .all(|l| dst(l) == dst(ffma[0]) && l.contains("ffma.ftz"))
         );
         const { assert!(REGISTERS <= 64) };
+    }
+
+    /// os-467 (Z3): the 8 64-bit shared stores of the dP accumulators use rows of 68 floats (`imad … 0x44`), never the
+    /// 65 (`0x41`) of the build that did not finish on the board.
+    #[test]
+    fn dp_stores_use_aligned_rows() {
+        assert_eq!(DUMP.matches("st.shared.strong.cta.b64").count(), 8);
+        assert!(DUMP.contains(" 0x44 "));
+        assert!(
+            !DUMP
+                .lines()
+                .any(|l| l.contains("= imad") && l.contains(" 0x41 "))
+        );
+        const { assert!((DP_ROW * 4).is_multiple_of(16) && SHARED.bytes == 16_384 + 64 * DP_ROW * 4) };
     }
 
     /// Every cbuf-0 word the program reads is the workgroup base (0x0 / 0x4 / 0x8) or an argument at 0x700..0x740,

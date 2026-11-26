@@ -53,6 +53,43 @@ Ipoteza OS-ului a fost bariera. Am citit listarea (`tools/nak/out2/attn_back_til
 - **Z5 — pe placă (NOT TESTED, de văzut în os-467 reluat):** programul termină; `atentie-tc0` 5 / 5 seturi; timpul cu cel mult
   ~3 % peste estimarea E7 (lanțul `dot` citește acum cu conflict de 2 pe bancă: firele `lid` și `lid + 16`).
 
-## 5. Rezultatul
+## 4b. Corectură la plan, tot înainte de codul programelor (aceeași sesiune)
 
-(se completează după cod)
+Scriind regula (a) am văzut că **66 nu ajunge pentru regula pe care o verific**: 66 · 4 = 264 B e multiplu de 8 (scrierile de 64 de
+biți ar fi aliniate), dar nu de 16, cât cere documentația CUDA pentru pasul matricelor. Aleg **68** (272 B, multiplu de 16), ca regula
+să fie una singură pentru toate programele. Prețul: lanțul `dot` (64 de fire, un rând pe fir) citește cu **conflict de 4 pe bancă**
+în loc de 2. Se schimbă deci: **Z3** — `imad … 0x44`, `Shared size: 33792` (16 384 + 64 · 68 · 4); **Z5** — timpul pe placă cu
+cel mult **~5 %** peste estimarea E7 (DEDUS: lanțul e oricum limitat de latența celor 64 de `fma` legate). Tot 1 bloc pe SM la treapta
+64 KiB (2 blocuri ar cere 67 584 B). Z1, Z2, Z4 rămân.
+
+## 5. Rezultatul (sesiunea 255, ~19:40; verificările = pe procesor; programele = COMPILATE, NU RULATE)
+
+Unealta Mesa NAK 26.3.1 construită din nou în cloud; `attn_back_tile_tc16` iese identic (`8cbbab7e…`), deci aceeași unealtă.
+
+| # | prezis | ieșit | verdict |
+|---|---|---|---|
+| Z1 | regula pasului prinde exact `attn_back_tile0_tc` și `_tc_v4` | din **74** de surse (15 cu matrice cooperative), refuzate **exact cele două** (`coopMatStore` în `cs`, 260 B); după reparație 0; pasul 65 pus înapoi de mână → prins | CONFIRMATĂ |
+| Z2 | barierele: nimic prins; o barieră mutată într-un bloc neuniform → prinsă | cele **13** listări NAK 26.3.1 cu bariere: toate în blocuri uniforme; plantată → prinsă. **Dar:** la unealta veche (25.0.7) **11 din 31** de listări au bariere în blocuri pe care NAK-ul vechi nu le marchează uniforme — toate programe care au rulat bine pe placă, deci acolo regula nu dovedește nimic (doar numărate) | CONFIRMATĂ pentru unealta nouă; regula e doar o dovadă suficientă, nu o detecție |
+| Z3 | `imad … 0x44`, `Shared size: 33792`, 56 ± 8 registre, 16 `hmma`, 0 locală / vărsări, argumentele la 0x700 | tc: **56 registre**, 33 792, 16 `hmma`, 8 `st.shared.b64` (rânduri de 272 B), 0 locală / vărsări; v4: 56, 33 792, aceleași 28 / 16 citiri / scrieri globale de 128 de biți, plus 4 `ld.shared.b128` (citirea plăcii dP, acum aliniată la 16) | CONFIRMATĂ |
+| Z4 | SIMULARE: aceiași biți, testele vechi trec doar cu constantele noi | toate testele vechi ale celor două programe (T254, T260–T263, pasul mixt, prin RAM) trec cu doar constantele noi; verificările întregi **1 309 PASS** (8 ignorate), format, clippy, no_std | CONFIRMATĂ |
+| Z5 | pe placă termină; timp ≤ ~5 % peste E7 | — | NOT TESTED |
+
+SHA-256 noi: `attn_back_tile0_tc.sm86.sass` = `f904a08bd110296b38cbee87f4cc5af597f2f0ea8a911c4789c48fd40981b8e2`,
+`attn_back_tile0_tc_v4.sm86.sass` = `0bbe619e5911131cc4c87c996839562df74f58eda1181c6916bc96fdd277d2ff`.
+
+Am verificat și celelalte scrieri de 64 de biți din v4 (plăcile f16 dO / V, `q = 32 · r + 2 · tx`, mereu par): aliniate.
+
+### Ce înseamnă (pe scurt)
+
+1. Programul nou nu s-a blocat din cauza barierei, ci pentru că scria în memoria partajată la adrese „strâmbe” (nealiniate).
+2. Reparația schimbă doar așezarea în memorie (rânduri de 68 în loc de 65); calculul e același, rezultatele identice în SIMULARE.
+3. Avem acum o verificare automată care ar fi prins greșeala înainte de placă, rulată peste toate programele noastre.
+
+### Ce NU e dovedit
+
+- Că programul termină pe placă — doar reluarea os-467 o arată. Regula (a) acoperă doar matricele cooperative; alte accese
+  late (64 / 128 de biți) în memoria partajată nu sunt verificate automat (le-am citit de mână doar la aceste două programe).
+
+Cod (doar adăugări de nume): `nvidia_ga104::program_lint::{coopmat_shared_strides, barriers_outside_uniform, StrideFinding}`,
+`attn_back_tile0_tc::DP_ROW`; testul `crates/nvidia-ga104/tests/lint_c157_os467.rs`. Valori schimbate: octeții, sumele și
+`SHARED.bytes` ale celor două programe, `gpu_sim::cmdproc::ATTN_BACK_TILE0_TC_NEEDS` (33 792).

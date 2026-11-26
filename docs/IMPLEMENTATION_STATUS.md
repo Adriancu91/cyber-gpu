@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 255 — 26 noiembrie 2026, ~19:12–20:10 (ora României), în cloud, FĂRĂ placă — **os-467: de ce `attn_back_tile0_tc` nu a terminat pe placă (scrieri de 64 de biți nealiniate în memoria partajată, nu bariera), programele reparate (rânduri de 68) și verificarea nouă a programelor; PREDARE P2zx**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 254), l-am pus `ocupat`. În hub: **os-467 NU A TERMINAT** (18:41, setul 0,
+„ultima înregistrare = 0x0”, placa revenită) cu cererea OS-ului „de ce, și o verificare în simulare” → punctul 2 al cozii, cu
+întâietate. Planul și predicțiile Z1–Z5 urcate înainte de cod (`2603166`), corectura 66 → 68 tot înainte de codul programelor.
+Nota: `docs/C-157_OS467_ATTN0_TC_BLOCAJ.md`. Clona veche era iar despărțită de GitHub; am lucrat pe ramura din GitHub
+(HEAD detașat pe `origin/g0-g2-fundatie`, ramura locală veche neatinsă, nimic șters).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Cauza os-467 | `coopMatStore` cu rânduri de 65 `float` → 8 `st.shared.b64`, jumătate la adrese `4 mod 8` (nealiniate); barierele toate în blocuri uniforme | DEDUS (listarea NAK) |
+| Z1 regula pasului (74 de programe) | refuză exact `attn_back_tile0_tc` și `_v4`; după reparație 0; plantat → prins | PASS (verificare pe procesor) |
+| Z2 regula barierelor | 13 / 13 listări NAK 26.3.1 curate; plantat → prins; la NAK 25.0.7 nu dovedește nimic (11 listări nemarcate, rulate bine pe placă) | PASS (cu limita scrisă) |
+| Z3 programele noi | 56 registre, 33 792 B partajați, 16 `hmma`, rânduri de 272 B, 0 locală / vărsări | CONFIRMATĂ (listarea NAK) |
+| Z4 aceiași biți | toate testele vechi trec cu doar constantele noi | PASS (SIMULARE) |
+| Z5 pe placă | termină; timp ≤ ~5 % peste E7 | NOT TESTED |
+| Verificările întregi | format, clippy, **1 309 PASS** (8 ignorate), no_std | PASS |
+
+**Ce e nou:** adăugări — `program_lint::{coopmat_shared_strides, barriers_outside_uniform, StrideFinding}`,
+`attn_back_tile0_tc::DP_ROW`. Valori schimbate (nume neschimbate): octeții / SHA-256 / `SHARED.bytes` (33 024 → 33 792) ale
+`attn_back_tile0_tc` și `attn_back_tile0_tc_v4`, `gpu_sim::cmdproc::ATTN_BACK_TILE0_TC_NEEDS`. **Nou pentru placă:** aceleași
+două programe, recompilate. PREDARE `integration/cyber-universe/C-157_P2zx_os467-attn0-tc-reparat.md` (același rând ca os-467).
+
+**Următorul pas:** comparația os-467 reluat când vine; altfel `token32` la G = 384 (predicții întâi), sub opțiune oprită implicit;
+comparațiile P2zs / P2zt / P2zu / P2zv și rândul lot 6 când vin.
+
 ## Sesiunea 254 — 26 noiembrie 2026, ~17:11–18:10 (ora României), în cloud, FĂRĂ placă — **comparațiile os-462 și os-465 (C-157 punctul 2): tc16 în pas −6,7 ms (prezis 2,2–4,0, cauza = treapta probei), v4 ×1,67 (în bandă, v4pf tăiat), bariera largă W1–W5 confirmate, G = 384 ales pentru `token32`; PREDARE P2zw**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 253), l-am pus `ocupat`. În hub apăruseră **două teste noi pe placă**
