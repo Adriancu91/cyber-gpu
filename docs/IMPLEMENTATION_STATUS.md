@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 245 — 26 noiembrie 2026, ~07:14–08:50 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile0_tc`: dP = dO·Vᵀ pe circuitele speciale (f16), dot și dS rămân F32 ca azi; modelul pe procesor + judecata + programul compilat; T254 în SIMULARE; încă nelegat, nicio PREDARE**
+## Sesiunea 245 — 26 noiembrie 2026, ~07:14–08:25 (ora României), în cloud, FĂRĂ placă — **`attn_back_tile0_tc`: dP = dO·Vᵀ pe circuitele speciale (f16), dot și dS rămân F32 ca azi; modelul pe procesor + judecata + programul compilat; T254 în SIMULARE; încă nelegat, nicio PREDARE**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 244), l-am pus `ocupat`. Niciun test nou pe placă în hub (os-445/447/449/451/456,
 P2zm fără rezultat) → punctul lăsat de sesiunea 244 (atenția înainte / dS pe circuitele speciale). Am ales `attn_back_tile0_3` (dS),
@@ -19,7 +19,7 @@ Unealta NAK 2 (Mesa 26.3.1) construită din nou; `mm_tc_v4` și `attn_back_tile_
 | E7 timpul | prezis 5,2 → ~1,8–3,2 ms (DEDUS) | NOT TESTED |
 | Verificările întregi | `tools/check.sh`: format, clippy, **1 245 PASS** (8 ignorate), no_std | PASS |
 
-**Partea a doua (~08:05–08:45): os-456 a venit în hub → comparația are întâietate** (`docs/C-157_P2_OS456_SM.md`). Profilul pasului
+**Partea a doua (~08:00–08:22): os-456 a venit în hub → comparația are întâietate** (`docs/C-157_P2_OS456_SM.md`). Profilul pasului
 a ieșit cum prezisesem (`mm_tc_v4` 73,6 ms față de ~73; atenția 20,5 față de 20,6). **Proba barierei oprită de OS: a citit 84 de SM-uri,
 placa are 48 — greșeala era în codul nostru**: `LITTER_*` sunt maximele de proiect (7 × 6 × 2), iar `grid_barrier` / `kronos_token` le
 foloseau ca număr de SM-uri (simularea avea 6 / 4 / 2 = 48, de aceea testele n-au prins). Reparat prin adăugare: `rmapi::{GR_INFO_INDEX_SHADER_PIPE_SUB_COUNT,
