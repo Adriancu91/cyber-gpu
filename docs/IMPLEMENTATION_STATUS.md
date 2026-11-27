@@ -1,5 +1,24 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 269 — 27 noiembrie 2026, ~10:12–11:10 (ora României), în cloud, FĂRĂ placă — **os-485 comparat: biții dX / dW = `mm_tc` peste tot, dar lanțul a durat 1 611 s și cererea de viteză maximă (600 s) a expirat la 714,3 s → v6 pe dX și tot dW au rulat cu placa încetinită (P8 la final, 210 MHz); timpii lor NU sunt timpi la viteză; V9 / V10 nejudecabile; `BoostPlan::covers_ms` (doar adăugare); PREDARE P2zzl**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 268), l-am pus `ocupat`. În hub venise ciclul 09:52 = os-485 → punctul 2 al cozii C-157.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Biții pe `qkv-513-dx` / `-dw` | toate programele = `mm_tc` (7 / 7 aliniate; `mm_tc@64k` 8 / 8); `mm_tc` în margine 3 / 2 ‰ | PASS (MĂSURAT de OS) |
+| Fereastra de viteză | cererea la 114,3 s, expiră la 714,3 s; la final P8 210 / 405 MHz; după ușile din jurnal: în fereastră tot qkv-513 și dX până la v5@64k, după prag v6 / v6@64k dX și tot dW | CALCUL (T283) pe jurnalul MĂSURAT |
+| V9 (dX v6/v5 ×1,00–1,10), V10 (dW) | măsurate după expirare | **BLOCKED** (de reluat în fereastră) |
+| Timpul bun nou | v5@64k dX 1,620 ms = 13,42 TFLOP/s; înainte / dX ×1,154, dreapta T282 prezice ×1,176 (1,8 %) | PASS (CALCUL, T283) |
+| `BoostPlan::covers_ms` | socoteală pură: o lucrare se termină în fereastra cererii? (oprit = false; fără depășire) | PASS (test `covers_ms_the_window`) |
+| Verificările întregi | format, clippy, teste, no_std | **1 404 PASS** (8 ignorate) |
+
+**Note:** `docs/C-157_OS485.md`, T283 (`crates/nvidia-ga104/tests/calc_c157_os485_dxdw.rs`), rândul nou în `docs/C-157_P2_COMPARATII.md`.
+PREDARE `integration/cyber-universe/C-157_P2zzl_os485-fereastra.md`. **Nou pentru placă:** nimic. Interfața: doar adăugare (`covers_ms`).
+
+**Următorul pas:** comparațiile când vin (pasul cu `--pas-v6`, reluarea `--mm-tc-dxdw` în fereastră P2zzl, proba v7 P2zzi, lot 6 cu
+tabloul ținut P2zzj, `token32_v2` P2zzd); altfel următorul punct al cozii C-157.
+
 ## Sesiunea 268 — 27 noiembrie 2026, ~09:11–10:05 (ora României), în cloud, FĂRĂ placă — **os-483 comparat: `mm_tc_v6` pe placă dă aceiași biți ca `mm_tc` (5 / 5) și qkv-513 v6@64k = 1,263 ms = 17,2 TFLOP/s (×1,48 față de v5, mai repede decât banda); condiția pasului cu `--pas-v6` îndeplinită; PREDARE P2zzk**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 267), l-am pus `ocupat`. În hub venise ciclul automat 09:02 cu rândul os-483

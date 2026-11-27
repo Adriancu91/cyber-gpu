@@ -224,6 +224,14 @@ impl BoostPlan {
             &boost_params(self.shape, boost_flags::CLEAR_COMPUTE, 0),
         )
     }
+
+    /// C-157 p.2 after os-485 (session 269): true when a piece of work that starts `since_request_ms` after the
+    /// accepted boost and lasts `run_ms` ends inside the boost's `duration_s`. Pure arithmetic, nothing is sent.
+    /// After the duration the boost ends by itself and the board may fall back to its low state (os-485: requested
+    /// at 114.3 s, P8 at 210 MHz at the end, 1 698 s); a time measured outside the window is not a time at full speed.
+    pub fn covers_ms(&self, since_request_ms: u64, run_ms: u64) -> bool {
+        self.enabled && since_request_ms.saturating_add(run_ms) <= u64::from(self.duration_s) * 1000
+    }
 }
 
 // ------------------------------------------------------------------------------ point 4, ready to link
@@ -510,5 +518,26 @@ mod tests {
         }
         assert_eq!(read_boost(&cl, &reply(&cl, 0, &[0; 8])), Ok(0));
         assert_eq!(read_boost(&cl, &reply(&cl, 0x56, &[0; 8])), Ok(0x8000_0056));
+    }
+
+    #[test]
+    fn covers_ms_the_window() {
+        let off = BoostPlan::default();
+        assert!(!off.covers_ms(0, 1), "plan off: nothing holds");
+        let p = BoostPlan {
+            enabled: true,
+            ..BoostPlan::default()
+        };
+        assert!(p.covers_ms(0, 600_000));
+        assert!(!p.covers_ms(0, 600_001));
+        // os-485: requested at 114.3 s of the journal; v5@64k dX at 677.6 s, v6 dX at 722.9 s.
+        assert!(p.covers_ms(677_600 - 114_300, 5_000));
+        assert!(!p.covers_ms(722_900 - 114_300, 5_000));
+        assert!(!p.covers_ms(u64::MAX, u64::MAX), "no overflow");
+        let long = BoostPlan {
+            duration_s: 1800,
+            ..p
+        };
+        assert!(long.covers_ms(1_697_600 - 114_300, 0));
     }
 }

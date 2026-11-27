@@ -737,3 +737,11 @@ Sursa: `Cyber-hub/rezultate/os-automat/2026-11-22/ciclu-auto-20261122-0506.txt` 
 - **Cauze (DEDUS, T271):** x citit de fiecare rând din L2 (`ld.strong.sys`, ~390 MB / simbol, ×4,55 trafic → explică ~89 %) și lista
   întreagă (5 632 cuvinte) scrisă la fiecare simbol (se schimbă 38). Leacuri: `token32_v2` (citiri prin L1, T272) și
   `work_list_changes`; PREDARE P2zzd. Nota întreagă: `docs/C-157_OS471.md`.
+
+## os-485 `--mm-tc-dxdw` (27 nov 2026, 09:52) — sesiunea 269
+- **Biții:** toate programele = `mm_tc` pe `qkv-513-dx` și `qkv-513-dw`; `mm_tc` în margine (3 / 2 ‰) — CONFIRMAT.
+- **Fereastra de viteză:** lanțul 1 611 s > cererea de 600 s (acceptată la 114,3 s; la final P8, 210 / 405 MHz). După ușile din jurnal
+  (T283): în fereastră tot qkv-513 și dX până la v5@64k; **după 714,3 s v6 / v6@64k pe dX și tot dW** → timpi NEVALIZI pentru viteză.
+  V9 și V10: **nejudecabile**, de reluat. Concluziile de viteză din `REZULTAT.md` (v6 ×8 mai lent la dX, dW ×14) nu se sprijină pe cifre.
+- **Bun:** v5@64k dX 1,620 ms = 13,42 TFLOP/s; înainte / dX ×1,154, dreapta T282 prezice ×1,176 (1,8 %).
+- **Nou:** `BoostPlan::covers_ms` (doar socoteală). PREDARE P2zzl. Nota întreagă: `docs/C-157_OS485.md`.
