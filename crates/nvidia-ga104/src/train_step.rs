@@ -3759,6 +3759,22 @@ pub enum TcPick {
     /// of padding on every shared slice row: conflict-free reads; the same launch, 128 registers, 14 336 B shared), only
     /// from [`pack_mixed_fast_attn7`].
     V7,
+    /// C-168 p.3 G7 (session 280, `docs/C-168_V8_PLAN.md`): a [`MixedLaunch::Tc`] on `mm_tc_v8` (128×128 blocks of
+    /// 256 threads, 128 registers, 24 576 B shared), only from [`pack_mixed_fast_attn8`].
+    V8,
+    /// C-168 p.3 G7 (session 280): a [`MixedLaunch::Tc`] on `mm_tc_v8n` (128×64 blocks of 128 threads, 144 registers,
+    /// 18 432 B shared), only from [`pack_mixed_fast_attn8`].
+    V8n,
+}
+
+/// C-168 p.3 G7 (session 280): where the OS loaded `mm_tc_v8` / `mm_tc_v8n` (both 256-aligned, non-zero), the active
+/// SMs and the rates for [`crate::mm_tc_v8::pick`], for [`pack_mixed_fast_attn8`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct V8Programs {
+    pub v8: u64,
+    pub v8n: u64,
+    pub sms: u32,
+    pub rates: crate::mm_tc_v8::Rates,
 }
 
 /// C-157 (session 253, `docs/C-157_ATTN_BACK_TC16_V4_LEGAT.md`): the fast variant of the second tensor-core attention
@@ -3862,6 +3878,8 @@ impl TcPick {
             TcPick::V5 => "mm_tc_v5",
             TcPick::V6 => "mm_tc_v6",
             TcPick::V7 => "mm_tc_v7",
+            TcPick::V8 => "mm_tc_v8",
+            TcPick::V8n => "mm_tc_v8n",
             TcPick::Gelu => "mm_tc_gelu",
             TcPick::AttnTc => "attn_back_tile_tc",
             TcPick::AttnTc16 => "attn_back_tile_tc16",
@@ -4113,7 +4131,45 @@ pub fn pack_mixed_fast_attn7(
     step_bytes: Option<u32>,
     zone_va: u64,
 ) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
+    pack_mixed_fast_attn8(
+        launches, prog_va, progs, v5_va, v6_va, v7_va, None, attn, attn_fast, attn0, step_bytes,
+        zone_va,
+    )
+}
+
+/// C-168 p.3 G7 (session 280, `docs/C-168_V8_PLAN.md`): [`pack_mixed_fast_attn7`] with **`mm_tc_v8` / `mm_tc_v8n`** as
+/// well (`v8`; `None` = not loaded). Every [`MixedLaunch::Tc`] whose product passes [`crate::mm_tc_v8::fits`] (=
+/// `mm_tc_v4::fits`) takes the program [`crate::mm_tc_v8::pick`] gives by waves among v7 (only if `v7_va != 0`), v8
+/// and v8n; otherwise the rule of [`pack_mixed_fast_attn7`] is unchanged. The v8 / v8n QMD = `mm_tc`'s cbuf (the same 48
+/// bytes of arguments) with their own program, registers (128 / 144), block (256 / 128 threads), grid
+/// ([`crate::mm_tc_v8::grid`] / [`crate::mm_tc_v8::grid_n`]) and shared memory (24 576 / 18 432 B). With `v8 = None` it is
+/// [`pack_mixed_fast_attn7`] byte for byte. **SIMULARE only:** v8 / v8n have not run on the board (proba `--mm-tc-v8`,
+/// G4–G6, comes first), and the rates the pick uses ([`crate::mm_tc_v8::RATES_PLAN`]) are DEDUS until it does.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub fn pack_mixed_fast_attn8(
+    launches: &[MixedLaunch],
+    prog_va: impl Fn(Prog) -> u64,
+    progs: &TcPrograms,
+    v5_va: u64,
+    v6_va: u64,
+    v7_va: u64,
+    v8: Option<V8Programs>,
+    attn: Option<AttnTcProgram>,
+    attn_fast: Option<AttnTcFast>,
+    attn0: Attn0Programs,
+    step_bytes: Option<u32>,
+    zone_va: u64,
+) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
     use crate::mm_tc as tc;
+    use crate::mm_tc_v8 as t8;
+    if let Some(p) = v8
+        && (p.v8 == 0 || p.v8n == 0 || p.sms == 0 || p.rates.v8_pct == 0 || p.rates.v8n_pct == 0)
+    {
+        return Err(bad(
+            "pas-mixt: mm_tc_v8 / mm_tc_v8n la adresa 0 sau fara SM-uri / viteze",
+        ));
+    }
+    let (v8_va, v8n_va) = v8.map_or((0, 0), |p| (p.v8, p.v8n));
     use crate::mm_tc_gelu as tg;
     let attn_tc_va = attn.map_or(0, AttnTcProgram::va);
     if attn.is_some() && attn_tc_va == 0 {
@@ -4126,7 +4182,7 @@ pub fn pack_mixed_fast_attn7(
     if !zone_va.is_multiple_of(256)
         || [
             progs.tc, progs.pf, progs.v4, progs.gelu, attn_tc_va, attn0.tc, attn0.v4, fast_va,
-            v5_va, v6_va, v7_va,
+            v5_va, v6_va, v7_va, v8_va, v8n_va,
         ]
         .iter()
         .any(|v| !v.is_multiple_of(256))
@@ -4142,6 +4198,13 @@ pub fn pack_mixed_fast_attn7(
                 .or(Some(TcPick::AttnTc)),
             (Some(TcPick::Attn0Tc), _) => Some(attn0_pick(l, attn0)),
             (Some(p @ (TcPick::V4 | TcPick::Pf | TcPick::Tc)), _) => match l {
+                MixedLaunch::Tc { args, .. } if v8.is_some() && t8::fits(args) => {
+                    v8.map(|p8| match t8::pick(args, p8.sms, p8.rates, v7_va != 0) {
+                        t8::Pick::V7 => TcPick::V7,
+                        t8::Pick::V8 => TcPick::V8,
+                        t8::Pick::V8n => TcPick::V8n,
+                    })
+                }
                 MixedLaunch::Tc { args, .. } if v7_va != 0 && crate::mm_tc_v7::fits(args) => {
                     Some(TcPick::V7)
                 }
@@ -4164,6 +4227,8 @@ pub fn pack_mixed_fast_attn7(
             TcPick::V5 => v5_va,
             TcPick::V6 => v6_va,
             TcPick::V7 => v7_va,
+            TcPick::V8 => v8_va,
+            TcPick::V8n => v8n_va,
             TcPick::Gelu => progs.gelu,
             TcPick::AttnTc | TcPick::AttnTc16 => attn_tc_va,
             TcPick::Attn0Tc => attn0.tc,
@@ -4269,25 +4334,44 @@ pub fn pack_mixed_fast_attn7(
                             let cb = args
                                 .cbuf()
                                 .ok_or(bad("pas-mixt: argumentele mm_tc refuzate"))?;
-                            let (va, regs, shared) = match pick {
-                                Some(TcPick::V7) => {
-                                    (v7_va, crate::mm_tc_v7::REGISTERS, crate::mm_tc_v7::SHARED)
+                            // v8 / v8n: their own block and grid as well (the cbuf is the same).
+                            match pick {
+                                Some(TcPick::V8) => {
+                                    let r = (v8_va, t8::REGISTERS, t8::SHARED);
+                                    (cb, t8::grid(args), t8::BLOCK, r.2, r.0, r.1)
                                 }
-                                Some(TcPick::V6) => {
-                                    (v6_va, crate::mm_tc_v6::REGISTERS, crate::mm_tc_v6::SHARED)
+                                Some(TcPick::V8n) => {
+                                    let r = (v8n_va, t8::REGISTERS_N, t8::SHARED_N);
+                                    (cb, t8::grid_n(args), t8::BLOCK_N, r.2, r.0, r.1)
                                 }
-                                Some(TcPick::V5) => {
-                                    (v5_va, crate::mm_tc_v5::REGISTERS, crate::mm_tc_v5::SHARED)
+                                _ => {
+                                    let (va, regs, shared) = match pick {
+                                        Some(TcPick::V7) => (
+                                            v7_va,
+                                            crate::mm_tc_v7::REGISTERS,
+                                            crate::mm_tc_v7::SHARED,
+                                        ),
+                                        Some(TcPick::V6) => (
+                                            v6_va,
+                                            crate::mm_tc_v6::REGISTERS,
+                                            crate::mm_tc_v6::SHARED,
+                                        ),
+                                        Some(TcPick::V5) => (
+                                            v5_va,
+                                            crate::mm_tc_v5::REGISTERS,
+                                            crate::mm_tc_v5::SHARED,
+                                        ),
+                                        Some(TcPick::V4) => {
+                                            (progs.v4, crate::mm_tc_v4::REGISTERS, tc::SHARED)
+                                        }
+                                        Some(TcPick::Pf) => {
+                                            (progs.pf, crate::mm_tc_pf::REGISTERS, tc::SHARED)
+                                        }
+                                        _ => (progs.tc, tc::REGISTERS, tc::SHARED),
+                                    };
+                                    (cb, args.grid(), tc::BLOCK, shared, va, regs)
                                 }
-                                Some(TcPick::V4) => {
-                                    (progs.v4, crate::mm_tc_v4::REGISTERS, tc::SHARED)
-                                }
-                                Some(TcPick::Pf) => {
-                                    (progs.pf, crate::mm_tc_pf::REGISTERS, tc::SHARED)
-                                }
-                                _ => (progs.tc, tc::REGISTERS, tc::SHARED),
-                            };
-                            (cb, args.grid(), tc::BLOCK, shared, va, regs)
+                            }
                         }
                         MixedLaunch::TcGelu { args, .. } => {
                             let cb = args

@@ -76,6 +76,69 @@ pub fn grid_n(args: &tc::Args) -> [u32; 3] {
     [args.n.div_ceil(BLOCK_NCOLS_N), args.m.div_ceil(BLOCK_M), 1]
 }
 
+/// C-168 p.3 G7 (session 280): which program one aligned product takes in the step — `mm_tc_v7` (64×64 blocks, 4 per
+/// SM at 64 KiB), [`MM_TC_V8`] or [`MM_TC_V8N`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pick {
+    V7,
+    V8,
+    V8n,
+}
+
+/// Blocks per SM of `mm_tc_v7` at 64 KiB (os-486 / os-490, T294) — the third candidate of [`pick`].
+pub const BLOCKS_PER_SM_V7: u32 = 4;
+
+/// The rates [`pick`] uses until the board measures them: per SM at full waves, in percent of `mm_tc_v7`'s rate.
+/// **DEDUS** (`docs/C-168_V8_PLAN.md` §4, the middle of the band f = 1,25–1,60; v8n = 0,9 · f). To be replaced by the
+/// rates of the probe `--mm-tc-v8` (G5 / G6) before the step uses the picker on the board.
+pub const RATES_PLAN: Rates = Rates {
+    v8_pct: 140,
+    v8n_pct: 126,
+};
+
+/// Rates per SM at full waves, in percent of `mm_tc_v7`'s (`mm_tc_v7` = 100). Both non-zero.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rates {
+    pub v8_pct: u32,
+    pub v8n_pct: u32,
+}
+
+/// The pick by waves (`docs/C-168_V8_PLAN.md` §3, the model of T294): a program's time on a product ∝
+/// waves · slots / (blocks · rate), with slots = `sms` · blocks per SM — the work is the same for all three, the last
+/// wave half empty is paid in full. The cheapest wins; on a tie `mm_tc_v7` (measured on the board), then v8, then v8n.
+/// `with_v7 = false` (v7 not loaded) leaves only v8 / v8n. Integers only (cross-multiplied), so the pick is exact.
+/// The caller checks [`fits`] first; `sms` and the rates must be non-zero.
+pub fn pick(args: &tc::Args, sms: u32, rates: Rates, with_v7: bool) -> Pick {
+    // (pick, rows per block, columns per block, blocks per SM, rate)
+    let all = [
+        (Pick::V7, 64, 64, BLOCKS_PER_SM_V7, 100),
+        (Pick::V8, BLOCK_M, BLOCK_NCOLS, BLOCKS_PER_SM, rates.v8_pct),
+        (
+            Pick::V8n,
+            BLOCK_M,
+            BLOCK_NCOLS_N,
+            BLOCKS_PER_SM_N,
+            rates.v8n_pct,
+        ),
+    ];
+    // cost = (waves · slots) / (blocks · rate) as a fraction (numerator, denominator).
+    let cost = |&(_, bm, bn, per_sm, rate): &(Pick, u32, u32, u32, u32)| -> (u128, u128) {
+        let blocks = u128::from(args.m.div_ceil(bm)) * u128::from(args.n.div_ceil(bn));
+        let slots = u128::from(sms) * u128::from(per_sm);
+        let waves = blocks.div_ceil(slots.max(1));
+        (waves * slots, blocks.max(1) * u128::from(rate.max(1)))
+    };
+    let mut best: Option<(Pick, (u128, u128))> = None;
+    for c in all.iter().filter(|c| with_v7 || c.0 != Pick::V7) {
+        let k = cost(c);
+        best = match best {
+            Some((p, b)) if b.0 * k.1 <= k.0 * b.1 => Some((p, b)),
+            _ => Some((c.0, k)),
+        };
+    }
+    best.map_or(Pick::V8, |b| b.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,5 +191,39 @@ mod tests {
         assert_eq!(grid_n(&a), [36, 48, 1]);
         assert!(fits(&a));
         assert!(!fits(&tc::Args { k: 766, ..a }));
+    }
+
+    /// G7 (DEDUS): the pick by waves on the lot-6 forms of step #513 (48 SM) at the plan's rates (f = 1,4) gives the
+    /// split written in `docs/C-168_V8_PLAN.md` §4: out-dW (768×768) on v7, qkv (exact tie, v8 first) / 3072×3072 /
+    /// the logits on v8, every form with 768 on v8n.
+    #[test]
+    fn pick_by_waves_lot6() {
+        let a = |m, n| tc::Args {
+            a: 0x1000,
+            b: 0x2000,
+            c: 0x3000,
+            bias: 0,
+            m,
+            n,
+            k: 768,
+            flags: 0,
+        };
+        let p = |m, n| pick(&a(m, n), 48, RATES_PLAN, true);
+        assert_eq!(p(3072, 2304), Pick::V8);
+        assert_eq!(p(3072, 3072), Pick::V8);
+        assert_eq!(p(3072, 16_384), Pick::V8);
+        assert_eq!(p(3072, 768), Pick::V8n);
+        assert_eq!(p(768, 3072), Pick::V8n);
+        assert_eq!(p(768, 2304), Pick::V8n);
+        assert_eq!(p(768, 768), Pick::V7);
+        // Without v7 loaded: v8 / v8n only.
+        assert_eq!(pick(&a(768, 768), 48, RATES_PLAN, false), Pick::V8n);
+        // At v7's rate (no gain per SM) v7 keeps every form where its waves are no worse.
+        let same = Rates {
+            v8_pct: 100,
+            v8n_pct: 100,
+        };
+        assert_eq!(pick(&a(3072, 768), 48, same, true), Pick::V7);
+        assert_eq!(pick(&a(3072, 3072), 48, same, true), Pick::V7);
     }
 }

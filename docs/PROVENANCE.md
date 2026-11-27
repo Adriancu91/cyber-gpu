@@ -684,3 +684,6 @@ niciun octet de firmware NVIDIA.
   `gpu_sim::cmdproc::{mm_tc_v8_on_cpu, mm_tc_v8n_on_cpu}`, testul T295 (ale noastre). Compilat cu Mesa NAK 26.3.1 (MIT), pe gazdă.
   Citite ca specificație, nimic copiat: `nak/assign_regs.rs` și `nak/ir.rs` (cum alege NAK numărul de registre). Nimic din
   firmware-ul NVIDIA.
+- **Sesiunea 280 (27 nov 2026):** `mm_tc_v8::pick` (regula valurilor, a noastră, din T294), `train_step::pack_mixed_fast_attn8`,
+  `batch_ram::pack_mixed_fast_via_ram_attn8`, testele T296 (CALCUL pe cifrele os-498, copiate din raportul OS-ului) și T297
+  (SIMULARE) — ale noastre. Nicio sursă străină nouă. Nimic din firmware-ul NVIDIA.

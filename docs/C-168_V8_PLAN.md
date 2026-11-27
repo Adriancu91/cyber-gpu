@@ -148,3 +148,25 @@ primul suspect, înaintea citirilor din memoria plăcii.
 
 **Următorul pas:** proba pe placă a sesiunii OS (`--mm-tc-v8`, G4–G6); între timp alegerea pe formă în pas (`TcPick::V8` /
 `V8n`, G7, doar adăugări) și o încercare de a coborî copiile din v8 (ordinea buclelor `i`/`j` sau două unități de citire pe fir).
+
+## 8. Alegerea pe formă în pas (sesiunea Cyber-GPU 280, 27 nov 2026, ~22:15–23:00, în cloud, FĂRĂ placă)
+
+Doar adăugări în `nvidia-ga104`:
+- `mm_tc_v8::pick(args, sms, rates, with_v7)` → `Pick::{V7, V8, V8n}`: regula valurilor din §3 (timpul ∝ valuri · locuri /
+  (blocuri · viteză)), numai cu numere întregi; la egalitate v7 (măsurat pe placă), apoi v8, apoi v8n. `RATES_PLAN` = 140 / 126 %
+  față de v7 (mijlocul benzii f din §4) — **DEDUS**, de înlocuit cu vitezele măsurate în proba `--mm-tc-v8` (G5 / G6).
+- `TcPick::V8`, `TcPick::V8n`, `train_step::V8Programs { v8, v8n, sms, rates }`, `pack_mixed_fast_attn8` și
+  `batch_ram::pack_mixed_fast_via_ram_attn8`. Cu `v8 = None` ele sunt `attn7` octet cu octet (`attn7` trece acum prin `attn8`).
+
+T297 (`crates/nvidia-ga104/tests/sim_c168_mm_tc_v8_mixed.rs`, SIMULARE):
+
+| Ce | Rezultat |
+|---|---|
+| N1 fără v8 | `attn8` = `attn7` octet cu octet (mini și #513, cu și fără v7, cu și fără tc16_v4) |
+| N2 alegerile | fiecare lansare de pe v7 ia exact `pick`; **#513 lot 6: v7 12 / v8 38 / v8n 97 = împărțirea scrisă în G7**; lot 2: v7 73 / v8 26 / v8n 48; QMD-urile v8 / v8n cu programul, registrele (128 / 144), firele (256 / 128), grila și memoria comună lor; restul zonei neschimbat |
+| N3 antrenarea mini (5 pași) | cu v8 / v8n (5 variante, inclusiv „totul pe v8” și „totul pe v8n”) = cu v7 **bit cu bit** |
+| N4 refuzuri | adrese nealiniate / 0, 0 SM-uri, viteză 0 → refuz; QMD v8 cu memoria comună a lui v7 → simularea refuză |
+| prin RAM | fără v8 = `attn7` prin RAM; cu v8 aceleași alegeri |
+
+**Pe placă: nimic nou de rulat acum.** Ordinea rămâne: întâi proba `--mm-tc-v8` (P3a, G4–G6); dacă v8 / v8n dau biții lui `mm_tc`,
+vitezele măsurate intră în `Rates` și abia apoi pasul cu `attn8` (G7). Copiile de registre din v8 (148 în buclă) rămân de redus.

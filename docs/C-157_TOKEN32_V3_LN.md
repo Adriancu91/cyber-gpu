@@ -72,3 +72,8 @@ se folosește; diferența de biți se caută în listare (contractarea `fmul` + 
   LayerNorm); toate LayerNorm-urile din lista de azi se lipesc; contorul (n − 1) · G. **L6 PASS** (lista lipită se schimbă în
   puține cuvinte între simboluri). Concluzia „aceiași biți pe placă” rămâne DEDUSĂ din sursă și listare; o decide L1.
 - Nimic rulat pe placă. PREDARE: `integration/cyber-universe/C-157_P2zzt_token32-v3-ln-lipit.md`.
+
+## 5. Pe placă (os-498, sesiunea 280)
+
+L1, L5, L6 CONFIRMATE; **L3 NECONFIRMATĂ** (1,453 ms la G = 768, peste banda 1,18–1,38), **L4 NECONFIRMATĂ** (478 simb/s).
+Comparația întreagă: `docs/C-157_TOKEN32_V3_PLACA.md` (T296).

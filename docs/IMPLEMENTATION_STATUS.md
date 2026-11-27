@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 280 — 27 noiembrie 2026, ~22:11–23:05 (ora României), în cloud, FĂRĂ placă — **os-498 (`--token32-v3`) comparat: aceiași biți, dar 1,453 ms (peste banda 1,18–1,38); C-168 p.3 G7: `mm_tc_v8` / `mm_tc_v8n` legate în pas cu alegerea pe formă (SIMULARE), lot 6 = v7 12 / v8 38 / v8n 97 ca în plan**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 279), l-am pus `ocupat`. În hub venise os-498 (ciclul 22:11, rândul
+`--token32 --token32-v2 --token32-v3`). Comparația întâi, apoi pasul următor din `docs/C-168_V8_PLAN.md`.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| L1 / L5 / L6 (`token32_v3` pe placă) | aceleași 16 simboluri, `0x6c8501f0`, contorul 18 / 18 la G = 384 și 768; 768 mai rapid; 38 de cuvinte schimbate pe simbol | CONFIRMATE (MĂSURAT de OS, T296) |
+| L3 (placa la G = 768) | **1,453 ms** față de banda 1,18–1,38 (v2 1,667 → −214 µs, ×1,147) | NECONFIRMATĂ |
+| L4 (cu driverul) | 478 simb/s față de 505–560 (lista obișnuită 493) | NECONFIRMATĂ |
+| Unde s-a dus diferența | cele 25 de începuturi lipite ~11 µs fiecare (prezis 1,5–4) | DEDUS (T296) |
+| G7 în cod: `mm_tc_v8::pick`, `TcPick::V8` / `V8n`, `pack_mixed_fast_attn8` (+ prin RAM) | doar adăugări; fără v8 = `attn7` octet cu octet | PASS în SIMULARE (T297) |
+| Alegerile #513 (vitezele planului, DEDUS) | lot 6 v7 12 / v8 38 / v8n 97 (= G7 scris înainte); lot 2 73 / 26 / 48 | PASS în SIMULARE |
+| Antrenarea mini cu v8 / v8n | = cu v7 bit cu bit (5 variante) | PASS în SIMULARE |
+| G4–G7 pe placă | — | NOT TESTED (întâi proba P3a) |
+| Verificările întregi | format, clippy, teste, no_std | **1 470 PASS** |
+
+**Note:** `docs/C-157_TOKEN32_V3_PLACA.md`, `docs/C-168_V8_PLAN.md` §8, T296 `crates/nvidia-ga104/tests/calc_c157_token32_v3_placa.rs`,
+T297 `crates/nvidia-ga104/tests/sim_c168_mm_tc_v8_mixed.rs`, rândurile în `TEST_MATRIX.md` și `PROVENANCE.md`. PREDARE
+`integration/cyber-universe/C-157_P2zzv_token32-v3-placa.md` (nimic nou pentru placă) și `integration/cyber-universe/C-168_P3b_v8-in-pas.md`
+(legarea în pas; pe placă doar după proba P3a). **Nou pentru placă:** nimic față de P3a.
+
+**Următorul pas:** comparația `--mm-tc-v8` (P3a, G4–G6) când vine → vitezele măsurate în `Rates` + rândul pentru pas; până atunci
+copiile de registre din v8 (148 în buclă) sau C-168 p.4 (atenția înainte pe circuite: plan + predicții întâi). Linia `token32`:
+`token32_v3c` (ceasul pe operație) stă în coadă, după C-168.
+
 ## Sesiunea 279 — 27 noiembrie 2026, ~21:10–22:15 (ora României), în cloud, FĂRĂ placă — **C-168 p.3: înmulțirea v8 scrisă și compilată (`mm_tc_v8` 128×128 + `mm_tc_v8n` 128×64), G1–G3 CONFIRMATE (listare + SIMULARE); compilatorul copia acumulatorii în jurul fiecărui `hmma` (și în v7) — leacul 16×8 pentru v8n; PREDARE P3a**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 278), l-am pus `ocupat`. Niciun rezultat nou de pe placă în hub de la os-496;
