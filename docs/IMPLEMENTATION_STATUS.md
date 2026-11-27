@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 266 — 27 noiembrie 2026, ~07:13–08:00 (ora României), în cloud, FĂRĂ placă — **`mm_tc_v7` = `mm_tc_v6` cu 16 B de umplutură pe rândurile memoriei comune (citirile fără conflict): compilat (W1–W2 CONFIRMATE), aceiași biți în SIMULARE (T280, W3); PREDARE P2zzi**
+## Sesiunea 266 — 27 noiembrie 2026, ~07:13–07:55 (ora României), în cloud, FĂRĂ placă — **`mm_tc_v7` = `mm_tc_v6` cu 16 B de umplutură pe rândurile memoriei comune (citirile fără conflict): compilat (W1–W2 CONFIRMATE), aceiași biți în SIMULARE (T280, W3); PREDARE P2zzi**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 265), l-am pus `ocupat`. În hub nu venise niciun rezultat nou de la placă
 (os-481 = pasul cu v5, os-477 = `token32_v2`, proba v6 — toate nerulate) → coada C-157 p.2: pașii 1–3 din

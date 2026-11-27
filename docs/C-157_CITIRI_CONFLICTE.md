@@ -110,7 +110,7 @@ Surse (publice, citite ca specificație): ghidul CUDA („shared memory”, băn
 (o matrice 8 × 8 = 8 rânduri de 16 octeți date de 8 fire), specificația `GL_KHR_cooperative_matrix` (pasul liniar al lui
 `coopMatLoad`). Codul și socoteala sunt ale noastre.
 
-## 6. Rezultat — pașii 1 și 2 (sesiunea 266, 27 nov 2026, ~07:13–08:00, în cloud, fără placă)
+## 6. Rezultat — pașii 1 și 2 (sesiunea 266, 27 nov 2026, ~07:13–07:55, în cloud, fără placă)
 
 | # | Ce a ieșit | Stare |
 |---|---|---|
