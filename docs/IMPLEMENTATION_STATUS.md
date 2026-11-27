@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 262 — 27 noiembrie 2026, ~02:14–03:05 (ora României), în cloud, FĂRĂ placă — **comparația os-476 (`mm_tc_v5` pe placă: aceiași biți, ×1,41, în banda scrisă înainte), lotul 6 cu dS pe circuite (pasul 264,9 ms = predicția; oprit de paza termică, 0x20 = încetinire termică din software) și `mm_tc_v5` legat în pasul mixt rapid (SIMULARE, T274); PREDARE P2zzf**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 261), l-am pus `ocupat`. În hub veniseră două rezultate noi: os-476
+(`mm_tc_v5`) și lotul 6 cu dS (ciclul 01:44) → comparațiile lor (C-157 p.2, au întâietate), apoi cererea centrului:
+`mm_tc_v5` în pas. Clonele vechi aveau ramuri despărțite; am lucrat în clone proaspete.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| os-476 biții (V5) | 5 / 5 seturi aliniate aceiași biți ca `mm_tc`, și la 64 KiB | CONFIRMATĂ (MĂSURAT de OS) |
+| os-476 viteza (V7) | qkv-513 1,868 ms = 11,6 TFLOP/s, ×1,407 față de v4@64k (banda 1,59–1,94 ms); fără 64 KiB ×1,005 → câștigul = ocuparea (V6) | CONFIRMATĂ |
+| Altfel decât prevăzut | setul mic `32x48x64` mai lent pe v5 (19,9 / 14,7 µs; un bloc, finalul prin zona de 1 KiB); în #513 nu există produse mici | NOTAT, nimic tăiat |
+| Lot 6 cu dS, pasul 2 | placa 264,86 ms față de 264–268 prezis | CONFIRMATĂ (o măsurare, fără oracol) |
+| Oprirea termică 0x20 | `SW_THERMAL_SLOWDOWN` (antetele NVIDIA 570.144): încetinire termică din software, nu urgența hardware (0x40) | TĂLMĂCIT; temperatura lipsește din raport → cerută OS-ului; regula pazei neschimbată |
+| `mm_tc_v5` în pas | `pack_mixed_fast_attn5`, `pack_mixed_fast_via_ram_attn5`, `TcPick::V5` (doar adăugări) | PASS în SIMULARE (T274 V1–V6) |
+| Predicțiile pasului cu v5 (scrise înainte) | lot 2: placa 97,1 → ~78–84 ms; lot 6: 264,9 → 202–222 ms (≈ 13 900–15 200 simb/s) | NOT TESTED |
+| Verificările întregi | format, clippy (1.100, ca în CI), teste, no_std | **1 354 PASS** (8 ignorate) |
+
+**Note:** `docs/C-157_OS476.md`, T274 (`crates/nvidia-ga104/tests/sim_c157_mm_tc_v5_mixed.rs`). PREDARE
+`integration/cyber-universe/C-157_P2zzf_mm-tc-v5-in-pas.md`. **Nou pentru placă:** doar `mm_tc_v5` (același binar ca în os-476)
+folosit și în pas. Nicio scriere în registre, niciun firmware.
+
+**Următorul pas:** comparațiile `mm_tc_v5` în pas (P2zzf) și `token32_v2` (P2zzd) când vin; altfel bucla lui `mm_tc_v5` (scrierile
+f16 împerecheate în memoria comună), plan + predicții întâi.
+
 ## Sesiunea 261 — 27 noiembrie 2026, ~01:12–02:00 (ora României), în cloud, FĂRĂ placă — **comparația os-473 (dS pe f16 în pasul mixt rapid #513: corect, ×2,14 ca proba, +2,9 % simb/s) și alarma falsă `tur-dupa` găsită și reparată (inelul jurnalului pierdea scrieri vechi); PREDARE P2zze**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 260), l-am pus `ocupat`. În hub a venit ciclul 00:33 (os-473 = fostul

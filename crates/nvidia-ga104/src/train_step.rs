@@ -3747,6 +3747,10 @@ pub enum TcPick {
     /// C-157 (session 253): a [`MixedLaunch::AttnTc`] on `attn_back_tile_tc16_v4pf` (128-bit loads, next tile read
     /// ahead; only aligned shapes), only from [`pack_mixed_fast_attn4`].
     AttnTc16V4pf,
+    /// C-157 p.2 after os-476 (`docs/C-157_OS476.md`): a [`MixedLaunch::Tc`] on `mm_tc_v5` (v4's loop, 12 KiB
+    /// shared: 4 blocks per SM at 64 KiB; only products [`crate::mm_tc_v5::fits`] takes), only from
+    /// [`pack_mixed_fast_attn5`].
+    V5,
 }
 
 /// C-157 (session 253, `docs/C-157_ATTN_BACK_TC16_V4_LEGAT.md`): the fast variant of the second tensor-core attention
@@ -3847,6 +3851,7 @@ impl TcPick {
             TcPick::Tc => "mm_tc",
             TcPick::Pf => "mm_tc_pf",
             TcPick::V4 => "mm_tc_v4",
+            TcPick::V5 => "mm_tc_v5",
             TcPick::Gelu => "mm_tc_gelu",
             TcPick::AttnTc => "attn_back_tile_tc",
             TcPick::AttnTc16 => "attn_back_tile_tc16",
@@ -4021,6 +4026,31 @@ pub fn pack_mixed_fast_attn4(
     step_bytes: Option<u32>,
     zone_va: u64,
 ) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
+    pack_mixed_fast_attn5(
+        launches, prog_va, progs, 0, attn, attn_fast, attn0, step_bytes, zone_va,
+    )
+}
+
+/// C-157 p.2 after os-476 (`docs/C-157_OS476.md`): [`pack_mixed_fast_attn4`] with **`mm_tc_v5`** as well:
+/// `v5_va` = where the OS loaded `mm_tc_v5` (256-aligned; 0 = not loaded). Every [`MixedLaunch::Tc`] whose product
+/// passes [`crate::mm_tc_v5::fits`] (= `mm_tc_v4::fits`) goes to `mm_tc_v5` ([`TcPick::V5`]) when it is loaded;
+/// otherwise the rule of [`tc_pick`] (v4 → pf → tc) is unchanged. The v5 QMD: 128 registers, **12 KiB** shared
+/// (`mm_tc_v5::SHARED`, 1 barrier), `mm_tc`'s block, grid and cbuf; only the program address and the shared size
+/// differ from a v4 QMD. With `v5_va = 0` it is [`pack_mixed_fast_attn4`] byte for byte.
+/// On the board: `mm_tc_v5` gave the same bits as `mm_tc` in os-476 (5 / 5 aligned sets, qkv-513 ×1,41 over v4 at
+/// 64 KiB); the whole step with v5 is SIMULARE only until the OS runs it.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub fn pack_mixed_fast_attn5(
+    launches: &[MixedLaunch],
+    prog_va: impl Fn(Prog) -> u64,
+    progs: &TcPrograms,
+    v5_va: u64,
+    attn: Option<AttnTcProgram>,
+    attn_fast: Option<AttnTcFast>,
+    attn0: Attn0Programs,
+    step_bytes: Option<u32>,
+    zone_va: u64,
+) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
     use crate::mm_tc as tc;
     use crate::mm_tc_gelu as tg;
     let attn_tc_va = attn.map_or(0, AttnTcProgram::va);
@@ -4034,6 +4064,7 @@ pub fn pack_mixed_fast_attn4(
     if !zone_va.is_multiple_of(256)
         || [
             progs.tc, progs.pf, progs.v4, progs.gelu, attn_tc_va, attn0.tc, attn0.v4, fast_va,
+            v5_va,
         ]
         .iter()
         .any(|v| !v.is_multiple_of(256))
@@ -4048,6 +4079,12 @@ pub fn pack_mixed_fast_attn4(
                 .or(a.map(AttnTcProgram::pick))
                 .or(Some(TcPick::AttnTc)),
             (Some(TcPick::Attn0Tc), _) => Some(attn0_pick(l, attn0)),
+            (Some(p @ (TcPick::V4 | TcPick::Pf | TcPick::Tc)), _) => match l {
+                MixedLaunch::Tc { args, .. } if v5_va != 0 && crate::mm_tc_v5::fits(args) => {
+                    Some(TcPick::V5)
+                }
+                _ => Some(p),
+            },
             (p, _) => p,
         })
         .collect();
@@ -4056,6 +4093,7 @@ pub fn pack_mixed_fast_attn4(
             TcPick::Tc => progs.tc,
             TcPick::Pf => progs.pf,
             TcPick::V4 => progs.v4,
+            TcPick::V5 => v5_va,
             TcPick::Gelu => progs.gelu,
             TcPick::AttnTc | TcPick::AttnTc16 => attn_tc_va,
             TcPick::Attn0Tc => attn0.tc,
@@ -4161,12 +4199,19 @@ pub fn pack_mixed_fast_attn4(
                             let cb = args
                                 .cbuf()
                                 .ok_or(bad("pas-mixt: argumentele mm_tc refuzate"))?;
-                            let (va, regs) = match pick {
-                                Some(TcPick::V4) => (progs.v4, crate::mm_tc_v4::REGISTERS),
-                                Some(TcPick::Pf) => (progs.pf, crate::mm_tc_pf::REGISTERS),
-                                _ => (progs.tc, tc::REGISTERS),
+                            let (va, regs, shared) = match pick {
+                                Some(TcPick::V5) => {
+                                    (v5_va, crate::mm_tc_v5::REGISTERS, crate::mm_tc_v5::SHARED)
+                                }
+                                Some(TcPick::V4) => {
+                                    (progs.v4, crate::mm_tc_v4::REGISTERS, tc::SHARED)
+                                }
+                                Some(TcPick::Pf) => {
+                                    (progs.pf, crate::mm_tc_pf::REGISTERS, tc::SHARED)
+                                }
+                                _ => (progs.tc, tc::REGISTERS, tc::SHARED),
                             };
-                            (cb, args.grid(), tc::BLOCK, tc::SHARED, va, regs)
+                            (cb, args.grid(), tc::BLOCK, shared, va, regs)
                         }
                         MixedLaunch::TcGelu { args, .. } => {
                             let cb = args
