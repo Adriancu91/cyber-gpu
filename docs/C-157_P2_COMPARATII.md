@@ -761,3 +761,10 @@ Sursa: `Cyber-hub/rezultate/os-automat/2026-11-22/ciclu-auto-20261122-0506.txt` 
 - **Ce spune:** cauza 1 (x din L2) explică scăderea la 768 (prezis ~1,57 ms); la 384 frâna e numărul mic de warp-uri; „restul” din
   os-471 (~0,67 ms la 768) rămâne. Cuvintele scrise după primul simbol: 37–38 (media 348 include primul, întreg).
 - **Tai:** `token32` v1 și G = 384. PREDARE P2zzn. Nota întreagă: `docs/C-157_TOKEN32_V2_PLACA.md`.
+
+## os-487 lot 6 cu tabloul ținut în jurnal (27 nov 2026, ciclul 12:24) — sesiunea 272 (T286)
+- **Pasul întreg 200,77 ms = 15 301 simb/s = placa** (200,95 ms), „în afara plăcii” 0 µs; banda P2zzj 205–215 ms: NECONFIRMATĂ,
+  în bine (cei ~7 ms erau doar la pasul 1). Aceleași pierderi și norme ca os-481 lot 6 — CONFIRMAT. Față de recordul fără tablou
+  (15 339): +0,23 % = zgomot → tabloul ținut nu costă nimic.
+- **Placa −1,0 %:** doar ceasul (programele de calcul −1,1 / −1,2 %, cele de memorie neschimbate). `mm_tc_v5` 11,85 TFLOP/s = 75,4 %.
+- **Tai:** frâna tabloului, închisă. Rândul cu `--pas-v6` n-a rulat încă. PREDARE P2zzo. Nota întreagă: `docs/C-157_OS487.md`.

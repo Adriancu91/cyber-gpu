@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 272 — 27 noiembrie 2026, ~13:18–14:20 (ora României), în cloud, FĂRĂ placă — **os-487 (lot 6 cu tabloul ținut în jurnal, ciclul 12:24) comparat: pasul întreg 200,77 ms = placa = 15 301 simb/s, sub banda prezisă 205–215 (în bine); aceleași pierderi ca os-481; tabloul nu mai costă nimic; PREDARE P2zzo**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 271), l-am pus `ocupat`. În hub venise ciclul 12:24 = os-487 necomparat încă →
+punctul 2 al cozii C-157. (Copia locală veche a repo-ului era o clonă scurtă rămasă în urmă; am lucrat pe o clonă nouă a ramurii
+`g0-g2-fundatie`, nimic pierdut: conținutul ei era deja pe GitHub.)
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Pierderile și normele (P2zzj) | 10 / 10 = os-481 lot 6, cifră cu cifră | PASS (MĂSURAT de OS) |
+| Pasul întreg 205–215 ms (P2zzj) | 200,77 ms = placa (în 0,1 %); cei ~7 ms erau doar la pasul 1 | FAIL (predicție; mai bine) |
+| Placa ~203 ms | 200,95 ms (−1,0 %: doar ceasul) | PASS (CALCUL, T286) |
+| „În afara plăcii” sub ~12 ms | 0 µs | PASS (MĂSURAT de OS) |
+| Tabloul ținut | 11 valori pe pas la ~5 µs una de alta (07:49: ~23 ms, o scriere pe stick fiecare) | PASS (MĂSURAT, `gpu-jurnal-177.txt`) |
+| „NU TRECE” din raport | criteriul pe loturi sintetice (ultima < prima), cunoscut; toate greutățile finite | așteptat |
+| Verificările întregi | format, clippy, teste, no_std | **1 416 PASS** (8 ignorate) |
+
+**Note:** `docs/C-157_OS487.md`, T286 (`crates/nvidia-ga104/tests/calc_c157_os487.rs`), rândurile T285 (lipsea) și T286 în
+`docs/TEST_MATRIX.md`, rândul nou în `docs/C-157_P2_COMPARATII.md`. PREDARE `integration/cyber-universe/C-157_P2zzo_os487-lot6.md`.
+**Nou pentru placă:** nimic. Interfața: neschimbată. **Închis:** frâna tabloului la lot 6.
+
+**Următorul pas:** comparațiile când vin — rândul cu `--pas-v6` (lot 2, apoi lot 6; DEDUS ~18 400 simb/s), reluarea dX / dW cu cererea
+de 1 800 s (P2zzm); după dX / dW la viteză: `mm_tc_v7` legat în pas; apoi „restul” din `token32_v2`; altfel următorul punct al cozii C-157.
+
 ## Sesiunea 271 — 27 noiembrie 2026, ~12:12–12:52 (ora României), în cloud, FĂRĂ placă — **`token32_v2` pe placă (ciclul 10:01) comparat: aceiași biți la G = 384 și 768; G = 768 placa 1,668 ms (V4 în bandă), G = 384 1,969 ms (V3 +12 % peste); partea driverului ~0,61 ms (V5 mai bine decât prezis); cu driverul ×1,10 față de lista obișnuită; PREDARE P2zzn**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 270), l-am pus `ocupat`. În hub venise rezultatul `token32_v2`
