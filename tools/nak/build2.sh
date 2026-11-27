@@ -27,6 +27,7 @@
 #   sh tools/nak/build2.sh attn_back_tile_tc16_v4pf # C-157: attn_back_tile_tc16_v4 + the next tile read ahead, same bits (session 248)
 #   sh tools/nak/build2.sh attn_back_tile0_tc # C-157: attn_back_tile0_3's dP = dO*V^T on the tensor cores, dot / dS F32 (session 245)
 #   sh tools/nak/build2.sh attn_back_tile0_tc_v4 # C-157: attn_back_tile0_tc with 128-bit loads and stores, same bits (session 251)
+#   sh tools/nak/build2.sh attn_fwd_tc  # C-168 p.4: causal attention forward on the tensor cores, two passes, P written once (session 282)
 #   sh tools/nak/build2.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): the apt packages listed in build.sh, plus
@@ -117,6 +118,9 @@ attn_back_tile0_tc)
 attn_back_tile0_tc_v4)
     exec sh "$0" kernel attn_back_tile0_tc_v4 64
     ;;
+attn_fwd_tc)
+    exec sh "$0" kernel attn_fwd_tc 44
+    ;;
 kernel)
     NAME=${2:?nume}; PUSH=${3:?octeti push constants}
     OUT=$HERE/out2; TMP=$(mktemp -d); mkdir -p "$OUT"
@@ -141,6 +145,6 @@ kernel)
     rm -rf "$TMP"
     ;;
 *)
-    echo "usage: $0 mesa|mma16_f16|mma16_s8|mm_tc|mm_tc128|mm_tc_gelu|mm_tc_pf|mm_tc_v4|mm_tc_v5|mm_tc_v6|mm_s8|attn_back_tile_tc|attn_back_tile_tc16|attn_back_tile_tc16_v4|attn_back_tile_tc16_v4pf|attn_back_tile0_tc|attn_back_tile0_tc_v4|kernel <nume> <octeti>" >&2; exit 2
+    echo "usage: $0 mesa|mma16_f16|mma16_s8|mm_tc|mm_tc128|mm_tc_gelu|mm_tc_pf|mm_tc_v4|mm_tc_v5|mm_tc_v6|mm_s8|attn_back_tile_tc|attn_back_tile_tc16|attn_back_tile_tc16_v4|attn_back_tile_tc16_v4pf|attn_back_tile0_tc|attn_back_tile0_tc_v4|attn_fwd_tc|kernel <nume> <octeti>" >&2; exit 2
     ;;
 esac

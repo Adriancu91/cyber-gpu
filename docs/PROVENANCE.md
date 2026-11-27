@@ -691,3 +691,8 @@ niciun octet de firmware NVIDIA.
   raportul OS-ului) — ale noastre. Idei publice citate (nimic copiat): FlashAttention / FlashAttention-2 (arXiv 2205.14135,
   2307.08691) — plăcile în memoria comună, softmax-ul din mers, recalcularea lui S înapoi; perechile de rânduri pentru echilibrul
   cauzal. Nimic din firmware-ul NVIDIA.
+- **Sesiunea 282 (28 nov 2026):** `tools/nak/attn_fwd_tc.comp`, `crates/nvidia-ga104/src/attn_fwd_tc.rs`, rândul din
+  `tools/nak/build2.sh` — ale noastre, după planul nostru (§3 / §8 din `docs/C-168_ATTN_FWD_TC_PLAN.md`). Ideile publice
+  (FlashAttention / FlashAttention-2, arXiv 2205.14135 și 2307.08691: plăcile în memoria comună, maximul și suma din mers;
+  perechile de rânduri pentru echilibrul cauzal) — nicio linie copiată. Binarul e ieșirea compilatorului Mesa NAK 26.3.1 (MIT)
+  pe sursa noastră. Nimic din firmware-ul NVIDIA.

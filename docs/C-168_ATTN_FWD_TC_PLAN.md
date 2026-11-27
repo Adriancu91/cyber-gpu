@@ -115,3 +115,38 @@ nu în produse → pasul următor e S păstrat în registre cu aranjarea măsura
   folosită și de alte programe de atenție). Nicio linie de cod copiată; codul e al nostru.
 - `docs/C-157_ATENTIE_TC.md` (precizia f16, A4), `tools/nak/attn_back_tile_tc16_v4.comp` (aranjarea grupurilor, a noastră),
   `docs/C-168_V8_PLAN.md` §1 (ce poate NAK 26.3.1: `ldsm` doar pe A pe rânduri / B pe coloane).
+
+## 8. Pasul 1 făcut (sesiunea 282, 28 nov 2026, cloud, FĂRĂ placă): programul scris și compilat — H1 și H2 CONFIRMATE pe listare
+
+`tools/nak/attn_fwd_tc.comp`, compilat cu unealta a doua (Mesa 26.3.1 reconstruit în cloud; `mm_tc_v7` a ieșit **identic**,
+`953ed6b8…`). Binarul: `tools/nak/out2/attn_fwd_tc.sm86.sass`, 19 952 B, SHA-256 `ce2b2f22…7e929257`. În Rust (doar adăugări):
+`nvidia_ga104::attn_fwd_tc` (constantele, `fits` / `fits_cbuf`, `cbuf` cu argumentele la 0x700, grila în perechi, `row_tiles`,
+`qmd`) + 5 teste pe listare și pe reguli. **Nimic rulat pe placă; modelul pe procesor și SIMULAREA sunt pasul 2.**
+
+| # | Prezis | Ieșit (listarea NAK) | Verdict |
+|---|---|---|---|
+| H1 | ≤ 128 registre, 0 memorie locală, 28 416 B | **120 registre**, 0 memorie locală, 0 copii pe memorie, **27 648 B** → 2 blocuri pe SM (registre 2 × 256 × 120 = 61 440) | CONFIRMATĂ |
+| H2 | toți operanzii prin `ldsm`; 16 `hmma` în trecerea 1, 32 în trecerea 2; 16 `ex2` pe fir și placă; 3 / ≤ 5 bariere | `ldsm` 8 × x4 (Q, P) + 48 × x2 (K, Vᵀ), **0 `movm`**; singurele citiri simple din memoria comună = 12 × 128 de biți ale plăcii f32 S / O; `hmma` 16 + (16 + 16); bariere **3** pe placă în trecerea 1, **5** în trecerea 2 (13 în program); `ex2` **16 + 1** în trecerea 1 (+1 = reajustarea sumei), 16 în trecerea 2, 4 la unire; 1 `rcp`; 8 `shfl`; 0 `ffma`; toate citirile / scrierile globale de 128 de biți (20 / 8) | CONFIRMATĂ (cu „+1” la `ex2`, scris aici) |
+
+Ce s-a schimbat față de §3 (și de ce), toate fără efect pe aritmetica rândului:
+
+- **Rândurile plăcii f32 S / O: 68 de numere, nu 65** — lecția os-467 (cu rânduri de 65 NAK a scris acumulatorii cu scrieri de
+  64 de biți la adrese 4 mod 8 și blocul nu s-a terminat pe placă). Memoria: trei zone de 64 × 144 B = 27 648 B (Z: Q la încărcare,
+  apoi Vᵀ; X: K în trecerea 2; Y: K în trecerea 1, apoi P f16); S și O stau peste Z + X.
+- **Unirea celor 4 bucăți ale unui rând prin `subgroupShuffle`** (cele 4 fire ale rândului sunt în același grup de 32), nu prin
+  memoria comună: nicio barieră în plus, 2 560 B mai puțin. Ordinea e fixă: q = 0, 1, 2, 3, aceeași pentru toate cele 4 fire.
+- **Trei încercări de compilare, scrise cinstit:** (1) V citit cu o placă înainte → **144 registre** (1 bloc pe SM); mutat: V
+  pleacă după produsul S (zboară cât se scrie S și se calculează P), K-ul următor pleacă după scrierea lui Vᵀ (zboară cât lucrează
+  O += P·V) → 120. (2) `live ? exp2(..) : 0` și `!diag || …` deveniseră **ramificații** (184 de blocuri în listare) → `mix(…, bool)`
+  (o alegere) și o limită pe placă `lim = mix(63, r, diag)` → 40 de blocuri. (3) Bucla pașilor lui P (16 câte 16) desfăcută cu o
+  ieșire uniformă → copiile de registre din jurul `hmma` de la O: 10 pe pas + ~65 în jurul buclei → 8 în pași + 16 la ieșire (în tot programul 216 → 168 `mov`).
+- **NAK a refolosit citirea lui K(0)** din trecerea 1 în trecerea 2 (memoria e doar-citire, deci e corect): 20 de citiri globale în
+  listare, nu 24.
+- **Corectură la §3:** am scris „deasupra nu se scrie nimic, ca azi” — **greșit**: `attn_fwd_tile3` scrie 0 și în plăcile de deasupra
+  diagonalei (faza C, ramura `jt > bx`). `attn_fwd_tc` scrie toate plăcile până la cea de pe diagonală inclusiv (cu 0 exact deasupra
+  diagonalei în ea) și **nu scrie** plăcile de deasupra. Programele înapoi nu folosesc acele numere (alegeri, încercate cu NaN acolo:
+  T188, T189, T258, T261). Pasul 2 verifică asta și pentru pasul întreg (P cu NaN în plăcile nescrise → aceiași biți înapoi); proba
+  de pe placă (pasul 3) compară P doar până la diagonală.
+
+**Pasul următor (2):** modelul pe procesor `gpu_compute::layer::attn_fwd_tc_gpu` + emularea în `gpu-sim` (H3, T299), cu `exp2`
+ca `ex2_ftz` și rotunjirile f16 ale lui Q, K, V, P.

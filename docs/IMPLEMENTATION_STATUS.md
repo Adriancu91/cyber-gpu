@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 282 — 28 noiembrie 2026, ~00:11–00:55 (ora României), în cloud, FĂRĂ placă — **C-168 p.4 pasul 1: atenția înainte pe circuitele speciale (`attn_fwd_tc`) scrisă și compilată; H1 și H2 CONFIRMATE pe listare (120 registre, 27 648 B, 2 blocuri pe SM, toți operanzii prin `ldsm`)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 281), l-am pus `ocupat`. Proba `--mm-tc-v8` (P3a) n-a rulat încă pe placă (niciun
+rezultat nou în hub după os-498) → G4–G7 așteaptă. Am luat pasul următor scris: `docs/C-168_ATTN_FWD_TC_PLAN.md` §6 pasul 1.
+(Copia locală veche a ramurii era despărțită de GitHub; am trecut pe ramura de pe GitHub, copia veche păstrată local ca
+`vechi-local-backup`, nimic șters.)
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Unealta a doua (Mesa 26.3.1) reconstruită în cloud | `mm_tc_v7` iese identic (`953ed6b8…`) | PASS |
+| `tools/nak/attn_fwd_tc.comp` compilat | 19 952 B, SHA-256 `ce2b2f22…7e929257` | PASS |
+| H1 compilarea | **120 registre**, 0 memorie locală, 0 copii pe memorie, **27 648 B** → 2 blocuri pe SM | CONFIRMATĂ |
+| H2 listarea | `ldsm` 8 × x4 + 48 × x2, 0 `movm`; `hmma` 16 (trecerea 1) + 16 + 16 (trecerea 2); bariere 3 / 5 pe placă; `ex2` 16 **+ 1** / 16; 0 `ffma`; global doar 128 de biți | CONFIRMATĂ (cu „+1”) |
+| Trei încercări de compilare | V citit o placă înainte = 144 registre → mutat (120); `?:` / `||` deveniseră ramificații → alegeri (184 → 40 de blocuri); bucla lui P desfăcută (216 → 168 `mov`) | scris în §8 |
+| Corectură la plan | `attn_fwd_tile3` scrie 0 și deasupra diagonalei; `attn_fwd_tc` nu scrie plăcile de deasupra (înapoi nu le folosește: T188 / T189 / T258 / T261) | scris în §8 |
+| `nvidia_ga104::attn_fwd_tc` (doar adăugări) | constantele, `fits` / `fits_cbuf`, `cbuf` (argumentele la 0x700), grila în perechi, `row_tiles`, `qmd`; 5 teste | PASS (listare + reguli) |
+| H3 (SIMULARE) … H7 (placa, pasul) | — | NOT TESTED (pașii 2–4) |
+| Verificările întregi | format, clippy, teste, no_std | **1 480 PASS** |
+
+**Note:** `docs/C-168_ATTN_FWD_TC_PLAN.md` §8, `tools/nak/attn_fwd_tc.comp`, `tools/nak/build2.sh` (`attn_fwd_tc`),
+`crates/nvidia-ga104/src/attn_fwd_tc.rs`, rândurile în `TEST_MATRIX.md` și `PROVENANCE.md`. **Nou pentru placă:** nimic încă (programul
+intră în probă abia la pasul 3, după SIMULARE). **Nicio schimbare de interfață** (doar adăugări).
+
+**Următorul pas:** comparația `--mm-tc-v8` (P3a, G4–G6) când vine are întâietate; altfel C-168 p.4 pasul 2: modelul pe procesor
+`gpu_compute::layer::attn_fwd_tc_gpu` + emularea în `gpu-sim` (H3, T299).
+
 ## Sesiunea 281 — 27–28 noiembrie 2026, ~23:11–00:10 (ora României), în cloud, FĂRĂ placă — **C-168 p.4: planul atenției înainte pe circuitele speciale (`attn_fwd_tc`) + predicțiile H1–H7, scrise înainte de cod; socotelile T298**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 280), l-am pus `ocupat`. Proba `--mm-tc-v8` (P3a) n-a rulat încă pe placă

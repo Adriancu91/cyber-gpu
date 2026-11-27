@@ -1,0 +1,299 @@
+// C-168 point 4, step 1 (plan + predictions H1-H7 written before this file: docs/C-168_ATTN_FWD_TC_PLAN.md, counted in
+// T298): causal attention FORWARD on the tensor cores, two passes over the key tiles, P written once.
+//   pass 1 (every key tile kt <= rt): S = Q K^T (f16 products, f32 sums), x = s * scale, the running row maximum and
+//           sum per thread, then the 4 partials of each row joined in a fixed order (subgroup shuffles, no memory);
+//   pass 2 (the same tiles): S again (the same code -> the same bits), P = 2^((x - M) log2 e) * (1 / L) in f32,
+//           written to `p` (128-bit stores) and as f16 into shared memory, then O += P V.
+// O is never rescaled (P is final when it multiplies V), which is why there are two passes: in GL_KHR_cooperative_matrix
+// the row of an accumulator element is not defined, so the FlashAttention-2 "online" rescale of O is not written here.
+// Inputs and outputs = attn_fwd_tile3's: qkv [B*T, 3C] f32, p [B, H, T, T] f32, att [B*T, C] f32, T, C, H, d, scale.
+// What p holds afterwards: every tile kt <= rt of row tile rt (on the diagonal tile 0 above the diagonal, as today);
+// the tiles ABOVE the diagonal tile are NOT written (attn_fwd_tile3 wrote 0 there). The backward programs never read
+// those numbers (the tc ones drop them by a select, tested with NaN above the diagonal: T188 / T189 / T258 / T261).
+// Only ALIGNED shapes (nvidia_ga104::attn_fwd_tc::fits): d = 64, T a multiple of 64, qkv / p / att multiples of 16
+// bytes; the host launches attn_fwd_tile3 otherwise.
+// Grid [ceil(T/64 / 2), H, B]: block x does row tiles x and nt-1-x one after the other (each block: nt+1 key tiles).
+// 256 threads = 8 warps; warp w owns rows wr = (w >> 1) * 16 .. +15 and columns wc = (w & 1) * 32 .. +31 of a 64x64
+// tile (attn_back_tile_tc16_v4's arrangement), as four 16x8 accumulators (v8's lesson: one hmma's registers each).
+// Shared memory: 27 648 bytes in three areas of 9 216 bytes (64 rows of 72 halves = 144 bytes, ldsm without conflicts):
+//   Z [0, 2304) words: Q at the load (then in registers), Vt in pass 2;   X [2304, 4608): K in pass 2;
+//   Y [4608, 6912): K in pass 1, P (f16) in pass 2;   S (f32, rows of 68 words, 4 352 words) and O at the end over Z + X.
+// Barriers per key tile: 3 in pass 1, 5 in pass 2 (the plan said <= 5). Rows of 68 floats, not 65: os-467 (64-bit
+// stores at 4 mod 8 with rows of 65 never ended on the board).
+// Arithmetic (the CPU model, step 2): Q, K, V, P rounded to f16 (RNE, with subnormals), the products' f32 sums in 16
+// steps in order (mm_tc's chain), every other operation f32 in the written order with no contraction (`precise`),
+// exp as exp2 (MUFU.EX2 on the board, approximate). Ideas: FlashAttention / FlashAttention-2 (arXiv 2205.14135,
+// 2307.08691: tiles in shared memory, the running maximum and sum), pairs of row tiles for the causal balance (public
+// idea). No line copied. Compiled with the SECOND NAK tool (tools/nak/build2.sh, Mesa 26.3.1). Nothing here has run
+// on a board.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer In4 { vec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) writeonly buffer Out4 { vec4 v[]; };
+// attn_fwd_tile3's 44 bytes (the same order), the addresses declared 16-byte aligned.
+layout(push_constant) uniform Args {
+    In4 qkv; Out4 p; Out4 att;
+    uint t; uint c; uint heads; uint d; float scale;
+} args;
+
+#define ZW 0u        // word offsets of the three areas
+#define XW 2304u
+#define YW 4608u
+#define RW 36u       // f16 tile row: 72 halves = 36 words (coopMat stride, in words)
+#define SW 68u       // f32 tile row: 68 words
+#define NEG -3.402823466e38
+#define LOG2E 1.4426950408889634
+
+shared uint sm[6912];
+
+// The 4 vec4 of a 64x64 f32 tile this thread loads (rows r = e / 16, columns 4 (e % 16) .. +3, e = lid + 256 s) from
+// rows row0.. of qkv at column off (Q: h d, K: C + h d).
+void load_rows(uint row0, uint off, uint lid, out vec4 v[4]) {
+    uint ld4 = (3u * args.c) >> 2u;
+    [[unroll]] for (uint s = 0u; s < 4u; s++) {
+        uint e = lid + 256u * s;
+        v[s] = args.qkv.v[(row0 + (e >> 4u)) * ld4 + ((off + ((e & 15u) << 2u)) >> 2u)];
+    }
+}
+
+// ... and writes them as f16 by rows ([r][x], 36 words per row) at word `base`.
+void store_rows(uint base, uint lid, vec4 v[4]) {
+    [[unroll]] for (uint s = 0u; s < 4u; s++) {
+        uint e = lid + 256u * s;
+        uint o = base + (e >> 4u) * RW + ((e & 15u) << 1u);
+        sm[o] = packFloat2x16(f16vec2(v[s].xy));
+        sm[o + 1u] = packFloat2x16(f16vec2(v[s].zw));
+    }
+}
+
+// V of a key tile, two units per thread: unit u -> rows j, j+1 and columns x .. x+3 (a lane group of 4 reads 64
+// contiguous bytes of a row), written turned: Vt[x + i][j / 2] = (V[j][x + i], V[j + 1][x + i]).
+void v_unit(uint u, out uint x, out uint j) {
+    uint l = u & 31u;
+    uint wv = u >> 5u;
+    x = 4u * ((l & 3u) + 4u * (wv & 3u));
+    j = 2u * ((l >> 2u) + 8u * (wv >> 2u));
+}
+
+void load_v(uint row0, uint lid, out vec4 v[4]) {
+    uint ld4 = (3u * args.c) >> 2u;
+    uint off = 2u * args.c + gl_WorkGroupID.y * 64u;
+    [[unroll]] for (uint s = 0u; s < 2u; s++) {
+        uint x;
+        uint j;
+        v_unit(lid + 256u * s, x, j);
+        v[2u * s] = args.qkv.v[(row0 + j) * ld4 + ((off + x) >> 2u)];
+        v[2u * s + 1u] = args.qkv.v[(row0 + j + 1u) * ld4 + ((off + x) >> 2u)];
+    }
+}
+
+void store_vt(uint lid, vec4 v[4]) {
+    [[unroll]] for (uint s = 0u; s < 2u; s++) {
+        uint x;
+        uint j;
+        v_unit(lid + 256u * s, x, j);
+        vec4 a = v[2u * s];
+        vec4 b = v[2u * s + 1u];
+        uint o = ZW + x * RW + (j >> 1u);
+        sm[o] = packFloat2x16(f16vec2(a.x, b.x));
+        sm[o + RW] = packFloat2x16(f16vec2(a.y, b.y));
+        sm[o + 2u * RW] = packFloat2x16(f16vec2(a.z, b.z));
+        sm[o + 3u * RW] = packFloat2x16(f16vec2(a.w, b.w));
+    }
+}
+
+void main() {
+    uint T = args.t;
+    uint b = gl_WorkGroupID.z;
+    uint h = gl_WorkGroupID.y;
+    uint bx = gl_WorkGroupID.x;
+    uint lid = gl_LocalInvocationID.x;
+    uint w = lid >> 5u;
+    uint wr = (w >> 1u) * 16u;
+    uint wc = (w & 1u) * 32u;
+    uint nt = T >> 6u;
+    uint C = args.c;
+    float scale = args.scale;
+    // the statistics: thread lid owns row r = lid / 4 and the columns 4 q + 16 m + i (q = lid % 4, m, i = 0..3)
+    uint r = lid >> 2u;
+    uint q = lid & 3u;
+    uint lbase = gl_SubgroupInvocationID & ~3u;
+    uint prow = (b * args.heads + h) * T;   // first row of this head in p
+
+    [[dont_unroll]] for (uint pr = 0u; pr < 2u; pr++) {
+        uint rt = (pr == 0u) ? bx : nt - 1u - bx;
+        if (pr == 1u && rt <= bx) {
+            break;
+        }
+        uint i0 = rt * 64u;
+        uint brow = b * T;
+        barrier();   // the previous row tile's O copy-out read Z + X
+        {
+            vec4 vq[4];
+            load_rows(brow + i0, h * 64u, lid, vq);
+            store_rows(ZW, lid, vq);
+        }
+        barrier();
+        coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> qa[4];
+        [[unroll]] for (uint ks = 0u; ks < 4u; ks++) {
+            coopMatLoad(qa[ks], sm, ZW + wr * RW + 8u * ks, RW, gl_CooperativeMatrixLayoutRowMajor);
+        }
+
+        // ---- pass 1: the row maxima and sums
+        float mrun = NEG;
+        precise float lrun = 0.0;
+        vec4 vk[4];
+        load_rows(brow, C + h * 64u, lid, vk);
+        for (uint kt = 0u; kt <= rt; kt++) {
+            store_rows(YW, lid, vk);
+            barrier();
+            load_rows(brow + min(kt + 1u, rt) * 64u, C + h * 64u, lid, vk);
+            bool diag = kt == rt;
+            coopmat<float, gl_ScopeSubgroup, 16, 8, gl_MatrixUseAccumulator> acc[4];
+            [[unroll]] for (uint jj = 0u; jj < 4u; jj++) {
+                acc[jj] = coopmat<float, gl_ScopeSubgroup, 16, 8, gl_MatrixUseAccumulator>(0.0);
+            }
+            if (!(diag && wc >= wr + 16u)) {
+                [[unroll]] for (uint ks = 0u; ks < 4u; ks++) {
+                    [[unroll]] for (uint jj = 0u; jj < 4u; jj++) {
+                        coopmat<float16_t, gl_ScopeSubgroup, 16, 8, gl_MatrixUseB> fk;
+                        coopMatLoad(fk, sm, YW + (wc + 8u * jj) * RW + 8u * ks, RW, gl_CooperativeMatrixLayoutColumnMajor);
+                        acc[jj] = coopMatMulAdd(qa[ks], fk, acc[jj]);
+                    }
+                }
+            }
+            barrier();
+            [[unroll]] for (uint jj = 0u; jj < 4u; jj++) {
+                coopMatStore(acc[jj], sm, wr * SW + wc + 8u * jj, SW, gl_CooperativeMatrixLayoutRowMajor);
+            }
+            barrier();
+            // the last live column of row r in this tile (a select, not `!diag || ...`: that became branches)
+            uint lim = mix(63u, r, diag);
+            float xs[16];
+            float tmax = NEG;
+            [[unroll]] for (uint m = 0u; m < 4u; m++) {
+                uint o = r * SW + 4u * q + 16u * m;
+                vec4 sv = uintBitsToFloat(uvec4(sm[o], sm[o + 1u], sm[o + 2u], sm[o + 3u]));
+                [[unroll]] for (uint i = 0u; i < 4u; i++) {
+                    bool live = 4u * q + 16u * m + i <= lim;
+                    float x = sv[i] * scale;
+                    xs[4u * m + i] = mix(NEG, x, live);   // mix on a bool = a select (a ?: became a branch)
+                    tmax = max(tmax, xs[4u * m + i]);
+                }
+            }
+            float mn = max(mrun, tmax);
+            lrun = lrun * exp2((mrun - mn) * LOG2E);
+            [[unroll]] for (uint k = 0u; k < 16u; k++) {
+                bool live = 4u * q + 16u * (k >> 2u) + (k & 3u) <= lim;
+                float ek = exp2((xs[k] - mn) * LOG2E);
+                lrun = lrun + mix(0.0, ek, live);
+            }
+            mrun = mn;
+        }
+        // the 4 partials of row r (lanes lbase .. lbase + 3), joined in the order q = 0, 1, 2, 3 by every one of them
+        float mq[4];
+        float lq[4];
+        [[unroll]] for (uint k = 0u; k < 4u; k++) {
+            mq[k] = subgroupShuffle(mrun, lbase + k);
+            lq[k] = subgroupShuffle(lrun, lbase + k);
+        }
+        float M = max(max(mq[0], mq[1]), max(mq[2], mq[3]));
+        precise float L = 0.0;
+        [[unroll]] for (uint k = 0u; k < 4u; k++) {
+            L = L + lq[k] * exp2((mq[k] - M) * LOG2E);
+        }
+        float inv = 1.0 / L;
+
+        // ---- pass 2: S again, P (written once), O += P V
+        coopmat<float, gl_ScopeSubgroup, 16, 8, gl_MatrixUseAccumulator> acco[4];
+        [[unroll]] for (uint jj = 0u; jj < 4u; jj++) {
+            acco[jj] = coopmat<float, gl_ScopeSubgroup, 16, 8, gl_MatrixUseAccumulator>(0.0);
+        }
+        vec4 vv[4];
+        load_rows(brow, C + h * 64u, lid, vk);
+        barrier();   // the last S of pass 1 (over Z + X) has been read
+        for (uint kt = 0u; kt <= rt; kt++) {
+            store_rows(XW, lid, vk);
+            barrier();
+            bool diag = kt == rt;
+            coopmat<float, gl_ScopeSubgroup, 16, 8, gl_MatrixUseAccumulator> acc[4];
+            [[unroll]] for (uint jj = 0u; jj < 4u; jj++) {
+                acc[jj] = coopmat<float, gl_ScopeSubgroup, 16, 8, gl_MatrixUseAccumulator>(0.0);
+            }
+            if (!(diag && wc >= wr + 16u)) {
+                [[unroll]] for (uint ks = 0u; ks < 4u; ks++) {
+                    [[unroll]] for (uint jj = 0u; jj < 4u; jj++) {
+                        coopmat<float16_t, gl_ScopeSubgroup, 16, 8, gl_MatrixUseB> fk;
+                        coopMatLoad(fk, sm, XW + (wc + 8u * jj) * RW + 8u * ks, RW, gl_CooperativeMatrixLayoutColumnMajor);
+                        acc[jj] = coopMatMulAdd(qa[ks], fk, acc[jj]);
+                    }
+                }
+            }
+            barrier();
+            // V of this tile: in flight while S is stored and P is computed (registers: K is not live here)
+            load_v(brow + kt * 64u, lid, vv);
+            [[unroll]] for (uint jj = 0u; jj < 4u; jj++) {
+                coopMatStore(acc[jj], sm, wr * SW + wc + 8u * jj, SW, gl_CooperativeMatrixLayoutRowMajor);
+            }
+            barrier();
+            uint lim = mix(63u, r, diag);
+            [[unroll]] for (uint m = 0u; m < 4u; m++) {
+                uint col = 4u * q + 16u * m;
+                uint o = r * SW + col;
+                vec4 sv = uintBitsToFloat(uvec4(sm[o], sm[o + 1u], sm[o + 2u], sm[o + 3u]));
+                vec4 pv;
+                [[unroll]] for (uint i = 0u; i < 4u; i++) {
+                    bool live = col + i <= lim;
+                    float x = sv[i] * scale;
+                    float pe = exp2((x - M) * LOG2E) * inv;
+                    pv[i] = mix(0.0, pe, live);
+                }
+                args.p.v[((prow + i0 + r) * T + kt * 64u + col) >> 2u] = pv;
+                uint po = YW + r * RW + (col >> 1u);
+                sm[po] = packFloat2x16(f16vec2(pv.xy));
+                sm[po + 1u] = packFloat2x16(f16vec2(pv.zw));
+            }
+            barrier();
+            store_vt(lid, vv);
+            // K of the next tile: in flight during O += P V
+            load_rows(brow + min(kt + 1u, rt) * 64u, C + h * 64u, lid, vk);
+            barrier();
+            // the 16-steps of P with a non-zero column for this warp (on the diagonal tile: up to its last row), in order
+            uint k1 = diag ? wr + 16u : 64u;
+            [[unroll]] for (uint kk = 0u; kk < 64u; kk += 16u) {
+                if (kk >= k1) {
+                    break;
+                }
+                coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> fp;
+                coopMatLoad(fp, sm, YW + wr * RW + (kk >> 1u), RW, gl_CooperativeMatrixLayoutRowMajor);
+                [[unroll]] for (uint jj = 0u; jj < 4u; jj++) {
+                    coopmat<float16_t, gl_ScopeSubgroup, 16, 8, gl_MatrixUseB> fv;
+                    coopMatLoad(fv, sm, ZW + (wc + 8u * jj) * RW + (kk >> 1u), RW, gl_CooperativeMatrixLayoutColumnMajor);
+                    acco[jj] = coopMatMulAdd(fp, fv, acco[jj]);
+                }
+            }
+        }
+        // ---- O -> shared (f32, rows of 68) -> att (128-bit stores)
+        barrier();
+        [[unroll]] for (uint jj = 0u; jj < 4u; jj++) {
+            coopMatStore(acco[jj], sm, wr * SW + wc + 8u * jj, SW, gl_CooperativeMatrixLayoutRowMajor);
+        }
+        barrier();
+        [[unroll]] for (uint s = 0u; s < 4u; s++) {
+            uint e = lid + 256u * s;
+            uint rr = e >> 4u;
+            uint x = (e & 15u) << 2u;
+            uint o = rr * SW + x;
+            vec4 ov = uintBitsToFloat(uvec4(sm[o], sm[o + 1u], sm[o + 2u], sm[o + 3u]));
+            args.att.v[((brow + i0 + rr) * C + h * 64u + x) >> 2u] = ov;
+        }
+    }
+}
