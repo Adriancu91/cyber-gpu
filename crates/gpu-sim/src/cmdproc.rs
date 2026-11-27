@@ -3590,6 +3590,30 @@ pub fn mm_tc_v6_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     mm_tc_v5_on_cpu(l)
 }
 
+/// C-157 p.2 after session 265 (`docs/C-157_CITIRI_CONFLICTE.md`): what `tools/nak/out2/mm_tc_v7.sm86.sass` needs —
+/// `mm_tc_v6`'s slices with 16 bytes of padding on every row (5 120 + 5 120 B, the larger of each operand's two
+/// layouts) and the same 4 KiB scratch: 14 336 B, one barrier.
+pub const MM_TC_V7_NEEDS: Needs = Needs {
+    shared_bytes: 640 * 8 + 640 * 8 + 4 * 16 * 16 * 4,
+    barriers: 1,
+};
+
+/// C-157 p.2 after session 265: the CPU stand-in for `tools/nak/out2/mm_tc_v7.sm86.sass` — `mm_tc_v6` with padded
+/// slice rows (80 / 144 bytes). The padding is never written nor read and every fragment gets the same halves (T280),
+/// so the same matrices reach the same `coopMatMulAdd` chain: the stand-in is [`mm_tc_v6_on_cpu`] (blocks of
+/// 128×1×1, aligned products only, anything else REFUSED, no write).
+pub fn mm_tc_v7_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [128, 1, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: mm_tc_v7 cere blocuri de 128x1x1"));
+    }
+    if !tc_aligned(l)? {
+        return Err(bad(
+            "SIM: mm_tc_v7: produs nealiniat (randuri multiplu de 4, adrese multiplu de 16)",
+        ));
+    }
+    mm_tc_v6_on_cpu(l)
+}
+
 /// C-165 after os-416 (session 220): what `tools/nak/out2/mm_tc128.sm86.sass` needs — the f16 slices of op(A)
 /// (128×32) and op(B) (32×128) plus one 16×16 f32 scratch per subgroup (8 of them): 8 + 8 + 8 KiB, one barrier.
 pub const MM_TC128_NEEDS: Needs = Needs {

@@ -109,3 +109,17 @@ niciun firmware.
 Surse (publice, citite ca specificație): ghidul CUDA („shared memory”, bănci, capacitatea 8.6), documentația PTX pentru `ldmatrix`
 (o matrice 8 × 8 = 8 rânduri de 16 octeți date de 8 fire), specificația `GL_KHR_cooperative_matrix` (pasul liniar al lui
 `coopMatLoad`). Codul și socoteala sunt ale noastre.
+
+## 6. Rezultat — pașii 1 și 2 (sesiunea 266, 27 nov 2026, ~07:13–08:00, în cloud, fără placă)
+
+| # | Ce a ieșit | Stare |
+|---|---|---|
+| W1 | listarea NAK a lui v7: aceleași clase de instrucțiuni ca v6 (`hmma`, citiri `b128`, bariere, 16 `f2fp`, scrieri `b64`, 8 `ldsm.x4`, `movm`), 32 `lds` + 8 `ldsm` la **exact** deplasările socotite din formulele GLSL cu rândurile de 80 / 144 B (`bs4_` la 5 120 B); 1 982 instrucțiuni față de 1 986 | **CONFIRMAT** (MĂSURAT pe text, T280a/b) |
+| W2 | 128 registre, 0 memorie locală (14 mutări între registre, ca v6), **14 336 B**, 16 warp-uri pe SM; 4 blocuri pe SM la 64 KiB | **CONFIRMAT** (T280a) |
+| W3 | aceiași biți ca `mm_tc` și ca `mm_tc_v6` pe toate produsele aliniate × cele 8 combinații de opțiuni; fiecare fragment primește aceleași jumătăți ca în v6 pe cele 4 combinații de transpunere (greșeala plantată — un rând citit fără umplutură — prinsă pe fiecare operand); umplutura nu e nici scrisă, nici citită; refuzurile lui v6 | **CONFIRMAT** (SIMULARE, T280e–h) |
+| W4–W8 | pe placă | NOT TESTED |
+
+Unealta: Mesa 26.3.1 reconstruit în cloud; `mm_tc_v6` recompilat **identic** (`8c761fa5…`). Binarul nou:
+`tools/nak/out2/mm_tc_v7.sm86.sass`, SHA-256 `953ed6b85fb0022183ef0e5b4b3262cd3f3742c43dcea2397ed9e2d285e1cf6a`.
+Pasul 3 (nota pentru OS): `integration/cyber-universe/C-157_P2zzi_mm-tc-v7.md`.
+

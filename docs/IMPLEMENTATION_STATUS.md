@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 266 — 27 noiembrie 2026, ~07:13–08:00 (ora României), în cloud, FĂRĂ placă — **`mm_tc_v7` = `mm_tc_v6` cu 16 B de umplutură pe rândurile memoriei comune (citirile fără conflict): compilat (W1–W2 CONFIRMATE), aceiași biți în SIMULARE (T280, W3); PREDARE P2zzi**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 265), l-am pus `ocupat`. În hub nu venise niciun rezultat nou de la placă
+(os-481 = pasul cu v5, os-477 = `token32_v2`, proba v6 — toate nerulate) → coada C-157 p.2: pașii 1–3 din
+`docs/C-157_CITIRI_CONFLICTE.md` §5. Clona veche din container (sesiunea 196) a fost adusă la `origin` (nimic pierdut: commit-urile ei
+sunt deja pe `origin`).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Unealta NAK | Mesa 26.3.1 reconstruit în cloud; `mm_tc_v6` recompilat identic (`8c761fa5…`) | PASS |
+| `mm_tc_v7` compilat (W1) | aceleași clase de instrucțiuni ca v6; 32 `lds` + 8 `ldsm.x4` la exact deplasările socotite din GLSL (rânduri 80 / 144 B, `bs4_` la 5 120 B); 1 982 instrucțiuni (v6: 1 986) | PASS (MĂSURAT pe text) |
+| Registre și memorie (W2) | 128 registre, 0 locală, 14 336 B, 16 warp-uri / 4 blocuri pe SM la 64 KiB | PASS |
+| Citirile | fără conflict pe orice steag: 128 de treceri pe bloc și felie (v6: 512 / 768 / 1 024) | PASS (CALCUL pe listare) |
+| Aceiași biți (W3) | fragmentele transcrise = ale lui v6 pe cele 4 combinații (greșeala plantată prinsă pe fiecare operand), umplutura neatinsă; prin procesorul de comenzi aceiași biți ca `mm_tc` și `mm_tc_v6` pe toate produsele aliniate × 8 opțiuni; refuzurile lui v6 | PASS (SIMULARE, T280) |
+| Pe placă (W4–W8) | — | NOT TESTED |
+| Verificările întregi | format, clippy, teste, no_std | **1 392 PASS** (8 ignorate) |
+
+**Note:** `docs/C-157_CITIRI_CONFLICTE.md` §6, T280 (`crates/nvidia-ga104/tests/sim_c157_mm_tc_v7.rs`). PREDARE
+`integration/cyber-universe/C-157_P2zzi_mm-tc-v7.md`. **Nou pentru placă:** doar programul `mm_tc_v7` (SHA-256 `953ed6b8…cf6a`),
+în probă, sub opțiune oprită implicit. Nicio scriere în registre, niciun firmware. Interfața: doar adăugări (`nvidia_ga104::mm_tc_v7`,
+`gpu_sim::cmdproc::{mm_tc_v7_on_cpu, MM_TC_V7_NEEDS}`).
+
+**Următorul pas:** comparațiile când vin (pasul cu v5 P2zzf, `token32_v2` P2zzd, proba v6 + seturile 6 / 7 P2zzg / P2zzh, proba v7
+P2zzi); altfel, fără placă: `mm_tc_v7` în pasul mixt rapid se pregătește doar după proba v6 / v7 (regula din §5) → până atunci
+următorul punct al cozii C-157.
+
 ## Sesiunea 265 — 27 noiembrie 2026, ~06:11–07:01 (ora României), în cloud, FĂRĂ placă — **socoteala conflictelor la citiri (`coopMatLoad`) în bucla lui `mm_tc_v5` / `mm_tc_v6`, pe cele trei steaguri ale pasului #513, și planul `mm_tc_v7` (rânduri cu 16 B de umplutură), scris înainte de cod (T279, CALCUL)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 264), l-am pus `ocupat`. În hub nu venise niciun rezultat nou de la placă

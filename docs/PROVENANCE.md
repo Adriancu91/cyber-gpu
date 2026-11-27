@@ -652,3 +652,7 @@ niciun octet de firmware NVIDIA.
   NAK a programului nostru `mm_tc_v6`; modelul băncilor din ghidul public CUDA (capacitatea 8.6) și forma lui `ldmatrix` din
   documentația publică PTX; pasul liniar al lui `coopMatLoad` din specificația publică `GL_KHR_cooperative_matrix`. Ideea umpluturii
   rândurilor e cunoscută public; nimic copiat; nimic din firmware-ul NVIDIA.
+- **Sesiunea 266 (27 nov 2026):** `tools/nak/mm_tc_v7.comp` (al nostru: `mm_tc_v6.comp` cu 16 octeți de umplutură pe fiecare rând
+  al feliilor), `nvidia_ga104::mm_tc_v7`, `gpu_sim::cmdproc::mm_tc_v7_on_cpu` și testul T280 (ale noastre). Aceleași surse publice ca
+  la sesiunea 265 (ghidul CUDA, PTX `ldmatrix`, `GL_KHR_cooperative_matrix`). Compilat cu Mesa NAK 26.3.1 (MIT), pe gazdă. Nimic
+  copiat; nimic din firmware-ul NVIDIA.
