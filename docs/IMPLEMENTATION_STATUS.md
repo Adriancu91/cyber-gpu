@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 279 — 27 noiembrie 2026, ~21:10–22:15 (ora României), în cloud, FĂRĂ placă — **C-168 p.3: înmulțirea v8 scrisă și compilată (`mm_tc_v8` 128×128 + `mm_tc_v8n` 128×64), G1–G3 CONFIRMATE (listare + SIMULARE); compilatorul copia acumulatorii în jurul fiecărui `hmma` (și în v7) — leacul 16×8 pentru v8n; PREDARE P3a**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 278), l-am pus `ocupat`. Niciun rezultat nou de pe placă în hub de la os-496;
+`--token32-v3` (P2zzt) n-a rulat încă. Am luat pasul următor din `docs/C-168_V8_PLAN.md` §6.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Unealta a doua (Mesa 26.3.1) reconstruită în cloud | `mm_tc_v7` iese identic (`953ed6b8…`) | PASS |
+| G1 compilarea | v8 **128** registre (2 blocuri pe SM), v8n **144** (3), 0 memorie locală, 24 576 / 18 432 B | CONFIRMATĂ |
+| G2 bucla K | doar `ldsm` (4 × x4 + 4 × x2), 0 `lds`, 0 `movm`, 1 barieră, 16 `hmma`, pe toate steagurile | CONFIRMATĂ |
+| Copiile de registre (nou, MĂSURAT pe listare) | NAK copiază acumulatorii în jurul fiecărui `hmma`: v7 138 în buclă, v8 148; cu acumulatori 16×8 v8n 161 → **41** (aceiași biți) | aflat; v8 rămâne de redus |
+| G3 (T295) | aceiași biți ca `mm_tc` pe 6 forme × 8 steaguri, ambele programe; fir cu fir: bucățile = op(A) / op(B), umplutura neatinsă, `ldsm` fără conflict; refuzurile | PASS în SIMULARE |
+| G4–G7 (biții și timpul pe placă, pasul) | — | NOT TESTED (cer placa) |
+| Verificările întregi | format, clippy, teste, no_std | **1 461 PASS** |
+
+**Note:** `docs/C-168_V8_PLAN.md` §7, `tools/nak/mm_tc_v8.comp`, `tools/nak/build2.sh` (`mm_tc_v8`, `mm_tc_v8n`),
+`nvidia_ga104::mm_tc_v8` (doar adăugări), `gpu_sim::cmdproc::{mm_tc_v8_on_cpu, mm_tc_v8n_on_cpu}`, T295
+`crates/nvidia-ga104/tests/sim_c168_mm_tc_v8.rs`, rândurile în `TEST_MATRIX.md` și `PROVENANCE.md`. PREDARE
+`integration/cyber-universe/C-168_P3a_mm-tc-v8.md`. **Nou pentru placă:** cele două programe (opțiunea `--mm-tc-v8` în probă);
+niciun registru, niciun firmware.
+
+**Următorul pas:** alegerea pe formă în pas (`TcPick::V8` / `V8n`, G7, doar adăugări) + încercarea de a coborî copiile din v8
+(ordinea `j`/`i` încercată: mai rău, 180); comparațiile când vin (`--mm-tc-v8` G4–G6, `--token32-v3` P2zzt). Apoi C-168 p.4.
+
 ## Sesiunea 278 — 27 noiembrie 2026, ~20:11–21:05 (ora României), în cloud, FĂRĂ placă — **os-496 (`--pas-v7`) comparat: P1 / P2 CONFIRMATE (20 795 simb/s la lot 6); C-168 punctul 3 — planul înmulțirii v8 + predicțiile G1–G7, scrise înainte de cod; PREDARE P2zzu (nimic nou pentru placă)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 277), l-am pus `ocupat`. În hub venise os-496 (ciclurile 19:48 și 19:54,

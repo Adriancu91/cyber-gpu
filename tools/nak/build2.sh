@@ -17,6 +17,8 @@
 #   sh tools/nak/build2.sh mm_tc_v5     # C-157 p.2: mm_tc_v4 with a 12 KiB block (per-warp output staging) -> 4 blocks per SM at 64 KiB, same bits (session 258)
 #   sh tools/nak/build2.sh mm_tc_v6     # C-157 p.2: mm_tc_v5 with 64-bit f16 slice stores, transposed operands column-major, same bits (session 263)
 #   sh tools/nak/build2.sh mm_tc_v7     # C-157 p.2: mm_tc_v6 with 16 bytes of padding per shared row (conflict-free reads), same bits (session 266)
+#   sh tools/nak/build2.sh mm_tc_v8     # C-168 p.3: 128x128 blocks, 2 shared stages, A by rows / B by columns (all ldsm), same bits (session 279)
+#   sh tools/nak/build2.sh mm_tc_v8n    # C-168 p.3: the same source with -DV8N: 128x64 blocks, 128 threads (session 279)
 #   sh tools/nak/build2.sh mm_tc128_v4  # C-157 p.2: mm_tc128 with mm_tc_v4's cure (loads ahead, 128 bits), same bits (session 231)
 #   sh tools/nak/build2.sh mm_s8        # B1 step 3: int8 matmul on the tensor cores, 128x128 tiles, i32 out (session 225)
 #   sh tools/nak/build2.sh attn_back_tile_tc # C-157: attn_back_tile_3's dQ / dK / dV on the tensor cores, f16 inputs (session 243)
@@ -84,6 +86,13 @@ mm_tc_v6)
 mm_tc_v7)
     exec sh "$0" kernel mm_tc_v7 48
     ;;
+mm_tc_v8)
+    exec sh "$0" kernel mm_tc_v8 48
+    ;;
+mm_tc_v8n)
+    GLSL_DEFS=-DV8N; KSRC=mm_tc_v8; export GLSL_DEFS KSRC
+    exec sh "$0" kernel mm_tc_v8n 48
+    ;;
 mm_tc128_v4)
     exec sh "$0" kernel mm_tc128_v4 48
     ;;
@@ -112,7 +121,8 @@ kernel)
     NAME=${2:?nume}; PUSH=${3:?octeti push constants}
     OUT=$HERE/out2; TMP=$(mktemp -d); mkdir -p "$OUT"
     LIB=$(dirname "$(find -L "$INST" -name libnouveau_noop_drm_shim.so | head -1)")
-    glslangValidator -V --target-env vulkan1.3 "$HERE/$NAME.comp" -o "$TMP/$NAME.spv"
+    # KSRC / GLSL_DEFS: one source compiled into two programs (mm_tc_v8n = mm_tc_v8.comp with -DV8N)
+    glslangValidator -V --target-env vulkan1.3 ${GLSL_DEFS:-} "$HERE/${KSRC:-$NAME}.comp" -o "$TMP/$NAME.spv"
     spirv-val --target-env vulkan1.3 "$TMP/$NAME.spv"
     cc -O1 -Wall -o "$TMP/nak_dump_cm" "$HERE/nak_dump_cm.c" -lvulkan
     VK_ICD_FILENAMES="$INST/share/vulkan/icd.d/nouveau_icd.x86_64.json" \

@@ -3614,6 +3614,53 @@ pub fn mm_tc_v7_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     mm_tc_v6_on_cpu(l)
 }
 
+/// C-168 p.3 (session 279, `docs/C-168_V8_PLAN.md`): what `tools/nak/out2/mm_tc_v8.sm86.sass` needs — two stages of
+/// the f16 slices (op(A) 128 rows and op(B) 128 rows, 16 values + 8 of padding = 48 B each): 2 × 256 × 48 = 24 576 B,
+/// the per-warp output scratch reusing the stages; one barrier.
+pub const MM_TC_V8_NEEDS: Needs = Needs {
+    shared_bytes: 2 * (128 + 128) * 48,
+    barriers: 1,
+};
+
+/// C-168 p.3 (session 279): what `tools/nak/out2/mm_tc_v8n.sm86.sass` needs — as [`MM_TC_V8_NEEDS`] with op(B) 64 rows:
+/// 2 × 192 × 48 = 18 432 B, one barrier.
+pub const MM_TC_V8N_NEEDS: Needs = Needs {
+    shared_bytes: 2 * (128 + 64) * 48,
+    barriers: 1,
+};
+
+/// C-168 p.3 (session 279): the CPU stand-in for `tools/nak/out2/mm_tc_v8.sm86.sass` — `mm_tc`'s job on 128×128 tiles
+/// (blocks of 256×1×1, grid (⌈n/128⌉, ⌈m/128⌉, 1)): op(A) kept by rows and op(B) by columns in shared memory (the
+/// turn done in registers), two stages, K slices of 16 in order from 0, the bias added once in f32. Every element gets
+/// the same f16 values and the same chain of tensor-core steps as in `mm_tc`, so the arithmetic is
+/// `gpu_compute::mm_tc::model` (a HYPOTHESIS fitted on os-335 and matched by `mm_tc` on the board). Aligned products
+/// only (the 128-bit loads, [`tc_aligned`]); anything else is REFUSED (no write).
+pub fn mm_tc_v8_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [256, 1, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: mm_tc_v8 cere blocuri de 256x1x1"));
+    }
+    if !tc_aligned(l)? {
+        return Err(bad(
+            "SIM: mm_tc_v8: produs nealiniat (randuri multiplu de 4, adrese multiplu de 16)",
+        ));
+    }
+    mm_tc_tiles_mn_on_cpu(l, 128, 128)
+}
+
+/// C-168 p.3 (session 279): the CPU stand-in for `tools/nak/out2/mm_tc_v8n.sm86.sass` — [`mm_tc_v8_on_cpu`] on 128×64
+/// tiles (128 rows, 64 columns of C): blocks of 128×1×1, grid (⌈n/64⌉, ⌈m/128⌉, 1). Same arithmetic, same refusals.
+pub fn mm_tc_v8n_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [128, 1, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: mm_tc_v8n cere blocuri de 128x1x1"));
+    }
+    if !tc_aligned(l)? {
+        return Err(bad(
+            "SIM: mm_tc_v8n: produs nealiniat (randuri multiplu de 4, adrese multiplu de 16)",
+        ));
+    }
+    mm_tc_tiles_mn_on_cpu(l, 128, 64)
+}
+
 /// C-165 after os-416 (session 220): what `tools/nak/out2/mm_tc128.sm86.sass` needs — the f16 slices of op(A)
 /// (128×32) and op(B) (32×128) plus one 16×16 f32 scratch per subgroup (8 of them): 8 + 8 + 8 KiB, one barrier.
 pub const MM_TC128_NEEDS: Needs = Needs {
@@ -3743,6 +3790,11 @@ pub fn mm_s8_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
 
 /// `mm_tc` / `mm_tc128` after the block check: cbuf0, refusals and the product, for C tiles of `tile`×`tile`.
 fn mm_tc_tiles_on_cpu(l: &mut Launch<'_>, tile: usize) -> GpuResult<()> {
+    mm_tc_tiles_mn_on_cpu(l, tile, tile)
+}
+
+/// [`mm_tc_tiles_on_cpu`] with tiles of `tile_m` rows × `tile_n` columns of C (the grid must cover C).
+fn mm_tc_tiles_mn_on_cpu(l: &mut Launch<'_>, tile_m: usize, tile_n: usize) -> GpuResult<()> {
     use gpu_compute::mm_tc;
     if l.mem.read_u64(l.cbuf0)? != 0 {
         return Err(bad(
@@ -3761,7 +3813,7 @@ fn mm_tc_tiles_on_cpu(l: &mut Launch<'_>, tile: usize) -> GpuResult<()> {
     if flags & !(mm_tc::TA | mm_tc::TB | mm_tc::BIAS) != 0 {
         return Err(bad("SIM: mm_tc: biti de optiuni necunoscuti"));
     }
-    if (l.grid[0] as usize) < n.div_ceil(tile) || (l.grid[1] as usize) < m.div_ceil(tile) {
+    if (l.grid[0] as usize) < n.div_ceil(tile_n) || (l.grid[1] as usize) < m.div_ceil(tile_m) {
         return Err(bad("SIM: mm_tc: grila nu acopera C (nemodelat)"));
     }
     let x = l.mem.read_f32s(a, m * k)?;

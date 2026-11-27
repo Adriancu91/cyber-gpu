@@ -108,3 +108,43 @@ din antetul scriptului. Apoi `mm_tc_v8.comp` → listarea (G1, G2) → modelul +
 Surse (publice, citite ca specificație, nimic copiat): ghidul CUDA (memoria comună, bănci, capacitatea 8.6), documentația PTX
 (`ldmatrix`, `mma.m16n8k16`), foaia publică NVIDIA GA104 (vârful f16 / sume f32); sursa Mesa 26.3.1 (MIT): `nak/ir.rs`,
 `nak_nir_lower_cmat.c`, `nvk_physical_device.c` — doar citite, pentru ce poate compilatorul.
+
+## 7. Ce a ieșit (sesiunea Cyber-GPU 279, 27 nov 2026, ~21:10–22:10, în cloud, FĂRĂ placă)
+
+Unealta a doua (Mesa 26.3.1) reconstruită în cloud; **`mm_tc_v7` iese identic** (`953ed6b8…`), deci e aceeași unealtă ca pentru
+programele de pe placă. Sursa: `tools/nak/mm_tc_v8.comp` (v8n = aceeași sursă cu `-DV8N`, `sh tools/nak/build2.sh mm_tc_v8n`).
+
+| | v8 (128×128, 256 fire) | v8n (128×64, 128 fire) |
+|---|---|---|
+| SHA-256 | `1b910a53…8c4b29` | `9a0702bc…20aae` |
+| registre / memorie comună / memorie locală | **128** / 24 576 B / 0 | **144** / 18 432 B / 0 |
+| blocuri pe SM la 64 KiB (cu rezerva de 1 KiB) | **2** | **3** |
+| bucla K (o felie de 16): `hmma` / `ldsm.x4` / `ldsm.x2` / `lds` / bariere | 16 / 4 / 4 / **0** / **1** | 16 / 4 / 4 / **0** / **1** |
+| copii de registre (`mov`) în buclă | 148 | **41** |
+| instrucțiuni în buclă pe `hmma` | 22,6 | 20,0 |
+
+**Verdictul predicțiilor (cele scrise în §4):**
+- **G1 — CONFIRMATĂ:** v8 = 128 registre (≤ 128, cât trebuie pentru 2 blocuri pe SM), v8n = 144 (≤ 168, 3 blocuri), 0 memorie locală.
+- **G2 — CONFIRMATĂ** pe forma scrisă (prima compilare, acumulatori 16×16: 6 `ldsm.x4` = 4 pentru A + 2 pentru B, 0 `lds`, 0 `movm`,
+  1 barieră, 16 `hmma`, fără ramificare pe steaguri în jurul citirilor). Programul final are acumulatori 16×8 (mai jos), deci B se
+  citește cu 4 `ldsm.x2` în loc de 2 `ldsm.x4` — aceiași octeți, tot fără `lds`.
+- **G3 — CONFIRMATĂ (SIMULARE, T295):** aceiași biți ca `mm_tc` pe 6 forme × 8 combinații de steaguri (TA / TB / BIAS, blocuri
+  parțiale, forme mai mici decât un bloc), pentru ambele programe; refuzate: adresa nealiniată, blocul celuilalt program, grila
+  prea mică. În plus, refăcut fir cu fir în Rust: fiecare bucată citită de buclă are exact op(A) / op(B) ale feliei (0 în afara
+  matricei), fiecare jumătate a unei trepte e scrisă o dată, umplutura nu e nici scrisă, nici citită; citirile `ldsm` cu rânduri de
+  48 B sunt fără conflict de bănci (o greșeală plantată — B citit pe rânduri — e prinsă).
+- G4–G7: **NOT TESTED** (cer placa; nota pentru OS: `integration/cyber-universe/C-168_P3a_mm-tc-v8.md`).
+
+**Ce am aflat nou (MĂSURAT pe listare, nepus în predicții):** compilatorul **copiază acumulatorii în și din registre în jurul
+fiecărui `hmma`** — și în v7 (138 `mov` în bucla de 16 `hmma`, programul care merge azi pe placă). Cauza văzută în listare: un
+`coopMatMulAdd` 16×16×16 devine două `hmma.m16n8k16`, iar alocatorul nu ține jumătățile acumulatorului lipite. Scris cu
+acumulatori **16×8** (fiecare = exact registrele unui `hmma`), v8n coboară de la 161 la **41** de copii; v8 rămâne la 148 (la
+128 de registre alocatorul nu are loc de manevră: NAK ia doar câte registre socotește că trăiesc, limita lui pentru 256 de fire
+fiind 254 — citit în `nak/assign_regs.rs`, `nak/ir.rs::gpr_limit_from_local_size`). Aceleași `hmma` pe aceleași valori în
+aceeași ordine → aceiași biți. Socoteala bugetului (DEDUS): la vârful f16 → f32 al plăcii un `hmma.m16n8k16` ține circuitul unei
+sub-partiții ~32 de tacte, deci sub ~32 de instrucțiuni pe `hmma` copiile nu frânează prin număr, ci doar prin lanțurile de
+așteptare. Dacă pe placă v8 iese sub prag (§4: < ×1,15 față de v7 la qkv-513) și v8n peste v8 pe aceleași forme, copiile din v8 sunt
+primul suspect, înaintea citirilor din memoria plăcii.
+
+**Următorul pas:** proba pe placă a sesiunii OS (`--mm-tc-v8`, G4–G6); între timp alegerea pe formă în pas (`TcPick::V8` /
+`V8n`, G7, doar adăugări) și o încercare de a coborî copiile din v8 (ordinea buclelor `i`/`j` sau două unități de citire pe fir).

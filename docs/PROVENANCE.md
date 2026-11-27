@@ -679,3 +679,8 @@ niciun octet de firmware NVIDIA.
   Citite ca specificație, nimic copiat: sursa Mesa 26.3.1 (MIT; `nak/ir.rs`, `nak_nir_lower_cmat.c`, `nvk_physical_device.c`) ca
   să aflăm ce poate compilatorul (fără `cp.async`; când alege `ldsm`); ghidul CUDA și documentația PTX publice; foaia publică GA104.
   Nimic din firmware-ul NVIDIA.
+- **Sesiunea 279 (27 nov 2026):** `tools/nak/mm_tc_v8.comp` (al nostru: două trepte în memoria comună, A pe rânduri / B pe coloane
+  cu întoarcerea în registre, acumulatori 16×8; v8n = aceeași sursă cu `-DV8N`), `nvidia_ga104::mm_tc_v8`,
+  `gpu_sim::cmdproc::{mm_tc_v8_on_cpu, mm_tc_v8n_on_cpu}`, testul T295 (ale noastre). Compilat cu Mesa NAK 26.3.1 (MIT), pe gazdă.
+  Citite ca specificație, nimic copiat: `nak/assign_regs.rs` și `nak/ir.rs` (cum alege NAK numărul de registre). Nimic din
+  firmware-ul NVIDIA.
