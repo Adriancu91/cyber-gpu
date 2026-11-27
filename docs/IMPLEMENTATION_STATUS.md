@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 265 — 27 noiembrie 2026, ~06:11–07:45 (ora României), în cloud, FĂRĂ placă — **socoteala conflictelor la citiri (`coopMatLoad`) în bucla lui `mm_tc_v5` / `mm_tc_v6`, pe cele trei steaguri ale pasului #513, și planul `mm_tc_v7` (rânduri cu 16 B de umplutură), scris înainte de cod (T279, CALCUL)**
+## Sesiunea 265 — 27 noiembrie 2026, ~06:11–07:01 (ora României), în cloud, FĂRĂ placă — **socoteala conflictelor la citiri (`coopMatLoad`) în bucla lui `mm_tc_v5` / `mm_tc_v6`, pe cele trei steaguri ale pasului #513, și planul `mm_tc_v7` (rânduri cu 16 B de umplutură), scris înainte de cod (T279, CALCUL)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 264), l-am pus `ocupat`. În hub nu venise niciun rezultat nou de la placă
 (pasul cu v5, `token32_v2`, proba v6 nerulate) → coada C-157 p.2: socoteala conflictelor la citiri, plan + predicții întâi.

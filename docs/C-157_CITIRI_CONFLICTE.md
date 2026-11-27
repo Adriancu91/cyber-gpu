@@ -1,6 +1,6 @@
 # C-157 punctul 2 — conflictele la **citiri** (`coopMatLoad`) în bucla lui `mm_tc_v5` / `mm_tc_v6`, pe cele trei steaguri ale pasului #513, și planul rândurilor cu umplutură (`mm_tc_v7`)
 
-Sesiunea Cyber-GPU 265, 27 nov 2026, ~06:10–07:40 (ora României), în cloud, **fără placă**. Totul de mai jos e **CALCUL** pe procesor
+Sesiunea Cyber-GPU 265, 27 nov 2026, ~06:10–07:00 (ora României), în cloud, **fără placă**. Totul de mai jos e **CALCUL** pe procesor
 (testul T279, `crates/nvidia-ga104/tests/calc_c157_mm_tc_reads.rs`) și e scris **înainte** de orice cod nou de program GPU.
 Nimic din ce e aici n-a rulat pe placă.
 
