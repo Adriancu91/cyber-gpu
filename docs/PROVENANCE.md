@@ -648,3 +648,7 @@ niciun octet de firmware NVIDIA.
   tablourile de alt tip la `coopMatLoad`: specificația publică `GL_KHR_cooperative_matrix` / `SPV_KHR_cooperative_matrix`. Compilat
   cu Mesa NAK 26.3.1 (MIT), pe gazdă; `nvidia_ga104::mm_tc_v6`, `gpu_sim::cmdproc::mm_tc_v6_on_cpu` și T276 sunt ale noastre. Nimic
   copiat; nimic din firmware-ul NVIDIA.
+- **Sesiunea 265 (27 nov 2026):** testul T279 și `docs/C-157_CITIRI_CONFLICTE.md` (ale noastre): adresele citirilor luate din listarea
+  NAK a programului nostru `mm_tc_v6`; modelul băncilor din ghidul public CUDA (capacitatea 8.6) și forma lui `ldmatrix` din
+  documentația publică PTX; pasul liniar al lui `coopMatLoad` din specificația publică `GL_KHR_cooperative_matrix`. Ideea umpluturii
+  rândurilor e cunoscută public; nimic copiat; nimic din firmware-ul NVIDIA.

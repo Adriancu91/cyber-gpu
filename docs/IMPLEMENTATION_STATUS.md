@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 265 — 27 noiembrie 2026, ~06:11–07:45 (ora României), în cloud, FĂRĂ placă — **socoteala conflictelor la citiri (`coopMatLoad`) în bucla lui `mm_tc_v5` / `mm_tc_v6`, pe cele trei steaguri ale pasului #513, și planul `mm_tc_v7` (rânduri cu 16 B de umplutură), scris înainte de cod (T279, CALCUL)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 264), l-am pus `ocupat`. În hub nu venise niciun rezultat nou de la placă
+(pasul cu v5, `token32_v2`, proba v6 nerulate) → coada C-157 p.2: socoteala conflictelor la citiri, plan + predicții întâi.
+Clona veche din container era rămasă la sesiunea 196 (despărțită); am lucrat într-o clonă proaspătă, fără să ating clona veche.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Adresele citirilor | luate din listarea NAK a lui v6 (32 `lds.b32` + 8 `ldsm.x4`, deplasările și formulele firelor verificate în text de T279); v5 = v6 fără steag | PASS (CALCUL pe listare) |
+| Conflictele (modelul public CUDA 8.6) | `lds` cu rânduri la 128 B: **8 la 1**; `ldsm` cu rânduri la 64 B: **4 la 1** | PASS (CALCUL) |
+| Pe bloc și felie, citiri + scrieri | v5: 1 024 / 1 408 / 1 920 (fără steag = dX / `TB` = înainte, proba qkv-513 / `TA` = dW); v6: 832 / 576 / 1 088; la dW în v6 citirile (1 024) sunt de 16 ori scrierile (64) | PASS (CALCUL) |
+| Planul v7 | rânduri de 80 / 144 B: citiri fără conflict (128), scrierile de 64 B 2 la 1 (schimbul cerut de aliniere), total 224 / 256 / 192; 14 336 B, tot 4 blocuri pe SM la 64 KiB | PASS (CALCUL) |
+| Predicții (scrise înainte) | W1–W8: v7 / v6 qkv-513 ×1,00–1,20, dx ×1,05–1,40, dw ×1,10–1,60; plafoanele ×1,25 / ×1,50 / ×1,75 | NOT TESTED |
+| Verificările întregi | format, clippy, teste, no_std | **1 382 PASS** (8 ignorate) |
+
+**Note:** `docs/C-157_CITIRI_CONFLICTE.md`, T279 (`crates/nvidia-ga104/tests/calc_c157_mm_tc_reads.rs`). **Nou pentru placă:**
+nimic (doar socoteală). Interfața: neschimbată.
+
+**Următorul pas:** comparațiile când vin (pasul cu v5 P2zzf, `token32_v2` P2zzd, proba v6 + seturile 6 / 7 P2zzg / P2zzh); altfel
+`tools/nak/mm_tc_v7.comp` după planul din `docs/C-157_CITIRI_CONFLICTE.md` §5 (compilare → W1–W2, apoi SIMULARE → W3).
+
 ## Sesiunea 264 — 27 noiembrie 2026, ~05:12–05:56 (ora României), în cloud, FĂRĂ placă — **`mm_tc_v6` legat în pasul mixt rapid (`TcPick::V6`, `pack_mixed_fast_attn6`, doar adăugări; T277 în SIMULARE) + două seturi de timp noi în proba `mm_tc` (`qkv-513-dx`, `qkv-513-dw`; T278) + o corectură la planul v6: proba qkv-513 e cazul `TB` (B transpus), nu cel fără transpunere; PREDARE P2zzh**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 263), l-am pus `ocupat`. În hub nu venise niciun rezultat nou de la placă
