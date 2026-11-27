@@ -1,5 +1,25 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 270 — 27 noiembrie 2026, ~11:13–12:05 (ora României), în cloud, FĂRĂ placă — **os-486 comparat: `mm_tc_v7` dă aceiași biți ca `mm_tc` (7 / 7) și pe înainte (qkv-513, în fereastră) v7@64k = 1,196 ms = 18,17 TFLOP/s, ×1,05 față de v6 (W5 în bandă); dX / dW iar după expirarea cererii de 600 s → W6–W8 nejudecabile; reluarea propusă în P2zzl tot n-ar încăpea → rândul nou cu cererea de 1 800 s; PREDARE P2zzm**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 269), l-am pus `ocupat`. În hub venise ciclul 11:09 = os-486 → punctul 2 al cozii C-157.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Biții `mm_tc_v7` / `@64k` (W4) | 7 / 7 seturi aliniate = `mm_tc` (și dX / dW), 1 sărit nealiniat; lanțul + 16 simboluri trec | PASS (MĂSURAT de OS) |
+| W5: qkv-513 v7 / v6 | ×1,051 la 64 KiB (banda ×1,00–1,20), ×1,068 fără; v7@64k 18,17 TFLOP/s; repetarea față de os-485 sub 0,5 % | PASS (CALCUL, T284) |
+| Ce spune W5 | dreapta T282 ar fi dat ×1,23 → sub calea 576 memoria comună nu mai e frâna pe înainte (panta ~0,22 în loc de 0,82) | DEDUS |
+| Fereastra de viteză | cererea la 114,9 s, expiră la 714,9 s, lanțul ~2 100 s; în fereastră qkv toate 10, dX până la v4@64k, dW niciunul | CALCUL (T284) pe jurnalul MĂSURAT |
+| W6, W7, W8 (dX / dW v7 / v6) | măsurate după expirare | **BLOCKED** (de reluat cu cererea de 1 800 s) |
+| Reluarea P2zzl | n-ar încăpea în 600 s (primul dW la ~804 s; greșeala mea: 6 programe pe set, nu 3); cu 1 800 s gata la ~1 150 s | CALCUL (T284) |
+| Verificările întregi | format, clippy, teste, no_std | **1 409 PASS** (8 ignorate) |
+
+**Note:** `docs/C-157_OS486.md`, T284 (`crates/nvidia-ga104/tests/calc_c157_os486_v7.rs`), rândul nou în `docs/C-157_P2_COMPARATII.md`.
+PREDARE `integration/cyber-universe/C-157_P2zzm_os486-v7.md`. **Nou pentru placă:** nimic. Interfața: neschimbată.
+
+**Următorul pas:** comparațiile când vin (reluarea dX / dW cu v6 / v7 și cererea de 1 800 s P2zzm, pasul cu `--pas-v6`, lot 6 cu
+tabloul ținut P2zzj, `token32_v2` P2zzd); după dX / dW la viteză: `mm_tc_v7` legat în pas (`TcPick` nou); altfel următorul punct al cozii C-157.
+
 ## Sesiunea 269 — 27 noiembrie 2026, ~10:12–10:58 (ora României), în cloud, FĂRĂ placă — **os-485 comparat: biții dX / dW = `mm_tc` peste tot, dar lanțul a durat 1 611 s și cererea de viteză maximă (600 s) a expirat la 714,3 s → v6 pe dX și tot dW au rulat cu placa încetinită (P8 la final, 210 MHz); timpii lor NU sunt timpi la viteză; V9 / V10 nejudecabile; `BoostPlan::covers_ms` (doar adăugare); PREDARE P2zzl**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 268), l-am pus `ocupat`. În hub venise ciclul 09:52 = os-485 → punctul 2 al cozii C-157.

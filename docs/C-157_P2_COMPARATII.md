@@ -745,3 +745,11 @@ Sursa: `Cyber-hub/rezultate/os-automat/2026-11-22/ciclu-auto-20261122-0506.txt` 
   V9 și V10: **nejudecabile**, de reluat. Concluziile de viteză din `REZULTAT.md` (v6 ×8 mai lent la dX, dW ×14) nu se sprijină pe cifre.
 - **Bun:** v5@64k dX 1,620 ms = 13,42 TFLOP/s; înainte / dX ×1,154, dreapta T282 prezice ×1,176 (1,8 %).
 - **Nou:** `BoostPlan::covers_ms` (doar socoteală). PREDARE P2zzl. Nota întreagă: `docs/C-157_OS485.md`.
+
+## os-486 `--mm-tc-v7 --mm-tc-dxdw` (27 nov 2026, 11:09) — sesiunea 270
+- **Biții (W4):** `mm_tc_v7` și `@64k` = `mm_tc` pe 7 / 7 seturi aliniate (și dX / dW) — CONFIRMAT.
+- **Pe înainte (W5), în fereastră:** v7@64k **1,196 ms = 18,17 TFLOP/s**, v7 / v6 **×1,051** (banda ×1,00–1,20) — CONFIRMAT; dreapta
+  T282 ar fi dat ×1,23 → sub calea 576 memoria comună nu mai e frâna pe înainte (DEDUS).
+- **Fereastra:** cererea la 114,9 s, expiră la 714,9 s, lanțul ~2 100 s; dX doar până la v4@64k, dW deloc → W6–W8 **nejudecabile**.
+- **Greșeala mea în P2zzl:** reluarea cerută tot n-ar încăpea (primul dW la ~804 s). Nou: rândul cu v6 / v7 și cererea de 1 800 s.
+  PREDARE P2zzm. Nota întreagă: `docs/C-157_OS486.md`.
