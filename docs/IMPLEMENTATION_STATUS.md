@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 278 — 27 noiembrie 2026, ~20:11–21:05 (ora României), în cloud, FĂRĂ placă — **os-496 (`--pas-v7`) comparat: P1 / P2 CONFIRMATE (20 795 simb/s la lot 6); C-168 punctul 3 — planul înmulțirii v8 + predicțiile G1–G7, scrise înainte de cod; PREDARE P2zzu (nimic nou pentru placă)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 277), l-am pus `ocupat`. În hub venise os-496 (ciclurile 19:48 și 19:54,
+rezultatul P2zzr) și comanda nouă C-168 (planul de reparație al lui Adrian, 20:00); `--token32-v3` (P2zzt) n-a rulat încă.
+(Copia locală veche a repo-ului era iar despărțită de GitHub; am lucrat într-o copie nouă a ramurii de pe GitHub, nimic șters.)
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| P1 (lot 2) | alegerile `mm_tc_v7` 147 / v6 0 / v5 0; oracolul mixt ACELEAȘI NUMERE (9,9·10⁻⁸) | CONFIRMATĂ (MĂSURAT de OS, T293) |
+| P2 (lot 6) | placa 147,81 ms în banda 137–162; înmulțirile ×1,545 față de v5; restul 49,7 ms (+0,6 %); 18,3 TFLOP/s = 39 % din vârf | CONFIRMATĂ (CALCUL T293) |
+| Unealta: ce poate NAK (sursa Mesa 26.3.1, citită) | **fără `cp.async`**; `ldsm` doar pentru A pe rânduri / B pe coloane | MĂSURAT pe text |
+| Planul v8 (`docs/C-168_V8_PLAN.md`) | v8 128×128 (2 blocuri pe SM) + v8n 128×64 (3), K = 16, două trepte, toate citirile `ldsm`, alegere pe formă; G1–G7 | scris, înainte de cod |
+| T294 (valurile pe cele 147 de forme) | v8 pierde 25 % pe 85 de forme cu 768 → de aici v8n; banda pasului 117–135 ms (DEDUS); „dW ×1,28” = ultimul val (×1,33 prezis) | PASS (CALCUL) |
+| Verificările întregi | format, clippy, teste, no_std | **1 452 PASS** |
+
+**Note:** `docs/C-157_OS496_V7_IN_PAS.md`, `docs/C-168_V8_PLAN.md`, T293 `crates/nvidia-ga104/tests/calc_c157_os496.rs`, T294
+`crates/nvidia-ga104/tests/calc_c168_v8_plan.rs`, rândurile în `TEST_MATRIX.md` și `PROVENANCE.md`. PREDARE
+`integration/cyber-universe/C-157_P2zzu_os496-si-planul-v8.md`. **Nou pentru placă:** nimic.
+
+**Următorul pas:** C-168 p.3 — construiesc unealta a doua (Mesa 26.3.1, `tools/nak/build2.sh mesa`, ~20 min), scriu
+`mm_tc_v8.comp` (v8 + v8n), listarea (G1, G2), modelul + SIMULARE (G3), nota pentru probă (G4–G6). Comparația `--token32-v3`
+(P2zzt) când vine. Apoi C-168 p.4 (atenția înainte pe circuite).
+
 ## Sesiunea 277 — 27 noiembrie 2026, ~19:11–19:55 (ora României), în cloud, FĂRĂ placă — **`token32_v3`: cele 25 de LayerNorm-uri lipite în înmulțirea care urmează (fiecare grup își face singur LayerNorm-ul și ține x normalizat în registre); planul + predicțiile L1–L7 scrise înainte de cod; compilat NAK (97 registre), SIMULARE = lansările separate bit cu bit; PREDARE P2zzt**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 276), l-am pus `ocupat`. Niciun rezultat nou în hub de la os-495 (18:06);

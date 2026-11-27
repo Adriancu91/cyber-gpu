@@ -674,3 +674,8 @@ niciun octet de firmware NVIDIA.
   lui `layernorm256` calculat de fiecare grup și ținut în registre pentru înmulțirea pe sferturi de bloc), `nvidia_ga104::token_ln`,
   `gpu_sim::cmdproc::token32v3_on_cpu`, testul T292 (ale noastre). Extensia publică `GL_EXT_control_flow_attributes` (Khronos,
   `[[unroll]]`). Compilat cu Mesa NAK 25.0.7 (MIT), pe gazdă. Nicio sursă nouă; nimic copiat; nimic din firmware-ul NVIDIA.
+- **Sesiunea 278 (27 nov 2026):** testele T293 (`calc_c157_os496.rs`) și T294 (`calc_c168_v8_plan.rs`), notele
+  `docs/C-157_OS496_V7_IN_PAS.md` și `docs/C-168_V8_PLAN.md` (ale noastre). Cifrele plăcii copiate din raportul OS-ului (os-496).
+  Citite ca specificație, nimic copiat: sursa Mesa 26.3.1 (MIT; `nak/ir.rs`, `nak_nir_lower_cmat.c`, `nvk_physical_device.c`) ca
+  să aflăm ce poate compilatorul (fără `cp.async`; când alege `ldsm`); ghidul CUDA și documentația PTX publice; foaia publică GA104.
+  Nimic din firmware-ul NVIDIA.
