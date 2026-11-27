@@ -110,7 +110,11 @@ pub struct TokenSim<'a> {
     /// C-157 p.2 (session 274): send `token32_v2c` (v2 + the clock area) instead; the area of the last token lands in
     /// `last_clock` (numbers invented by the SIMULARE model).
     pub token32_v2c: bool,
+    /// C-157 p.2 (session 277): send `token32_v3` (layernorm folded into the next product, `token_ln::work_list_ln`).
+    pub token32_v3: bool,
     pub last_clock: Vec<u32>,
+    /// C-157 p.2 (session 277): the number of operations in the last token list sent (folded pairs count once).
+    pub last_ops: usize,
 }
 
 impl<'a> TokenSim<'a> {
@@ -292,7 +296,9 @@ impl<'a> TokenSim<'a> {
             token32_sms: None,
             token32_v2: false,
             token32_v2c: false,
+            token32_v3: false,
             last_clock: Vec::new(),
+            last_ops: 0,
         })
     }
 
@@ -374,12 +380,19 @@ impl<'a> TokenSim<'a> {
         old_cbuf: bool,
         tamper: Option<(usize, u32)>,
     ) -> GpuResult<u32> {
-        use gpu_sim::cmdproc::{TOKEN32_NEEDS, token32_on_cpu, token32c_on_cpu};
+        use gpu_sim::cmdproc::{TOKEN32_NEEDS, token32_on_cpu, token32c_on_cpu, token32v3_on_cpu};
         use nvidia_ga104::kronos_token as kt;
         use nvidia_ga104::token_clock as tc;
-        let list_bytes = kt::work_list32(launches)?;
-        let n = launches.len();
-        let code = if self.token32_v2c {
+        use nvidia_ga104::token_ln as tl;
+        let (list_bytes, n) = if self.token32_v3 {
+            tl::work_list_ln(launches)?
+        } else {
+            (kt::work_list32(launches)?, launches.len())
+        };
+        self.last_ops = n;
+        let code = if self.token32_v3 {
+            tl::TOKEN32_V3
+        } else if self.token32_v2c {
             tc::TOKEN32_V2C
         } else if self.token32_v2 {
             kt::TOKEN32_V2
@@ -419,7 +432,13 @@ impl<'a> TokenSim<'a> {
         };
         put_bytes(w, launch.pa, &c);
         let q = match self.token32_sms {
+            Some(sms) if self.token32_v3 => tl::token32_v3_qmd_wide(prog.va, cb, groups, sms)?,
             Some(sms) => kt::token32_qmd_wide(prog.va, cb, groups, sms)?,
+            None if self.token32_v3 => {
+                return Err(GpuError::InvalidArgument(
+                    "token32_v3 cere numarul de SM (token32_sms)",
+                ));
+            }
             None => kt::token32_qmd(prog.va, cb, groups)?,
         };
         put_bytes(w, launch.pa + 256, &q);
@@ -439,7 +458,9 @@ impl<'a> TokenSim<'a> {
             .iter()
             .map(|&(p, f, needs)| (p.code(), f, needs))
             .collect();
-        let model = if clock.is_some() {
+        let model = if self.token32_v3 {
+            token32v3_on_cpu
+        } else if clock.is_some() {
             token32c_on_cpu
         } else {
             token32_on_cpu

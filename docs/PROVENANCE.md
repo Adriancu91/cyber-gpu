@@ -670,3 +670,7 @@ niciun octet de firmware NVIDIA.
 - **Sesiunea 276 (27 nov 2026):** testul T291 (`calc_c157_token32_v2c_placa.rs`, al nostru) și `docs/C-157_TOKEN32_V2C_PLACA.md`:
   cifrele sunt copiate din raportul OS-ului (os-495, ciclul 18:06, rândurile `kc`). Nicio sursă nouă; nimic copiat; nimic din
   firmware-ul NVIDIA.
+- **Sesiunea 277 (27 nov 2026):** `tools/nak/token32_v3.comp` (al nostru: `token32_v2.comp` + operațiile 13 / 14, LayerNorm-ul
+  lui `layernorm256` calculat de fiecare grup și ținut în registre pentru înmulțirea pe sferturi de bloc), `nvidia_ga104::token_ln`,
+  `gpu_sim::cmdproc::token32v3_on_cpu`, testul T292 (ale noastre). Extensia publică `GL_EXT_control_flow_attributes` (Khronos,
+  `[[unroll]]`). Compilat cu Mesa NAK 25.0.7 (MIT), pe gazdă. Nicio sursă nouă; nimic copiat; nimic din firmware-ul NVIDIA.

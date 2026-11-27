@@ -4191,6 +4191,63 @@ const TOKEN32_OPS: [(ProgramFn, u32); 13] = [
 /// What `token32.comp` needs: the attention's 2 176 B of shared memory, as `token.comp`.
 pub const TOKEN32_NEEDS: Needs = TOKEN_NEEDS;
 
+/// C-157 p.2 (session 277, `docs/C-157_TOKEN32_V3_LN.md`): `token32_v3.comp` — the operations of [`token32_on_cpu`]
+/// plus 13 / 14: a `layernorm256` folded into the `q8_fused32` / `q8_matvec32` that reads its output. The folded
+/// entry is the product's (arguments from 0x28) with the layernorm's arguments at 0xa0; the model runs the layernorm's
+/// model on them (its constant buffer seen at entry + 0x78, so its 0x28 is the entry's 0xa0) and then the product's
+/// model on the entry, refusing n > 768 or n ≠ 32 × blocks (the program keeps 24 values per lane). It shows the list
+/// and the arguments; that the SASS gives the bits of the separate programs is DEDUS from the listing.
+pub fn token32v3_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    let was = l.mem.set_in_program(false);
+    let ran = token_ops_with(l, &TOKEN32_V3_OPS);
+    l.mem.set_in_program(was);
+    ran
+}
+
+fn ln_folded(l: &mut Launch<'_>, blocks_at: u64, product: ProgramFn) -> GpuResult<()> {
+    let e = l.cbuf0;
+    let n = l.mem.read_u32(e + 0xa0 + 0x20)?;
+    let blocks = l.mem.read_u32(e + blocks_at)?;
+    if n == 0 || n > 768 || blocks.checked_mul(32) != Some(n) {
+        return Err(bad(
+            "SIM: token32_v3: layernorm lipit cu n > 768 sau n != 32 x blocuri",
+        ));
+    }
+    layernorm256_on_cpu(&mut Launch {
+        mem: l.mem,
+        cbuf0: e + 0x78,
+        grid: [1, 1, 1],
+        block: [256, 1, 1],
+    })?;
+    product(l)
+}
+
+fn ln_fused32_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    ln_folded(l, 0x64, q8_fused32_on_cpu)
+}
+
+fn ln_matvec32_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    ln_folded(l, 0x44, q8_matvec32_on_cpu)
+}
+
+const TOKEN32_V3_OPS: [(ProgramFn, u32); 15] = [
+    (copy_b128_on_cpu, 256),
+    (q8_matvec_on_cpu, 32),
+    (vadd_on_cpu, 256),
+    (layernorm_on_cpu, 32),
+    (attention_on_cpu, 32),
+    (gelu_on_cpu, 256),
+    (embed_on_cpu, 256),
+    (q8_fused_on_cpu, 32),
+    (layernorm256_on_cpu, 256),
+    (argmax_on_cpu, 256),
+    (q8_fused32_on_cpu, 32),
+    (q8_matvec32_on_cpu, 32),
+    (embed_dev_on_cpu, 256),
+    (ln_fused32_on_cpu, 32),
+    (ln_matvec32_on_cpu, 32),
+];
+
 /// C-157 p.2 (session 274, `docs/C-157_TOKEN32_CEAS.md`): `token32_v2c.comp` — [`token32_on_cpu`] (the same list and
 /// results) plus the clock area at cbuf 0x40 (n·G + n + 1 + G words, `nvidia_ga104::token_clock`). The numbers written
 /// there are INVENTED (SIMULARE): workgroup g's work on operation k = 1 000 + 37·op + (g mod 5)·3 cycles, a barrier of

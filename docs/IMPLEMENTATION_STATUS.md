@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 277 — 27 noiembrie 2026, ~19:11–19:55 (ora României), în cloud, FĂRĂ placă — **`token32_v3`: cele 25 de LayerNorm-uri lipite în înmulțirea care urmează (fiecare grup își face singur LayerNorm-ul și ține x normalizat în registre); planul + predicțiile L1–L7 scrise înainte de cod; compilat NAK (97 registre), SIMULARE = lansările separate bit cu bit; PREDARE P2zzt**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 276), l-am pus `ocupat`. Niciun rezultat nou în hub de la os-495 (18:06);
+`--pas-v7` (P2zzr) n-a rulat încă. Am luat pasul D1 din `docs/C-157_TOKEN32_V2C_PLACA.md` §4.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Planul + predicțiile L1–L7 (commit `4650561`, înainte de cod) | `docs/C-157_TOKEN32_V3_LN.md` §1–§3 | scris |
+| Mesa NAK 25.0.7 reconstruit în cloud | `token32_v2` iese identic (`5f4d22a0…`) | PASS |
+| L2 listarea `token32_v3` | 10 548 instrucțiuni, **97 registre** (prima variantă: 140 — tabloul global ținut viu prin tot programul, mutat local), 0 memorie locală, bariera ca v2, +80 `shfl.bfly` / +1 `mufu.rsq` | PASS |
+| L6 / L7 (T292) | G = 384 și 768, 3 simboluri = lansările separate bit cu bit; 25 de LayerNorm lipite (88 → 63 operații la #513); contorul (n − 1) · G; puține cuvinte schimbate între simboluri | PASS în SIMULARE |
+| L1 (biții pe placă), L3 (1,18–1,38 ms la G = 768), L4 (~505–560 simb/s), L5 | — | NOT TESTED (cer placa) |
+| Verificările întregi | format, clippy, teste, no_std | **1 445 PASS** |
+
+**Note:** `docs/C-157_TOKEN32_V3_LN.md` (planul, predicțiile, §4 ce a ieșit), `tools/nak/token32_v3.comp`, `nvidia_ga104::token_ln`
+(doar adăugări), `gpu_sim::cmdproc::token32v3_on_cpu`, T292 `crates/nvidia-ga104/tests/sim_c157_token32_v3.rs`, rândurile în
+`TEST_MATRIX.md` și `PROVENANCE.md`. PREDARE `integration/cyber-universe/C-157_P2zzt_token32-v3-ln-lipit.md`. **Nou pentru placă:**
+doar programul `token32_v3` (opțiunea `--token32-v3`, după `--token32-v2`); niciun registru nou.
+
+**Următorul pas:** comparațiile când vin (`--pas-v7` P2zzr lot 2 / lot 6; `--token32-v3` P2zzt: L1, L3–L5); altfel planul +
+predicțiile pentru atenția pe mai multe grupuri în `token32` (D2), scrise înainte de cod; apoi dW (×1,28 față de dX).
+
 ## Sesiunea 276 — 27 noiembrie 2026, ~18:11–18:55 (ora României), în cloud, FĂRĂ placă — **os-495 (`token32_v2c`, ciclul 18:06) comparat cu C1–C8: „restul” lui `token32_v2` stă în LayerNorm făcut de un singur grup (+0,36 ms) și în atenția pe 12 grupuri (+0,15 ms) + bariera 0,17 ms; înmulțirile = lista; PREDARE P2zzs (nimic nou pentru placă)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 275), l-am pus `ocupat`. Rezultatul os-495 a venit în hub la 18:06 (are

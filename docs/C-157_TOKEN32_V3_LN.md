@@ -58,3 +58,17 @@ se folosește; diferența de biți se caută în listare (contractarea `fmul` + 
 3. `gpu-sim`: modelul `token32_v3` = operațiile lui `token32` + 13 / 14 = modelul `layernorm256` urmat de modelul înmulțirii
    (SIMULARE: arată lista și argumentele, nu biții SASS-ului — aceia sunt DEDUȘI din listare).
 4. Testul L7 (SIMULARE) + nota pentru OS (PREDARE): o opțiune nouă, oprită implicit, `token32_v3` după `token32_v2`.
+
+## 4. Ce a ieșit (sesiunea 277, după predicții)
+
+- Compilat (Mesa NAK 25.0.7; `token32_v2` reconstruit identic `5f4d22a0…`): **10 548 de instrucțiuni, 97 de registre** (v2: 92),
+  0 memorie locală, aceeași memorie partajată; SHA-256 `8ecf4fed…5b719`. **L2 PASS** (listare): ≤ 128 registre → 16 grupuri pe SM
+  rămân; bariera aceeași (4 `cctl`, 2 adunări atomice); +80 `shfl.bfly` și +1 `mufu.rsq` = exact un LayerNorm în plus (începutul
+  lipit apare o singură dată în program); toate scrierile `strong.sys`.
+- **Prima compilare a dat 140 de registre** (16 grupuri pe SM n-ar mai fi încăput): cele 24 de valori erau o variabilă globală, deci
+  NAK le ținea vii prin tot programul (și prin atenție). Mutate într-un tablou local al operației lipite (în `main`) → 97.
+  Aritmetica nu s-a schimbat.
+- **L7 PASS în SIMULARE** (T292): G = 384 și 768, trei simboluri, = lansările separate bit cu bit (logit-uri, argmax, ieșirile
+  LayerNorm); toate LayerNorm-urile din lista de azi se lipesc; contorul (n − 1) · G. **L6 PASS** (lista lipită se schimbă în
+  puține cuvinte între simboluri). Concluzia „aceiași biți pe placă” rămâne DEDUSĂ din sursă și listare; o decide L1.
+- Nimic rulat pe placă. PREDARE: `integration/cyber-universe/C-157_P2zzt_token32-v3-ln-lipit.md`.
