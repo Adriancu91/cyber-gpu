@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 281 — 27–28 noiembrie 2026, ~23:11–00:10 (ora României), în cloud, FĂRĂ placă — **C-168 p.4: planul atenției înainte pe circuitele speciale (`attn_fwd_tc`) + predicțiile H1–H7, scrise înainte de cod; socotelile T298**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 280), l-am pus `ocupat`. Proba `--mm-tc-v8` (P3a) n-a rulat încă pe placă
+(OS-ul a legat-o în P6-258, încă nerulată pe placă) → G4–G7 așteaptă. Am luat pasul următor scris: C-168 punctul 4, plan întâi.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Cifrele de azi (os-496 lot 6, MĂSURAT de OS) | `attn_fwd_tile3` 1 346 µs / lansare = **2,02 TFLOP/s** (2 produse); `tc16_v4` 455 µs = **8,96** (3 produse); `tile0_tc_v4` 2,55 | CALCUL (T298a) |
+| S / P prin memorie, atenția înainte | azi 5 treceri = 2 430 MiB pe pas (~5,7–6,4 ms); planul: P scris o dată, 486 MiB | CALCUL / DEDUS (T298c) |
+| Alegerea | **două treceri pe chei, P scris o dată** (înapoi neschimbat; 3 + 4 = 7 produse pe pas, cât FlashAttention-2: 2 + 5); FlashAttention-2 întreg (fără P) = pasul de după | plan |
+| Memoria comună a planului | 28 416 B → 2 blocuri pe SM (azi `tile3`: 1) | CALCUL (T298b) |
+| Grila în perechi (rândurile x și 7 − x într-un bloc) | coada grilei: 32 → **27 unități = idealul** (obișnuită și inversată: 32) | CALCUL (T298d) |
+| H5 / H6 (pe placă) | 550–930 µs pe lansare; atenția înainte 16,1 → 6,6–11,1 ms; placa ~138–143 ms | DEDUS (T298e), NOT TESTED |
+| Ținta C-168 (≤ 6 ms) | cere 8,2 TFLOP/s pe 3 produse = viteza lui `tc16_v4`; cu planul A singur ~20 % | scris cinstit |
+| Verificările întregi | format, clippy, teste, no_std | **1 475 PASS** |
+
+**Note:** `docs/C-168_ATTN_FWD_TC_PLAN.md` (planul, predicțiile H1–H7, pragul, ce e tăiat), T298
+`crates/nvidia-ga104/tests/calc_c168_attn_fwd_tc_plan.rs`, rândurile în `TEST_MATRIX.md` și `PROVENANCE.md`. **Nou pentru placă:**
+nimic. **Nicio schimbare de interfață** (doar un test și documente).
+
+**Următorul pas:** comparația `--mm-tc-v8` (P3a, G4–G6) când vine are întâietate; altfel C-168 p.4 pasul 1: `tools/nak/attn_fwd_tc.comp`
++ compilarea (H1, H2) + `nvidia_ga104::attn_fwd_tc` (doar adăugări).
+
 ## Sesiunea 280 — 27 noiembrie 2026, ~22:11–23:05 (ora României), în cloud, FĂRĂ placă — **os-498 (`--token32-v3`) comparat: aceiași biți, dar 1,453 ms (peste banda 1,18–1,38); C-168 p.3 G7: `mm_tc_v8` / `mm_tc_v8n` legate în pas cu alegerea pe formă (SIMULARE), lot 6 = v7 12 / v8 38 / v8n 97 ca în plan**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 279), l-am pus `ocupat`. În hub venise os-498 (ciclul 22:11, rândul

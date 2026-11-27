@@ -687,3 +687,7 @@ niciun octet de firmware NVIDIA.
 - **Sesiunea 280 (27 nov 2026):** `mm_tc_v8::pick` (regula valurilor, a noastră, din T294), `train_step::pack_mixed_fast_attn8`,
   `batch_ram::pack_mixed_fast_via_ram_attn8`, testele T296 (CALCUL pe cifrele os-498, copiate din raportul OS-ului) și T297
   (SIMULARE) — ale noastre. Nicio sursă străină nouă. Nimic din firmware-ul NVIDIA.
+- **Sesiunea 281 (27–28 nov 2026):** planul `docs/C-168_ATTN_FWD_TC_PLAN.md` și testul T298 (CALCUL; cifrele os-496 copiate din
+  raportul OS-ului) — ale noastre. Idei publice citate (nimic copiat): FlashAttention / FlashAttention-2 (arXiv 2205.14135,
+  2307.08691) — plăcile în memoria comună, softmax-ul din mers, recalcularea lui S înapoi; perechile de rânduri pentru echilibrul
+  cauzal. Nimic din firmware-ul NVIDIA.
