@@ -3570,6 +3570,26 @@ pub fn mm_tc_v5_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     mm_tc_v4_on_cpu(l)
 }
 
+/// C-157 p.2 after os-476 (session 263, `docs/C-157_MM_TC_V6_PLAN.md`): what `tools/nak/out2/mm_tc_v6.sm86.sass`
+/// needs — exactly [`MM_TC_V5_NEEDS`] (the same slices, written four f16 at a time, and the same scratch).
+pub const MM_TC_V6_NEEDS: Needs = MM_TC_V5_NEEDS;
+
+/// C-157 p.2 after os-476 (session 263): the CPU stand-in for `tools/nak/out2/mm_tc_v6.sm86.sass` — `mm_tc_v5` with
+/// each vector of a slice converted by the same f32 → f16 rounding and written in one store, the transposed operands
+/// kept column-major and read `ColumnMajor`: the same matrices reach the same `coopMatMulAdd` chain, so the stand-in
+/// is [`mm_tc_v5_on_cpu`]: blocks of 128×1×1, aligned products only (anything else REFUSED, no write).
+pub fn mm_tc_v6_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [128, 1, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: mm_tc_v6 cere blocuri de 128x1x1"));
+    }
+    if !tc_aligned(l)? {
+        return Err(bad(
+            "SIM: mm_tc_v6: produs nealiniat (randuri multiplu de 4, adrese multiplu de 16)",
+        ));
+    }
+    mm_tc_v5_on_cpu(l)
+}
+
 /// C-165 after os-416 (session 220): what `tools/nak/out2/mm_tc128.sm86.sass` needs — the f16 slices of op(A)
 /// (128×32) and op(B) (32×128) plus one 16×16 f32 scratch per subgroup (8 of them): 8 + 8 + 8 KiB, one barrier.
 pub const MM_TC128_NEEDS: Needs = Needs {

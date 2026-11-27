@@ -1,0 +1,191 @@
+// C-157 p.2 after os-476 (session 263): mm_tc_v5 with the f16 slices written four values at a time.
+// Plan and predictions V1-V8 written before this file: docs/C-157_MM_TC_V6_PLAN.md (counted in T275). In mm_tc_v5 each
+// thread writes its 4 + 4 converted vectors as 32 separate 16-bit shared stores per slice; on the transposed operands
+// (dX: B transposed, dW: A transposed - two thirds of the #513 step) those stores hit the same bank 8 and 16 times.
+// Here each vector is one 64-bit store (f16vec4: the same four f32 -> f16 conversions). Not transposed: the same layout
+// as v5. Transposed: op(A) is kept column-major [p][r] and op(B) column-major [c][p], so the vector stays contiguous,
+// and coopMatLoad reads them ColumnMajor - the same matrices reach the tensor cores. The branch is on args.flags,
+// the same for the whole block. Global loads, slices, the coopMatMulAdd chain and the ending are mm_tc_v5's ->
+// C is the same bits as mm_tc. Same push constants, same aligned-only rule (nvidia_ga104::mm_tc_v4::fits), 12 KiB.
+// Nothing here has run on a board.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_shader_subgroup_basic : require
+
+#define BM 64u
+#define BN 64u
+#define BK 32u
+#define THREADS 128u
+#define TA 1u
+#define TB 2u
+#define BIAS 4u
+#define NV ((BM * BK) / (4u * THREADS))  // vec4 loads per thread per slice, for A and for B: 4
+// coopMatLoad strides in f16vec4 units, written as literals so the stride lint (program_lint) can check them:
+#define SA 8u    // BK / 4: op(A) row-major, 64 bytes
+#define SAT 16u  // BM / 4: op(A) column-major, 128 bytes
+#define SB 16u   // BN / 4: op(B) row-major, 128 bytes
+#define SBT 8u   // BK / 4: op(B) column-major, 64 bytes
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer In4 { vec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+
+// The same 48 bytes as mm_tc: a and b are the same 64-bit addresses, only declared 16-byte aligned.
+layout(push_constant) uniform Args {
+    In4 a;
+    In4 b;
+    Out c;
+    In bias;
+    uint m;
+    uint n;
+    uint k;
+    uint flags;
+} args;
+
+// op(A) slice: row-major [r][p] (stride BK) when A is not transposed, column-major [p][r] (stride BM) when it is.
+shared f16vec4 as4_[(BM * BK) / 4u];
+// op(B) slice: row-major [p][col] (stride BN) when B is not transposed, column-major [col][p] (stride BK) when it is.
+shared f16vec4 bs4_[(BK * BN) / 4u];
+shared float st_[4u * 256u];    // per warp: one 16x16 f32 accumulator on its way out, row-major, stride 16
+
+// Vector s of this thread (e = tid + s * 128, 0..511) covers 4 elements along the stored matrix's rows:
+//   A    (m x k, op = A):   r = e / 8,         p = 4 * (e % 8)   -> op(A)[r][p..p+3]
+//   A^T  (k x m, op = A^T): r = 4 * (e % 16),  p = e / 16        -> op(A)[r..r+3][p]
+//   B    (k x n, op = B):   p = e / 16,        c = 4 * (e % 16)  -> op(B)[p][c..c+3]
+//   B^T  (n x k, op = B^T): p = 4 * (e % 8),   c = e / 8         -> op(B)[p..p+3][c]
+// Outside the matrix the vec4 index is multiplied by 0 (vector 0, always valid); the value is replaced by 0 only at
+// the shared store. Bit s of ia / ib: vector s is inside.
+void load_slice(uint t, uint row0, uint col0, uint tid, bool ta, bool tb,
+                out vec4 ra[NV], out vec4 rb[NV], out uint ia, out uint ib) {
+    ia = 0u;
+    ib = 0u;
+    for (uint s = 0u; s < NV; s++) {
+        uint e = tid + s * THREADS;
+        uint r = mix(e / 8u, 4u * (e % 16u), ta);
+        uint p = mix(4u * (e % 8u), e / 16u, ta);
+        uint gr = row0 + r;
+        uint gp = t + p;
+        uint in_ = uint(gr < args.m) & uint(gp < args.k);
+        ia |= in_ << s;
+        uint at = mix(gr * args.k + gp, gp * args.m + gr, ta);  // a multiple of 4 when fits()
+        ra[s] = args.a.v[(at / 4u) * in_];
+    }
+    for (uint s = 0u; s < NV; s++) {
+        uint e = tid + s * THREADS;
+        uint p = mix(e / 16u, 4u * (e % 8u), tb);
+        uint cl = mix(4u * (e % 16u), e / 8u, tb);
+        uint gp = t + p;
+        uint gc = col0 + cl;
+        uint in_ = uint(gp < args.k) & uint(gc < args.n);
+        ib |= in_ << s;
+        uint at = mix(gp * args.n + gc, gc * args.k + gp, tb);
+        rb[s] = args.b.v[(at / 4u) * in_];
+    }
+}
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint w = tid / 32u;
+    uint wr = (w / 2u) * 32u;
+    uint wc = (w % 2u) * 32u;
+    uint row0 = gl_WorkGroupID.y * BM;
+    uint col0 = gl_WorkGroupID.x * BN;
+    bool ta = (args.flags & TA) != 0u;
+    bool tb = (args.flags & TB) != 0u;
+
+    coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator> acc[2][2];
+    for (uint i = 0u; i < 2u; i++) {
+        for (uint j = 0u; j < 2u; j++) {
+            acc[i][j] = coopmat<float, gl_ScopeSubgroup, 16, 16, gl_MatrixUseAccumulator>(0.0);
+        }
+    }
+
+    vec4 ra[NV];
+    vec4 rb[NV];
+    uint ia;
+    uint ib;
+    load_slice(0u, row0, col0, tid, ta, tb, ra, rb, ia, ib);
+
+    for (uint t = 0u; t < args.k; t += BK) {
+        for (uint s = 0u; s < NV; s++) {
+            uint e = tid + s * THREADS;
+            uint r = mix(e / 8u, 4u * (e % 16u), ta);
+            uint p = mix(4u * (e % 8u), e / 16u, ta);
+            vec4 v = mix(vec4(0.0), ra[s], bvec4(((ia >> s) & 1u) != 0u));
+            uint base = mix(r * BK + p, p * BM + r, ta);  // a multiple of 4 in both layouts
+            as4_[base / 4u] = f16vec4(v);
+        }
+        for (uint s = 0u; s < NV; s++) {
+            uint e = tid + s * THREADS;
+            uint p = mix(e / 16u, 4u * (e % 8u), tb);
+            uint cl = mix(4u * (e % 16u), e / 8u, tb);
+            vec4 v = mix(vec4(0.0), rb[s], bvec4(((ib >> s) & 1u) != 0u));
+            uint base = mix(p * BN + cl, cl * BK + p, tb);
+            bs4_[base / 4u] = f16vec4(v);
+        }
+        barrier();
+        // The next slice's loads go out now and land while the tensor cores work on this one (no branch: see
+        // mm_tc_pf.comp; after the last slice they are all outside, vector 0, not used).
+        load_slice(t + BK, row0, col0, tid, ta, tb, ra, rb, ia, ib);
+        for (uint kk = 0u; kk < BK; kk += 16u) {
+            coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> fa[2];
+            coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB> fb[2];
+            // element and stride in f16vec4 units (4 halves)
+            if (ta) {
+                for (uint i = 0u; i < 2u; i++) {
+                    coopMatLoad(fa[i], as4_, (kk * BM + wr + 16u * i) / 4u, SAT, gl_CooperativeMatrixLayoutColumnMajor);
+                }
+            } else {
+                for (uint i = 0u; i < 2u; i++) {
+                    coopMatLoad(fa[i], as4_, ((wr + 16u * i) * BK + kk) / 4u, SA, gl_CooperativeMatrixLayoutRowMajor);
+                }
+            }
+            if (tb) {
+                for (uint j = 0u; j < 2u; j++) {
+                    coopMatLoad(fb[j], bs4_, ((wc + 16u * j) * BK + kk) / 4u, SBT, gl_CooperativeMatrixLayoutColumnMajor);
+                }
+            } else {
+                for (uint j = 0u; j < 2u; j++) {
+                    coopMatLoad(fb[j], bs4_, (kk * BN + wc + 16u * j) / 4u, SB, gl_CooperativeMatrixLayoutRowMajor);
+                }
+            }
+            for (uint i = 0u; i < 2u; i++) {
+                for (uint j = 0u; j < 2u; j++) {
+                    acc[i][j] = coopMatMulAdd(fa[i], fb[j], acc[i][j]);
+                }
+            }
+        }
+        barrier();
+    }
+
+    // Each warp stores its 2x2 accumulators one by one through st_[w]: only the warp's own lanes touch that area,
+    // so a subgroup barrier (not a block barrier) orders the store, the reads and the next store. This is mm_tc128's
+    // ending (its 16x16 scratch per subgroup), which matched mm_tc bit for bit on the board (os-423).
+    uint lane = tid % 32u;
+    uint sb = w * 256u;
+    for (uint i = 0u; i < 2u; i++) {
+        for (uint j = 0u; j < 2u; j++) {
+            coopMatStore(acc[i][j], st_, sb, 16u, gl_CooperativeMatrixLayoutRowMajor);
+            subgroupBarrier();
+            for (uint s = 0u; s < 8u; s++) {
+                uint e = lane + s * 32u;
+                uint gr = row0 + wr + 16u * i + e / 16u;
+                uint gc = col0 + wc + 16u * j + e % 16u;
+                if (gr < args.m && gc < args.n) {
+                    float v = st_[sb + e];
+                    if ((args.flags & BIAS) != 0u) {
+                        v += args.bias.v[gc];
+                    }
+                    args.c.v[gr * args.n + gc] = v;
+                }
+            }
+            subgroupBarrier();
+        }
+    }
+}

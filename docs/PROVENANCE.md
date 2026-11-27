@@ -642,3 +642,9 @@ niciun octet de firmware NVIDIA.
   (`.constant` / `.strong.sys`; `cctl` WBAll / IVAll în jurul `membar`) — citit în sursa Mesa 25.0.7
   `src/nouveau/compiler/nak/from_nir.rs` (MIT), ca specificație, nimic copiat. Compilat cu Mesa NAK 25.0.7 (MIT), pe gazdă. Nimic din
   firmware-ul NVIDIA.
+- **Sesiunea 263 (27 nov 2026):** `tools/nak/mm_tc_v6.comp` (al nostru: `mm_tc_v5.comp` cu scrierile felie de câte 64 de biți
+  și operanzii transpuși ținuți pe coloane), testul T275 (al nostru). Ideile (scrieri vectoriale în memoria comună, conflictele de
+  bancă, regula jumătăților de warp la 64 de biți): ghidul public CUDA („shared memory”, capacitatea 8.6); ordinea `ColumnMajor` și
+  tablourile de alt tip la `coopMatLoad`: specificația publică `GL_KHR_cooperative_matrix` / `SPV_KHR_cooperative_matrix`. Compilat
+  cu Mesa NAK 26.3.1 (MIT), pe gazdă; `nvidia_ga104::mm_tc_v6`, `gpu_sim::cmdproc::mm_tc_v6_on_cpu` și T276 sunt ale noastre. Nimic
+  copiat; nimic din firmware-ul NVIDIA.

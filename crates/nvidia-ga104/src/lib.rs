@@ -132,6 +132,7 @@ pub mod mm_tc_pf;
 pub mod mm_tc_probe;
 pub mod mm_tc_v4;
 pub mod mm_tc_v5;
+pub mod mm_tc_v6;
 pub mod mm_train;
 pub mod mm_train_gelu;
 pub mod mm_train_tile;
