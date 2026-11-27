@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 269 — 27 noiembrie 2026, ~10:12–11:10 (ora României), în cloud, FĂRĂ placă — **os-485 comparat: biții dX / dW = `mm_tc` peste tot, dar lanțul a durat 1 611 s și cererea de viteză maximă (600 s) a expirat la 714,3 s → v6 pe dX și tot dW au rulat cu placa încetinită (P8 la final, 210 MHz); timpii lor NU sunt timpi la viteză; V9 / V10 nejudecabile; `BoostPlan::covers_ms` (doar adăugare); PREDARE P2zzl**
+## Sesiunea 269 — 27 noiembrie 2026, ~10:12–10:58 (ora României), în cloud, FĂRĂ placă — **os-485 comparat: biții dX / dW = `mm_tc` peste tot, dar lanțul a durat 1 611 s și cererea de viteză maximă (600 s) a expirat la 714,3 s → v6 pe dX și tot dW au rulat cu placa încetinită (P8 la final, 210 MHz); timpii lor NU sunt timpi la viteză; V9 / V10 nejudecabile; `BoostPlan::covers_ms` (doar adăugare); PREDARE P2zzl**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 268), l-am pus `ocupat`. În hub venise ciclul 09:52 = os-485 → punctul 2 al cozii C-157.
 
