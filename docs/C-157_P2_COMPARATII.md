@@ -2,6 +2,15 @@
 
 Fiecare test nou pe placă primește aici 5–10 rânduri (cel mai nou sus). Sursele: `Cyber-hub/rezultate/…/REZULTAT.md` și jurnalele brute.
 
+## os-483 — `mm_tc_v6` în proba `--mm-tc` (ciclul automat 27 nov 2026, 09:02) — sesiunea 268
+Sursa: `rezultate/os-automat/2026-11-27/ciclu-auto-20261127-0902.txt` (rândurile 104–170), `gpu-jurnal-169.txt`. Detalii: `docs/C-157_OS483.md`, T282.
+- **Biții:** v6 și v6@64k = `mm_tc` pe 5 / 5 seturi aliniate (V5 CONFIRMATĂ); lanțul și cele 16 simboluri trec, amprenta `0x6c8501f0`.
+- **Viteza peste bandă:** qkv-513 v6@64k **1,263 ms = 17,2 TFLOP/s**, ×1,48 față de v5@64k (V7 1,70–1,87 și V7b 1,44–1,78 — NECONFIRMATE,
+  placa a mers mai repede). Fără 64 KiB doar ×1,30. v4@64k / v5@64k repetă os-476 la 0,1 %.
+- **De ce:** scrierile conflictuale stăteau aproape toate pe drumul critic (82 % din modelul „în serie”); felia ≈ 953 + 0,82 × calea.
+- **Ce tai:** pasul #513 cu `--pas-v6` (condiția lui e îndeplinită; estimat lot 6 placa ~167 ms ≈ 18 400 simb/s, fără tablou pe pas),
+  apoi `--mm-tc-dxdw` și proba v7 (~1,03 ms). Nota `integration/cyber-universe/C-157_P2zzk_os483-v6.md`. Nimic nou pentru placă.
+
 ## os-470 — dS al atenției pe circuitele speciale, programele reparate (`--atentie-tc0 --atentie-tc0-v4`, 26 nov 2026, 22:54) — sesiunea 259
 Sursa: `rezultate/os-automat/2026-11-26/ciclu-auto-20261126-2254.txt` (rândurile 108–134, 217–218). Detalii: `docs/C-157_OS470.md`, T270.
 - **Corectitudinea exact ca în SIMULARE:** ambele programe termină (cauza os-467 = scrierile nealiniate, confirmată); tc = modelul

@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 268 — 27 noiembrie 2026, ~09:11–10:05 (ora României), în cloud, FĂRĂ placă — **os-483 comparat: `mm_tc_v6` pe placă dă aceiași biți ca `mm_tc` (5 / 5) și qkv-513 v6@64k = 1,263 ms = 17,2 TFLOP/s (×1,48 față de v5, mai repede decât banda); condiția pasului cu `--pas-v6` îndeplinită; PREDARE P2zzk**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 267), l-am pus `ocupat`. În hub venise ciclul automat 09:02 cu rândul os-483
+(`--mm-tc --mm-tc-v4 --mm-tc-v5 --mm-tc-v6 --mm-tc-64k`) → punctul 2 al cozii C-157 (are întâietate). Clonele vechi din container
+(istorii scurtate) n-au putut fi aduse la zi fără ștergere; am lucrat în clone noi (`/home/claude/w`), fără să le ating pe cele vechi.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Biții `mm_tc_v6` / `@64k` (V5) | 5 / 5 seturi aliniate = `mm_tc` (și `-ta`, `-ta-tb`), 1 sărit nealiniat; lanțul + 16 simboluri trec, amprenta `0x6c8501f0` | PASS (MĂSURAT de OS) |
+| qkv-513 v6@64k (V7 1,70–1,87; V7b 1,44–1,78 ms) | **1,263 ms = 17,21 TFLOP/s**, ×1,479 față de v5@64k (1,869); fără 64 KiB ×1,30 | V7 / V7b NECONFIRMATE (mai repede) |
+| Repetabilitatea | v4@64k și v5@64k = os-476 la 0,1 % | PASS (CALCUL, T282) |
+| Modelele de margine | felia 1 425 tacți: între „suprapus” (2 108) și „în serie” (1 276), 82 % din câștigul celui din urmă; dreapta 953 + 0,82 × calea | CALCUL (T282) |
+| Estimări noi (DEDUS) | pasul cu v6: înmulțirile ×1,31 → lot 2 ~66,9 ms, lot 6 ~166,7 ms (159–177) ≈ 18 400 simb/s; dX ×1,10, dW ×1,37; v7 ~1,03 ms | NOT TESTED |
+| Verificările întregi | format, clippy, teste, no_std | **1 399 PASS** (8 ignorate) |
+
+**Note:** `docs/C-157_OS483.md`, T282 (`crates/nvidia-ga104/tests/calc_c157_os483_v6.rs`), rândul nou în `docs/C-157_P2_COMPARATII.md`.
+PREDARE `integration/cyber-universe/C-157_P2zzk_os483-v6.md`. **Nou pentru placă:** nimic. Interfața: neschimbată (doar un test nou).
+
+**Următorul pas:** comparațiile când vin (pasul cu `--pas-v6` lot 2 / lot 6, `--mm-tc-dxdw` os-485, proba v7 P2zzi, lot 6 cu
+tabloul ținut P2zzj, `token32_v2` P2zzd); altfel următorul punct al cozii C-157.
+
 ## Sesiunea 267 — 27 noiembrie 2026, ~08:11–08:57 (ora României), în cloud, FĂRĂ placă — **os-481 comparat: pasul #513 cu `mm_tc_v5` confirmă toate predicțiile (lot 2 placa 80,16 ms, lot 6 203,06 ms = 15 128 simb/s pe placă); la lot 6 pasul întreg (274,3 ms) e ținut de tabloul de bord scris pe stick valoare cu valoare → `Journal::set_hold_values` (doar adăugare), PREDARE P2zzj**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 266), l-am pus `ocupat`. În hub veniseră ciclurile 07:18 (lot 2) și 07:49
