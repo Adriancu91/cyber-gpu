@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 272 — 27 noiembrie 2026, ~13:18–14:20 (ora României), în cloud, FĂRĂ placă — **os-487 (lot 6 cu tabloul ținut în jurnal, ciclul 12:24) comparat: pasul întreg 200,77 ms = placa = 15 301 simb/s, sub banda prezisă 205–215 (în bine); aceleași pierderi ca os-481; tabloul nu mai costă nimic; PREDARE P2zzo**
+## Sesiunea 272 — 27 noiembrie 2026, ~13:18–13:52 (ora României), în cloud, FĂRĂ placă — **os-487 (lot 6 cu tabloul ținut în jurnal, ciclul 12:24) comparat: pasul întreg 200,77 ms = placa = 15 301 simb/s, sub banda prezisă 205–215 (în bine); aceleași pierderi ca os-481; tabloul nu mai costă nimic; PREDARE P2zzo**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 271), l-am pus `ocupat`. În hub venise ciclul 12:24 = os-487 necomparat încă →
 punctul 2 al cozii C-157. (Copia locală veche a repo-ului era o clonă scurtă rămasă în urmă; am lucrat pe o clonă nouă a ramurii
