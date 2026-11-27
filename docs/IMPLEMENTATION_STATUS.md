@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 267 — 27 noiembrie 2026, ~08:11–09:10 (ora României), în cloud, FĂRĂ placă — **os-481 comparat: pasul #513 cu `mm_tc_v5` confirmă toate predicțiile (lot 2 placa 80,16 ms, lot 6 203,06 ms = 15 128 simb/s pe placă); la lot 6 pasul întreg (274,3 ms) e ținut de tabloul de bord scris pe stick valoare cu valoare → `Journal::set_hold_values` (doar adăugare), PREDARE P2zzj**
+## Sesiunea 267 — 27 noiembrie 2026, ~08:11–08:57 (ora României), în cloud, FĂRĂ placă — **os-481 comparat: pasul #513 cu `mm_tc_v5` confirmă toate predicțiile (lot 2 placa 80,16 ms, lot 6 203,06 ms = 15 128 simb/s pe placă); la lot 6 pasul întreg (274,3 ms) e ținut de tabloul de bord scris pe stick valoare cu valoare → `Journal::set_hold_values` (doar adăugare), PREDARE P2zzj**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 266), l-am pus `ocupat`. În hub veniseră ciclurile 07:18 (lot 2) și 07:49
 (lot 6, două locuri) = os-481 → punctul 2 al cozii C-157 (are întâietate). Clona veche din container (sesiunea 196) n-a putut fi
