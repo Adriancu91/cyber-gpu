@@ -4191,6 +4191,43 @@ const TOKEN32_OPS: [(ProgramFn, u32); 13] = [
 /// What `token32.comp` needs: the attention's 2 176 B of shared memory, as `token.comp`.
 pub const TOKEN32_NEEDS: Needs = TOKEN_NEEDS;
 
+/// C-157 p.2 (session 274, `docs/C-157_TOKEN32_CEAS.md`): `token32_v2c.comp` — [`token32_on_cpu`] (the same list and
+/// results) plus the clock area at cbuf 0x40 (n·G + n + 1 + G words, `nvidia_ga104::token_clock`). The numbers written
+/// there are INVENTED (SIMULARE): workgroup g's work on operation k = 1 000 + 37·op + (g mod 5)·3 cycles, a barrier of
+/// 400 cycles after the slowest, workgroup 0's clock starting at 0xffff_f000 (so the wrap is exercised), and n − 1 + (g
+/// mod 3) counter reads per workgroup. They only let the driver's reading of the area be checked; they say nothing
+/// about the board.
+pub fn token32c_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    let clock = l.mem.read_u64(l.cbuf0 + 0x40)?;
+    if clock == 0 || !clock.is_multiple_of(4) {
+        return Err(bad("SIM: token32_v2c: zona ceasului lipsa sau nealiniata"));
+    }
+    token32_on_cpu(l)?;
+    let (list, n, g) = (
+        l.mem.read_u64(l.cbuf0 + 0x28)?,
+        l.mem.read_u32(l.cbuf0 + 0x38)? as u64,
+        l.grid[0] as u64,
+    );
+    let mut start = 0xffff_f000u32;
+    for k in 0..n {
+        let op = l.mem.read_u32(list + 256 * k + 0x20)?;
+        l.mem.write_u32(clock + 4 * (n * g + k), start);
+        let mut slowest = 0u32;
+        for i in 0..g {
+            let w = 1_000 + 37 * op + (i % 5) as u32 * 3;
+            slowest = slowest.max(w);
+            l.mem.write_u32(clock + 4 * (k * g + i), w);
+        }
+        start = start.wrapping_add(slowest + 400);
+    }
+    l.mem.write_u32(clock + 4 * (n * g + n), start);
+    for i in 0..g {
+        l.mem
+            .write_u32(clock + 4 * (n * g + n + 1 + i), (n - 1 + i % 3) as u32);
+    }
+    Ok(())
+}
+
 fn token_ops(l: &mut Launch<'_>) -> GpuResult<()> {
     const OPS: [(ProgramFn, u32); 7] = [
         (copy_b128_on_cpu, 256),

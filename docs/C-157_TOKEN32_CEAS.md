@@ -56,7 +56,21 @@ nu se folosește la generare.
 
 1. Programul `tools/nak/token32_v2c.comp` + compilarea NAK; în listare: aceleași operații aritmetice ca `token32_v2`, plus numai
    citiri de ceas și scrieri `st.global` în zona ceasului.
-2. Rust (doar adăugări): `kronos_token::{TOKEN32_V2C, CBUF_CLOCK, token_cbuf_clock, clock_words}`, modulul
-   `nvidia_ga104::token_clock` (împărțirea pe feluri + rândurile de jurnal), modelul în `gpu-sim` (SIMULARE: lista rulată ca la v2,
+2. Rust (doar adăugări): modulul `nvidia_ga104::token_clock` (`TOKEN32_V2C`, `CBUF_CLOCK`, `token_cbuf_clock`, `clock_words`,
+   `token32_v2c_qmd_wide`, împărțirea pe feluri + rândurile de jurnal), modelul în `gpu-sim` (SIMULARE: lista rulată ca la v2,
    ceasul umplut cu cifre **inventate, marcate SIMULARE**, doar ca să verificăm citirea zonei).
 3. Nota pentru OS (PREDARE): o opțiune nouă, oprită implicit, care rulează `token32_v2c` la G = 768 după `token32_v2`.
+
+## 5. Ce a ieșit (sesiunea 274, după predicții)
+
+- Compilat (Mesa NAK 25.0.7; `token32_v2` reconstruit identic `5f4d22a0…`): **7 570 de instrucțiuni** (v2: 7 438), **99 de registre**
+  (v2: 92), 0 memorie locală; SHA-256 `e899fa7c…6c18206`. Ceasul iese `cs2r sr[0x50]` / `sr[0x51]` (numărătorul de cicluri al SM-ului,
+  citit sus–jos–sus pentru 64 de biți), o dată la începutul și o dată la sfârșitul operației.
+- Listarea (T288): aceleași numere de `ffma`, `fadd`, `fmul`, `mufu`, `fsetp`, `fmnmx`, `i2f`, `f2i`, `shfl`, `fswzadd` ca v2; aceleași
+  citiri (`.strong.sys`, `.constant`, b128, memoria partajată); bariera aceeași (4 `cctl`, 2 adunări atomice); 4 scrieri `st.global` în
+  plus (zona ceasului). Concluzia „aceiași biți ca v2” rămâne DEDUSĂ; pe placă o decide C1.
+- **Atenție la QMD:** 99 de registre ≠ 92 → `token_clock::token32_v2c_qmd_wide`, nu `kronos_token::token32_qmd_wide`. 16 blocuri pe SM
+  încap în continuare (G = 768 pe 48 de SM).
+- SIMULARE (T288): un simbol al listei de azi + argmax la lățimea lui Kronos, G = 768 = lansările separate bit cu bit; zona ceasului
+  (cifre **inventate** de model) citită exact: ferestrele, munca cea mai lungă, bariera, citirile contorului, rândurile `kc`.
+- Nimic rulat pe placă. PREDARE: `integration/cyber-universe/C-157_P2zzq_token32-v2c-ceas.md`.

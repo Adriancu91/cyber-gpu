@@ -52,6 +52,7 @@
 #   sh tools/nak/build.sh grid_barrier   # C-157: the grid-barrier probe for token.comp, reads G from c[0][0xc] (session 237)
 #   sh tools/nak/build.sh token32        # C-157: token.comp + today's generation programs (layernorm256, q8_*32, argmax, embed_dev) (session 239)
 #   sh tools/nak/build.sh token32_v2     # C-157 after os-471: token32 with the reads of earlier results through L1 (session 260)
+#   sh tools/nak/build.sh token32_v2c    # C-157 p.2: token32_v2 + the SM clock per operation, a measuring program (session 274)
 #   sh tools/nak/build.sh kernel <name> <push-constant bytes>
 #
 # Needs (Ubuntu 24.04): apt install glslang-tools spirv-tools libvulkan-dev libdrm-dev
@@ -91,6 +92,9 @@ token32)
     ;;
 token32_v2)
     exec sh "$0" kernel token32_v2 20
+    ;;
+token32_v2c)
+    exec sh "$0" kernel token32_v2c 32
     ;;
 matmul_naive)
     exec sh "$0" kernel matmul_naive 40

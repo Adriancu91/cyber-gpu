@@ -107,6 +107,10 @@ pub struct TokenSim<'a> {
     pub token32_sms: Option<u32>,
     /// C-157 (session 260): send `token32_v2` instead of `token32` (the same model in `gpu-sim`).
     pub token32_v2: bool,
+    /// C-157 p.2 (session 274): send `token32_v2c` (v2 + the clock area) instead; the area of the last token lands in
+    /// `last_clock` (numbers invented by the SIMULARE model).
+    pub token32_v2c: bool,
+    pub last_clock: Vec<u32>,
 }
 
 impl<'a> TokenSim<'a> {
@@ -287,6 +291,8 @@ impl<'a> TokenSim<'a> {
             last_stamps: Vec::new(),
             token32_sms: None,
             token32_v2: false,
+            token32_v2c: false,
+            last_clock: Vec::new(),
         })
     }
 
@@ -368,14 +374,27 @@ impl<'a> TokenSim<'a> {
         old_cbuf: bool,
         tamper: Option<(usize, u32)>,
     ) -> GpuResult<u32> {
-        use gpu_sim::cmdproc::{TOKEN32_NEEDS, token32_on_cpu};
+        use gpu_sim::cmdproc::{TOKEN32_NEEDS, token32_on_cpu, token32c_on_cpu};
         use nvidia_ga104::kronos_token as kt;
+        use nvidia_ga104::token_clock as tc;
         let list_bytes = kt::work_list32(launches)?;
         let n = launches.len();
-        let code = if self.token32_v2 {
+        let code = if self.token32_v2c {
+            tc::TOKEN32_V2C
+        } else if self.token32_v2 {
             kt::TOKEN32_V2
         } else {
             kt::TOKEN32
+        };
+        let clock = if self.token32_v2c {
+            let bytes = 4 * tc::clock_words(n, groups)? as u64;
+            Some(
+                self.r
+                    .mem
+                    .alloc_mapped(bytes.next_multiple_of(0x1000), 0x1000)?,
+            )
+        } else {
+            None
         };
         let prog = self.r.mem.alloc_mapped(code.len() as u64, 0x1000)?;
         let list = self.r.mem.alloc_mapped(list_bytes.len() as u64, 0x1000)?;
@@ -391,7 +410,9 @@ impl<'a> TokenSim<'a> {
                 &op.to_le_bytes(),
             );
         }
-        let c = if old_cbuf {
+        let c = if let Some(cl) = &clock {
+            tc::token_cbuf_clock(list.va, sync, n, groups, cl.va)?
+        } else if old_cbuf {
             kt::token_cbuf(list.va, sync, n)?
         } else {
             kt::token_cbuf_for(list.va, sync, n, groups)?
@@ -418,7 +439,12 @@ impl<'a> TokenSim<'a> {
             .iter()
             .map(|&(p, f, needs)| (p.code(), f, needs))
             .collect();
-        programs.push((code, token32_on_cpu, TOKEN32_NEEDS));
+        let model = if clock.is_some() {
+            token32c_on_cpu
+        } else {
+            token32_on_cpu
+        };
+        programs.push((code, model, TOKEN32_NEEDS));
         let mut loads: Vec<(u64, u64)> = self.mappings().iter().map(span).collect();
         loads.extend([span(&prog), span(&list), span(&launch)]);
         loads.push((self.host.va, self.host.size));
@@ -433,7 +459,18 @@ impl<'a> TokenSim<'a> {
             stores.push((rm.va, rm.size));
         }
         stores.extend(self.caches.iter().flat_map(|(k, c)| [span(k), span(c)]));
+        if let Some(cl) = &clock {
+            stores.push(span(cl));
+        }
         gpu_runs(&mut self.r, &programs, &loads, &stores)?;
+        if let Some(cl) = &clock {
+            let words = tc::clock_words(n, groups)?;
+            let b = get_bytes(self.r.mem.writer_mut(), cl.pa, 4 * words as u64);
+            self.last_clock = b
+                .chunks_exact(4)
+                .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+                .collect();
+        }
         let rec = get_bytes(self.r.mem.writer_mut(), self.records.pa, 32);
         let each = transfer::analyze_sequence(&rec, 1, first)?;
         self.durations.push(each);

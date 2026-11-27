@@ -659,3 +659,8 @@ niciun octet de firmware NVIDIA.
 - **Sesiunea 269 (27 nov 2026):** `nvidia_ga104::gsp::perf::BoostPlan::covers_ms` și testul T283 (ale noastre): socoteală pe
   durata cererii de viteză (`duration_s`, câmpul deja descris din antetele NVIDIA 570.144, MIT) și pe jurnalul plăcii din os-485.
   Nicio sursă nouă; nimic copiat; nimic din firmware-ul NVIDIA.
+- **Sesiunea 274 (27 nov 2026):** `tools/nak/token32_v2c.comp` (al nostru: `token32_v2.comp` cu citirea ceasului SM-ului în jurul
+  fiecărei operații și scrieri într-o zonă separată), `nvidia_ga104::token_clock`, `gpu_sim::cmdproc::token32c_on_cpu`, testul T288
+  (ale noastre). Ceasul: extensia publică `GL_ARB_shader_clock` (`clock2x32ARB`, specificația Khronos / `SPV_KHR_shader_clock`);
+  ce instrucțiune iese (`cs2r sr[0x50]` / `sr[0x51]`) — citit în listarea NAK, nimic copiat. Compilat cu Mesa NAK 25.0.7 (MIT), pe
+  gazdă. Nimic din firmware-ul NVIDIA.

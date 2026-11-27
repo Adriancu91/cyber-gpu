@@ -1,5 +1,33 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 274 — 27 noiembrie 2026, ~15:12–16:05 (ora României), în cloud, FĂRĂ placă — **„restul” lui `token32_v2`: programul de măsurat `token32_v2c` (ceasul SM-ului în jurul fiecărei operații) gata în SIMULARE, cu predicțiile C1–C8 scrise înainte de cod; PREDARE P2zzq**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 273), l-am pus `ocupat`. Niciun rezultat nou în hub de la 14:42; „da”-ul lui
+Adrian pentru 1 800 s a venit la 14:35 (`DECIZII.md`) — rândul P2zzm e acum la OS. Am luat următorul punct al cozii C-157: „restul”
+de ~0,67 ms din `token32_v2` la G = 768 (`docs/C-157_TOKEN32_V2_PLACA.md` §3). (Copia locală veche a repo-ului rămăsese în urmă și
+despărțită de GitHub; am lucrat pe o clonă nouă a ramurii, nimic șters.)
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Planul + predicțiile C1–C8 (commit `fc29325`, înainte de cod) | trei bănuieli: ciocănitul barierei (B1), operațiile unui singur grup (B2), împărțirea fixă (B3) | scris |
+| `token32_v2c` compilat (Mesa NAK 25.0.7 reconstruit; v2 ieșit identic) | 7 570 instr., 99 registre, 0 locală; ceasul = `cs2r sr[0x50/0x51]`; SHA `e899fa7c…` | PASS (listare) |
+| Aceeași aritmetică ca v2 (T288) | aceleași `ffma`/`fadd`/`fmul`/`mufu`/`shfl`/conversii, aceleași citiri și barieră; +4 scrieri | PASS (listare) |
+| Un simbol la lățimea lui Kronos, G = 768 (T288) | aceiași biți ca lansările separate, contorul (n − 1) · G | PASS în SIMULARE |
+| Citirea zonei ceasului (`token_clock`) | cifre INVENTATE de model citite exact: ferestre, munca maximă, bariera, contorul, rândurile `kc` | PASS în SIMULARE |
+| QMD cu 99 de registre (`token32_v2c_qmd_wide`) | doar câmpul registrelor diferă de v2; 768 pe 48 SM încap, 769 refuzat | PASS |
+| C1–C8 (biți, cost ≤ +3 %, ceasul, bariera, unde e restul) | — | NOT TESTED (cer placa) |
+| Verificările întregi | format, clippy, teste, no_std | **1 427 PASS** (8 ignorate) |
+
+**Note:** `docs/C-157_TOKEN32_CEAS.md` (plan, predicții, §5 ce a ieșit), `tools/nak/token32_v2c.comp`, `tools/nak/out/token32_v2c.*`,
+`nvidia_ga104::token_clock` (nou), `gpu_sim::cmdproc::token32c_on_cpu`, `TokenSim::token32_v2c`, T288, rândurile în `TEST_MATRIX.md`
+și `PROVENANCE.md`. PREDARE `integration/cyber-universe/C-157_P2zzq_token32-v2c-ceas.md`. **Nou pentru placă:** programul
+`token32_v2c` (o lansare pe simbol; citește ceasul SM-ului, scrie doar în memoria noastră; niciun registru al plăcii). Interfața:
+doar adăugări (`kronos_token` neschimbat).
+
+**Următorul pas:** comparațiile când vin — P2zzm (dX / dW la 1 800 s), rândul cu `--pas-v6` (P2zzo), `token32_v2c` (P2zzq, C1–C8);
+după dX / dW la viteză: `mm_tc_v7` legat în pas; altfel, după ce vine `token32_v2c`: leacul pentru partea găsită (de ex. bariera care
+ciocăne mai rar), cu predicții noi.
+
 ## Sesiunea 273 — 27 noiembrie 2026, ~14:14–14:50 (ora României), în cloud, FĂRĂ placă — **rândul P2zzl refuzat la 13:28 (greșeala noastră: `--mm-tc-v5` fără `--mm-tc-v4`), corectat; predicția pentru rularea repornită (14:08) scrisă înainte și CONFIRMATĂ la 14:42: exact 10 seturi în afara ferestrei de 600 s; niciun rând cu un însoțitor nu încape în 600 s → dX / dW la viteză doar cu `--viteza-1800` (P2zzm, „da”-ul lui Adrian); PREDARE P2zzp**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 272), l-am pus `ocupat`. În hub: rândul nostru din P2zzl fusese refuzat de OS
