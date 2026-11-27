@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 264 — 27 noiembrie 2026, ~05:12–06:15 (ora României), în cloud, FĂRĂ placă — **`mm_tc_v6` legat în pasul mixt rapid (`TcPick::V6`, `pack_mixed_fast_attn6`, doar adăugări; T277 în SIMULARE) + două seturi de timp noi în proba `mm_tc` (`qkv-513-dx`, `qkv-513-dw`; T278) + o corectură la planul v6: proba qkv-513 e cazul `TB` (B transpus), nu cel fără transpunere; PREDARE P2zzh**
+## Sesiunea 264 — 27 noiembrie 2026, ~05:12–05:56 (ora României), în cloud, FĂRĂ placă — **`mm_tc_v6` legat în pasul mixt rapid (`TcPick::V6`, `pack_mixed_fast_attn6`, doar adăugări; T277 în SIMULARE) + două seturi de timp noi în proba `mm_tc` (`qkv-513-dx`, `qkv-513-dw`; T278) + o corectură la planul v6: proba qkv-513 e cazul `TB` (B transpus), nu cel fără transpunere; PREDARE P2zzh**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 263), l-am pus `ocupat`. În hub nu venise niciun rezultat nou de la placă
 (os-478 = OS-ul a legat P2zze; pasul cu v5 și proba v6 nerulate) → coada C-157 p.2: v6 în pas + seturile transpuse.
