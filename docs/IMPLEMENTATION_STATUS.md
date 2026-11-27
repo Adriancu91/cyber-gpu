@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 271 — 27 noiembrie 2026, ~12:12–13:25 (ora României), în cloud, FĂRĂ placă — **`token32_v2` pe placă (ciclul 10:01) comparat: aceiași biți la G = 384 și 768; G = 768 placa 1,668 ms (V4 în bandă), G = 384 1,969 ms (V3 +12 % peste); partea driverului ~0,61 ms (V5 mai bine decât prezis); cu driverul ×1,10 față de lista obișnuită; PREDARE P2zzn**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 270), l-am pus `ocupat`. În hub venise rezultatul `token32_v2`
+(`rezultate/2026-11-27-workstation-token32-v2/`) necomparat încă → punctul 2 al cozii C-157.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| V1: biții | 16 simboluri identice, amprenta `0x6c8501f0`, contorul 18 / 18, la 384 și 768 | PASS (MĂSURAT de OS) |
+| V3: G = 384 0,9–1,75 ms | 1,969 ms | FAIL (predicție, +12 %) |
+| V4: G = 768 0,95–2,1 ms | 1,668 ms | PASS (CALCUL, T285) |
+| V5: driverul 0,9–1,2 ms | ~0,61 ms | FAIL (predicție; mai bine) |
+| Cauza 1 (x din L2) | la 768 prezis ~1,57 ms, placa 1,668 (+6 %); la 384 +0,65 ms din puținele warp-uri | DEDUS (T285) |
+| „Restul” din os-471 | ~0,67 ms la 768, neatins de L1; candidați scriși, neverificați | NOT TESTED |
+| Cuvintele scrise | media 348 include primul simbol întreg; celelalte 37–38 (= T271) | CALCUL (T285) |
+| Verificările întregi | format, clippy, teste, no_std | **1 413 PASS** (8 ignorate) |
+
+**Note:** `docs/C-157_TOKEN32_V2_PLACA.md`, T285 (`crates/nvidia-ga104/tests/calc_c157_token32_v2_placa.rs`), rândul nou în
+`docs/C-157_P2_COMPARATII.md`. PREDARE `integration/cyber-universe/C-157_P2zzn_token32-v2-placa.md`. **Nou pentru placă:** nimic.
+Interfața: neschimbată. **Tăiat:** `token32` v1 și G = 384.
+
+**Următorul pas:** comparațiile când vin (reluarea dX / dW cu cererea de 1 800 s P2zzm, pasul cu `--pas-v6`, lot 6 cu tabloul ținut
+P2zzj); după dX / dW la viteză: `mm_tc_v7` legat în pas; apoi „restul” din `token32_v2` (ceasul pe operație sau blocuri de 64 de
+fire, cu predicții scrise înainte); altfel următorul punct al cozii C-157.
+
 ## Sesiunea 270 — 27 noiembrie 2026, ~11:13–12:05 (ora României), în cloud, FĂRĂ placă — **os-486 comparat: `mm_tc_v7` dă aceiași biți ca `mm_tc` (7 / 7) și pe înainte (qkv-513, în fereastră) v7@64k = 1,196 ms = 18,17 TFLOP/s, ×1,05 față de v6 (W5 în bandă); dX / dW iar după expirarea cererii de 600 s → W6–W8 nejudecabile; reluarea propusă în P2zzl tot n-ar încăpea → rândul nou cu cererea de 1 800 s; PREDARE P2zzm**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 269), l-am pus `ocupat`. În hub venise ciclul 11:09 = os-486 → punctul 2 al cozii C-157.

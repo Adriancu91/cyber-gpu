@@ -753,3 +753,11 @@ Sursa: `Cyber-hub/rezultate/os-automat/2026-11-22/ciclu-auto-20261122-0506.txt` 
 - **Fereastra:** cererea la 114,9 s, expiră la 714,9 s, lanțul ~2 100 s; dX doar până la v4@64k, dW deloc → W6–W8 **nejudecabile**.
 - **Greșeala mea în P2zzl:** reluarea cerută tot n-ar încăpea (primul dW la ~804 s). Nou: rândul cu v6 / v7 și cererea de 1 800 s.
   PREDARE P2zzm. Nota întreagă: `docs/C-157_OS486.md`.
+
+## `token32_v2` pe placă (ciclul 27 nov 10:01) — sesiunea 271 (T285)
+- **Biții (V1):** aceleași 16 simboluri, amprenta `0x6c8501f0`, contorul 18 / 18 la G = 384 și 768 — CONFIRMAT.
+- **Viteza:** G = 768 placa **1,668 ms** (V4 0,95–2,1: CONFIRMAT), G = 384 **1,969 ms** (V3 0,9–1,75: NECONFIRMAT, +12 %); partea
+  driverului **~0,61 ms** (V5 0,9–1,2: NECONFIRMAT, mai bine). Cu driverul 2,281 ms față de lista 2,083 (×1,10).
+- **Ce spune:** cauza 1 (x din L2) explică scăderea la 768 (prezis ~1,57 ms); la 384 frâna e numărul mic de warp-uri; „restul” din
+  os-471 (~0,67 ms la 768) rămâne. Cuvintele scrise după primul simbol: 37–38 (media 348 include primul, întreg).
+- **Tai:** `token32` v1 și G = 384. PREDARE P2zzn. Nota întreagă: `docs/C-157_TOKEN32_V2_PLACA.md`.
