@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 275 — 27 noiembrie 2026, ~16:13–17:20 (ora României), în cloud, FĂRĂ placă — **os-490 comparat (dX / dW la viteză, cererea de 1 800 s aprobată de Adrian): W6 / W7 / W8 CONFIRMATE, `mm_tc_v7@64k` cel mai rapid pe toate trei formele; `mm_tc_v7` legat în pasul mixt rapid (`TcPick::V7`, `pack_mixed_fast_attn7`, doar adăugări) cu predicțiile M1–M5 / P1–P2 scrise înainte; PREDARE P2zzr**
+## Sesiunea 275 — 27 noiembrie 2026, ~16:13–17:05 (ora României), în cloud, FĂRĂ placă — **os-490 comparat (dX / dW la viteză, cererea de 1 800 s aprobată de Adrian): W6 / W7 / W8 CONFIRMATE, `mm_tc_v7@64k` cel mai rapid pe toate trei formele; `mm_tc_v7` legat în pasul mixt rapid (`TcPick::V7`, `pack_mixed_fast_attn7`, doar adăugări) cu predicțiile M1–M5 / P1–P2 scrise înainte; PREDARE P2zzr**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 274), l-am pus `ocupat`. Rezultatul os-490 (ciclul 15:20) venise în hub la 15:34,
 după ce sesiunea 274 își alesese lucrul. (Copia locală veche a repo-ului era iar despărțită de GitHub; am lucrat pe ramura de pe GitHub,
