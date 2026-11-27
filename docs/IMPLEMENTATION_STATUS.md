@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 271 — 27 noiembrie 2026, ~12:12–13:25 (ora României), în cloud, FĂRĂ placă — **`token32_v2` pe placă (ciclul 10:01) comparat: aceiași biți la G = 384 și 768; G = 768 placa 1,668 ms (V4 în bandă), G = 384 1,969 ms (V3 +12 % peste); partea driverului ~0,61 ms (V5 mai bine decât prezis); cu driverul ×1,10 față de lista obișnuită; PREDARE P2zzn**
+## Sesiunea 271 — 27 noiembrie 2026, ~12:12–12:52 (ora României), în cloud, FĂRĂ placă — **`token32_v2` pe placă (ciclul 10:01) comparat: aceiași biți la G = 384 și 768; G = 768 placa 1,668 ms (V4 în bandă), G = 384 1,969 ms (V3 +12 % peste); partea driverului ~0,61 ms (V5 mai bine decât prezis); cu driverul ×1,10 față de lista obișnuită; PREDARE P2zzn**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 270), l-am pus `ocupat`. În hub venise rezultatul `token32_v2`
 (`rezultate/2026-11-27-workstation-token32-v2/`) necomparat încă → punctul 2 al cozii C-157.
