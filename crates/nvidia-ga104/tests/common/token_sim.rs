@@ -467,8 +467,10 @@ impl<'a> TokenSim<'a> {
             let words = tc::clock_words(n, groups)?;
             let b = get_bytes(self.r.mem.writer_mut(), cl.pa, 4 * words as u64);
             self.last_clock = b
-                .chunks_exact(4)
-                .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| u32::from_le_bytes(*c))
                 .collect();
         }
         let rec = get_bytes(self.r.mem.writer_mut(), self.records.pa, 32);
