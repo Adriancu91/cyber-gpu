@@ -17,6 +17,7 @@ nimic șters.)
 | M4 refuzuri / M5 blocuri | adresă nealiniată → refuz; QMD v7 cu 12 KiB → refuzat; 4 blocuri pe SM la 64 KiB | PASS |
 | P1 (lot 2: alegerile, oracolul), P2 (lot 6: placa 137–162 ms ≈ 19 000–22 400 simb/s, DEDUS) | — | NOT TESTED (cer placa) |
 | Verificările întregi | format, clippy, teste, no_std | **1 436 PASS** |
+| CI-ul GitHub | roșu din sesiunea 274 (clippy 1.100: `chunks_exact(4)` în `tests/common/token_sim.rs`) → reparat în `9e02227` (`as_chunks`); format + clippy verzi în CI, testele rulau la final | reparat |
 
 **Note:** `docs/C-157_OS490_V7_IN_PAS.md` (comparația, planul, predicțiile, §4 ce a ieșit), T289 `calc_c157_os490.rs`, T290
 `sim_c157_mm_tc_v7_mixed.rs`, rândurile în `TEST_MATRIX.md` și `PROVENANCE.md`. PREDARE
