@@ -67,4 +67,15 @@ rămâne pornită; dacă taie, timpii nu se judecă.
 
 ## 4. Ce a ieșit (după teste)
 
-(se completează după T289 / T290)
+| # | Rezultat | Stare |
+|---|---|---|
+| §1 | T289: fereastra, W6 ×1,203, W7 ×1,340, W8, estimările T283, V9 peste două rulări ×1,17 — cifrele din tabel, socotite din nou | PASS (CALCUL) |
+| M1 | `attn7` cu `v7 = 0` = `attn6` octet cu octet (mini, #513 lot 2; cu / fără v5, v6; cu / fără `tc16_v4`); prin RAM la fel | PASS (SIMULARE) |
+| M2 | mini 27, #513 lot 2 **147**, #513 lot 6 **147** × v6 → v7; pf / tc 0 neschimbate; zona aceeași lungime; **2 octeți** diferiți pe QMD (adresa + memoria comună 12 288 → 14 336); fără v6 / v5 aceleași alegeri | PASS (SIMULARE) |
+| M3 | mini 5 pași cu v7 = cu v6 = cu v4, bit cu bit (2 301 760 valori; și doar cu v7, și cu `tc16_v4`); pierderea 9,7128 → 8,8200 | PASS (SIMULARE) |
+| M4 | adresă v7 nealiniată → refuz; QMD v7 cu memoria comună a lui v6 (12 KiB) → „QMD dă mai puțină memorie partajată decât cere programul” | PASS (SIMULARE) |
+| M5 | 4 blocuri pe SM la 64 KiB, ca v6 (cu și fără rezerva de 1 KiB) | PASS (CALCUL) |
+| P1, P2 | pe placă | NOT TESTED |
+
+Nota pentru OS: `integration/cyber-universe/C-157_P2zzr_os490-v7-in-pas.md`. **Nou pentru placă:** doar `mm_tc_v7` în pas (în
+probă a rulat deja cu aceiași biți, os-486 și os-490).

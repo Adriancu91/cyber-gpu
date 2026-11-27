@@ -664,3 +664,6 @@ niciun octet de firmware NVIDIA.
   (ale noastre). Ceasul: extensia publică `GL_ARB_shader_clock` (`clock2x32ARB`, specificația Khronos / `SPV_KHR_shader_clock`);
   ce instrucțiune iese (`cs2r sr[0x50]` / `sr[0x51]`) — citit în listarea NAK, nimic copiat. Compilat cu Mesa NAK 25.0.7 (MIT), pe
   gazdă. Nimic din firmware-ul NVIDIA.
+- **Sesiunea 275 (27 nov 2026):** `TcPick::V7`, `train_step::pack_mixed_fast_attn7`, `batch_ram::pack_mixed_fast_via_ram_attn7`
+  și testele T289 / T290 (ale noastre): aceeași regulă de alegere ca pentru v6, cu QMD-ul lui `mm_tc_v7`. Cifrele din T289 sunt
+  copiate din raportul OS-ului (os-490). Nicio sursă nouă; nimic copiat; nimic din firmware-ul NVIDIA.

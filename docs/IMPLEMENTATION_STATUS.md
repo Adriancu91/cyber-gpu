@@ -1,5 +1,32 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 275 — 27 noiembrie 2026, ~16:13–17:20 (ora României), în cloud, FĂRĂ placă — **os-490 comparat (dX / dW la viteză, cererea de 1 800 s aprobată de Adrian): W6 / W7 / W8 CONFIRMATE, `mm_tc_v7@64k` cel mai rapid pe toate trei formele; `mm_tc_v7` legat în pasul mixt rapid (`TcPick::V7`, `pack_mixed_fast_attn7`, doar adăugări) cu predicțiile M1–M5 / P1–P2 scrise înainte; PREDARE P2zzr**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 274), l-am pus `ocupat`. Rezultatul os-490 (ciclul 15:20) venise în hub la 15:34,
+după ce sesiunea 274 își alesese lucrul. (Copia locală veche a repo-ului era iar despărțită de GitHub; am lucrat pe ramura de pe GitHub,
+nimic șters.)
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Comparația + planul (commit înainte de cod) | fereastra 1 190 / 1 800 s, 0 seturi afară; v7 / v6 la 64 KiB: înainte ×1,05, dX ×1,20 (W6), dW ×1,34 (W7), ordinea W8 | CONFIRMATE (CALCUL T289) |
+| Estimările T283 | dX v6@64k 1,380 ms (prezis ~1,48, în bine 7 %), dW v6@64k 1,963 ms (în banda 1,63–2,18) | CONFIRMATE |
+| V9 (os-485) peste două rulări | dX v6 / v5 ×1,17 (banda ×1,00–1,10) | NECONFIRMATĂ, mai repede |
+| M1 `attn7` cu `v7 = 0` | = `attn6` octet cu octet (și prin RAM) | PASS în SIMULARE |
+| M2 alegerile | 147 `mm_tc_v6` → `mm_tc_v7` la #513 lot 2 și lot 6 (27 la mini); QMD: 2 octeți diferiți (adresa + 12 288 → 14 336 B) | PASS în SIMULARE |
+| M3 antrenarea mini 5 pași | cu v7 = cu v6 = cu v4, bit cu bit (2 301 760 valori) | PASS în SIMULARE |
+| M4 refuzuri / M5 blocuri | adresă nealiniată → refuz; QMD v7 cu 12 KiB → refuzat; 4 blocuri pe SM la 64 KiB | PASS |
+| P1 (lot 2: alegerile, oracolul), P2 (lot 6: placa 137–162 ms ≈ 19 000–22 400 simb/s, DEDUS) | — | NOT TESTED (cer placa) |
+| Verificările întregi | format, clippy, teste, no_std | **1 436 PASS** |
+
+**Note:** `docs/C-157_OS490_V7_IN_PAS.md` (comparația, planul, predicțiile, §4 ce a ieșit), T289 `calc_c157_os490.rs`, T290
+`sim_c157_mm_tc_v7_mixed.rs`, rândurile în `TEST_MATRIX.md` și `PROVENANCE.md`. PREDARE
+`integration/cyber-universe/C-157_P2zzr_os490-v7-in-pas.md`. **Nou pentru placă:** doar `mm_tc_v7` în pas (în probă a dat deja
+aceiași biți de două ori). Interfața: doar adăugări (`TcPick` primește varianta `V7`; OS-ul o folosește doar într-o listă).
+
+**Următorul pas:** comparațiile când vin — pasul cu `--pas-v7` (P2zzr: lot 2, apoi lot 6), `token32_v2c` (P2zzq, C1–C8); după
+pasul cu v7 pe placă: dW (încă ×1,28 mai lent decât dX la aceeași muncă), plan + predicții întâi; după `token32_v2c`: leacul pentru
+partea găsită.
+
 ## Sesiunea 274 — 27 noiembrie 2026, ~15:12–16:05 (ora României), în cloud, FĂRĂ placă — **„restul” lui `token32_v2`: programul de măsurat `token32_v2c` (ceasul SM-ului în jurul fiecărei operații) gata în SIMULARE, cu predicțiile C1–C8 scrise înainte de cod; PREDARE P2zzq**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 273), l-am pus `ocupat`. Niciun rezultat nou în hub de la 14:42; „da”-ul lui
