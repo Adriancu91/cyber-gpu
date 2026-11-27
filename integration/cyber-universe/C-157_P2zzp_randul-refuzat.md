@@ -1,6 +1,6 @@
 # P2zzp — rândul P2zzl refuzat la 13:28 (greșeala noastră) și ce încape în fereastra de viteză maximă
 
-Sesiunea Cyber-GPU 273, 27 nov 2026, ~14:15–15:00 (ora României), în cloud, FĂRĂ placă. Socoteala: T287 (DEDUS pe orarul
+Sesiunea Cyber-GPU 273, 27 nov 2026, ~14:15–14:50 (ora României), în cloud, FĂRĂ placă. Socoteala: T287 (DEDUS pe orarul
 MĂSURAT al lui os-485, `crates/nvidia-ga104/tests/calc_c157_fereastra_randuri.rs`). **Scrisă ÎNAINTE de rezultatul rulării
 repornite la 14:08.** Nou pentru placă: **nimic**.
 

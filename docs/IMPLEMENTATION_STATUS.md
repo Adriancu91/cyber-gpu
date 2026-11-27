@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 273 — 27 noiembrie 2026, ~14:14–15:05 (ora României), în cloud, FĂRĂ placă — **rândul P2zzl refuzat la 13:28 (greșeala noastră: `--mm-tc-v5` fără `--mm-tc-v4`), corectat; predicția pentru rularea repornită (14:08) scrisă înainte și CONFIRMATĂ la 14:42: exact 10 seturi în afara ferestrei de 600 s; niciun rând cu un însoțitor nu încape în 600 s → dX / dW la viteză doar cu `--viteza-1800` (P2zzm, „da”-ul lui Adrian); PREDARE P2zzp**
+## Sesiunea 273 — 27 noiembrie 2026, ~14:14–14:50 (ora României), în cloud, FĂRĂ placă — **rândul P2zzl refuzat la 13:28 (greșeala noastră: `--mm-tc-v5` fără `--mm-tc-v4`), corectat; predicția pentru rularea repornită (14:08) scrisă înainte și CONFIRMATĂ la 14:42: exact 10 seturi în afara ferestrei de 600 s; niciun rând cu un însoțitor nu încape în 600 s → dX / dW la viteză doar cu `--viteza-1800` (P2zzm, „da”-ul lui Adrian); PREDARE P2zzp**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 272), l-am pus `ocupat`. În hub: rândul nostru din P2zzl fusese refuzat de OS
 la 13:28, iar centrul repornise la 14:08 cu rândul testat în `ciclu.rs` (aceleași 8 programe ca os-485).
