@@ -296,6 +296,30 @@ pub fn pack_mixed_fast_via_ram_attn5(
     zone_va: u64,
     v: &ViaRam,
 ) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
+    pack_mixed_fast_via_ram_attn6(
+        list, prog_va, progs, v5_va, 0, attn, attn_fast, attn0, step_bytes, copy_va, zone_va, v,
+    )
+}
+
+/// C-157 p.2 (session 264, `docs/C-157_MM_TC_V6_IN_PAS.md`): [`pack_mixed_fast_via_ram_attn5`] with `mm_tc_v6` as
+/// well (`v6_va`, 256-aligned; 0 = not loaded), packed by `train_step::pack_mixed_fast_attn6` (an aligned `Tc` goes to
+/// `mm_tc_v6` when it is loaded, before `mm_tc_v5`). With `v6_va = 0` it is [`pack_mixed_fast_via_ram_attn5`] byte for
+/// byte. SIMULARE only.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub fn pack_mixed_fast_via_ram_attn6(
+    list: &[MixedLaunch],
+    prog_va: impl Fn(Prog) -> u64,
+    progs: &TcPrograms,
+    v5_va: u64,
+    v6_va: u64,
+    attn: Option<crate::train_step::AttnTcProgram>,
+    attn_fast: Option<crate::train_step::AttnTcFast>,
+    attn0: Attn0Programs,
+    step_bytes: Option<u32>,
+    copy_va: u64,
+    zone_va: u64,
+    v: &ViaRam,
+) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
     if !copy_va.is_multiple_of(256) || !zone_va.is_multiple_of(256) {
         return Err(bad(
             "lot prin RAM: programul de copiere sau zona nealiniate",
@@ -303,8 +327,8 @@ pub fn pack_mixed_fast_via_ram_attn5(
     }
     let n_in = v.copies_in.len();
     let list_va = zone_va + SLOT * n_in as u64;
-    let (list_bytes, list_qmds, picks) = crate::train_step::pack_mixed_fast_attn5(
-        list, prog_va, progs, v5_va, attn, attn_fast, attn0, step_bytes, list_va,
+    let (list_bytes, list_qmds, picks) = crate::train_step::pack_mixed_fast_attn6(
+        list, prog_va, progs, v5_va, v6_va, attn, attn_fast, attn0, step_bytes, list_va,
     )?;
     let copy_shared = SharedMemory {
         bytes: 0,

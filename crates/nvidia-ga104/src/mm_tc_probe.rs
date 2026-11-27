@@ -146,6 +146,48 @@ pub const SETS: [ProbeSet; 6] = [
     },
 ];
 
+/// C-157 p.2 (session 264, `docs/C-157_MM_TC_V6_IN_PAS.md`): row bands judged in `qkv-513-dw` (m = 2 304).
+pub const QKV_DW_BANDS: [usize; 3] = [0, 1152, 2288];
+/// Index of `qkv-513-dx` for [`set`], [`launch_bytes`] and [`judge_set`].
+pub const QKV_DX_SET: usize = 6;
+/// Index of `qkv-513-dw` for [`set`], [`launch_bytes`] and [`judge_set`].
+pub const QKV_DW_SET: usize = 7;
+
+/// C-157 p.2 (session 264, `docs/C-157_MM_TC_V6_IN_PAS.md`): two more **timing** products, outside [`SETS`] (which
+/// stays as it is): the two backward products of the same qkv (one #513 chunk), with the flags the step really uses —
+/// dX = dY · W (no flag; W is stored `[out, in]` = `[K, N]`) and dW = Xᵀ · dY ([`TA`]). Indices [`QKV_DX_SET`] and
+/// [`QKV_DW_SET`] through [`set`]. Same 5 launches, guards and oracle as `qkv-513`. Not yet run on a board.
+pub const QKV_T_SETS: [ProbeSet; 2] = [
+    ProbeSet {
+        name: "qkv-513-dx",
+        m: 6144,
+        n: 768,
+        k: 2304,
+        flags: 0,
+        seed: 7,
+        scale: Scale::Qkv,
+        bands: Some(&QKV_BANDS),
+        repeats: QKV_REPEATS,
+    },
+    ProbeSet {
+        name: "qkv-513-dw",
+        m: 2304,
+        n: 768,
+        k: 6144,
+        flags: TA,
+        seed: 8,
+        scale: Scale::Normal,
+        bands: Some(&QKV_DW_BANDS),
+        repeats: QKV_REPEATS,
+    },
+];
+
+/// Set `i`: 0–5 = [`SETS`], 6–7 = [`QKV_T_SETS`] ([`QKV_DX_SET`], [`QKV_DW_SET`]); `None` past that.
+pub fn set(i: usize) -> Option<&'static ProbeSet> {
+    SETS.get(i)
+        .or_else(|| i.checked_sub(SETS.len()).and_then(|j| QKV_T_SETS.get(j)))
+}
+
 /// Byte offsets inside the buffer of one set (every region aligned to 256 bytes).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Layout {
@@ -457,7 +499,7 @@ pub fn launch_bytes(
     cbuf_va: u64,
     buf_va: u64,
 ) -> GpuResult<([u8; tc::CBUF_BYTES], [u8; nvidia_rm570::QMD_SIZE])> {
-    let s = SETS.get(set).ok_or(bad("mm_tc proba: set necunoscut"))?;
+    let s = self::set(set).ok_or(bad("mm_tc proba: set necunoscut"))?;
     if !buf_va.is_multiple_of(4096) || !cbuf_va.is_multiple_of(256) || !prog_va.is_multiple_of(256)
     {
         return Err(bad(
@@ -527,7 +569,7 @@ impl SetResult {
     }
     /// GFLOP/s of the median launch (2·m·n·k / ns), if timed.
     pub fn gflops(&self) -> Option<u32> {
-        let s = SETS[self.set];
+        let s = set(self.set)?;
         let flop = 2 * s.m as u64 * s.n as u64 * s.k as u64;
         self.median_ns()
             .filter(|&ns| ns > 0)
@@ -554,7 +596,7 @@ fn words(b: &[u8]) -> Vec<u32> {
 
 /// Judges the bytes read back for set `set` ([`ProbeSet::read_ranges`], concatenated) and the launch times.
 pub fn judge_set(set: usize, out: &[u8], ns: &[u64]) -> GpuResult<SetResult> {
-    let s = SETS.get(set).ok_or(bad("mm_tc proba: set necunoscut"))?;
+    let s = self::set(set).ok_or(bad("mm_tc proba: set necunoscut"))?;
     let (_, n, k) = s.dims();
     let elements = s.judged_rows().len() * n;
     let mut res = SetResult {
@@ -675,7 +717,10 @@ impl Probe {
         for r in &self.sets {
             out.extend([
                 ("kt mm_tc set: index", r.set as u32),
-                ("kt mm_tc set: intrari (fnv)", SETS[r.set].inputs_fnv()),
+                (
+                    "kt mm_tc set: intrari (fnv)",
+                    set(r.set).map_or(u32::MAX, ProbeSet::inputs_fnv),
+                ),
                 ("kt mm_tc set: verdict", r.code()),
                 ("kt mm_tc set: exacte (model)", r.exact_model),
                 (
@@ -732,7 +777,7 @@ impl Probe {
                 .unwrap_or_else(|| String::from("-"));
             out.push(format!(
                 "mm_tc set {} ({label}): {}, exacte {}/{}, {} promile, garzi {}{}",
-                SETS[r.set].name,
+                set(r.set).map_or("?", |s| s.name),
                 ["NU TRECE", "in margine", "INVALID"][r.code() as usize],
                 r.exact_model,
                 r.elements,

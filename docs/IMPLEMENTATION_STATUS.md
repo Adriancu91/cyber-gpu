@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 264 — 27 noiembrie 2026, ~05:12–06:15 (ora României), în cloud, FĂRĂ placă — **`mm_tc_v6` legat în pasul mixt rapid (`TcPick::V6`, `pack_mixed_fast_attn6`, doar adăugări; T277 în SIMULARE) + două seturi de timp noi în proba `mm_tc` (`qkv-513-dx`, `qkv-513-dw`; T278) + o corectură la planul v6: proba qkv-513 e cazul `TB` (B transpus), nu cel fără transpunere; PREDARE P2zzh**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 263), l-am pus `ocupat`. În hub nu venise niciun rezultat nou de la placă
+(os-478 = OS-ul a legat P2zze; pasul cu v5 și proba v6 nerulate) → coada C-157 p.2: v6 în pas + seturile transpuse.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Steagurile reale ale pasului #513 (lot 2) | 147 `mm_tc` = 49 înainte (`TB`), 49 dX (fără steag), 49 dW (`TA`); planul v6 (T275) socotea înainte = fără steag și dX = `TB` — socoteala pe steaguri e bună, eticheta era inversată; **proba qkv-513 e cazul cu 640 de tacți**, nu 256 | GĂSIT (CALCUL pe lista reală, T277) |
+| Predicții (scrise înainte de teste) | V7 din plan neschimbată; nouă V7b qkv-513 v6 1,44–1,78 ms; V9 dX ×1,00–1,10; V10 dW ×1,15–1,70; V8 (pasul) neschimbată | NOT TESTED |
+| `mm_tc_v6` în pas | `TcPick::V6`, `pack_mixed_fast_attn6`, `pack_mixed_fast_via_ram_attn6`; `attn5` = `attn6` cu `v6 = 0` octet cu octet; 147 × v5 → v6, 1 octet diferit pe QMD; mini 5 pași aceiași biți; refuzurile | PASS (SIMULARE, T277 L1–L4) |
+| Seturile noi ale probei | `mm_tc_probe::set`, `QKV_T_SETS`, indicii 6 / 7; `SETS` neschimbat; judecata pe benzi, gărzile, rândurile din jurnal | PASS (SIMULARE, T278) |
+| Verificările întregi | format, clippy (1.100), teste, no_std | **1 376 PASS** (8 ignorate) |
+
+**Note:** `docs/C-157_MM_TC_V6_IN_PAS.md`, T277 (`crates/nvidia-ga104/tests/sim_c157_mm_tc_v6_mixed.rs`), T278
+(`crates/nvidia-ga104/tests/sim_c157_mm_tc_qkv_t_sets.rs`). PREDARE `integration/cyber-universe/C-157_P2zzh_mm-tc-v6-in-pas.md`.
+**Nou pentru placă:** doar `mm_tc_v6` (același binar ca în P2zzg) folosit și în pas, și două produse de timp în probă. Nicio scriere
+în registre, niciun firmware. Interfața: doar adăugări.
+
+**Următorul pas:** comparațiile când vin (pasul cu v5 P2zzf, `token32_v2` P2zzd, proba v6 + seturile 6 / 7 P2zzg / P2zzh); altfel
+socoteala conflictelor la **citiri** (`coopMatLoad`) pe cele trei steaguri ale pasului, plan + predicții întâi.
+
 ## Sesiunea 263 — 27 noiembrie 2026, ~03:10–04:28 (ora României), în cloud, FĂRĂ placă — **`mm_tc_v6`: bucla lui `mm_tc_v5` cu scrierile f16 împerecheate (o scriere de 64 de biți pe vector; operanzii transpuși pe coloane); plan + predicții V1–V8 scrise înainte (T275), compilat, aceiași biți în SIMULARE (T276); PREDARE P2zzg**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 262), l-am pus `ocupat`. În hub nu venise niciun rezultat nou de la placă
