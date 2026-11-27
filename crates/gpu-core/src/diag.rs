@@ -221,6 +221,8 @@ pub struct Journal {
     sink: Option<fn(&Event)>,
     live: Option<LiveSink>,
     routine: Option<Routine>,
+    /// os-481 (27 Nov 2026): inside a routine stretch, [`Event::Value`] rows are held too ([`Self::set_hold_values`]).
+    hold_values: bool,
     stats: LiveStats,
 }
 
@@ -235,6 +237,7 @@ impl Journal {
             sink: None,
             live: None,
             routine: None,
+            hold_values: false,
             stats: LiveStats::default(),
         }
     }
@@ -269,6 +272,18 @@ impl Journal {
         self.routine
     }
 
+    /// os-481 (note C-157_P2zzj): `true` = inside a routine stretch, every [`Event::Value`] is also held (under the
+    /// same `max_pending`), so a dashboard read after each training step (11 values) costs one stick write now and
+    /// then instead of one per value (~23 ms each on the workstation's stick). Outside a stretch it changes nothing;
+    /// the memory journal is the same either way. Off by default.
+    pub fn set_hold_values(&mut self, on: bool) {
+        self.hold_values = on;
+    }
+
+    pub fn holds_values(&self) -> bool {
+        self.hold_values
+    }
+
     /// C-145: the held events go to the stick now (e.g. once per token).
     pub fn flush_live(&mut self) {
         if self.stats.pending > 0 {
@@ -289,9 +304,10 @@ impl Journal {
             s(&e);
         }
         if let Some(l) = self.live {
-            let hold = self
-                .routine
-                .is_some_and(|r| r.covers(&e) && self.stats.pending < r.max_pending);
+            let hold = self.routine.is_some_and(|r| {
+                (r.covers(&e) || (self.hold_values && matches!(e, Event::Value { .. })))
+                    && self.stats.pending < r.max_pending
+            });
             if hold {
                 (l.line)(&e, Flush::Later);
                 self.stats.pending += 1;
@@ -511,6 +527,54 @@ mod tests {
         }));
         k.push(w(0x1700));
         assert_eq!((k.len(), k.live_stats().held), (1, 0));
+    }
+
+    /// os-481 (T281 c): with `set_hold_values(true)`, a routine stretch holds the values too (the dashboard after a
+    /// step); off, or outside a stretch, they go out at once as before.
+    #[test]
+    fn routine_stretch_can_hold_values() {
+        use std::sync::Mutex;
+        use std::vec::Vec;
+        static LOG: Mutex<Vec<Flush>> = Mutex::new(Vec::new());
+        static FLUSHES: Mutex<u32> = Mutex::new(0);
+        fn line(_: &Event, f: Flush) {
+            LOG.lock().unwrap().push(f);
+        }
+        fn flush() {
+            *FLUSHES.lock().unwrap() += 1;
+        }
+        const R: Routine = Routine {
+            writes: &[],
+            notes: &[],
+            max_pending: 3,
+        };
+        let v = |x: u32| Event::Value {
+            what: "kd temperatura",
+            value: x,
+        };
+        let mut j = Journal::with_live_sink(64, LiveSink { line, flush });
+        assert!(!j.holds_values(), "off by default");
+        j.set_hold_values(true);
+        j.push(v(1)); // no stretch: Now
+        j.set_routine(Some(R));
+        j.push(v(2)); // held
+        j.push(v(3)); // held
+        j.set_hold_values(false);
+        j.push(v(4)); // off again: Now (writes the held ones too)
+        j.set_hold_values(true);
+        j.push(v(5)); // held
+        j.push(v(6)); // held
+        j.push(v(7)); // held (3rd)
+        j.push(v(8)); // over the cap: Now
+        j.push(v(9)); // held
+        j.flush_live(); // once per step
+        j.set_routine(None);
+        j.push(v(10)); // after the stretch: Now
+        use Flush::{Later as L, Now as N_};
+        assert_eq!(*LOG.lock().unwrap(), [N_, L, L, N_, L, L, L, N_, L, N_]);
+        assert_eq!(*FLUSHES.lock().unwrap(), 1);
+        assert_eq!(j.len(), 10, "the memory journal keeps every value");
+        assert_eq!(j.live_stats().held, 6);
     }
 
     #[test]

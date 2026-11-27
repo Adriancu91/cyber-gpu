@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 267 — 27 noiembrie 2026, ~08:11–09:10 (ora României), în cloud, FĂRĂ placă — **os-481 comparat: pasul #513 cu `mm_tc_v5` confirmă toate predicțiile (lot 2 placa 80,16 ms, lot 6 203,06 ms = 15 128 simb/s pe placă); la lot 6 pasul întreg (274,3 ms) e ținut de tabloul de bord scris pe stick valoare cu valoare → `Journal::set_hold_values` (doar adăugare), PREDARE P2zzj**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 266), l-am pus `ocupat`. În hub veniseră ciclurile 07:18 (lot 2) și 07:49
+(lot 6, două locuri) = os-481 → punctul 2 al cozii C-157 (are întâietate). Clona veche din container (sesiunea 196) n-a putut fi
+adusă la zi (istorii scurtate); am lucrat într-o clonă nouă a ramurii `g0-g2-fundatie`.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Alegerile, oracolul mixt, 16 simboluri | 147 `mm_tc_v5`; ACELEAȘI NUMERE ca os-473 (2,7·10⁻⁵ / 3,2·10⁻⁴); lanțul trecut | PASS (MĂSURAT de OS) |
+| Lot 2: placa în banda 78–84 ms | 80,16 ms; ceasul a fost 1 815 MHz (os-473: 1 935) → la același ceas `mm_tc_v5` ×1,403 față de v4 (proba ×1,407) | PASS (CALCUL, T281) |
+| Lot 6: placa în banda 202–222 ms | 203,06 ms, `mm_tc_v5` 11,71 TFLOP/s, 50 °C, motive 0 | PASS (CALCUL, T281) |
+| Lot 6: pasul întreg | 274,3 ms = 11 200 simb/s: tabloul (11 valori × ~23–24 ms pe stick, mediana 237,7 + 28 ms) > placa; modelul 272,7 ms | MĂSURAT în `gpu-jurnal-165.txt` |
+| `Journal::set_hold_values` | valorile ținute în rutină ca scrierile și notele; oprit implicit; în afara rutinei neschimbat | PASS (test `routine_stretch_can_hold_values`) |
+| Pe placă, cu tabloul ținut | prezis pasul ~205–215 ms ≈ 14 300–15 000 simb/s | NOT TESTED |
+| Verificările întregi | format, clippy, teste, no_std | **1 395 PASS** (8 ignorate) |
+
+**Note:** `docs/C-157_OS481.md`, T281 (`crates/nvidia-ga104/tests/calc_c157_os481.rs`). PREDARE
+`integration/cyber-universe/C-157_P2zzj_tabloul-pe-stick.md`. **Nou pentru placă:** nimic (doar când se scrie jurnalul pe stick).
+Interfața: doar adăugări (`gpu_core::diag::Journal::{set_hold_values, holds_values}`).
+
+**Următorul pas:** comparațiile când vin (lot 6 cu tabloul ținut P2zzj, `token32_v2` P2zzd, proba v6 + seturile 6 / 7, proba v7
+P2zzi); altfel următorul punct al cozii C-157.
+
 ## Sesiunea 266 — 27 noiembrie 2026, ~07:13–07:55 (ora României), în cloud, FĂRĂ placă — **`mm_tc_v7` = `mm_tc_v6` cu 16 B de umplutură pe rândurile memoriei comune (citirile fără conflict): compilat (W1–W2 CONFIRMATE), aceiași biți în SIMULARE (T280, W3); PREDARE P2zzi**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 265), l-am pus `ocupat`. În hub nu venise niciun rezultat nou de la placă
