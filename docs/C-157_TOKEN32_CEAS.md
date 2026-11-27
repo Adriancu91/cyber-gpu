@@ -74,3 +74,8 @@ nu se folosește la generare.
 - SIMULARE (T288): un simbol al listei de azi + argmax la lățimea lui Kronos, G = 768 = lansările separate bit cu bit; zona ceasului
   (cifre **inventate** de model) citită exact: ferestrele, munca cea mai lungă, bariera, citirile contorului, rândurile `kc`.
 - Nimic rulat pe placă. PREDARE: `integration/cyber-universe/C-157_P2zzq_token32-v2c-ceas.md`.
+
+## 6. Pe placă (sesiunea 276)
+
+os-495 (ciclul 27 nov 18:06): C1, C2, C3, C4, C7 CONFIRMATE; C5, C6, C8 NECONFIRMATE — restul stă în LayerNorm făcut de un singur
+grup (+0,36 ms) și în atenția pe 12 grupuri (+0,15 ms), nu în înmulțiri. Comparația: `docs/C-157_TOKEN32_V2C_PLACA.md` (T291).

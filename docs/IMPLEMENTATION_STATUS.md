@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 276 — 27 noiembrie 2026, ~18:11–18:55 (ora României), în cloud, FĂRĂ placă — **os-495 (`token32_v2c`, ciclul 18:06) comparat cu C1–C8: „restul” lui `token32_v2` stă în LayerNorm făcut de un singur grup (+0,36 ms) și în atenția pe 12 grupuri (+0,15 ms) + bariera 0,17 ms; înmulțirile = lista; PREDARE P2zzs (nimic nou pentru placă)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 275), l-am pus `ocupat`. Rezultatul os-495 a venit în hub la 18:06 (are
+întâietate, punctul 2 al cozii C-157). Rândurile `--pas-v7` (P2zzr) nu au rulat încă. (Copia locală veche a repo-ului era iar
+despărțită de GitHub; am lucrat pe ramura de pe GitHub, nimic șters.)
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| C1 biții | 16 simboluri identice, amprenta `0x6c8501f0`, contorul 18 / 18 | CONFIRMATĂ (MĂSURAT de OS) |
+| C2 / C3 / C4 / C7 | ceasul +0,6 %; 1 951 MHz; bariera 0,172 ms (2,0 µs pe barieră); 26,5 citiri pe grup și barieră | CONFIRMATE (CALCUL T291) |
+| C5 înmulțirile | 0,696 ms = cât lista din același lanț (×0,99) → B1 nu le frânează | NECONFIRMATĂ |
+| C6 LayerNorm (25) | 0,459 ms (prezis 0,05–0,20): un singur grup, 18,6 µs fiecare | NECONFIRMATĂ |
+| C8 atenția | fereastra ×2,12 față de listă (prezis ≤ ×1,3); ~12 grupuri din 768 lucrează | NECONFIRMATĂ |
+| Repetabilitatea | `token32_v2` G = 768 1 666 µs (10:01: 1 668), G = 384 1 936 (1 969) | MĂSURAT |
+| D1 / D2 (următorul program) | LayerNorm în înmulțirea următoare → placa 1,28–1,38 ms; + atenția pe mai multe grupuri → 1,10–1,30 ms ≈ 520–580 simb/s cu driverul | NOT TESTED (DEDUS) |
+| Verificările întregi | format, clippy, teste, no_std | **1 440 PASS** |
+
+**Note:** `docs/C-157_TOKEN32_V2C_PLACA.md` (comparația, unde stă restul, ce urmează), §6 în `docs/C-157_TOKEN32_CEAS.md`, T291
+`crates/nvidia-ga104/tests/calc_c157_token32_v2c_placa.rs`, rândurile în `TEST_MATRIX.md` și `PROVENANCE.md`. **Nou pentru placă:**
+nimic; `--token32-v2c` nu mai trebuie rulat.
+
+**Următorul pas:** comparațiile când vin (`--pas-v7` P2zzr: lot 2, apoi lot 6); altfel planul + predicțiile pentru LayerNorm lipit
+în înmulțirea următoare din `token32` (D1), scrise înainte de cod; apoi dW (×1,28 față de dX).
+
 ## Sesiunea 275 — 27 noiembrie 2026, ~16:13–17:05 (ora României), în cloud, FĂRĂ placă — **os-490 comparat (dX / dW la viteză, cererea de 1 800 s aprobată de Adrian): W6 / W7 / W8 CONFIRMATE, `mm_tc_v7@64k` cel mai rapid pe toate trei formele; `mm_tc_v7` legat în pasul mixt rapid (`TcPick::V7`, `pack_mixed_fast_attn7`, doar adăugări) cu predicțiile M1–M5 / P1–P2 scrise înainte; PREDARE P2zzr**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 274), l-am pus `ocupat`. Rezultatul os-490 (ciclul 15:20) venise în hub la 15:34,

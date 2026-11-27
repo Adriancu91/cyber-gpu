@@ -667,3 +667,6 @@ niciun octet de firmware NVIDIA.
 - **Sesiunea 275 (27 nov 2026):** `TcPick::V7`, `train_step::pack_mixed_fast_attn7`, `batch_ram::pack_mixed_fast_via_ram_attn7`
   și testele T289 / T290 (ale noastre): aceeași regulă de alegere ca pentru v6, cu QMD-ul lui `mm_tc_v7`. Cifrele din T289 sunt
   copiate din raportul OS-ului (os-490). Nicio sursă nouă; nimic copiat; nimic din firmware-ul NVIDIA.
+- **Sesiunea 276 (27 nov 2026):** testul T291 (`calc_c157_token32_v2c_placa.rs`, al nostru) și `docs/C-157_TOKEN32_V2C_PLACA.md`:
+  cifrele sunt copiate din raportul OS-ului (os-495, ciclul 18:06, rândurile `kc`). Nicio sursă nouă; nimic copiat; nimic din
+  firmware-ul NVIDIA.
