@@ -1,5 +1,27 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 273 — 27 noiembrie 2026, ~14:14–15:05 (ora României), în cloud, FĂRĂ placă — **rândul P2zzl refuzat la 13:28 (greșeala noastră: `--mm-tc-v5` fără `--mm-tc-v4`), corectat; predicția pentru rularea repornită (14:08) scrisă înainte și CONFIRMATĂ la 14:42: exact 10 seturi în afara ferestrei de 600 s; niciun rând cu un însoțitor nu încape în 600 s → dX / dW la viteză doar cu `--viteza-1800` (P2zzm, „da”-ul lui Adrian); PREDARE P2zzp**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 272), l-am pus `ocupat`. În hub: rândul nostru din P2zzl fusese refuzat de OS
+la 13:28, iar centrul repornise la 14:08 cu rândul testat în `ciclu.rs` (aceleași 8 programe ca os-485).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Rândul P2zzl | nu e formă validă (`--mm-tc-v5` cere `--mm-tc-v4`, P6-242); corectat în P2zzl și `docs/C-157_OS485.md` | reparat (doc) |
+| Modelul orarului (T287) pe os-485 | refă toate cele 24 de porniri în 2 s | PASS (CALCUL) |
+| Predicția pentru 14:08: 10 seturi afară (dX v6, v6@64k; dW 8) | paza os-489: exact cele 10; lanțul 1 597 s | PASS (MĂSURAT de OS, ciclul 14:42) |
+| Rândul scurt (`mm_tc` + v6) în 600 s | ~747 s, dW v6@64k afară cu ~33 s (modelul e chiar 8–14 s optimist) | DEDUS |
+| Cu 1 800 s | până la 3 însoțitori încap (P2zzm ~1 140 s); 4 nu (~1 926 s) | DEDUS |
+| Biții la 14:42 | aceiași ca `mm_tc` peste tot; v5@64k dX 1,617 ms (os-485 1,620) | PASS (MĂSURAT de OS) |
+| Verificările întregi | format, clippy, teste, no_std | **1 421 PASS** (8 ignorate) |
+
+**Note:** T287 (`crates/nvidia-ga104/tests/calc_c157_fereastra_randuri.rs`), rândul T287 în `docs/TEST_MATRIX.md`, rândul nou în
+`docs/C-157_P2_COMPARATII.md`. PREDARE `integration/cyber-universe/C-157_P2zzp_randul-refuzat.md`. **Nou pentru placă:** nimic.
+Interfața: neschimbată. **Lecție:** orice rând propus OS-ului se verifică întâi pe testele `board_command` din `ciclu.rs` (citire).
+
+**Următorul pas:** „da”-ul lui Adrian pentru 1 800 s → rândul P2zzm și comparația lui; rândul cu `--pas-v6` (P2zzo) când vine; după
+dX / dW la viteză: `mm_tc_v7` legat în pas; altfel „restul” din `token32_v2` (următorul punct al cozii C-157).
+
 ## Sesiunea 272 — 27 noiembrie 2026, ~13:18–13:52 (ora României), în cloud, FĂRĂ placă — **os-487 (lot 6 cu tabloul ținut în jurnal, ciclul 12:24) comparat: pasul întreg 200,77 ms = placa = 15 301 simb/s, sub banda prezisă 205–215 (în bine); aceleași pierderi ca os-481; tabloul nu mai costă nimic; PREDARE P2zzo**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 271), l-am pus `ocupat`. În hub venise ciclul 12:24 = os-487 necomparat încă →

@@ -15,7 +15,7 @@ alegerea pe formă în pas pe baza lor.
 **Ce e bun:** v5@64k pe dX **1,620 ms = 13,42 TFLOP/s** (×1,154 față de înainte; dreapta noastră prezicea ×1,176 — la 1,8 %).
 
 **Ce cerem (nimic nou pentru placă):**
-1. **Reluarea `--mm-tc-dxdw` în fereastră**, cu mai puține programe: `test-placa --i9 c135 --tablou-viteza --mm-tc --mm-tc-v5 --mm-tc-v6
+1. **CORECTAT 27 nov 14:30 (P2zzp): rândul de mai jos e REFUZAT de OS (`--mm-tc-v5` cere `--mm-tc-v4` înainte) și oricum nu încape în 600 s; vezi `C-157_P2zzp_randul-refuzat.md`.** **Reluarea `--mm-tc-dxdw` în fereastră**, cu mai puține programe: `test-placa --i9 c135 --tablou-viteza --mm-tc --mm-tc-v5 --mm-tc-v6
    --mm-tc-64k --mm-tc-dxdw`. Estimat (DEDUS, T283): dX v6@64k ~1,48 ms; dW v5@64k 2,3–3,1 ms; dW v6@64k 1,6–2,2 ms. Se judecă pe V9 / V10.
 2. **Paza timpilor** (la voi, dacă vreți): `nvidia_ga104::gsp::perf::BoostPlan::covers_ms(de_la_cerere_ms, durata_ms)` — doar socoteală, nu
    trimite nimic (doar adăugare, commit-ul acestei note). Când e `false`, rândul timpului poate purta „în afara ferestrei de viteză”; sau

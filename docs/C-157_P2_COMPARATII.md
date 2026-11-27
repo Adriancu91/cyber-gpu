@@ -768,3 +768,11 @@ Sursa: `Cyber-hub/rezultate/os-automat/2026-11-22/ciclu-auto-20261122-0506.txt` 
   (15 339): +0,23 % = zgomot → tabloul ținut nu costă nimic.
 - **Placa −1,0 %:** doar ceasul (programele de calcul −1,1 / −1,2 %, cele de memorie neschimbate). `mm_tc_v5` 11,85 TFLOP/s = 75,4 %.
 - **Tai:** frâna tabloului, închisă. Rândul cu `--pas-v6` n-a rulat încă. PREDARE P2zzo. Nota întreagă: `docs/C-157_OS487.md`.
+
+## os-489: `--mm-tc-dxdw` reluat cu cererea de 600 s (27 nov 2026, ciclul 14:42) — sesiunea 273 (T287)
+- **Rândul P2zzl era greșit** (`--mm-tc-v5` fără `--mm-tc-v4`, refuzat la 13:28; greșeala noastră). Centrul a repornit cu aceleași
+  8 programe ca os-485. Predicția scrisă înainte (T287): aceeași tăietură, 10 seturi în afara ferestrei.
+- **Placa:** paza os-489 a marcat **exact cele 10** (dX v6, v6@64k; dW toate 8), lanțul 1 597 s după cerere — CONFIRMAT. Biții
+  aceiași peste tot; v5@64k dX 1,617 ms (os-485 1,620). Modelul orarului: 8–14 s mai devreme decât placa.
+- **Tai:** reluările `--mm-tc-dxdw` la 600 s (niciun rând cu un însoțitor nu încape: rândul scurt `mm_tc` + v6 ~747 s, dW v6@64k
+  afară). Singura cale: P2zzm cu `--viteza-1800` (~1 140 s), după „da”-ul lui Adrian. PREDARE P2zzp.
