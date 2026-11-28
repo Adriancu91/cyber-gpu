@@ -390,7 +390,10 @@ fn flop(l: &MixedLaunch) -> u64 {
     match l {
         MixedLaunch::Tc { args, .. } => args.flop(),
         MixedLaunch::TcGelu { args, .. } => 2 * args.m as u64 * args.n as u64 * args.k as u64,
-        MixedLaunch::Std(_) | MixedLaunch::AttnTc(_) | MixedLaunch::Attn0Tc(_) => 0,
+        MixedLaunch::Std(_)
+        | MixedLaunch::AttnTc(_)
+        | MixedLaunch::Attn0Tc(_)
+        | MixedLaunch::AttnFwdTc(_) => 0,
     }
 }
 

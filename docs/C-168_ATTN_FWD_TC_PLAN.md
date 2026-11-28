@@ -269,3 +269,31 @@ acumulatorilor”) **nu s-a atins** → pasul 4 (legarea în pas) e următorul, 
 
 Ținta C-168 p.4 (≤ 6 ms pe pas) e atinsă dacă H6c iese (DEDUS până la rândul pe placă). FlashAttention-2 întreg (B din §2) nu mai e
 necesar pentru țintă; rămâne scris, pentru memoria lui P (−906 MiB din arenă), nu pentru timp.
+
+## 12. Pasul 4 făcut (sesiunea 289, 28 nov 2026, cloud, FĂRĂ placă): `attn_fwd_tc` legat în pas — PREDARE (nota P4b)
+
+Ce s-a scris (doar adăugări): `MixedLaunch::AttnFwdTc`, `TcPick::AttnFwdTc`, `train_step::attn_fwd_tc_list`,
+`train_step::pack_mixed_fast_attn9` (= `attn8k` + `attn_fwd_va`), `batch_ram::pack_mixed_fast_via_ram_attn9`. `attn8k` și
+`via_ram_attn8k` cheamă acum varianta 9 cu `attn_fwd_va = 0`; packerii vechi (`pack_mixed_fast_attn`, `pack_mixed_gelu`) refuză o
+listă cu `AttnFwdTc`. Nota pentru OS: `integration/cyber-universe/C-168_P4b_atentie-fwd-tc-in-pas.md`.
+
+| # | Prezis (§11) | SIMULARE (T305) | Verdict |
+|---|---|---|---|
+| H6a | fără `attn_fwd_tc` = `attn8k` octet cu octet; la #513 exact 12 lansări mutate, restul neschimbat | exact așa (lot 2: 73/24/50; lot 6 cu gardă 13/0/134); grila [4, 12, lot], QMD-ul lui `attn_fwd_tc`, cbuf = `cbuf_from_f32` | **CONFIRMATĂ** (SIMULARE) |
+| H6b | modelul mic aliniat, 5 pași, în `MIX_TOL_*` față de tile3 | pierderea 4,8·10⁻⁶ / scăderea 1,7·10⁻⁵ / gradientul 6,3·10⁻⁴ **în**; greutățile **peste** 1·10⁻³ pe biasuri | **PARȚIAL** |
+| H6c, H6d, H7 | pe placă | — | NOT TESTED |
+
+**De ce greutățile ies peste prag (CALCUL, verificat element cu element):** în modelul mic biasurile pornesc de la 0 și, după 5 pași
+Adam cu lr 1·10⁻³, au ~3·10⁻³; un element cu gradientul aproape 0 (în `ln2.bias` al stratului 1: g₁ = 5·10⁻⁴, celelalte ~1) primește
+de la Adam pași de ±lr după zgomot, deci ajunge în altă parte (−3,2·10⁻³ față de −1,4·10⁻³) — singur dă 7,8·10⁻² pe tensor; celelalte
+127 de elemente diferă cu ~1·10⁻⁵. Treimea K din `in_proj_bias` are gradientul exact 0 (softmax nu se schimbă la o constantă pe chei)
+→ e doar zgomot de rotunjire, peste prag la orice schimbare. **Reperul:** schimbarea deja trecută pe placă (atenția înapoi pe circuite
+față de programele F32 `_3`) dă în același model 2,5·10⁻³ fără K și 0,38 cu K — tot peste 1·10⁻³. Deci criteriul greutăților pe
+tensor nu deosebește o greșeală în acest model mic; nu l-am slăbit (pragul rămâne în §11, verdictul e PARȚIAL), iar testul afirmă
+doar cele trei cifre care au trecut și o limită largă (≤ 0,1 fără K, totul finit). Verdictul pe greutăți rămâne oracolul pe placă (H7,
+#513 cu lr 5·10⁻⁵ și 10 pași).
+
+**Ce NU arată pasul 4:** nimic despre placă; timpul (H6c / H6d) e DEDUS din os-504.
+
+**Pasul următor:** rândul OS lot 2 cu oracolul, apoi lot 6 (nota P4b). Dacă H6c iese, ținta C-168 p.4 (≤ 6 ms) e atinsă și urmează
+C-168 p.5 (lipirea lansărilor mărunte).

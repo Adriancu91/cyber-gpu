@@ -400,6 +400,35 @@ pub fn pack_mixed_fast_via_ram_attn8k(
     zone_va: u64,
     v: &ViaRam,
 ) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
+    pack_mixed_fast_via_ram_attn9(
+        list, prog_va, progs, v5_va, v6_va, v7_va, v8, long_k, 0, attn, attn_fast, attn0,
+        step_bytes, copy_va, zone_va, v,
+    )
+}
+
+/// C-168 p.4 step 4 (session 289, `docs/C-168_ATTN_FWD_TC_PLAN.md` §11): [`pack_mixed_fast_via_ram_attn8k`] with
+/// `attn_fwd_tc` as well (`attn_fwd_va`, 0 = not loaded), the list packed by `train_step::pack_mixed_fast_attn9` (every
+/// `MixedLaunch::AttnFwdTc` of `train_step::attn_fwd_tc_list` on `attn_fwd_tc`). `attn_fwd_va = 0` and no
+/// `AttnFwdTc` = [`pack_mixed_fast_via_ram_attn8k`] byte for byte. SIMULARE only (T305).
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub fn pack_mixed_fast_via_ram_attn9(
+    list: &[MixedLaunch],
+    prog_va: impl Fn(Prog) -> u64,
+    progs: &TcPrograms,
+    v5_va: u64,
+    v6_va: u64,
+    v7_va: u64,
+    v8: Option<crate::train_step::V8Programs>,
+    long_k: u32,
+    attn_fwd_va: u64,
+    attn: Option<crate::train_step::AttnTcProgram>,
+    attn_fast: Option<crate::train_step::AttnTcFast>,
+    attn0: Attn0Programs,
+    step_bytes: Option<u32>,
+    copy_va: u64,
+    zone_va: u64,
+    v: &ViaRam,
+) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
     if !copy_va.is_multiple_of(256) || !zone_va.is_multiple_of(256) {
         return Err(bad(
             "lot prin RAM: programul de copiere sau zona nealiniate",
@@ -407,8 +436,20 @@ pub fn pack_mixed_fast_via_ram_attn8k(
     }
     let n_in = v.copies_in.len();
     let list_va = zone_va + SLOT * n_in as u64;
-    let (list_bytes, list_qmds, picks) = crate::train_step::pack_mixed_fast_attn8k(
-        list, prog_va, progs, v5_va, v6_va, v7_va, v8, long_k, attn, attn_fast, attn0, step_bytes,
+    let (list_bytes, list_qmds, picks) = crate::train_step::pack_mixed_fast_attn9(
+        list,
+        prog_va,
+        progs,
+        v5_va,
+        v6_va,
+        v7_va,
+        v8,
+        long_k,
+        attn_fwd_va,
+        attn,
+        attn_fast,
+        attn0,
+        step_bytes,
         list_va,
     )?;
     let copy_shared = SharedMemory {

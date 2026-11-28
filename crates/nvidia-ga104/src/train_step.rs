@@ -3375,6 +3375,13 @@ pub enum MixedLaunch {
     /// ([`crate::attn_back_tile0_tc::cbuf_from_f32`]). Made only by [`attn0_tc_list`]; packed only by
     /// [`pack_mixed_fast_attn2`] (the other packers refuse it).
     Attn0Tc(Launch),
+    /// C-168 p.4 step 4 (session 289, `docs/C-168_ATTN_FWD_TC_PLAN.md` §11): an `attn_fwd_tile3` launch of the list
+    /// moved to `attn_fwd_tc` (the attention forward on the tensor cores, f16 products) — the same [`Launch`]
+    /// (arguments, tag; its grid's z = the batch), packed with its arguments at 0x700 of a 0x800-byte cbuf
+    /// ([`crate::attn_fwd_tc::cbuf_from_f32`]) and the grid **in pairs** ([`crate::attn_fwd_tc::grid`]). Made only by
+    /// [`attn_fwd_tc_list`]; packed only by [`pack_mixed_fast_attn9`] with `attn_fwd_va != 0` (the other packers
+    /// refuse it). The numbers are NOT the F32 list's (f16 Q, K, V, P in the products): a margin, not the same bits.
+    AttnFwdTc(Launch),
 }
 
 /// Bytes of one `mm_tc` launch in the control zone: the cbuf (0x800) then the QMD (0x100).
@@ -3388,12 +3395,16 @@ impl MixedLaunch {
             MixedLaunch::TcGelu { .. } => "mm_tc_gelu",
             MixedLaunch::AttnTc(_) => "attn_back_tile_tc",
             MixedLaunch::Attn0Tc(_) => "attn_back_tile0_tc",
+            MixedLaunch::AttnFwdTc(_) => "attn_fwd_tc",
         }
     }
 
     pub fn tag(&self) -> &'static str {
         match self {
-            MixedLaunch::Std(l) | MixedLaunch::AttnTc(l) | MixedLaunch::Attn0Tc(l) => l.tag,
+            MixedLaunch::Std(l)
+            | MixedLaunch::AttnTc(l)
+            | MixedLaunch::Attn0Tc(l)
+            | MixedLaunch::AttnFwdTc(l) => l.tag,
             MixedLaunch::Tc { tag, .. } | MixedLaunch::TcGelu { tag, .. } => tag,
         }
     }
@@ -3405,7 +3416,8 @@ impl MixedLaunch {
             MixedLaunch::Tc { .. }
             | MixedLaunch::TcGelu { .. }
             | MixedLaunch::AttnTc(_)
-            | MixedLaunch::Attn0Tc(_) => SLOT_TC,
+            | MixedLaunch::Attn0Tc(_)
+            | MixedLaunch::AttnFwdTc(_) => SLOT_TC,
         }
     }
 }
@@ -3453,6 +3465,63 @@ pub fn attn0_tc_list(list: Vec<MixedLaunch>) -> GpuResult<Vec<MixedLaunch>> {
             other => Ok(other),
         })
         .collect()
+}
+
+/// C-168 p.4 step 4 (session 289, `docs/C-168_ATTN_FWD_TC_PLAN.md` §11): the mixed list with every `attn_fwd_tile3`
+/// launch whose shape `attn_fwd_tc` takes ([`crate::attn_fwd_tc::cbuf_from_f32`]: d = 64, T a multiple of 64, the
+/// addresses multiples of 16 bytes) moved to [`MixedLaunch::AttnFwdTc`]; an `attn_fwd_tile3` launch it does not take
+/// stays where it is (that is the rule of the plan, not an error), everything else unchanged, same order. It composes
+/// with [`attn_tc_list`] / [`attn0_tc_list`] in any order. A moved launch whose grid is not `attn_fwd_tile3`'s for its
+/// arguments (y = H, z = the batch, both non-zero) is refused here, before anything is sent. The numbers are NOT the
+/// F32 list's (f16 products): SIMULARE only (`gpu_sim::cmdproc::attn_fwd_tc_on_cpu`); `attn_fwd_tc` alone gave the
+/// margins of `attn_fwd_tile3` on the board in os-504 (5 / 5 sets), the step with it has not run.
+pub fn attn_fwd_tc_list(list: Vec<MixedLaunch>) -> GpuResult<Vec<MixedLaunch>> {
+    list.into_iter()
+        .map(|l| match l {
+            MixedLaunch::Std(x) if x.prog == Prog::AttnFwdTile3 => {
+                match crate::attn_fwd_tc::cbuf_from_f32(&x.cbuf) {
+                    Some(cb) => {
+                        let h = u32::from_le_bytes(
+                            cb[crate::attn_fwd_tc::PUSH_BASE + 0x20
+                                ..crate::attn_fwd_tc::PUSH_BASE + 0x24]
+                                .try_into()
+                                .unwrap_or([0; 4]),
+                        );
+                        if x.grid[1] != h || x.grid.contains(&0) {
+                            return Err(bad(
+                                "pas-mixt: grila attn_fwd_tile3 nepotrivita pentru attn_fwd_tc",
+                            ));
+                        }
+                        Ok(MixedLaunch::AttnFwdTc(x))
+                    }
+                    None => Ok(MixedLaunch::Std(x)),
+                }
+            }
+            other => Ok(other),
+        })
+        .collect()
+}
+
+/// The pair grid of one [`MixedLaunch::AttnFwdTc`] (`attn_fwd_tc::grid` from the moved cbuf and the batch in the
+/// launch's grid z). `None` if the cbuf is refused.
+fn attn_fwd_tc_grid(x: &Launch) -> Option<([u8; crate::attn_fwd_tc::CBUF_BYTES], [u32; 3])> {
+    use crate::attn_fwd_tc as af;
+    let cb = af::cbuf_from_f32(&x.cbuf)?;
+    let u32_at = |o: usize| {
+        u32::from_le_bytes(
+            cb[af::PUSH_BASE + o..af::PUSH_BASE + o + 4]
+                .try_into()
+                .unwrap_or([0; 4]),
+        )
+    };
+    let (t, h) = (u32_at(0x18), u32_at(0x20));
+    if x.grid[1] != h || x.grid[2] == 0 {
+        return None;
+    }
+    Some((
+        cb,
+        [t.div_ceil(af::ROWS_PER_TILE).div_ceil(2), h, x.grid[2]],
+    ))
 }
 
 fn mm_args_of(l: &Launch) -> mm::Args {
@@ -3648,6 +3717,14 @@ pub fn pack_mixed_gelu(
             "pas-mixt: lista are attn_back_tile0_tc: foloseste pack_mixed_fast_attn2",
         ));
     }
+    if launches
+        .iter()
+        .any(|l| matches!(l, MixedLaunch::AttnFwdTc(_)))
+    {
+        return Err(bad(
+            "pas-mixt: lista are attn_fwd_tc: foloseste pack_mixed_fast_attn9",
+        ));
+    }
     let total: u64 = launches.iter().map(MixedLaunch::slot).sum();
     let mut bytes = alloc::vec![0u8; total as usize];
     let mut qmds = Vec::with_capacity(launches.len());
@@ -3684,7 +3761,9 @@ pub fn pack_mixed_gelu(
                 bytes[at + c..at + c + q.len()].copy_from_slice(&q);
                 qmds.push(cb_va + c as u64);
             }
-            MixedLaunch::AttnTc(_) | MixedLaunch::Attn0Tc(_) => unreachable!(),
+            MixedLaunch::AttnTc(_) | MixedLaunch::Attn0Tc(_) | MixedLaunch::AttnFwdTc(_) => {
+                unreachable!()
+            }
             MixedLaunch::TcGelu { args, .. } => {
                 let cb = args
                     .cbuf()
@@ -3765,6 +3844,9 @@ pub enum TcPick {
     /// C-168 p.3 G7 (session 280): a [`MixedLaunch::Tc`] on `mm_tc_v8n` (128×64 blocks of 128 threads, 144 registers,
     /// 18 432 B shared), only from [`pack_mixed_fast_attn8`].
     V8n,
+    /// C-168 p.4 step 4 (session 289, `docs/C-168_ATTN_FWD_TC_PLAN.md` §11): a [`MixedLaunch::AttnFwdTc`] on
+    /// `attn_fwd_tc` (120 registers, 27 648 B shared, the grid in pairs), only from [`pack_mixed_fast_attn9`].
+    AttnFwdTc,
 }
 
 /// C-168 p.3 G7 (session 280): where the OS loaded `mm_tc_v8` / `mm_tc_v8n` (both 256-aligned, non-zero), the active
@@ -3887,6 +3969,7 @@ impl TcPick {
             TcPick::Attn0TcV4 => "attn_back_tile0_tc_v4",
             TcPick::AttnTc16V4 => "attn_back_tile_tc16_v4",
             TcPick::AttnTc16V4pf => "attn_back_tile_tc16_v4pf",
+            TcPick::AttnFwdTc => "attn_fwd_tc",
         }
     }
 }
@@ -3901,6 +3984,7 @@ pub fn tc_pick(l: &MixedLaunch, progs: &TcPrograms) -> Option<TcPick> {
         MixedLaunch::TcGelu { .. } => Some(TcPick::Gelu),
         MixedLaunch::AttnTc(_) => Some(TcPick::AttnTc),
         MixedLaunch::Attn0Tc(_) => Some(TcPick::Attn0Tc),
+        MixedLaunch::AttnFwdTc(_) => Some(TcPick::AttnFwdTc),
         MixedLaunch::Tc { args, .. } => Some(if progs.v4 != 0 && crate::mm_tc_v4::fits(args) {
             TcPick::V4
         } else if progs.pf != 0 {
@@ -4187,6 +4271,36 @@ pub fn pack_mixed_fast_attn8k(
     step_bytes: Option<u32>,
     zone_va: u64,
 ) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
+    pack_mixed_fast_attn9(
+        launches, prog_va, progs, v5_va, v6_va, v7_va, v8, long_k, 0, attn, attn_fast, attn0,
+        step_bytes, zone_va,
+    )
+}
+
+/// C-168 p.4 step 4 (session 289, `docs/C-168_ATTN_FWD_TC_PLAN.md` §11): [`pack_mixed_fast_attn8k`] with the
+/// **attention forward on the tensor cores** as well: `attn_fwd_va` = where the OS loaded `attn_fwd_tc` (256-aligned;
+/// 0 = not loaded, then a list with [`MixedLaunch::AttnFwdTc`] is refused before anything is sent). An `AttnFwdTc`
+/// launch ([`attn_fwd_tc_list`]) takes [`SLOT_TC`] bytes: its cbuf (0x800, arguments at 0x700) then its QMD
+/// (`attn_fwd_tc::REGISTERS` = 120, `attn_fwd_tc::SHARED` = 27 648 B, 1 barrier, blocks of 256, the grid in pairs);
+/// its pick is [`TcPick::AttnFwdTc`]. With `attn_fwd_va = 0` and no `AttnFwdTc` it is [`pack_mixed_fast_attn8k`] byte
+/// for byte. **SIMULARE only** for the step (T305); `attn_fwd_tc` alone passed on the board in os-504.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub fn pack_mixed_fast_attn9(
+    launches: &[MixedLaunch],
+    prog_va: impl Fn(Prog) -> u64,
+    progs: &TcPrograms,
+    v5_va: u64,
+    v6_va: u64,
+    v7_va: u64,
+    v8: Option<V8Programs>,
+    long_k: u32,
+    attn_fwd_va: u64,
+    attn: Option<AttnTcProgram>,
+    attn_fast: Option<AttnTcFast>,
+    attn0: Attn0Programs,
+    step_bytes: Option<u32>,
+    zone_va: u64,
+) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
     use crate::mm_tc as tc;
     use crate::mm_tc_v8 as t8;
     if let Some(p) = v8
@@ -4208,8 +4322,20 @@ pub fn pack_mixed_fast_attn8k(
     }
     if !zone_va.is_multiple_of(256)
         || [
-            progs.tc, progs.pf, progs.v4, progs.gelu, attn_tc_va, attn0.tc, attn0.v4, fast_va,
-            v5_va, v6_va, v7_va, v8_va, v8n_va,
+            progs.tc,
+            progs.pf,
+            progs.v4,
+            progs.gelu,
+            attn_tc_va,
+            attn0.tc,
+            attn0.v4,
+            fast_va,
+            v5_va,
+            v6_va,
+            v7_va,
+            v8_va,
+            v8n_va,
+            attn_fwd_va,
         ]
         .iter()
         .any(|v| !v.is_multiple_of(256))
@@ -4263,6 +4389,7 @@ pub fn pack_mixed_fast_attn8k(
             TcPick::Attn0Tc => attn0.tc,
             TcPick::Attn0TcV4 => attn0.v4,
             TcPick::AttnTc16V4 | TcPick::AttnTc16V4pf => fast_va,
+            TcPick::AttnFwdTc => attn_fwd_va,
         };
         if va == 0 {
             return Err(bad(match p {
@@ -4274,6 +4401,7 @@ pub fn pack_mixed_fast_attn8k(
                     "pas-mixt: forma nealiniata pentru attn_back_tile0_tc_v4 si attn_back_tile0_tc nu e incarcat"
                 }
                 TcPick::Attn0Tc | TcPick::Attn0TcV4 => "pas-mixt: attn_back_tile0_tc nu e incarcat",
+                TcPick::AttnFwdTc => "pas-mixt: attn_fwd_tc nu e incarcat",
                 _ => "pas-mixt: programul mm_tc ales nu e incarcat",
             }));
         }
@@ -4326,6 +4454,28 @@ pub fn pack_mixed_fast_attn8k(
                     None => q.to_bytes_with_shared(&shared)?,
                 };
                 let c = at_tc::CBUF_BYTES;
+                bytes[at..at + c].copy_from_slice(&cb);
+                bytes[at + c..at + c + q.len()].copy_from_slice(&q);
+                qmds.push(cb_va + c as u64);
+            }
+            MixedLaunch::AttnFwdTc(x) => {
+                use crate::attn_fwd_tc as af;
+                let (cb, grid) =
+                    attn_fwd_tc_grid(x).ok_or(bad("pas-mixt: argumentele attn_fwd_tc refuzate"))?;
+                let q = ComputeQmd {
+                    program_va: attn_fwd_va,
+                    registers: af::REGISTERS,
+                    cbuf0_va: cb_va,
+                    cbuf0_size: af::CBUF_BYTES as u32,
+                    grid,
+                    block: af::BLOCK,
+                    release: None,
+                };
+                let q = match step_bytes {
+                    Some(s) => q.to_bytes_with_sm_config(&af::SHARED, s)?,
+                    None => q.to_bytes_with_shared(&af::SHARED)?,
+                };
+                let c = af::CBUF_BYTES;
                 bytes[at..at + c].copy_from_slice(&cb);
                 bytes[at + c..at + c + q.len()].copy_from_slice(&q);
                 qmds.push(cb_va + c as u64);
@@ -4415,7 +4565,10 @@ pub fn pack_mixed_fast_attn8k(
                                 tg::REGISTERS,
                             )
                         }
-                        MixedLaunch::Std(_) | MixedLaunch::AttnTc(_) | MixedLaunch::Attn0Tc(_) => {
+                        MixedLaunch::Std(_)
+                        | MixedLaunch::AttnTc(_)
+                        | MixedLaunch::Attn0Tc(_)
+                        | MixedLaunch::AttnFwdTc(_) => {
                             unreachable!()
                         }
                     };

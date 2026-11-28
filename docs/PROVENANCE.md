@@ -712,3 +712,7 @@ niciun octet de firmware NVIDIA.
   `batch_ram::pack_mixed_fast_via_ram_attn8k` și testele `crates/nvidia-ga104/tests/calc_c168_os503.rs` + `t304_s*` din
   `sim_c168_mm_tc_v8_mixed.rs` (T304) — ale noastre; cifrele de placă copiate din jurnalele OS-ului din hub (os-496, os-503).
   Nimic copiat, nimic din firmware-ul NVIDIA.
+- **Sesiunea 289 (28 nov 2026):** `MixedLaunch::AttnFwdTc`, `TcPick::AttnFwdTc`, `train_step::{attn_fwd_tc_list,
+  pack_mixed_fast_attn9}`, `batch_ram::pack_mixed_fast_via_ram_attn9` și testul `crates/nvidia-ga104/tests/sim_c168_attn_fwd_tc_mixed.rs`
+  (T305) — ale noastre, pe tiparul lui `attn0_tc_list` / `pack_mixed_fast_attn8k`; cifrele de placă copiate din jurnalele OS-ului din
+  hub (os-504). Nimic copiat, nimic din firmware-ul NVIDIA.

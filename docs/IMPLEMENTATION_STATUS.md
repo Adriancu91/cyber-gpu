@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 289 — 28 noiembrie 2026, ~08:11–09:20 (ora României), în cloud, FĂRĂ placă — **C-168 p.4: os-504 comparat (H4 CONFIRMATĂ, H5 RATATĂ în bine) + pasul 4: `attn_fwd_tc` legat în pas → PREDARE P4b; T305 SIMULARE**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 288), l-am pus `ocupat`. Rezultat nou pe placă: **os-504** (proba
+`--atentie-fwd-tc` TRECE, ×5,45 la #513) + cererea centrului: atenția înainte pe circuite legată în pas. Planul și predicțiile
+H6a–H6d / H7 scrise înainte de cod (`docs/C-168_ATTN_FWD_TC_PLAN.md` §11, commit `95d7e86`).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| H4 (5 / 5 seturi în margine) | 5 / 5; la #513 O 1,9e-4, P 5,2e-5 | **CONFIRMAT** (pe placă, os-504) |
+| H5 (`atentie-513-b4` 0,37–0,62 ms) | 0,184 ms (×5,45; ~14,8 TFLOP/s pe cele 3 produse) | **RATAT în bine** (pe placă) |
+| `MixedLaunch::AttnFwdTc`, `TcPick::AttnFwdTc`, `attn_fwd_tc_list`, `pack_mixed_fast_attn9`, `via_ram_attn9` (doar adăugări) | `attn_fwd_va = 0` = `attn8k` octet cu octet; packerii vechi refuză lista mutată | PASS |
+| T305 S1–S3, S5 (H6a) | fără `attn_fwd_tc` aceiași octeți; #513: exact 12 lansări mutate, QMD-ul lui `attn_fwd_tc` (grila [4, 12, lot]), restul neschimbat (lot 6 cu gardă 13/0/134); refuzuri; prin RAM aceeași listă | PASS (SIMULARE) |
+| T305 S4 (H6b): mini aliniat, 5 pași, față de tile3 | pierderea 4,8e-6, scăderea 1,7e-5, gradientul 6,3e-4 în toleranțe; greutățile **peste** 1e-3 pe biasuri (un element din `ln2.bias` L1 cu gradient ~0; K-bias = zgomot); reperul dovedit pe placă tot peste (2,5e-3) | PASS (SIMULARE) — H6b **PARȚIAL** |
+| H6c / H6d / H7 (atenția înainte 2,6–4,0 ms; pasul lot 6 126–130 ms; oracolul lot 2) | scrise înainte | NOT TESTED |
+| Nota pentru OS | `integration/cyber-universe/C-168_P4b_atentie-fwd-tc-in-pas.md` | — |
+| Verificările întregi | format, clippy, teste, no_std | **1 526 PASS** |
+
+**Note:** `docs/C-168_ATTN_FWD_TC_PLAN.md` §11–§12, T305 în `TEST_MATRIX.md`, rândul în `PROVENANCE.md`. **Nou pentru placă:**
+doar folosirea în pas a lui `attn_fwd_tc` (același binar ca în os-504), sub opțiunea OS-ului. **Nicio schimbare incompatibilă**
+(câte o variantă nouă la coada enum-urilor `MixedLaunch` și `TcPick`, ca la `Attn0Tc` / `V8n`; OS-ul nu le potrivește exhaustiv).
+
+**Următorul pas:** OS: rândul lot 2 cu oracolul, apoi lot 6 (nota P4b; H6c / H6d / H7). Noi: comparațiile când vin (P4b, garda P3e,
+`--mm-tc-v8r` V1–V4); altfel C-168 p.5 (lipirea lansărilor mărunte) cu planul + predicțiile întâi.
+
 ## Sesiunea 288 — 28 noiembrie 2026, ~07:11–07:50 (ora României), în cloud, FĂRĂ placă — **C-168 p.3: os-503 comparat (G7) + garda „sumă lungă” (dX-ul capului înapoi pe v7) → PREDARE P3e; T304 CALCUL + SIMULARE**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 287), l-am pus `ocupat`. Rezultat nou pe placă: **os-503** (pasul #513 cu
