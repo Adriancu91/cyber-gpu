@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 287 — 28 noiembrie 2026, ~05:13–06:15 (ora României), în cloud, FĂRĂ placă — **C-168 p.3 urmarea: modulul `nvidia_ga104::mm_tc_v8r` pentru proba `--mm-tc-v8r` → PREDARE; T303 în SIMULARE**
+## Sesiunea 287 — 28 noiembrie 2026, ~05:13–06:12 (ora României), în cloud, FĂRĂ placă — **C-168 p.3 urmarea: modulul `nvidia_ga104::mm_tc_v8r` pentru proba `--mm-tc-v8r` → PREDARE; T303 în SIMULARE**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 286), l-am pus `ocupat`. Niciun rezultat nou pe placă (os-501 și proba
 `--atentie-fwd-tc` n-au rulat încă) → am luat pasul scris: `docs/C-168_V8R.md` §4 punctul 1. (Copiile locale vechi erau despărțite de
