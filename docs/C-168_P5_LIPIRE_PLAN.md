@@ -228,3 +228,42 @@ deci nu e o problemă acolo, dar orice loc fix de 64 KiB pe program le-ar suprap
 
 Nota pentru OS: `integration/cyber-universe/C-168_P5c_gelu-inainte-in-coada-fc.md`. Următorul pas: P5d (reziduurile înainte în coada
 lui „out” / „proj”) cu plan + predicții întâi; pe placă: rândurile P5b și P5c.
+
+## 12. P5d — reziduurile înainte în coada lui „out” și „proj”: planul și predicțiile (sesiunea 294, 28 nov, scrise ÎNAINTE de cod)
+
+**Ce e azi (planul P5a + P5b + P5c):** pe fiecare strat, înainte, „out” (`att · Woutᵀ + bias`, m = n·T, n = C, k = C) scrie `tmp`,
+apoi `vadd` scrie `xmid = xin + tmp`; la fel „proj” (`act · Wprojᵀ + bias`, k = F) scrie `tmp`, apoi `vadd` scrie `xout = xmid + tmp`.
+Fiecare `vadd` citește 2 × n×C și scrie n×C (lot 6: 28,3 MB, ~52 µs măsurat: os-503 `vadd` 2 483 µs / 48). `tmp` nu mai e citit de
+nimeni după `vadd` (stratul următor îl rescrie înainte să-l citească), deci lipirea poate scrie direct `xmid` / `xout`.
+
+**Ce fac:**
+1. Aceleași surse cu un fanion nou `-DRES`: `mm_tc_v8.comp` → `mm_tc_v8_res` (și `-DV8N` → `mm_tc_v8n_res`), `mm_tc_v7.comp` →
+   `mm_tc_v7_res`, **și `mm_tc_v8r.comp` → `mm_tc_v8r_res`** (spre deosebire de P5c: „out” / „proj” au n = C = 768, iar la lot 2
+   valurile dau v8, deci azi merg pe v8r; fără `v8r_res` lipirea le-ar muta pe v8, ~9 % mai lent). Scrierea devine
+   `c = (v + bias) + res[rând, col]`: aceeași valoare `v + bias` ca azi, apoi **o adunare f32** cu reziduul — exact ce face `vadd`
+   (`a + b`, `fadd.ftz`; adunarea e comutativă bit cu bit). Adresa lui `res` la 0x730 (ca `act` la P5c; fanioanele `-DRES` și
+   `-DGELU_FWD` nu se folosesc împreună). Fără fanion sursele dau **exact aceiași octeți** ca azi.
+2. `nvidia_ga104::mm_tc_fast_res` (programele, SHA-256, registrele, `Args` = `mm_tc::Args` + `res`; refuzuri: `res` 0, nealiniat la 4,
+   suprapus peste A / B / C / bias), doar adăugări.
+3. În simulator: `mm_tc_v{7,8,8n,8r}_res_on_cpu` = aritmetica programului fără fanion + `add_f32_ftz` cu reziduul.
+4. `train_step`: `MixedLaunch::TcRes` (variantă nouă), `Plan::with_fused_res_fwd()` (în `step_mixed`: „out” + `rezidual1` →
+   `inainte:out+rez` / `recalcul:out+rez`, „proj” + `rezidual2` → `inainte:proj+rez`; C = ieșirea lui `vadd`, `res` = cealaltă
+   intrare a lui `vadd`), `pack_mixed_fast_attn13` = `attn12` + `ResFast { v7, v8, v8n, v8r }`: un `TcRes` ia varianta `_res` a
+   programului pe care `attn12` l-ar da aceluiași produs (inclusiv v8 → v8r când `v8r_va ≠ 0`); variantă neîncărcată / nealiniat →
+   refuz înainte de trimis. `None` = `attn12` octet cu octet. `TcPick::V7Res` / `V8Res` / `V8nRes` / `V8rRes`.
+5. OS-ul: plan rapid + `.with_fused_res_fwd()`, încarcă cele patru programe.
+
+**Predicțiile (M1–M7):**
+- **M1 (CALCUL, NAK):** fără `-DRES` toate programele vechi (v7 / v8 / v8n / v8r și variantele GELU' / `geluf`) ies cu aceleași SHA-256.
+- **M2 (CALCUL, NAK):** registrele = ale programelor simple (v7_res 128, v8_res 128, v8n_res 144, v8r_res 120), 0 „spills”: coada ține
+  o singură valoare în plus (reziduul citit), mai puțin decât GELU înainte (care a încăput).
+- **M3 (CALCUL):** în fiecare listare, coada = a programului simplu + **exact o `fadd` în plus pe element**, al cărei operand e o
+  citire globală de la adresa din 0x730 + același deplasament ca scrierea lui C; restul operațiilor în virgulă mobilă (cu `hmma`)
+  identice, în aceeași ordine.
+- **M4 (SIMULARE):** model mic aliniat, 5 pași rapizi (P5a + P5b + P5c ± P5d): pierderile, gradientul pasului 1 și greutățile
+  **bit cu bit** ca fără `with_fused_res_fwd`; plus același produs forțat pe fiecare din cele 4 programe = „mm + `vadd`”, bit cu bit.
+- **M5 (SIMULARE):** #513 lot 2 și lot 6: exact **−24 lansări** (436 → 412 față de lista P5c), cele 24 `vadd` înainte dispar, „out” și
+  „proj” pe varianta `_res` a programului de azi; celelalte alegeri și cbuf-uri identice, în ordine.
+- **M6 (placa, DEDUS):** lot 6: −24 × ~52 µs (`vadd`) + 24 × ~18 µs (citirea lui `res` în coadă, 9,4 MB la ~533 GB/s) → câștig net
+  **0,5–1,1 ms**; lot 2: **0,3–0,9 ms** (la os-508 lansările mărunte la lot 2 au costat cât la lot 6). Sub 0,3 ms la lot 6 = RATAT.
+- **M7 (placa):** oracolul lot 2: aceleași numere ca rândul fără P5d.
