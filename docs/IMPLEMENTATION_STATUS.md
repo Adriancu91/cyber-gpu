@@ -1,5 +1,34 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 294 — 28 noiembrie 2026, ~16:11–17:50 (ora României), în cloud, FĂRĂ placă — **C-168 p.5 P5d: reziduurile înainte lipite în coada lui „out” / „proj” (`mm_tc_*_res`, `Plan::with_fused_res_fwd`, `pack_mixed_fast_attn13`) → PREDARE P5d; T311 CALCUL + SIMULARE**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 293), l-am pus `ocupat`. Nu venise nimic nou de pe placă (os-512 GATA DE TEST,
+nerulat), deci P5d: planul + predicțiile M1–M7 scrise și urcate **înainte de cod** (`docs/C-168_P5_LIPIRE_PLAN.md` §12, commit
+`2b60215`), apoi codul; rezultatul în §13. Unealta NAK a doua (Mesa 26.3.1) reconstruită în cloud (~35 min). Dosarul local vechi
+`cyber-gpu` (istorie nelegată, sesiunea 196) lăsat deoparte, ca în sesiunea 293; lucrul pe o clonă proaspătă.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| M1 fără `-DRES` aceiași octeți | 11 programe vechi (v7 / v8 / v8n / v8r, variantele GELU' și `geluf`, `mm_tc_gelu`) recompilate = aceleași SHA-256 | **PASS (CALCUL)** |
+| M2 registre | v7_res 128, v8_res 128, v8n_res 144, v8r_res 120 (ca programele simple), 0 spills în memorie; toate < 64 KiB | **PASS (CALCUL)** |
+| M3 coada = simplă + o `fadd.ftz` cu `res` | `compara_res.py` (nou): 32 / 64 / 64 / 64 cozi; citirea de la 0x730 cu indicele lui C; restul programului = cel simplu, în ordine; 3 greșeli plantate prinse | **PASS (CALCUL)** |
+| M4 model mic 5 pași | P5a + P5b + P5c ± P5d aceiași biți pe v7 / v8 / v8r / v8n; 86 → 82 lansări; produsul 256×512×128 cu bias pe fiecare program = produs + `vadd` | **PASS (SIMULARE)** |
+| M5 #513 −24 lansări | lot 2 / 6: 436 → 412; lot 6 24 × v8n_res, lot 2 24 × v7_res; restul alegerilor și cbuf-urilor identice; refuzuri; prin RAM aceeași listă | **PASS (SIMULARE)** |
+| M6 / M7 | scrise înainte (−0,5…−1,1 ms la lot 6, −0,3…−0,9 la lot 2; oracolul lot 2) | NOT TESTED |
+| Verificările întregi | format, clippy, teste, no_std (`tools/check.sh`; ținta no_std instalată în cloud) | **1 566 PASS** |
+
+**Aflat:** la lot 2 „out” / „proj” merg azi pe v7, nu pe v8r cum presupunea planul; `mm_tc_v8r_res` e făcut și testat, dar #513 nu-l
+folosește azi.
+
+**Nou pentru placă:** patru programe (`mm_tc_v7_res` / `v8_res` / `v8n_res` / `v8r_res`, SHA-256 în notă), doar pe produse aliniate, cu o
+citire și o adunare în plus pe element. Doar adăugări în bibliotecă: `mm_tc_fast_res`, `MixedLaunch::TcRes` (variantă nouă a unui enum
+public — OS-ul folosește doar `matches!`; un test al nostru cu `match` complet a cerut o ramură), `Plan::with_fused_res_fwd`, `ResFast`,
+`TcPick::V7Res / V8Res / V8nRes / V8rRes`, `pack_mixed_fast_attn13`, `pack_mixed_fast_via_ram_attn13`. Nota:
+`integration/cyber-universe/C-168_P5d_rezidual-inainte-in-coada.md`.
+
+**Următorul pas:** comparațiile când vin (P5b J6 / J7, P5c L6 / L7, P5d M6 / M7, P3f, P3g); altfel P5f (cele 98 `colsum` finale într-o
+lansare, aceiași biți) cu planul + predicțiile întâi.
+
 ## Sesiunea 293 — 28 noiembrie 2026, ~14:10–15:35 (ora României), în cloud, FĂRĂ placă — **P5a comparat cu os-508 + C-168 p.5 P5c: GELU înainte lipit în coada lui „fc” (`mm_tc_*_geluf`, `Plan::with_fused_gelu_fwd`, `pack_mixed_fast_attn12`) → PREDARE P5c; T310 CALCUL + SIMULARE**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 292), l-am pus `ocupat`. A venit os-508 (P5a pe placă) → comparația întâi

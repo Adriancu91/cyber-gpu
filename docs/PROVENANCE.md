@@ -720,6 +720,12 @@ niciun octet de firmware NVIDIA.
   OS-ului os-503 din hub, octeții socotiți de noi din argumente) și testul `crates/nvidia-ga104/tests/sim_c168_p5a_ln_back_res_mixed.rs`
   (T306) — ale noastre, pe tiparul lui T305; niciun program nou (`ln_back_res` e cel din sesiunea 192). Nimic copiat, nimic din
   firmware-ul NVIDIA.
+- **Sesiunea 294 (28 nov 2026):** fanionul `-DRES` din `tools/nak/mm_tc_v7.comp` / `mm_tc_v8.comp` / `mm_tc_v8r.comp` (o adunare cu
+  reziduul înainte de scrierea lui C, ca `vadd.comp`, al nostru), programele `tools/nak/out2/mm_tc_{v7,v8,v8n,v8r}_res.sm86.*` (compilate
+  de Mesa NAK 26.3.1, MIT, pe gazdă; nimic din Mesa în repo), `nvidia_ga104::mm_tc_fast_res`, `MixedLaunch::TcRes`,
+  `Plan::with_fused_res_fwd`, `train_step::{ResFast, pack_mixed_fast_attn13}`, `batch_ram::pack_mixed_fast_via_ram_attn13`, înlocuitorii
+  `gpu_sim::cmdproc::mm_tc_{v7,v8,v8n,v8r}_res_on_cpu`, unealta `tools/nak/compara_res.py` și testul
+  `crates/nvidia-ga104/tests/sim_c168_p5d_res_fwd.rs` (T311) — ale noastre, pe tiparul lui P5c. Nimic copiat, nimic din firmware-ul NVIDIA.
 - **Sesiunea 293 (28 nov 2026):** fanionul `-DGELU_FWD` din `tools/nak/mm_tc_v7.comp` / `mm_tc_v8.comp` / `mm_tc_v8r.comp` (coada =
   corpul lui `gelu_tr.comp` mod 0, al nostru, din sesiunea 143), programele `tools/nak/out2/mm_tc_{v7,v8,v8n}_geluf.sm86.*` (compilate
   de Mesa NAK 26.3.1, MIT, pe gazdă; nimic din Mesa în repo), `nvidia_ga104::mm_tc_fast_gelu_fwd`, `MixedLaunch::TcGeluFwd`,

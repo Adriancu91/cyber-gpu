@@ -267,3 +267,27 @@ nimeni după `vadd` (stratul următor îl rescrie înainte să-l citească), dec
 - **M6 (placa, DEDUS):** lot 6: −24 × ~52 µs (`vadd`) + 24 × ~18 µs (citirea lui `res` în coadă, 9,4 MB la ~533 GB/s) → câștig net
   **0,5–1,1 ms**; lot 2: **0,3–0,9 ms** (la os-508 lansările mărunte la lot 2 au costat cât la lot 6). Sub 0,3 ms la lot 6 = RATAT.
 - **M7 (placa):** oracolul lot 2: aceleași numere ca rândul fără P5d.
+
+## 13. Rezultatul P5d (CALCUL + SIMULARE, sesiunea 294) — se citește cu §12
+
+Unealta NAK a doua (Mesa 26.3.1) reconstruită în cloud; T311 = `crates/nvidia-ga104/tests/sim_c168_p5d_res_fwd.rs`; comparatorul nou
+`tools/nak/compara_res.py`.
+
+| Predicția | Rezultat | Stare |
+|---|---|---|
+| M1: fără `-DRES` aceiași octeți | `mm_tc_v7` / `v8` / `v8n` / `v8r`, `mm_tc_v7_gelu` / `v8_gelu` / `v8n_gelu`, `mm_tc_v7_geluf` / `v8_geluf` / `v8n_geluf`, `mm_tc_gelu` — recompilate, **identice** (git nu vede nicio schimbare în `out2/`) | **CONFIRMAT** (CALCUL) |
+| M2: registrele | `mm_tc_v7_res` **128**, `mm_tc_v8_res` **128**, `mm_tc_v8n_res` **144**, `mm_tc_v8r_res` **120** — exact ca programele simple (4 / 2 / 3 / 2 blocuri pe SM); 0 „spills” în memorie (v7: aceleași 14 copii în registre ca `mm_tc_v7`); mărimi 33 760 / 50 576 / 49 488 / 49 344 B, toate sub 64 KiB | **CONFIRMAT** (CALCUL) |
+| M3: coada = a programului simplu + o `fadd` cu `res` | `compara_res.py`: v7 32 / 32, v8 64 / 64, v8n 64 / 64, v8r 64 / 64 cozi: valoarea scrisă vine dintr-o `fadd.ftz` chiar înainte de scriere, cu o citire globală de la adresa din 0x730 cu **același indice** ca adresa lui C; fără aceste 4 instrucțiuni, restul (232 / 348 / 370 / 348 operații în virgulă mobilă, `hmma`, citiri și scrieri) = programul simplu, în ordine. 3 greșeli plantate (`fadd` → `fmul`, altă adresă pentru `res`, alt indice) prinse | **CONFIRMAT** (CALCUL) |
+| M4: model mic, 5 pași rapizi, aceiași biți | P5a + P5b + P5c ± P5d: pierderile, gradientul pasului 1, greutățile **bit cu bit**, pe 4 vitezele: os-500 (out / proj pe v7_res), v8 (v8_res), v8 + v8r încărcat (v8r_res), v8n (v8n_res); 86 → 82 lansări; plus S4: produsul 256×512×128 (TB + BIAS) pe fiecare din cele 4 programe = produs + `vadd`, bit cu bit | **CONFIRMAT** (SIMULARE) |
+| M5: #513 exact −24 lansări | lot 2 și lot 6: 436 → 412 (lista P5c, fără copierile lotului); 24 `vadd` înainte dispar; „out” / „proj” pe varianta `_res` a programului de azi: **lot 6 24 × v8n_res, lot 2 24 × v7_res**; celelalte alegeri și cbuf-uri identice, în ordine; QMD-urile cu adresa, registrele, blocul, grila variantei; cbuf-ul = al produsului cu C = ieșirea lui `vadd` și `res` la 0x730 | **CONFIRMAT** (SIMULARE) |
+| refuzuri | `res_fwd = None` = `attn12` octet cu octet; o listă cu „+rez” refuzată de `attn12`, de `pack_mixed_gelu` și de `attn13` fără programele `_res`; variantă neîncărcată, adresă nealiniată, fără v7 / v8, produs nealiniat, `res` suprapus peste A / B / C / bias — refuzate înainte de trimis; prin RAM (`via_ram_attn13`) aceleași alegeri și aceeași listă | **CONFIRMAT** (SIMULARE) |
+| M6: câștig 0,5–1,1 ms la lot 6, 0,3–0,9 la lot 2 | — | NOT TESTED (placa) |
+| M7: oracolul lot 2 aceleași numere | — | NOT TESTED (placa) |
+
+Aflat, cinstit: (1) planul presupunea că la lot 2 „out” / „proj” merg pe v8r; în SIMULARE, cu vitezele os-500 și garda os-503, ele merg
+pe **v7** (n = C = 768 dă puține blocuri de 128×128). `mm_tc_v8r_res` rămâne pentru cazul în care valurile aleg v8 (dovedit în S1 / S4),
+dar #513 nu-l folosește azi. (2) Comparația M3 arată că pe aceeași valoare se face aceeași adunare cu reziduul, nu că `FADD.FTZ` de pe
+placă dă aceiași biți ca `vadd` — e aceeași instrucțiune, deci ar trebui; o arată oracolul (M7).
+
+Nota pentru OS: `integration/cyber-universe/C-168_P5d_rezidual-inainte-in-coada.md`. Următorul pas: P5f (cele 98 `colsum` finale într-o
+lansare, aceiași biți) cu plan + predicții întâi; P5e și P5g dau alți biți și vin după; pe placă: rândurile P5b, P5c, P5d.

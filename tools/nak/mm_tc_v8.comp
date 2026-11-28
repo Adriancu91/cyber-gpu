@@ -27,6 +27,9 @@
 // C-168 p.5 P5c (session 293): with -DGELU_FWD the store also writes act[row, col] = gelu_tr.comp mode 0 of the value
 // just written to C (u = v + bias), act at the end of the push constants (0x730): mm_tc_*_geluf. Without -DGELU_FWD the
 // source compiles to the same bytes as before.
+// C-168 p.5 P5d (session 294): with -DRES the store writes C = (v + bias) + res[row, col] (vadd.comp's add on the
+// value written today), res at the end of the push constants (0x730): mm_tc_*_res. Without -DRES the source compiles
+// to the same bytes as before.
 #version 460
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
@@ -78,6 +81,9 @@ layout(push_constant) uniform Args {
     uint flags;
 #ifdef GELU_FWD
     Out act;
+#endif
+#ifdef RES
+    In res;
 #endif
 } args;
 
@@ -244,6 +250,10 @@ void main() {
                     if ((args.flags & BIAS) != 0u) {
                         v += args.bias.v[gc];
                     }
+#ifdef RES
+                    // C-168 p.5 P5d (-DRES): the residual add of vadd.comp (one f32 add) on the value C would get.
+                    v = v + args.res.v[gr * args.n + gc];
+#endif
                     args.c.v[gr * args.n + gc] = v;
 #ifdef GELU_FWD
                     // C-168 p.5 P5c (-DGELU_FWD): gelu_tr.comp mode 0, letter for letter, on the value just written (u).

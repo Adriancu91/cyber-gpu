@@ -4159,6 +4159,124 @@ fn fast_geluf(
     Ok(())
 }
 
+/// C-168 p.5 P5d (session 294, `docs/C-168_P5_LIPIRE_PLAN.md` §12): what `tools/nak/out2/mm_tc_v7_res.sm86.sass` needs —
+/// `mm_tc_v7`'s (only the store differs: one more read and one f32 add per element).
+pub const MM_TC_V7_RES_NEEDS: Needs = MM_TC_V7_NEEDS;
+/// C-168 p.5 P5d: what `tools/nak/out2/mm_tc_v8_res.sm86.sass` needs — `mm_tc_v8`'s.
+pub const MM_TC_V8_RES_NEEDS: Needs = MM_TC_V8_NEEDS;
+/// C-168 p.5 P5d: what `tools/nak/out2/mm_tc_v8n_res.sm86.sass` needs — `mm_tc_v8n`'s.
+pub const MM_TC_V8N_RES_NEEDS: Needs = MM_TC_V8N_NEEDS;
+/// C-168 p.5 P5d: what `tools/nak/out2/mm_tc_v8r_res.sm86.sass` needs — `mm_tc_v8r`'s (= `mm_tc_v8`'s).
+pub const MM_TC_V8R_RES_NEEDS: Needs = MM_TC_V8R_NEEDS;
+
+/// C-168 p.5 P5d (session 294): the CPU stand-in for `tools/nak/out2/mm_tc_v7_res.sm86.sass` — [`mm_tc_v7_on_cpu`]'s
+/// value (op(A)·op(B) (+ bias), the same bits as `mm_tc`), then `C[i] = res[i] + that value` with one `FADD.FTZ`
+/// (`gpu_compute::math::add_f32_ftz`, the add of `vadd`), `res` read at cbuf0 0x730. Blocks of 128×1×1, 64×64 tiles,
+/// aligned products only; `res` at 0, unaligned (4) or overlapping A, B, C or the bias is REFUSED with nothing written.
+pub fn mm_tc_v7_res_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    fast_res(
+        l,
+        [128, 1, 1],
+        64,
+        64,
+        [
+            "SIM: mm_tc_v7_res cere blocuri de 128x1x1",
+            "SIM: mm_tc_v7_res: produs nealiniat (randuri multiplu de 4, adrese multiplu de 16)",
+        ],
+    )
+}
+
+/// C-168 p.5 P5d (session 294): the CPU stand-in for `tools/nak/out2/mm_tc_v8_res.sm86.sass` — blocks of 256×1×1,
+/// 128×128 tiles; the rest as [`mm_tc_v7_res_on_cpu`].
+pub fn mm_tc_v8_res_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    fast_res(
+        l,
+        [256, 1, 1],
+        128,
+        128,
+        [
+            "SIM: mm_tc_v8_res cere blocuri de 256x1x1",
+            "SIM: mm_tc_v8_res: produs nealiniat (randuri multiplu de 4, adrese multiplu de 16)",
+        ],
+    )
+}
+
+/// C-168 p.5 P5d (session 294): the CPU stand-in for `tools/nak/out2/mm_tc_v8n_res.sm86.sass` — blocks of 128×1×1,
+/// 128×64 tiles; the rest as [`mm_tc_v7_res_on_cpu`].
+pub fn mm_tc_v8n_res_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    fast_res(
+        l,
+        [128, 1, 1],
+        128,
+        64,
+        [
+            "SIM: mm_tc_v8n_res cere blocuri de 128x1x1",
+            "SIM: mm_tc_v8n_res: produs nealiniat (randuri multiplu de 4, adrese multiplu de 16)",
+        ],
+    )
+}
+
+/// C-168 p.5 P5d (session 294): the CPU stand-in for `tools/nak/out2/mm_tc_v8r_res.sm86.sass` — `mm_tc_v8r`'s arithmetic
+/// (= `mm_tc_v8`'s, [`mm_tc_v8r_on_cpu`]) with the residual add; blocks of 256×1×1, 128×128 tiles.
+pub fn mm_tc_v8r_res_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    fast_res(
+        l,
+        [256, 1, 1],
+        128,
+        128,
+        [
+            "SIM: mm_tc_v8r_res cere blocuri de 256x1x1",
+            "SIM: mm_tc_v8r_res: produs nealiniat (randuri multiplu de 4, adrese multiplu de 16)",
+        ],
+    )
+}
+
+fn fast_res(
+    l: &mut Launch<'_>,
+    block: [u32; 3],
+    tile_m: usize,
+    tile_n: usize,
+    why: [&'static str; 2],
+) -> GpuResult<()> {
+    if l.block != block || l.grid[2] != 1 {
+        return Err(bad(why[0]));
+    }
+    if !tc_aligned(l)? {
+        return Err(bad(why[1]));
+    }
+    let base = l.cbuf0 + MMA16_PUSH_BASE;
+    let a = l.mem.read_u64(base)?;
+    let b = l.mem.read_u64(base + 0x08)?;
+    let c = l.mem.read_u64(base + 0x10)?;
+    let bias = l.mem.read_u64(base + 0x18)?;
+    let m = u64::from(l.mem.read_u32(base + 0x20)?);
+    let n = u64::from(l.mem.read_u32(base + 0x24)?);
+    let k = u64::from(l.mem.read_u32(base + 0x28)?);
+    let flags = l.mem.read_u32(base + 0x2c)?;
+    let res = l.mem.read_u64(base + 0x30)?;
+    if res == 0 || !res.is_multiple_of(4) {
+        return Err(bad("SIM: mm_tc_res: res la 0 sau nealiniat"));
+    }
+    let over = |va: u64, len: u64| va < res + 4 * m * n && res < va + len;
+    if over(c, 4 * m * n)
+        || over(a, 4 * m * k)
+        || over(b, 4 * k * n)
+        || (flags & 4 != 0 && over(bias, 4 * n))
+    {
+        return Err(bad("SIM: mm_tc_res: res se suprapune cu A, B, C sau bias"));
+    }
+    let x = l.mem.read_f32s(res, (m * n) as usize)?;
+    mm_tc_tiles_mn_on_cpu(l, tile_m, tile_n)?;
+    let v = l.mem.read_f32s(c, (m * n) as usize)?;
+    let y: Vec<f32> = x
+        .iter()
+        .zip(&v)
+        .map(|(&x, &v)| gpu_compute::math::add_f32_ftz(x, v))
+        .collect();
+    l.mem.write_f32s(c, &y);
+    Ok(())
+}
+
 fn mm_tc_gelu_tiles(
     l: &mut Launch<'_>,
     f: fn(f32, f32) -> f32,

@@ -568,14 +568,7 @@ pub fn pack_mixed_fast_via_ram_attn12(
     zone_va: u64,
     v: &ViaRam,
 ) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
-    if !copy_va.is_multiple_of(256) || !zone_va.is_multiple_of(256) {
-        return Err(bad(
-            "lot prin RAM: programul de copiere sau zona nealiniate",
-        ));
-    }
-    let n_in = v.copies_in.len();
-    let list_va = zone_va + SLOT * n_in as u64;
-    let (list_bytes, list_qmds, picks) = crate::train_step::pack_mixed_fast_attn12(
+    pack_mixed_fast_via_ram_attn13(
         list,
         prog_va,
         progs,
@@ -588,6 +581,64 @@ pub fn pack_mixed_fast_via_ram_attn12(
         gelu_fast,
         v8r_va,
         gelu_fwd,
+        None,
+        attn,
+        attn_fast,
+        attn0,
+        step_bytes,
+        copy_va,
+        zone_va,
+        v,
+    )
+}
+
+/// C-168 p.5 P5d (session 294, `docs/C-168_P5_LIPIRE_PLAN.md` §12): [`pack_mixed_fast_via_ram_attn12`] with the `_res`
+/// variants of the fast programs (`res_fwd`, `None` = [`pack_mixed_fast_via_ram_attn12`] byte for byte), the list
+/// packed by `train_step::pack_mixed_fast_attn13` (a `Plan::with_fused_res_fwd` plan). SIMULARE only (T311).
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub fn pack_mixed_fast_via_ram_attn13(
+    list: &[MixedLaunch],
+    prog_va: impl Fn(Prog) -> u64,
+    progs: &TcPrograms,
+    v5_va: u64,
+    v6_va: u64,
+    v7_va: u64,
+    v8: Option<crate::train_step::V8Programs>,
+    long_k: u32,
+    attn_fwd_va: u64,
+    gelu_fast: Option<crate::train_step::GeluFast>,
+    v8r_va: u64,
+    gelu_fwd: Option<crate::train_step::GeluFwdFast>,
+    res_fwd: Option<crate::train_step::ResFast>,
+    attn: Option<crate::train_step::AttnTcProgram>,
+    attn_fast: Option<crate::train_step::AttnTcFast>,
+    attn0: Attn0Programs,
+    step_bytes: Option<u32>,
+    copy_va: u64,
+    zone_va: u64,
+    v: &ViaRam,
+) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
+    if !copy_va.is_multiple_of(256) || !zone_va.is_multiple_of(256) {
+        return Err(bad(
+            "lot prin RAM: programul de copiere sau zona nealiniate",
+        ));
+    }
+    let n_in = v.copies_in.len();
+    let list_va = zone_va + SLOT * n_in as u64;
+    let (list_bytes, list_qmds, picks) = crate::train_step::pack_mixed_fast_attn13(
+        list,
+        prog_va,
+        progs,
+        v5_va,
+        v6_va,
+        v7_va,
+        v8,
+        long_k,
+        attn_fwd_va,
+        gelu_fast,
+        v8r_va,
+        gelu_fwd,
+        res_fwd,
         attn,
         attn_fast,
         attn0,

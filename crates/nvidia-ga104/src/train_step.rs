@@ -968,6 +968,9 @@ pub struct Plan {
     /// C-168 p.5 P5c ([`Plan::with_fused_gelu_fwd`]): in the mixed step "fc" writes GELU's forward itself
     /// ([`MixedLaunch::TcGeluFwd`]), no forward `gelu_tr`.
     fused_gelu_fwd: bool,
+    /// C-168 p.5 P5d ([`Plan::with_fused_res_fwd`]): in the mixed step "out" and "proj" add the forward residual
+    /// themselves ([`MixedLaunch::TcRes`]), no forward `vadd`.
+    fused_res_fwd: bool,
     /// C-157 p.2x ([`Plan::with_mm_tile`]): every `mm_train` launch goes on `mm_train_tile` (same cbuf, same bits).
     mm_tile: bool,
     /// C-165 ([`Plan::with_mm_choice`]): the race's pick per `mm_train` shape (the others stay on `mm_train_tile`).
@@ -1264,6 +1267,7 @@ impl Plan {
         p.fused_back = self.fused_back;
         p.fused_gelu = self.fused_gelu;
         p.fused_gelu_fwd = self.fused_gelu_fwd;
+        p.fused_res_fwd = self.fused_res_fwd;
         p.mm_tile = self.mm_tile;
         p.mm_choice = self.mm_choice;
         p.mm_tile_gelu = self.mm_tile_gelu;
@@ -1488,6 +1492,7 @@ impl Plan {
             fused_back: false,
             fused_gelu: false,
             fused_gelu_fwd: false,
+            fused_res_fwd: false,
             mm_tile: false,
             mm_choice: None,
             mm_tile_gelu: false,
@@ -1545,6 +1550,24 @@ impl Plan {
     /// True after [`Plan::with_fused_gelu_fwd`].
     pub fn fused_gelu_fwd(&self) -> bool {
         self.fused_gelu_fwd
+    }
+
+    /// C-168 p.5 P5d (session 294, `docs/C-168_P5_LIPIRE_PLAN.md` §12): the same plan (same arena, same addresses) whose
+    /// **mixed** step ([`Plan::step_mixed`]) adds the forward residuals in the "out" and "proj" products themselves: each
+    /// "out" / "proj" ([`MixedLaunch::Tc`], writes `tmp`) and the forward `vadd` right after it (`x' = x + tmp`) become one
+    /// [`MixedLaunch::TcRes`] (tags `inainte:out+rez`, `recalcul:out+rez`, `inainte:proj+rez`) that writes `x'` with
+    /// `res` = `x` — two launches fewer per layer (one per re-run layer); `tmp` is no longer written there. Pack with
+    /// [`pack_mixed_fast_attn13`] / `batch_ram::pack_mixed_fast_via_ram_attn13` and the `_res` programs
+    /// ([`crate::mm_tc_fast_res`]); the other packers refuse such a list. The F32 step ([`Plan::step`]) is unchanged.
+    /// Off unless asked for; combines with every other option. **SIMULARE only** (T311).
+    pub fn with_fused_res_fwd(mut self) -> Self {
+        self.fused_res_fwd = true;
+        self
+    }
+
+    /// True after [`Plan::with_fused_res_fwd`].
+    pub fn fused_res_fwd(&self) -> bool {
+        self.fused_res_fwd
     }
 
     /// C-157 p.2x (`docs/C-157_P2x_MM_TRAIN_TILE.md`): the same plan (same arena, same addresses, same launches in the
@@ -1839,6 +1862,7 @@ impl Plan {
         p.fused_back = self.fused_back;
         p.fused_gelu = self.fused_gelu;
         p.fused_gelu_fwd = self.fused_gelu_fwd;
+        p.fused_res_fwd = self.fused_res_fwd;
         p.mm_tile = self.mm_tile;
         p.mm_choice = self.mm_choice;
         p.mm_tile_gelu = self.mm_tile_gelu;
@@ -3415,6 +3439,15 @@ pub enum MixedLaunch {
         tag: &'static str,
         layer: Option<u16>,
     },
+    /// C-168 p.5 P5d (session 294, `docs/C-168_P5_LIPIRE_PLAN.md` §12): "out" / "proj" + the forward `vadd` after it in
+    /// one launch, on a `_res` program ([`crate::mm_tc_fast_res`]: C = (op(A)·op(B) + bias) + res) — only in
+    /// [`Plan::step_mixed`] of a [`Plan::with_fused_res_fwd`] plan; packed only by [`pack_mixed_fast_attn13`] with
+    /// `ResFast` (the other packers refuse it). The same bits as the two launches it replaces.
+    TcRes {
+        args: crate::mm_tc_fast_res::Args,
+        tag: &'static str,
+        layer: Option<u16>,
+    },
 }
 
 /// Bytes of one `mm_tc` launch in the control zone: the cbuf (0x800) then the QMD (0x100).
@@ -3430,6 +3463,7 @@ impl MixedLaunch {
             MixedLaunch::Attn0Tc(_) => "attn_back_tile0_tc",
             MixedLaunch::AttnFwdTc(_) => "attn_fwd_tc",
             MixedLaunch::TcGeluFwd { .. } => "mm_tc_geluf",
+            MixedLaunch::TcRes { .. } => "mm_tc_res",
         }
     }
 
@@ -3441,7 +3475,8 @@ impl MixedLaunch {
             | MixedLaunch::AttnFwdTc(l) => l.tag,
             MixedLaunch::Tc { tag, .. }
             | MixedLaunch::TcGelu { tag, .. }
-            | MixedLaunch::TcGeluFwd { tag, .. } => tag,
+            | MixedLaunch::TcGeluFwd { tag, .. }
+            | MixedLaunch::TcRes { tag, .. } => tag,
         }
     }
 
@@ -3454,7 +3489,8 @@ impl MixedLaunch {
             | MixedLaunch::AttnTc(_)
             | MixedLaunch::Attn0Tc(_)
             | MixedLaunch::AttnFwdTc(_)
-            | MixedLaunch::TcGeluFwd { .. } => SLOT_TC,
+            | MixedLaunch::TcGeluFwd { .. }
+            | MixedLaunch::TcRes { .. } => SLOT_TC,
         }
     }
 }
@@ -3694,20 +3730,33 @@ impl Plan {
                     Ok(l)
                 }
             })
+            .and_then(|l| {
+                if self.fused_res_fwd {
+                    fuse_res_fwd(l)
+                } else {
+                    Ok(l)
+                }
+            })
     }
 
     /// Launches per mixed step: one more than [`Plan::launches_per_step`] (the 1×1×1 c/S); with
-    /// [`Plan::with_fused_gelu_fwd`] one fewer per layer and per re-run layer.
+    /// [`Plan::with_fused_gelu_fwd`] one fewer per layer and per re-run layer; with [`Plan::with_fused_res_fwd`] two
+    /// fewer per layer and one fewer per re-run layer.
     pub fn launches_per_step_mixed(&self, recipe: Recipe) -> usize {
+        let rerun = (0..self.arch.layers)
+            .filter(|&l| self.recomputed(l))
+            .count();
         let fused = if self.fused_gelu_fwd {
-            self.arch.layers
-                + (0..self.arch.layers)
-                    .filter(|&l| self.recomputed(l))
-                    .count()
+            self.arch.layers + rerun
         } else {
             0
         };
-        self.launches_per_step(recipe) + 1 - fused
+        let fused_res = if self.fused_res_fwd {
+            2 * self.arch.layers + rerun
+        } else {
+            0
+        };
+        self.launches_per_step(recipe) + 1 - fused - fused_res
     }
 }
 
@@ -3757,6 +3806,68 @@ fn fuse_gelu_fwd(list: Vec<MixedLaunch>) -> GpuResult<Vec<MixedLaunch>> {
         a.cbuf()
             .ok_or(bad("pas-mixt: argumentele fc+gelu refuzate"))?;
         out.push(MixedLaunch::TcGeluFwd {
+            args: a,
+            tag: fused_tag,
+            layer,
+        });
+    }
+    Ok(out)
+}
+
+/// C-168 p.5 P5d (session 294, `docs/C-168_P5_LIPIRE_PLAN.md` §12): every "out" / "proj" ([`MixedLaunch::Tc`] tagged
+/// `inainte:out`, `recalcul:out`, `inainte:proj`) and the forward `vadd` right after it (same layer, `b` = that product's
+/// C, `n` = m·n) → one [`MixedLaunch::TcRes`]: C = the `vadd`'s output, `res` = its `a`. Everything else unchanged, in
+/// order. An "out" / "proj" not followed by its `vadd` is refused.
+fn fuse_res_fwd(list: Vec<MixedLaunch>) -> GpuResult<Vec<MixedLaunch>> {
+    let rd = |cb: &[u8; 0x100], at: usize| u64::from_le_bytes(cb[at..at + 8].try_into().unwrap());
+    let rd32 = |cb: &[u8; 0x100], at: usize| u32::from_le_bytes(cb[at..at + 4].try_into().unwrap());
+    let mut out = Vec::with_capacity(list.len());
+    let mut it = list.into_iter().peekable();
+    while let Some(l) = it.next() {
+        let fused_tag = match &l {
+            MixedLaunch::Tc {
+                tag: "inainte:out", ..
+            } => "inainte:out+rez",
+            MixedLaunch::Tc {
+                tag: "recalcul:out",
+                ..
+            } => "recalcul:out+rez",
+            MixedLaunch::Tc {
+                tag: "inainte:proj",
+                ..
+            } => "inainte:proj+rez",
+            _ => {
+                out.push(l);
+                continue;
+            }
+        };
+        let MixedLaunch::Tc { args, layer, .. } = l else {
+            unreachable!()
+        };
+        // vadd's cbuf (kronos_layer::cbuf): a 0x28, b 0x30, c 0x38, n 0x40.
+        let (res, c) = match it.peek() {
+            Some(MixedLaunch::Std(v))
+                if v.prog == Prog::Vadd
+                    && v.layer == layer
+                    && rd(&v.cbuf, 0x30) == args.c
+                    && u64::from(rd32(&v.cbuf, 0x40)) == u64::from(args.m) * u64::from(args.n) =>
+            {
+                (rd(&v.cbuf, 0x28), rd(&v.cbuf, 0x38))
+            }
+            _ => {
+                return Err(bad(
+                    "pas-mixt: out / proj fara rezidualul dupa el (with_fused_res_fwd)",
+                ));
+            }
+        };
+        it.next();
+        let a = crate::mm_tc_fast_res::Args {
+            tc: crate::mm_tc::Args { c, ..args },
+            res,
+        };
+        a.cbuf()
+            .ok_or(bad("pas-mixt: argumentele out / proj + rezidual refuzate"))?;
+        out.push(MixedLaunch::TcRes {
             args: a,
             tag: fused_tag,
             layer,
@@ -3819,6 +3930,14 @@ pub fn pack_mixed_gelu(
             "pas-mixt: lista are fc+gelu (with_fused_gelu_fwd): foloseste pack_mixed_fast_attn12",
         ));
     }
+    if launches
+        .iter()
+        .any(|l| matches!(l, MixedLaunch::TcRes { .. }))
+    {
+        return Err(bad(
+            "pas-mixt: lista are out / proj + rezidual (with_fused_res_fwd): foloseste pack_mixed_fast_attn13",
+        ));
+    }
     if launches.iter().any(|l| matches!(l, MixedLaunch::AttnTc(_))) {
         return Err(bad(
             "pas-mixt: lista are attn_back_tile_tc: foloseste pack_mixed_fast_attn",
@@ -3879,7 +3998,8 @@ pub fn pack_mixed_gelu(
             MixedLaunch::AttnTc(_)
             | MixedLaunch::Attn0Tc(_)
             | MixedLaunch::AttnFwdTc(_)
-            | MixedLaunch::TcGeluFwd { .. } => {
+            | MixedLaunch::TcGeluFwd { .. }
+            | MixedLaunch::TcRes { .. } => {
                 unreachable!()
             }
             MixedLaunch::TcGelu { args, .. } => {
@@ -3982,6 +4102,16 @@ pub enum TcPick {
     V8GeluF,
     /// C-168 p.5 P5c (session 293): a [`MixedLaunch::TcGeluFwd`] on `mm_tc_v8n_geluf`, only from [`pack_mixed_fast_attn12`].
     V8nGeluF,
+    /// C-168 p.5 P5d (session 294): a [`MixedLaunch::TcRes`] on `mm_tc_v7_res`, only from [`pack_mixed_fast_attn13`]
+    /// (also what [`tc_pick`] gives such a launch: there is no slow `_res` program).
+    V7Res,
+    /// C-168 p.5 P5d (session 294): a [`MixedLaunch::TcRes`] on `mm_tc_v8_res`, only from [`pack_mixed_fast_attn13`].
+    V8Res,
+    /// C-168 p.5 P5d (session 294): a [`MixedLaunch::TcRes`] on `mm_tc_v8n_res`, only from [`pack_mixed_fast_attn13`].
+    V8nRes,
+    /// C-168 p.5 P5d (session 294): a [`MixedLaunch::TcRes`] on `mm_tc_v8r_res` (where the waves pick v8 and `mm_tc_v8r`
+    /// is loaded), only from [`pack_mixed_fast_attn13`].
+    V8rRes,
 }
 
 /// C-168 p.3 G7 (session 280): where the OS loaded `mm_tc_v8` / `mm_tc_v8n` (both 256-aligned, non-zero), the active
@@ -4112,6 +4242,10 @@ impl TcPick {
             TcPick::V7GeluF => "mm_tc_v7_geluf",
             TcPick::V8GeluF => "mm_tc_v8_geluf",
             TcPick::V8nGeluF => "mm_tc_v8n_geluf",
+            TcPick::V7Res => "mm_tc_v7_res",
+            TcPick::V8Res => "mm_tc_v8_res",
+            TcPick::V8nRes => "mm_tc_v8n_res",
+            TcPick::V8rRes => "mm_tc_v8r_res",
         }
     }
 }
@@ -4128,6 +4262,7 @@ pub fn tc_pick(l: &MixedLaunch, progs: &TcPrograms) -> Option<TcPick> {
         MixedLaunch::Attn0Tc(_) => Some(TcPick::Attn0Tc),
         MixedLaunch::AttnFwdTc(_) => Some(TcPick::AttnFwdTc),
         MixedLaunch::TcGeluFwd { .. } => Some(TcPick::V7GeluF),
+        MixedLaunch::TcRes { .. } => Some(TcPick::V7Res),
         MixedLaunch::Tc { args, .. } => Some(if progs.v4 != 0 && crate::mm_tc_v4::fits(args) {
             TcPick::V4
         } else if progs.pf != 0 {
@@ -4629,6 +4764,94 @@ pub fn pack_mixed_fast_attn12(
     step_bytes: Option<u32>,
     zone_va: u64,
 ) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
+    pack_mixed_fast_attn13(
+        launches,
+        prog_va,
+        progs,
+        v5_va,
+        v6_va,
+        v7_va,
+        v8,
+        long_k,
+        attn_fwd_va,
+        gelu_fast,
+        v8r_va,
+        gelu_fwd,
+        None,
+        attn,
+        attn_fast,
+        attn0,
+        step_bytes,
+        zone_va,
+    )
+}
+
+/// C-168 p.5 P5d (session 294, `docs/C-168_P5_LIPIRE_PLAN.md` §12): where the OS loaded the `_res` variants of the fast
+/// `mm_tc` programs (`mm_tc_v7_res` / `mm_tc_v8_res` / `mm_tc_v8n_res` / `mm_tc_v8r_res`, [`crate::mm_tc_fast_res`]);
+/// 0 = not loaded. All 256-aligned.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ResFast {
+    pub v7: u64,
+    pub v8: u64,
+    pub v8n: u64,
+    pub v8r: u64,
+}
+
+/// C-168 p.5 P5d: the `_res` variant of the program the same product would take as a plain [`MixedLaunch::Tc`] in
+/// [`pack_mixed_fast_attn13`] (the waves with `v8`, else `mm_tc_v7`; v8 → `mm_tc_v8r_res` when `mm_tc_v8r` is loaded,
+/// as a plain launch would go to `mm_tc_v8r`). `None` = that program has no `_res` variant (unaligned, or v7 / v8 not
+/// given).
+fn res_pick(
+    args: &crate::mm_tc::Args,
+    v8: Option<V8Programs>,
+    v7_va: u64,
+    long_k: u32,
+    v8r_va: u64,
+) -> Option<TcPick> {
+    use crate::mm_tc_v8 as t8;
+    match v8 {
+        Some(p8) if t8::fits(args) => Some(
+            match t8::pick_long_k(args, p8.sms, p8.rates, v7_va != 0, long_k) {
+                t8::Pick::V7 => TcPick::V7Res,
+                t8::Pick::V8 if v8r_va != 0 => TcPick::V8rRes,
+                t8::Pick::V8 => TcPick::V8Res,
+                t8::Pick::V8n => TcPick::V8nRes,
+            },
+        ),
+        _ if v7_va != 0 && crate::mm_tc_v7::fits(args) => Some(TcPick::V7Res),
+        _ => None,
+    }
+}
+
+/// C-168 p.5 P5d (session 294, `docs/C-168_P5_LIPIRE_PLAN.md` §12): [`pack_mixed_fast_attn12`] with the **`_res`
+/// variants** of the fast programs as well (`res_fwd`; `None` = [`pack_mixed_fast_attn12`] byte for byte, and then a
+/// list with [`MixedLaunch::TcRes`] is refused). A `TcRes` (a [`Plan::with_fused_res_fwd`] plan: "out" / "proj" + the
+/// forward residual) takes the `_res` variant of the program the same product takes without it ([`res_pick`]):
+/// [`TcPick::V7Res`] / [`TcPick::V8Res`] / [`TcPick::V8nRes`] / [`TcPick::V8rRes`] — that program's block, grid,
+/// shared memory, its own registers, `mm_tc`'s cbuf with `res` at 0x730. A product with no `_res` variant or a variant
+/// not loaded (0) is **refused** before anything is sent. Same bits as the product + `vadd`. **SIMULARE only** (T311);
+/// none of the four has run on the board.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub fn pack_mixed_fast_attn13(
+    launches: &[MixedLaunch],
+    prog_va: impl Fn(Prog) -> u64,
+    progs: &TcPrograms,
+    v5_va: u64,
+    v6_va: u64,
+    v7_va: u64,
+    v8: Option<V8Programs>,
+    long_k: u32,
+    attn_fwd_va: u64,
+    gelu_fast: Option<GeluFast>,
+    v8r_va: u64,
+    gelu_fwd: Option<GeluFwdFast>,
+    res_fwd: Option<ResFast>,
+    attn: Option<AttnTcProgram>,
+    attn_fast: Option<AttnTcFast>,
+    attn0: Attn0Programs,
+    step_bytes: Option<u32>,
+    zone_va: u64,
+) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
     use crate::mm_tc as tc;
     use crate::mm_tc_v8 as t8;
     use crate::mm_tc_v8r as t8r;
@@ -4648,7 +4871,21 @@ pub fn pack_mixed_fast_attn12(
     use crate::mm_tc_gelu as tg;
     let gf = gelu_fast.unwrap_or_default();
     let gff = gelu_fwd.unwrap_or_default();
+    use crate::mm_tc_fast_res as fr;
+    let rf = res_fwd.unwrap_or_default();
     for l in launches {
+        if let MixedLaunch::TcRes { args, .. } = l {
+            if res_fwd.is_none() {
+                return Err(bad(
+                    "pas-mixt: lista are out / proj + rezidual (with_fused_res_fwd): foloseste pack_mixed_fast_attn13 cu ResFast",
+                ));
+            }
+            if res_pick(&args.tc, v8, v7_va, long_k, v8r_va).is_none() {
+                return Err(bad(
+                    "pas-mixt: out / proj + rezidual fara varianta _res (produs nealiniat sau v7 / v8 lipsa)",
+                ));
+            }
+        }
         if let MixedLaunch::TcGeluFwd { args, .. } = l {
             if gelu_fwd.is_none() {
                 return Err(bad(
@@ -4693,6 +4930,10 @@ pub fn pack_mixed_fast_attn12(
             gff.v7,
             gff.v8,
             gff.v8n,
+            rf.v7,
+            rf.v8,
+            rf.v8n,
+            rf.v8r,
         ]
         .iter()
         .any(|v| !v.is_multiple_of(256))
@@ -4705,6 +4946,10 @@ pub fn pack_mixed_fast_attn12(
         .map(|l| match (tc_pick(l, progs), attn) {
             (Some(TcPick::V7GeluF), _) => match l {
                 MixedLaunch::TcGeluFwd { args, .. } => geluf_pick(&args.tc, v8, v7_va, long_k),
+                _ => unreachable!(),
+            },
+            (Some(TcPick::V7Res), _) => match l {
+                MixedLaunch::TcRes { args, .. } => res_pick(&args.tc, v8, v7_va, long_k, v8r_va),
                 _ => unreachable!(),
             },
             (Some(TcPick::AttnTc), a) => attn_fast_pick(l, attn_fast)
@@ -4778,6 +5023,10 @@ pub fn pack_mixed_fast_attn12(
             TcPick::V7GeluF => gff.v7,
             TcPick::V8GeluF => gff.v8,
             TcPick::V8nGeluF => gff.v8n,
+            TcPick::V7Res => rf.v7,
+            TcPick::V8Res => rf.v8,
+            TcPick::V8nRes => rf.v8n,
+            TcPick::V8rRes => rf.v8r,
         };
         if va == 0 {
             return Err(bad(match p {
@@ -4795,6 +5044,9 @@ pub fn pack_mixed_fast_attn12(
                 }
                 TcPick::V7GeluF | TcPick::V8GeluF | TcPick::V8nGeluF => {
                     "pas-mixt: varianta geluf a programului ales (mm_tc_v7_geluf / v8_geluf / v8n_geluf) nu e incarcata"
+                }
+                TcPick::V7Res | TcPick::V8Res | TcPick::V8nRes | TcPick::V8rRes => {
+                    "pas-mixt: varianta _res a programului ales (mm_tc_v7_res / v8_res / v8n_res / v8r_res) nu e incarcata"
                 }
                 _ => "pas-mixt: programul mm_tc ales nu e incarcat",
             }));
@@ -4900,9 +5152,52 @@ pub fn pack_mixed_fast_attn12(
                 bytes[at + c..at + c + q.len()].copy_from_slice(&q);
                 qmds.push(cb_va + c as u64);
             }
-            MixedLaunch::Tc { .. } | MixedLaunch::TcGelu { .. } | MixedLaunch::TcGeluFwd { .. } => {
+            MixedLaunch::Tc { .. }
+            | MixedLaunch::TcGelu { .. }
+            | MixedLaunch::TcGeluFwd { .. }
+            | MixedLaunch::TcRes { .. } => {
                 let (cb, grid, block, shared, va, regs): ([u8; tc::CBUF_BYTES], _, _, _, _, _) =
                     match l {
+                        MixedLaunch::TcRes { args, .. } => {
+                            let cb = args.cbuf().ok_or(bad(
+                                "pas-mixt: argumentele out / proj + rezidual refuzate",
+                            ))?;
+                            let ta = &args.tc;
+                            match pick {
+                                Some(TcPick::V8Res) => (
+                                    cb,
+                                    t8::grid(ta),
+                                    t8::BLOCK,
+                                    t8::SHARED,
+                                    rf.v8,
+                                    fr::REGISTERS_V8,
+                                ),
+                                Some(TcPick::V8rRes) => (
+                                    cb,
+                                    t8r::grid(ta),
+                                    t8r::BLOCK,
+                                    t8r::SHARED,
+                                    rf.v8r,
+                                    fr::REGISTERS_V8R,
+                                ),
+                                Some(TcPick::V8nRes) => (
+                                    cb,
+                                    t8::grid_n(ta),
+                                    t8::BLOCK_N,
+                                    t8::SHARED_N,
+                                    rf.v8n,
+                                    fr::REGISTERS_V8N,
+                                ),
+                                _ => (
+                                    cb,
+                                    ta.grid(),
+                                    tc::BLOCK,
+                                    crate::mm_tc_v7::SHARED,
+                                    rf.v7,
+                                    fr::REGISTERS_V7,
+                                ),
+                            }
+                        }
                         MixedLaunch::TcGeluFwd { args, .. } => {
                             let cb = args
                                 .cbuf()

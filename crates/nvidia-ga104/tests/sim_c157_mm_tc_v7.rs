@@ -420,6 +420,12 @@ fn t280d_only_the_row_lengths_changed_in_the_glsl() {
     // T307): drop the `#ifdef GELU ... #else` lines and the `#endif` before comparing with v6.
     // C-168 p.5 P5c (session 293, T310): the same for every `#ifdef GELU_FWD ... #endif` block (the act store and the
     // act push constant), first, since one of them sits inside the `#else` above.
+    // C-168 p.5 P5d (session 294, T311): the same for every `#ifdef RES ... #endif` block (the res push constant and the
+    // residual add).
+    while let Some(a) = v7s.find("#ifdef RES\n") {
+        let e = v7s[a..].find("#endif\n").unwrap() + a + "#endif\n".len();
+        v7s.replace_range(a..e, "");
+    }
     while let Some(a) = v7s.find("#ifdef GELU_FWD\n") {
         let e = v7s[a..].find("#endif\n").unwrap() + a + "#endif\n".len();
         v7s.replace_range(a..e, "");
