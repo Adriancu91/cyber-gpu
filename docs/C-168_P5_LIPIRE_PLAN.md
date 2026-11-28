@@ -291,3 +291,71 @@ placă dă aceiași biți ca `vadd` — e aceeași instrucțiune, deci ar trebui
 
 Nota pentru OS: `integration/cyber-universe/C-168_P5d_rezidual-inainte-in-coada.md`. Următorul pas: P5f (cele 98 `colsum` finale într-o
 lansare, aceiași biți) cu plan + predicții întâi; P5e și P5g dau alți biți și vin după; pe placă: rândurile P5b, P5c, P5d.
+
+## 14. P5b, P3g și P5c comparate cu placa: os-512 și os-514 (sesiunea 295, 28 nov 18:40)
+
+Surse (hub, `rezultate/os-automat/2026-11-28/`): os-508 = `ciclu-auto-20261128-1259.txt` (lot 2) / `-1304` (lot 6), martorul;
+os-512 (`--pas-gelu-lipit --pas-v8r`) = `-1554` (lot 2) / `-1559` (lot 6) / `-1613` (lot 6 pe datele reale); os-514
+(`--pas-gelu-inainte-lipit` peste os-512) = `-1739` (lot 2) / `-1744` (lot 6). Toate „placa, median pe 10 pași”, nucleul cu
+`cyber-gpu 408c69c`, aceeași placă, `ceas 60`.
+
+| Predicția | Măsurat pe placă | Stare |
+|---|---|---|
+| J4: 467 → 455 lansări la lot 6 | 455 (os-512 lot 6), 448 la lot 2 | **CONFIRMAT** (placa) |
+| J6: câștig net 1,0–1,8 ms la lot 6 | placa 119,03 → **118,82 ms** = −0,2 ms (pasul întreg 118,77 → 118,76) | **RATAT** (sub 0,5) |
+| J7: oracolul lot 2 aceleași numere | ACELEAȘI NUMERE (pierderea 6,3e-6, norma 6,4e-5); lot 6 pe datele reale = S141 (4,2e-5 / 5,6e-4) | **CONFIRMAT** (placa) |
+| K5: v8r ~217–225 µs pe lansare la lot 2 (5,2–5,4 ms pe 24) | „înainte:fc” pe v8r: 12 lansări **2 594 µs** = 216 µs (os-508 pe v8: 2 836 µs = 236 µs; ×1,09) | **CONFIRMAT** (placa; la marginea bună) |
+| K6: lot 6 neschimbat (±0,5 ms) | niciun v8 / v8r în pasul lot 6; 118,8 ms | **CONFIRMAT** (placa) |
+| L5: −12 lansări | 455 → 443 (lot 6), 448 → 436 (lot 2) | **CONFIRMAT** (placa) |
+| L6: câștig 0,6–1,1 ms la lot 6 (sub 0,4 = RATAT) | placa 118,82 → **117,89 ms** = **−0,93 ms**; pasul întreg 117,77 ms = **26 085 simb/s** (cel mai bun pe loturi sintetice) | **CONFIRMAT** (placa) |
+| L7: oracolul lot 2 aceleași numere | ACELEAȘI NUMERE (6,3e-6 / 6,4e-5) | **CONFIRMAT** (placa) |
+
+**De ce J6 a ratat (CALCUL, din profil + listarea NAK):** `gelu_tr` înapoi a dispărut exact cât am socotit (lot 6: 24 → 12 lansări,
+4 258 → 1 700 µs = **−2 558 µs**; prezis ~−2,5 ms), dar „proj-dX” cu coada GELU' a crescut cu **+2 286 µs** (7 438 → 9 724 µs,
+12 lansări = +190 µs pe lansare), nu cu +70–110 µs. La lot 2 la fel: `gelu_tr` −876 µs, „proj-dX” pe v8 → v8_gelu +608 µs (+51 µs pe
+lansare). În listarea `tools/nak/out2/mm_tc_v8n_gelu.sm86.txt` coada e scrisă element cu element: fiecare din cele 64 de valori ale unui
+fir stă în propriul bloc păzit (`if (gr < m && gc < n)`), cu o citire `ld.global.b32` a lui `u`, lanțul GELU' (~20 de operații
+dependente) și scrierea — iar citirea următoare pornește abia după. Așteptarea memoriei (~600 de cicluri) se plătește deci de 64 de ori
+pe rând în fiecare val de blocuri: ~64 × 0,35 µs ≈ 20–25 µs pe val; lot 6 are 8 valuri (1 152 blocuri, 144 pe val) → ~190 µs pe
+lansare = exact ce s-a măsurat. Programul simplu citește la fel `bias`, dar acela e un vector mic (din memoria rapidă); `u` e citit o
+singură dată, din memoria plăcii. Socoteala din §7 a presupus că citirea lui `u` merge cu viteza memoriei (533 GB/s); merge de fapt cu
+~200 GB/s.
+
+**De ce P5c a ținut:** coada `geluf` doar **scrie** în plus (`act`), nu citește; scrierile nu așteaptă. „înainte:fc” 7 702 → 8 753 µs
+(+88 µs pe lansare, prezis +71), `gelu_tr` înainte −1 700 µs → −0,93 ms. La lot 2 câștigul e mic (−0,13 ms): „fc” mergea pe v8r
+(2 594 µs), iar v8r nu are variantă `geluf`, deci trece pe `mm_tc_v8_geluf` (3 087 µs).
+
+**Ce înseamnă pentru P5d (M6, scris înainte de rândul pe placă — îl corectez ACUM, înainte să vină):** coada `_res` are aceeași
+formă (`tools/nak/out2/mm_tc_v8n_res.sm86.txt`: 64 de citiri `res` în plus, câte una pe bloc păzit). Lot 6, „out” / „proj” pe v8n_res:
+288 blocuri = 2 valuri × ~20 µs ≈ +40 µs pe lansare × 24 ≈ +0,96 ms, față de `vadd` −1,28 ms (os-514: 24 × 53 µs) → **M6 revizuit:
+−0,1…−0,6 ms la lot 6**; lot 2 (v7_res, 32 de citiri pe fir, 1 val) ≈ +10 µs × 24 față de `vadd` −0,45 ms → **0…−0,4 ms**. Predicția
+veche (−0,5…−1,1 / −0,3…−0,9) rămâne scrisă; dacă placa o atinge, socoteala de aici e greșită.
+
+**Unde suntem:** lot 6 sintetic 117,8 ms = 26 085 simb/s (os-514); pe datele reale 118,0 ms = 26 031 (os-512). Leacul pentru coadă
+(citirile pornite înainte, aceiași biți) = P5e de mai jos.
+
+## 15. P5e — coada cu citirile pornite înainte (aceiași biți): planul și predicțiile (sesiunea 295, scrise ÎNAINTE de cod)
+
+**Ce fac:** aceleași surse (`mm_tc_v7.comp`, `mm_tc_v8.comp`, `mm_tc_v8r.comp`) cu un fanion nou `-DPF`, doar împreună cu `-DGELU` sau
+`-DRES`. În coadă, valorile citite (`u` pentru GELU', `res` pentru reziduu) ale bucății următoare (i, j) se citesc **înainte** să se
+lucreze bucata curentă, cu indicele strâns în margini (`min(gr, m−1)`, `min(gc, n−1)`, ca citirea să fie mereu la o adresă validă și
+fără ramificație); scrierea rămâne păzită ca azi. Aritmetica pe fiecare element e literă cu literă aceeași, pe aceeași valoare → aceiași
+biți. Programe noi: `mm_tc_v7_gelu_pf`, `mm_tc_v8_gelu_pf`, `mm_tc_v8n_gelu_pf`, `mm_tc_v7_res_pf`, `mm_tc_v8_res_pf`,
+`mm_tc_v8n_res_pf`, `mm_tc_v8r_res_pf` (`geluf` nu citește nimic, nu are nevoie). În bibliotecă doar adăugări: constantele (octeți,
+SHA-256, registre) în `mm_tc_fast_gelu` / `mm_tc_fast_res`; dacă registrele sunt aceleași ca la programele de azi, OS-ul pune adresele
+`_pf` în `GeluFast` / `ResFast` și nimic altceva nu se schimbă (aceleași `Args`, bloc, grilă, memorie partajată).
+
+**Predicțiile (N1–N7):**
+- **N1 (CALCUL):** fără `-DPF` cele 15 programe de azi (v7 / v8 / v8n / v8r, 3 `_gelu`, 3 `_geluf`, 4 `_res`, `mm_tc_gelu`) ies cu
+  aceleași SHA-256.
+- **N2 (CALCUL):** registrele `_pf` = ale variantelor de azi (128 / 128 / 144; 128 / 128 / 144 / 120). Riscul: +8 registre vii în
+  coadă; la v8n ≤ 168 tot 3 blocuri pe SM, la v8 / v8r / v7 peste 128 = blocuri pierdute → atunci varianta nu e folosită.
+- **N3 (CALCUL):** în listare, citirile lui `u` / `res` nu mai stau fiecare în blocul ei păzit: cele 4 citiri ale bucății următoare
+  pornesc împreună, înaintea lanțului bucății curente; operațiile în virgulă mobilă ale fiecărui element = ale variantei de azi, în
+  ordine (unealta `compara_pf.py`, cu greșeli plantate).
+- **N4 (SIMULARE):** modelul mic, 5 pași rapizi cu adresele `_pf` în `GeluFast` / `ResFast`: aceiași biți ca azi; lista #513 identică
+  în afara adreselor programelor.
+- **N5 (placa, DEDUS):** lot 6 „proj-dX+gelu” 9,75 → **7,6–8,2 ms** (−1,5…−2,1 ms; podeaua = citirea lui `u` la viteza memoriei,
+  ~70 µs pe lansare); lot 2 `mm_tc_v8_gelu` 3,39 → 2,85–3,05 ms. Sub −0,8 ms la lot 6 = RATAT (atunci așteptarea nu era cauza).
+- **N6 (placa, DEDUS):** cu P5d legat, „out” / „proj” pe `_res_pf`: încă −0,5…−0,9 ms la lot 6 față de `_res`.
+- **N7 (placa):** oracolul lot 2 aceleași numere.
