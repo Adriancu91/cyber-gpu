@@ -1,5 +1,26 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 290 — 28 noiembrie 2026, ~09:12–09:58 (ora României), în cloud, FĂRĂ placă — **C-168 p.5: inventarul lansărilor mărunte (os-503) + planul P5a–P5g + P5a (`ln_back_res` în pasul rapid) → PREDARE P5a; T306 SIMULARE**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 289), l-am pus `ocupat`. Niciun rezultat nou pe placă (P4b, P3e, `--mm-tc-v8r`
+încă nerulate) → C-168 p.5, cu planul și predicțiile întâi (`docs/C-168_P5_LIPIRE_PLAN.md`, commit `4b96a31`, înainte de cod).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Inventarul (os-503, lot 6) | 297 lansări mărunte = 21,5 ms; `opt_step` 573 GB/s (94 % din vârf), `gelu_tr` 533, `vadd` 547, `colsum_part` 436; 98 `colsum` ~14 µs fiecare (costul lansării) | CALCUL |
+| Podeaua | Adam F32 (28 B pe parametru) ≥ 4,5 ms oricum; după toate lipirile ~12–15 ms; **≤ 11 ms cere o decizie a lui Adrian** (starea lui Adam) | CALCUL / DEDUS |
+| I1: model mic, 5 pași rapizi (`attn9`) cu `with_fused_back`, cu și fără colsum împărțit | aceiași biți (pierderi, gradient, greutăți); 76 → 72, 94 → 90 lansări | **PASS (SIMULARE)** |
+| I2: #513 lot 2 / 6 | 484 → 460 (pe placă 491 → 467); exact 24 `vadd` + 24 `ln_back` → `ln_back_res`; restul identic; alegerile identice | **PASS (SIMULARE)** |
+| I3 / I4 (câștig 0,5–1,1 ms la lot 6; oracolul lot 2) | scrise înainte | NOT TESTED |
+| Nota pentru OS | `integration/cyber-universe/C-168_P5a_rezidual-lipit-in-pas-rapid.md` | — |
+| Verificările întregi | format, clippy, teste, no_std | **1 529 PASS** |
+
+**Nou pentru placă:** doar folosirea lui `ln_back_res` (binarul din os-415) în pasul rapid. **Niciun cod nou în bibliotecă**, nicio
+schimbare incompatibilă. Aflat: packerul nu verifică dacă un program `Std` e încărcat — verificarea rămâne a OS-ului.
+
+**Următorul pas:** OS: P5a (după P4b sau împreună). Noi: comparațiile când vin (P4b, P3e, `--mm-tc-v8r`); altfel P5b (GELU' în
+coada lui v8n / v7 la „proj-dX”) cu planul + predicțiile întâi.
+
 ## Sesiunea 289 — 28 noiembrie 2026, ~08:11–09:05 (ora României), în cloud, FĂRĂ placă — **C-168 p.4: os-504 comparat (H4 CONFIRMATĂ, H5 RATATĂ în bine) + pasul 4: `attn_fwd_tc` legat în pas → PREDARE P4b; T305 SIMULARE**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 288), l-am pus `ocupat`. Rezultat nou pe placă: **os-504** (proba

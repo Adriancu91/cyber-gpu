@@ -76,4 +76,16 @@ modelul pe procesor și emularea literală (ca T299); cod care scrie în placa r
 
 ## 6. Rezultatul P5a (SIMULARE) — se completează după cod
 
-(gol până la T306)
+T306 (`crates/nvidia-ga104/tests/sim_c168_p5a_ln_back_res_mixed.rs`), SIMULARE:
+
+| Predicția | Rezultat | Stare |
+|---|---|---|
+| I1: model mic, 5 pași rapizi, aceiași biți | pierderile, gradientul pasului 1, greutățile = aceiași biți, cu și fără colsum împărțit (76 → 72, 94 → 90 lansări) | **CONFIRMAT** (SIMULARE) |
+| I2: #513 exact −24 lansări, restul neschimbat | lot 2 și 6: 484 → 460 (pe placă 491 → 467 cu copierile lotului); 24 `vadd` și 24 `ln_back` → 24 `ln_back_res`; restul listei identic, în ordine; alegerile (lot 6 13 / 0 / 134, 12 `attn_fwd_tc`) identice | **CONFIRMAT** (SIMULARE) |
+| I3: câștig 0,5–1,1 ms la lot 6 | — | NOT TESTED (placa) |
+| I4: oracolul lot 2 aceleași numere | — | NOT TESTED (placa) |
+
+Aflat: packerul nu verifică dacă un program `Std` e încărcat (`prog_va` greșit nu e refuzat) — verificarea rămâne a OS-ului (ca la
+os-415). Nota pentru OS: `integration/cyber-universe/C-168_P5a_rezidual-lipit-in-pas-rapid.md`.
+
+Următorul pas (P5b): planul + predicțiile pentru GELU' în coada lui v8n / v7 („proj-dX”), apoi codul.

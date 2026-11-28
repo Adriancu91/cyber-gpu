@@ -716,3 +716,7 @@ niciun octet de firmware NVIDIA.
   pack_mixed_fast_attn9}`, `batch_ram::pack_mixed_fast_via_ram_attn9` și testul `crates/nvidia-ga104/tests/sim_c168_attn_fwd_tc_mixed.rs`
   (T305) — ale noastre, pe tiparul lui `attn0_tc_list` / `pack_mixed_fast_attn8k`; cifrele de placă copiate din jurnalele OS-ului din
   hub (os-504). Nimic copiat, nimic din firmware-ul NVIDIA.
+- **Sesiunea 290 (28 nov 2026):** `docs/C-168_P5_LIPIRE_PLAN.md` (inventarul lansărilor mărunte; cifrele de placă copiate din jurnalul
+  OS-ului os-503 din hub, octeții socotiți de noi din argumente) și testul `crates/nvidia-ga104/tests/sim_c168_p5a_ln_back_res_mixed.rs`
+  (T306) — ale noastre, pe tiparul lui T305; niciun program nou (`ln_back_res` e cel din sesiunea 192). Nimic copiat, nimic din
+  firmware-ul NVIDIA.
