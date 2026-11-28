@@ -228,3 +228,44 @@ diagonală, lungime greșită / set nealiniat / buffer nealiniat refuzate). Rân
 
 **Pasul următor (4):** după rezultatul probei pe placă: `TcPick` pentru atenția înainte în pas (`pack_mixed_fast_attn*`, doar
 adăugări) → PREDARE (H6, H7).
+
+## 11. os-504 comparat + pasul 4: planul legării în pas (sesiunea 289, 28 nov 2026, ~08:15, cloud, FĂRĂ placă — scris ÎNAINTE de cod)
+
+**os-504 (MĂSURAT de OS, `rezultate/2026-11-28-workstation-os504-atentia-fwd-tc/` din hub):**
+
+| # | Prezis | Pe placă | Verdict |
+|---|---|---|---|
+| H4 | 5 / 5 seturi în margine (O ≤ 1·10⁻³, P ≤ 2·10⁻³) | 5 / 5; la #513 O 1,9·10⁻⁴, P 5,2·10⁻⁵ (= SIMULAREA, T301) | **CONFIRMATĂ** |
+| H5 (proba) | `atentie-513-b4` 0,37–0,62 ms (×1,6–2,7) | **0,184 ms** (tile3 1,003 → ×5,45); seturile mici ×1,9–2,4 | **RATATĂ în bine** (de 2–3,4 ori mai rapid decât intervalul) |
+
+Ce înseamnă H5 ratată în bine (DEDUS, nu măsurat): pe 3 produse de 64×64×64 pe placă și pe toate capetele (`atentie-513-b4`:
+4 × 12 × 36 plăci × 3 produse = 0,68 GFLOP… ×2 pentru treceri) programul nou face ~**11 TFLOP/s** pe produsele utile — peste
+`tc16_v4` (8,96), nu de 1,2–1,8 ori sub el cum presupusesem. Presupunerea greșită: că S dus prin memoria comună și cele 5 bariere
+costă cât produsele; pe placă costul s-a ascuns în cele 2 blocuri pe SM. Pragul din §4 / §10 („peste 0,62 ms → proba aranjării
+acumulatorilor”) **nu s-a atins** → pasul 4 (legarea în pas) e următorul, cum scrie în plan.
+
+**Pasul 4 — ce scriu (doar adăugări, ca la `attn_tc_list` / `pack_mixed_fast_attn2`):**
+
+1. `MixedLaunch::AttnFwdTc(Launch)` — o lansare `attn_fwd_tile3` a listei, mutată pe `attn_fwd_tc` (aceleași argumente; cbuf-ul
+   de 0x800 cu argumentele la 0x700, `attn_fwd_tc::cbuf_from_f32`; **grila în perechi** `attn_fwd_tc::grid`, nu grila lui tile3).
+   Locul în zona de control: `SLOT_TC` (ca celelalte programe de pe circuite).
+2. `train_step::attn_fwd_tc_list(list)` — mută doar lansările `attn_fwd_tile3` care trec `attn_fwd_tc::fits_cbuf`; restul rămân
+   (formele nealiniate pe tile3, fără eroare: asta e regula din §3). Se compune cu `attn_tc_list` / `attn0_tc_list` în orice ordine.
+3. `train_step::pack_mixed_fast_attn9(…, long_k, attn_fwd_va, attn, …)` = `pack_mixed_fast_attn8k` cu `attn_fwd_va` (adresa lui
+   `attn_fwd_tc`, 0 = neîncărcat) pus după `long_k`; alegerea nouă `TcPick::AttnFwdTc`; QMD-ul: 120 registre, 27 648 B, 1 barieră,
+   256 de fire, grila în perechi, treapta pasului. `attn_fwd_va = 0` și fără `AttnFwdTc` în listă = `attn8k` octet cu octet;
+   o listă cu `AttnFwdTc` și `attn_fwd_va = 0` e refuzată înainte de orice trimitere. Plus `batch_ram::pack_mixed_fast_via_ram_attn9`.
+   Packerii vechi refuză o listă cu `AttnFwdTc` (ca la `Attn0Tc`).
+
+**Predicțiile pasului 4 (scrise acum; H6 și H7 din §4 reluate cu cifrele os-504):**
+
+| # | Ce | Prezis | Încredere |
+|---|---|---|---|
+| H6a | SIMULARE: legarea | `attn_fwd_va = 0` = `attn8k` octet cu octet (mini și #513); în #513 lot 6 **exact 12** lansări mutate (una pe strat), toate celelalte alegeri neschimbate (v7 12 / v8n 135 fără gardă; 13 / 134 cu garda P3e) | 95 % |
+| H6b | SIMULARE: un model mic aliniat (d = 64, T = 64, 2 straturi, 5 pași) prin pushbuffer + QMD | pierderile / gradientul / greutățile **în marginile pasului mixt** față de același pas cu tile3 (`MIX_TOL_*`), nu aceiași biți (f16 în produse) | 85 % |
+| H6c | pe placă, timpul atenției înainte, lot 6 | 12 × ~0,25 ms (1,346 / 5,45) = **2,6–4,0 ms** (azi 16,1) — în margine sus pentru că în pas L2-ul e împărțit | 60 % |
+| H6d | pe placă, pasul lot 6 (os-503 / os-504: 140,5–140,7 ms) | **126–130 ms = 23 600–24 400 simb/s**; cu garda P3e împreună **121–126 ms = 24 400–25 400 simb/s** | 55 % |
+| H7 | pe placă, oracolul mixt lot 2 | **ACELEAȘI NUMERE** (în toleranțe; os-504 a dat marginile H4 pe #513) | 75 % |
+
+Ținta C-168 p.4 (≤ 6 ms pe pas) e atinsă dacă H6c iese (DEDUS până la rândul pe placă). FlashAttention-2 întreg (B din §2) nu mai e
+necesar pentru țintă; rămâne scris, pentru memoria lui P (−906 MiB din arenă), nu pentru timp.
