@@ -18,6 +18,8 @@ Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 289), l-am pus `ocupat`. Ni
 **Nou pentru placă:** doar folosirea lui `ln_back_res` (binarul din os-415) în pasul rapid. **Niciun cod nou în bibliotecă**, nicio
 schimbare incompatibilă. Aflat: packerul nu verifică dacă un program `Std` e încărcat — verificarea rămâne a OS-ului.
 
+**CI:** rularea 591 (planul, `4b96a31`) verde; 592 (`e127322`) pornită la sfârșitul sesiunii; local toate verificările trec.
+
 **Următorul pas:** OS: P5a (după P4b sau împreună). Noi: comparațiile când vin (P4b, P3e, `--mm-tc-v8r`); altfel P5b (GELU' în
 coada lui v8n / v7 la „proj-dX”) cu planul + predicțiile întâi.
 
