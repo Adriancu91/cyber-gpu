@@ -1,5 +1,29 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 285 — 28 noiembrie 2026, ~03:11–04:10 (ora României), în cloud, FĂRĂ placă — **C-168 p.4 pasul 3: proba `--atentie-fwd-tc` pentru OS (`attn_fwd_tc` lângă `attn_fwd_tile3`) → PREDARE; T301 în SIMULARE**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 284), l-am pus `ocupat`. Niciun rezultat nou pe placă după os-500 (G7 așteaptă
+pasul cu `attn8` + `RATES_OS500`) → am luat pasul scris: `docs/C-168_ATTN_FWD_TC_PLAN.md` §6 pasul 3. (Copiile locale vechi erau
+despărțite de GitHub; am lucrat în clone noi, nimic șters.)
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| `nvidia_ga104::attn_fwd_tc_probe` (doar adăugări) | 5 seturi (4 mici **aliniate** noi + `atentie-513-b4`), `fwd_ranges`, `launch_bytes` (QMD la treapta 64 KiB), `judge`, `Probe::lines`, `parse` | PASS |
+| De ce seturi noi | din cele 5 seturi mici ale probei atenției niciunul nu e aliniat (d 16 / 40, T 130 / 200 / 96) | — |
+| T301: ambele programe prin pushbuffer + QMD, NaN înainte, citirile judecate | 4 / 4 seturi mici trec: O 3,7–6,1·10⁻⁴, P 2,3–5,4·10⁻⁴ față de `tile3`; cuvintele tc = modelul | PASS (SIMULARE) |
+| `atentie-513-b4` (benzi, din modele) | O 1,9·10⁻⁴, P 5,2·10⁻⁵ | PASS (SIMULARE) |
+| Greșeli plantate în citire | 8 / 8 prinse (scris deasupra, ne-zero, 2 gărzi, rând +10 %, att decalat, NaN rămas, lungimi / alinieri) | PASS |
+| H4 (5 / 5 în margine pe placă), H5 (0,37–0,62 ms la `atentie-513-b4`, `tile3` ~1,00 ms) | scrise înainte de placă (§10) | NOT TESTED |
+| Nota pentru OS | `integration/cyber-universe/C-168_P4a_atentie-fwd-tc-proba.md` | — |
+| Verificările întregi | format, clippy, teste, no_std | **1 503 PASS** |
+
+**Note:** `docs/C-168_ATTN_FWD_TC_PLAN.md` §10, T301 (`crates/nvidia-ga104/tests/sim_c168_attn_fwd_tc_probe.rs`), rândurile în
+`TEST_MATRIX.md` și `PROVENANCE.md`. **Nou pentru placă:** programul `attn_fwd_tc` (SHA-256 `ce2b2f22…7e929257`), doar în probă, sub
+opțiune. **Nicio schimbare de interfață** (doar adăugări).
+
+**Următorul pas:** comparația pasului cu `attn8` + `RATES_OS500` (G7) sau a probei `--atentie-fwd-tc` (H4, H5) când vin; altfel
+v8 cu mai puține copii de registre / proba de diagnostic (`docs/C-168_OS500_V8.md` §4).
+
 ## Sesiunea 284 — 28 noiembrie 2026, ~02:11–03:10 (ora României), în cloud, FĂRĂ placă — **C-168 p.4 pasul 2: modelul pe procesor al atenției înainte pe circuite (`attn_fwd_tc`) + emularea programului; H3 CONFIRMATĂ în SIMULARE (T299)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 283), l-am pus `ocupat`. Niciun rezultat nou pe placă după os-500 (G7 așteaptă

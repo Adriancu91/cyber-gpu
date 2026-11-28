@@ -188,3 +188,43 @@ aproximative; că NAK a tradus GLSL-ul exact cum îl emulăm e verificat doar pe
 `attn_fwd_tile3`, nu biții (H4), și timpul (H5).
 
 **Pasul următor (3):** nota pentru OS — proba `--atentie-fwd-tc` lângă `attn_fwd_tile3` pe aceleași intrări (H4, H5) → PREDARE.
+
+## 10. Pasul 3 făcut (sesiunea 285, 28 nov 2026, cloud, FĂRĂ placă): proba `--atentie-fwd-tc` pentru OS — PREDARE
+
+Ce s-a scris (doar adăugări): `nvidia_ga104::attn_fwd_tc_probe` — seturile, ce se umple cu NaN și ce se citește (`fwd_ranges`),
+`launch_bytes` (cbuf 0x800 + QMD **la treapta 64 KiB**; la treapta proprie, 32 KiB, ar încăpea doar 1 bloc pe SM), `judge`
+(O și P pe j ≤ i ca norme relative față de `attn_fwd_tile3`, 0 exact deasupra diagonalei în placa diagonală, plăcile de deasupra plăcii
+diagonale nescrise = NaN, gărzile), `Probe::lines` și `parse`. Nota pentru OS: `integration/cyber-universe/C-168_P4a_atentie-fwd-tc-proba.md`.
+
+**De ce seturi noi:** din cele 5 seturi mici ale probei atenției **niciunul nu e aliniat** (d 16 / 40, T 130 / 200 / 96); ar fi rămas
+doar `atentie-513-b4`, citit pe benzi. Seturile noi (citite întregi): `tc-t64` (o placă), `tc-t192-b2` (3 plăci: blocul din mijloc face
+una — cazul impar al perechilor; 2 texte), `tc-t256-h2` (2 capete, perechi pline), `tc-t320-ascutit` (5 plăci, qkv în [−4, 4)).
+
+**T301 (SIMULARE):** ambele programe prin pushbuffer + QMD, ca în OS (`attn_fwd_tile3` cu `launch_bytes3`, `attn_fwd_tc` cu
+`launch_bytes`), NaN înainte de fiecare, citirile judecate: 4 / 4 seturi mici trec, cuvintele lui `attn_fwd_tc` = modelul pe procesor
+(toate), iar `atentie-513-b4` (benzile, din modele) trece. 8 greșeli plantate în citire, toate prinse (un cuvânt scris deasupra plăcii
+diagonale, un ne-zero deasupra diagonalei, garda lui P, garda lui att, un rând de P cu +10 %, att decalat cu un rând, un NaN rămas sub
+diagonală, lungime greșită / set nealiniat / buffer nealiniat refuzate). Rândurile de raport citite înapoi cu `parse`.
+
+| Set | O față de `tile3` | P față de `tile3` | cel mai rău P (absolut) |
+|---|---|---|---|
+| `tc-t64` | 3,7·10⁻⁴ | 2,3·10⁻⁴ | 1,5·10⁻⁴ |
+| `tc-t192-b2` | 3,9·10⁻⁴ | 2,7·10⁻⁴ | 2,5·10⁻⁴ |
+| `tc-t256-h2` | 3,7·10⁻⁴ | 2,7·10⁻⁴ | 2,4·10⁻⁴ |
+| `tc-t320-ascutit` | **6,1·10⁻⁴** | 5,4·10⁻⁴ | 1,0·10⁻³ |
+| `atentie-513-b4` (benzi) | 1,9·10⁻⁴ | 5,2·10⁻⁵ | 4,9·10⁻⁵ |
+
+**Predicțiile pentru placă (scrise acum, înainte de rulare):**
+
+- **H4 (80 %, neschimbată):** 5 / 5 seturi în margine (O ≤ 1·10⁻³, P ≤ 2·10⁻³), zerourile, nimic scris deasupra plăcii diagonale,
+  gărzile neatinse. Cel mai aproape de prag: `tc-t320-ascutit` (O ×1,6 sub prag). „Exacte față de model” pe placă **sub** total
+  (`ex2` / `rcp` aproximative) — doar informativ.
+- **H5 pe proba OS (45 %):** H5 (lot 6, 550–930 µs pe 3 valuri de 96 de blocuri) trecută la `atentie-513-b4` (192 de blocuri = 2 valuri):
+  **0,37–0,62 ms** față de `attn_fwd_tile3` ~1,00 ms (os-364…375) → ×1,6–2,7. DEDUS.
+- **Prag (neschimbat):** H4 trece și timpul peste 0,62 ms → frâna e în trecerea 2; pasul următor e proba aranjării acumulatorilor, nu
+  legarea în pas.
+
+**Ce NU arată pasul 3:** nimic despre placă — seturile, citirile și verdictul sunt verificate pe modele.
+
+**Pasul următor (4):** după rezultatul probei pe placă: `TcPick` pentru atenția înainte în pas (`pack_mixed_fast_attn*`, doar
+adăugări) → PREDARE (H6, H7).

@@ -699,3 +699,6 @@ niciun octet de firmware NVIDIA.
 - **Sesiunea 284 (28 nov 2026):** `crates/gpu-compute/src/attn_fwd_tc.rs` (modelul pe procesor), `attn_fwd_tc_on_cpu` din
   `crates/gpu-sim/src/cmdproc.rs`, testul `crates/nvidia-ga104/tests/sim_c168_attn_fwd_tc.rs` (T299) — ale noastre, scrise după
   GLSL-ul nostru și listarea NAK; sumatorul circuitelor = ipoteza noastră potrivită pe os-335. Nimic copiat, nimic din firmware-ul NVIDIA.
+- **Sesiunea 285 (28 nov 2026):** `crates/nvidia-ga104/src/attn_fwd_tc_probe.rs` (proba `--atentie-fwd-tc`: seturile, citirile,
+  verdictul, rândurile de raport) și testul `crates/nvidia-ga104/tests/sim_c168_attn_fwd_tc_probe.rs` (T301) — ale noastre, pe tiparul
+  probei atenției noastre (`attn_tile_probe`). Nimic copiat, nimic din firmware-ul NVIDIA.
