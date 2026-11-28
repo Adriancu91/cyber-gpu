@@ -720,6 +720,12 @@ niciun octet de firmware NVIDIA.
   OS-ului os-503 din hub, octeții socotiți de noi din argumente) și testul `crates/nvidia-ga104/tests/sim_c168_p5a_ln_back_res_mixed.rs`
   (T306) — ale noastre, pe tiparul lui T305; niciun program nou (`ln_back_res` e cel din sesiunea 192). Nimic copiat, nimic din
   firmware-ul NVIDIA.
+- **Sesiunea 295 (28 nov 2026):** fanionul `-DPF` din `tools/nak/mm_tc_v7.comp` / `mm_tc_v8.comp` / `mm_tc_v8r.comp` (citirile cozii
+  pornite cu o bucată înainte, la indici strânși în margini — ideea „citește înainte” a lui `mm_tc_pf` din sesiunea 229, a noastră),
+  programele `tools/nak/out2/mm_tc_{v7,v8,v8n}_gelu_pf.sm86.*` și `mm_tc_{v7,v8,v8n,v8r}_res_pf.sm86.*` (compilate de Mesa NAK 26.3.1, MIT,
+  pe gazdă; nimic din Mesa în repo), `nvidia_ga104::mm_tc_fast_pf`, unealta `tools/nak/compara_pf.py` și testul
+  `crates/nvidia-ga104/tests/sim_c168_p5e_pf.rs` (T312) — ale noastre. Cifrele de pe placă din hub (os-512 / os-513 / os-514). Nimic
+  copiat, nimic din firmware-ul NVIDIA.
 - **Sesiunea 294 (28 nov 2026):** fanionul `-DRES` din `tools/nak/mm_tc_v7.comp` / `mm_tc_v8.comp` / `mm_tc_v8r.comp` (o adunare cu
   reziduul înainte de scrierea lui C, ca `vadd.comp`, al nostru), programele `tools/nak/out2/mm_tc_{v7,v8,v8n,v8r}_res.sm86.*` (compilate
   de Mesa NAK 26.3.1, MIT, pe gazdă; nimic din Mesa în repo), `nvidia_ga104::mm_tc_fast_res`, `MixedLaunch::TcRes`,

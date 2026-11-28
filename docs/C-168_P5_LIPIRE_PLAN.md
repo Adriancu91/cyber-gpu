@@ -359,3 +359,26 @@ SHA-256, registre) în `mm_tc_fast_gelu` / `mm_tc_fast_res`; dacă registrele su
   ~70 µs pe lansare); lot 2 `mm_tc_v8_gelu` 3,39 → 2,85–3,05 ms. Sub −0,8 ms la lot 6 = RATAT (atunci așteptarea nu era cauza).
 - **N6 (placa, DEDUS):** cu P5d legat, „out” / „proj” pe `_res_pf`: încă −0,5…−0,9 ms la lot 6 față de `_res`.
 - **N7 (placa):** oracolul lot 2 aceleași numere.
+
+## 16. Rezultatul P5e (CALCUL + SIMULARE, sesiunea 295) — se citește cu §15
+
+Unealta NAK a doua (Mesa 26.3.1) reconstruită în cloud (~15 min cu `meson` / `bindgen` / `cbindgen` instalate din nou); T312 =
+`crates/nvidia-ga104/tests/sim_c168_p5e_pf.rs`; comparatorul nou `tools/nak/compara_pf.py`.
+
+| Predicția | Rezultat | Stare |
+|---|---|---|
+| N1: fără `-DPF` aceiași octeți | cele 15 programe de azi (v7 / v8 / v8n / v8r, 3 `_gelu`, 3 `_geluf`, 4 `_res`, `mm_tc_gelu`) recompilate: **identice** (git nu vede nicio schimbare în `out2/`) | **CONFIRMAT** (CALCUL) |
+| N2: registrele | `_gelu_pf` 128 / 128 / 144, `_res_pf` 128 / 128 / 144 / 120 = exact ale programelor înlocuite; 0 „spills” în memorie (v7: aceleași 14 copii în registre); mărimi 41 536 / 65 488 / 64 400 / 35 392 / 53 200 / 52 112 / 51 968 B — încap în locurile lor | **CONFIRMAT** (CALCUL) |
+| N3: citirile pornite împreună, aceeași aritmetică | `compara_pf.py`: aceleași operații în virgulă mobilă în aceeași ordine (1 248 / 1 256 / 640; 160 / 168 / 160 / 96), aceleași 64 / 32 de scrieri; **citiri în așteptare deodată 1 → 8** (v7: 1 → 16); baza adresei citită o singură dată (`ldc`) în loc de o adresă refăcută pe element; 3–5 greșeli plantate prinse pe fiecare | **CONFIRMAT** (CALCUL) |
+| N4: model mic aceiași biți; QMD-urile bune | P5a–P5d, 5 pași, pe os-500 / v8 / v8 + v8r / v8n: pierderile, gradientul pasului 1, greutățile **bit cu bit** cu `_pf` în locuri, aceleași 82 lansări și alegeri; #513 lot 2 și 6: 36 de QMD-uri (12 GELU' + 24 reziduu) cu adresa locului și registrele programului `_pf` | **CONFIRMAT** (SIMULARE) |
+| N5 / N6 / N7 | scrise înainte (lot 6 −1,5…−2,1 ms din GELU'; încă −0,5…−0,9 cu P5d; oracolul lot 2) | NOT TESTED (placa) |
+
+Aflat: (1) NAK a scos singur citirea repetată a ultimei bucăți la v8 / v8n / v8r (64 → 64 de citiri), iar la v7 a păstrat jumătate
+(32 → 36) — predicția „+o bucată” era prea strictă; verificarea cere acum „între +0 și +o bucată”. (2) Socoteala statică a compilatorului
+(„Static cycle count”) crește puțin la `_gelu_pf` (+1–3 %) și scade la `_res_pf` (−3…−6 %); ea nu vede așteptarea memoriei, deci nu spune
+nimic despre N5. (3) Simulatorul folosește același model de calcul pentru `_pf` ca pentru programul înlocuit; „aceeași aritmetică” o arată
+N3 pe listare, nu S1. Pe placă o arată oracolul (N7).
+
+Nota pentru OS: `integration/cyber-universe/C-168_P5e_citiri-coada-inainte.md`. Următorul pas: P5f (cele 98 `colsum` finale într-o
+lansare, aceiași biți) sau „v8r în locul lui v8n” la produsele înainte (`docs/C-168_OS505_OS507.md` §5), fiecare cu plan + predicții întâi;
+pe placă: rândul P5d (cu M6 revizuit, §14) și rândul P5e.

@@ -30,6 +30,9 @@
 // C-168 p.5 P5d (session 294): with -DRES the store writes C = (v + bias) + res[row, col] (vadd.comp's add on the
 // value written today), res at the end of the push constants (0x730): mm_tc_*_res. Without -DRES the source compiles
 // to the same bytes as before.
+// C-168 p.5 P5e (session 295): with -DPF (and -DGELU or -DRES) the tail reads (u / res) of the next fragment are issued
+// before the current one is worked, at clamped (always valid) addresses: the same values, the same bits, the memory wait
+// overlapped (os-512: one read at a time cost ~190 us per launch at batch 6). Without -DPF the source compiles as before.
 #version 460
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
@@ -86,6 +89,21 @@ layout(push_constant) uniform Args {
     In res;
 #endif
 } args;
+
+#ifdef PF
+// C-168 p.5 P5e (-DPF, with -DGELU or -DRES): the value the tail reads at [gr, gc] (u at the bias slot / res), with the
+// row and column clamped into C so the read is always at a valid address and needs no branch. In range (the only
+// values used) the index is the unclamped one, so the value is the same.
+float pf_src(uint gr, uint gc) {
+    uint r = min(gr, args.m - 1u);
+    uint q = min(gc, args.n - 1u);
+#ifdef GELU
+    return args.bias.v[r * args.n + q];
+#else
+    return args.res.v[r * args.n + q];
+#endif
+}
+#endif
 
 // Two stages, each: op(A) [r][p] (128 rows of LS halves) then op(B) [c][p] (BN rows of LS halves). After the K loop the
 // first 8 KiB (v8) / 4 KiB (v8n) hold one 16x16 f32 scratch per warp (256 words each).
@@ -222,8 +240,27 @@ void main() {
     // reads and the next store (mm_tc128's ending).
     uint lane = tid % 32u;
     uint so = w * 256u;
+#ifdef PF
+    // C-168 p.5 P5e: the reads of fragment (0, 0), issued before its store; inside the loop the reads of the next
+    // fragment are issued before the current one is worked, so the memory wait overlaps the work (same values).
+    float pfc[4];
+    for (uint s = 0u; s < 4u; s++) {
+        uint e = lane + s * 32u;
+        pfc[s] = pf_src(row0 + wr + e / 8u, col0 + wc + e % 8u);
+    }
+#endif
     for (uint i = 0u; i < 4u; i++) {
         for (uint j = 0u; j < 4u; j++) {
+#ifdef PF
+            uint f1 = min(i * 4u + j + 1u, 15u);
+            uint i1 = f1 / 4u;
+            uint j1 = f1 % 4u;
+            float pfn[4];
+            for (uint s = 0u; s < 4u; s++) {
+                uint e = lane + s * 32u;
+                pfn[s] = pf_src(row0 + wr + 16u * i1 + e / 8u, col0 + wc + 8u * j1 + e % 8u);
+            }
+#endif
             coopMatStore(acc[i][j], sh_, so, 8u, gl_CooperativeMatrixLayoutRowMajor);
             subgroupBarrier();
             for (uint s = 0u; s < 4u; s++) {
@@ -235,7 +272,11 @@ void main() {
 #ifdef GELU
                     // C-168 p.5 P5b (-DGELU): mm_tc_gelu.comp's store, letter for letter (u at the bias slot, [row, col]).
                     uint i = gr * args.n + gc;
+#ifdef PF
+                    float u = pfc[s];
+#else
                     float u = args.bias.v[i];
+#endif
                     float z = u * 0.70710678118654752;
                     float a = abs(z);
                     float t = 1.0 / (1.0 + 0.3275911 * a);
@@ -252,7 +293,11 @@ void main() {
                     }
 #ifdef RES
                     // C-168 p.5 P5d (-DRES): the residual add of vadd.comp (one f32 add) on the value C would get.
+#ifdef PF
+                    v = v + pfc[s];
+#else
                     v = v + args.res.v[gr * args.n + gc];
+#endif
 #endif
                     args.c.v[gr * args.n + gc] = v;
 #ifdef GELU_FWD
@@ -272,6 +317,11 @@ void main() {
                 }
             }
             subgroupBarrier();
+#ifdef PF
+            for (uint s = 0u; s < 4u; s++) {
+                pfc[s] = pfn[s];
+            }
+#endif
         }
     }
 }

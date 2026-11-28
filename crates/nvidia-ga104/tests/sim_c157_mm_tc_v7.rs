@@ -410,12 +410,43 @@ fn t280c_the_reads_are_conflict_free_on_every_flag() {
     }
 }
 
+/// The source as the preprocessor sees it with `PF` undefined: each `#ifdef PF` line, its lines up to its own `#else`
+/// (or `#endif`) and that `#endif` go; nested `#ifdef` / `#endif` pairs inside are counted.
+fn without_pf(src: &str) -> String {
+    let mut out = String::new();
+    // stack of (is the PF block, keeping lines)
+    let mut stack: Vec<(bool, bool)> = Vec::new();
+    for l in src.lines() {
+        let keeping = stack.iter().all(|&(_, k)| k);
+        let top_is_pf = stack.last().is_some_and(|&(pf, _)| pf);
+        if l.starts_with("#ifdef PF") {
+            stack.push((true, false));
+            continue;
+        } else if l.starts_with("#if") {
+            stack.push((false, true));
+        } else if l.starts_with("#else") && top_is_pf {
+            stack.last_mut().unwrap().1 = true;
+            continue;
+        } else if l.starts_with("#endif") && stack.pop().is_some_and(|(pf, _)| pf) {
+            continue;
+        }
+        if keeping {
+            out.push_str(l);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 #[test]
 fn t280d_only_the_row_lengths_changed_in_the_glsl() {
     // Undo the renames of v7 and drop its new defines and its header: what is left is v6 without its header and its
     // four stride literals.
     let body = |s: &'static str| &s[s.find("#version 460").unwrap()..];
     let mut v7s = body(SRC_V7).to_string();
+    // C-168 p.5 P5e (session 295, T312): first, every `#ifdef PF` block read as with PF undefined (its `#else` part
+    // kept, nested `#ifdef` inside it counted): the `_pf` programs are not part of mm_tc_v7 (its bytes are unchanged).
+    v7s = without_pf(&v7s).replace("\n\n\n", "\n\n");
     // C-168 p.5 P5b (session 291): the `-DGELU` store (mm_tc_v7_gelu) is not part of mm_tc_v7 (its bytes are unchanged,
     // T307): drop the `#ifdef GELU ... #else` lines and the `#endif` before comparing with v6.
     // C-168 p.5 P5c (session 293, T310): the same for every `#ifdef GELU_FWD ... #endif` block (the act store and the

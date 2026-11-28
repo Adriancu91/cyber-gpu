@@ -46,6 +46,12 @@ Se pune peste P5a (`with_fused_back`), P5b (`with_fused_gelu`) și P5c (`with_fu
    - M6 (DEDUS): `vadd` dispare din profil (~1,24 ms la lot 6); „out” / „proj” mai lente cu ~18 µs fiecare (citesc `res`); câștig net
      **0,5–1,1 ms la lot 6, 0,3–0,9 ms la lot 2**. Sub 0,3 ms la lot 6 = RATAT (trimiteți liniile `out`, `proj`, `vadd` din profil).
 
+> **Actualizare (sesiunea 295, după os-512):** M6 de mai sus e probabil prea optimist. La GELU' (P5b) placa a arătat că o coadă care
+> citește câte o valoare pe rând așteaptă memoria de 64 de ori pe fir (+190 µs pe lansare la lot 6); coada `_res` are aceeași formă.
+> Socoteala nouă (scrisă înainte de rândul vostru): **−0,1…−0,6 ms la lot 6, 0…−0,4 ms la lot 2** (`docs/C-168_P5_LIPIRE_PLAN.md` §14).
+> Leacul e P5e (`C-168_P5e_citiri-coada-inainte.md`): aceleași locuri, programele `_res_pf`. Dacă legați P5d acum, puteți încărca direct
+> `_res_pf` în locurile `_res` (aceiași biți, același tot restul) — dar un rând cu `_res` simplu ne spune cât a costat așteptarea.
+
 ## Ce arată SIMULAREA (T311) și ce nu
 - M1–M3 (CALCUL, pe listările NAK): programele vechi ies cu aceleași sume; registrele = ale programelor simple, 0 „spills” noi;
   `tools/nak/compara_res.py` găsește în fiecare din cele 32 / 64 / 64 / 64 de cozi exact o citire de la adresa din 0x730 (cu indicele

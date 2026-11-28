@@ -29,6 +29,13 @@
 #   sh tools/nak/build2.sh mm_tc_v8n_res  # C-168 p.5 P5d: mm_tc_v8.comp with -DV8N -DRES (session 294)
 #   sh tools/nak/build2.sh mm_tc_v7_res   # C-168 p.5 P5d: mm_tc_v7.comp with -DRES (session 294)
 #   sh tools/nak/build2.sh mm_tc_v8r_res  # C-168 p.5 P5d: mm_tc_v8r.comp with -DRES (session 294)
+#   sh tools/nak/build2.sh mm_tc_v8_gelu_pf # C-168 p.5 P5e: mm_tc_v8.comp with -DGELU -DPF: the tail reads issued one fragment ahead, same bits (session 295)
+#   sh tools/nak/build2.sh mm_tc_v8n_gelu_pf # C-168 p.5 P5e: mm_tc_v8.comp with -DV8N -DGELU -DPF: the tail reads issued one fragment ahead, same bits (session 295)
+#   sh tools/nak/build2.sh mm_tc_v7_gelu_pf # C-168 p.5 P5e: mm_tc_v7.comp with -DGELU -DPF: the tail reads issued one fragment ahead, same bits (session 295)
+#   sh tools/nak/build2.sh mm_tc_v8_res_pf # C-168 p.5 P5e: mm_tc_v8.comp with -DRES -DPF: the tail reads issued one fragment ahead, same bits (session 295)
+#   sh tools/nak/build2.sh mm_tc_v8n_res_pf # C-168 p.5 P5e: mm_tc_v8.comp with -DV8N -DRES -DPF: the tail reads issued one fragment ahead, same bits (session 295)
+#   sh tools/nak/build2.sh mm_tc_v7_res_pf # C-168 p.5 P5e: mm_tc_v7.comp with -DRES -DPF: the tail reads issued one fragment ahead, same bits (session 295)
+#   sh tools/nak/build2.sh mm_tc_v8r_res_pf # C-168 p.5 P5e: mm_tc_v8r.comp with -DRES -DPF: the tail reads issued one fragment ahead, same bits (session 295)
 #   sh tools/nak/build2.sh mm_tc_v8r    # C-168 p.3 follow-up: mm_tc_v8 with B fragments first, A one at a time (fewer register copies), same bits (session 286)
 #   sh tools/nak/build2.sh mm_tc128_v4  # C-157 p.2: mm_tc128 with mm_tc_v4's cure (loads ahead, 128 bits), same bits (session 231)
 #   sh tools/nak/build2.sh mm_s8        # B1 step 3: int8 matmul on the tensor cores, 128x128 tiles, i32 out (session 225)
@@ -147,6 +154,34 @@ mm_tc_v7_res)
 mm_tc_v8r_res)
     GLSL_DEFS=-DRES; KSRC=mm_tc_v8r; export GLSL_DEFS KSRC
     exec sh "$0" kernel mm_tc_v8r_res 56
+    ;;
+mm_tc_v8_gelu_pf)
+    GLSL_DEFS="-DGELU -DPF"; KSRC=mm_tc_v8; export GLSL_DEFS KSRC
+    exec sh "$0" kernel mm_tc_v8_gelu_pf 48
+    ;;
+mm_tc_v8n_gelu_pf)
+    GLSL_DEFS="-DV8N -DGELU -DPF"; KSRC=mm_tc_v8; export GLSL_DEFS KSRC
+    exec sh "$0" kernel mm_tc_v8n_gelu_pf 48
+    ;;
+mm_tc_v7_gelu_pf)
+    GLSL_DEFS="-DGELU -DPF"; KSRC=mm_tc_v7; export GLSL_DEFS KSRC
+    exec sh "$0" kernel mm_tc_v7_gelu_pf 48
+    ;;
+mm_tc_v8_res_pf)
+    GLSL_DEFS="-DRES -DPF"; KSRC=mm_tc_v8; export GLSL_DEFS KSRC
+    exec sh "$0" kernel mm_tc_v8_res_pf 56
+    ;;
+mm_tc_v8n_res_pf)
+    GLSL_DEFS="-DV8N -DRES -DPF"; KSRC=mm_tc_v8; export GLSL_DEFS KSRC
+    exec sh "$0" kernel mm_tc_v8n_res_pf 56
+    ;;
+mm_tc_v7_res_pf)
+    GLSL_DEFS="-DRES -DPF"; KSRC=mm_tc_v7; export GLSL_DEFS KSRC
+    exec sh "$0" kernel mm_tc_v7_res_pf 56
+    ;;
+mm_tc_v8r_res_pf)
+    GLSL_DEFS="-DRES -DPF"; KSRC=mm_tc_v8r; export GLSL_DEFS KSRC
+    exec sh "$0" kernel mm_tc_v8r_res_pf 56
     ;;
 mm_tc128_v4)
     exec sh "$0" kernel mm_tc128_v4 48

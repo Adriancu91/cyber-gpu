@@ -1,5 +1,36 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 295 — 28 noiembrie 2026, ~18:11–19:30 (ora României), în cloud, FĂRĂ placă — **os-512 / os-513 / os-514 comparate cu predicțiile (J6 RATAT, găsită cauza) + C-168 p.5 P5e: coada lui `_gelu` / `_res` cu citirile pornite înainte (`mm_tc_fast_pf`, 7 programe, aceiași biți) → PREDARE P5e; T312 CALCUL + SIMULARE**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 294), l-am pus `ocupat`. Veniseră trei rânduri de pe placă necomparate: os-512
+(P5b + P3g, ciclurile 15:54 / 15:59 / 16:13), os-514 (P5c, 17:39 / 17:44), os-513 (P3f, 18:10). Comparațiile întâi
+(`docs/C-168_P5_LIPIRE_PLAN.md` §14, `docs/C-168_OS505_OS507.md` §5), apoi planul P5e cu predicțiile N1–N7 scrise și urcate **înainte de
+cod** (§15, commit `89a30de`), apoi codul; rezultatul în §16. Dosarul local vechi `cyber-gpu` (istorie nelegată, sesiunea 196) lăsat
+deoparte; lucrul pe o clonă proaspătă.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| J6 (P5b) câștig 1,0–1,8 ms la lot 6 | −0,2 ms: `gelu_tr` −2,56 ms cum am prezis, dar „proj-dX+gelu” +2,29 ms (nu +0,1) | **RATAT (placa)** — cauza aflată |
+| J4 / J7, K5 / K6 (P5b, P3g) | 455 lansări; oracolul lot 2 ACELEAȘI NUMERE; v8r 216 µs pe lansare (prezis 217–225); lot 6 neschimbat | **CONFIRMAT (placa)** |
+| L5 / L6 / L7 (P5c) | −12 lansări; lot 6 **−0,93 ms** (prezis 0,6–1,1) → 117,8 ms = **26 085 simb/s**; oracolul lot 2 ACELEAȘI NUMERE | **CONFIRMAT (placa)** |
+| W1 / W3 / W4 (P3f) | 0 seturi în afara ferestrei, lanțul 1 419 s; dW v8r 1,546 ms, v8n 1,459 ms | **CONFIRMAT (placa)** |
+| W2 (P3f) | 3 / 4 în ±3 %; v8n dX 0,910 ms (−4 %, mai bine) | **RATAT ÎN BINE** (o valoare) |
+| Cauza lui J6 (CALCUL) | în listarea `mm_tc_v8n_gelu` fiecare din cele 64 de citiri ale lui `u` stă în blocul ei păzit, una după alta → așteptarea memoriei plătită de 64 de ori pe val (~190 µs pe lansare la lot 6, cât s-a măsurat); coada `_res` (P5d) la fel → M6 revizuit (−0,1…−0,6 ms la lot 6) | DEDUS |
+| N1 fără `-DPF` aceiași octeți | 15 programe de azi recompilate = aceleași SHA-256 | **PASS (CALCUL)** |
+| N2 registre | `_gelu_pf` 128 / 128 / 144, `_res_pf` 128 / 128 / 144 / 120 = ale programelor înlocuite; 0 spills în memorie | **PASS (CALCUL)** |
+| N3 aceeași aritmetică, citiri înainte | `compara_pf.py` (nou): aceleași operații în virgulă mobilă în ordine pe toate 7; citiri în așteptare deodată 1 → 8 (v7 1 → 16); greșeli plantate prinse | **PASS (CALCUL)** |
+| N4 SIMULARE | modelul mic P5a–P5d cu `_pf` în locuri = aceiași biți pe 4 viteze; #513 lot 2 / 6: 36 QMD-uri cu adresa și registrele bune | **PASS (SIMULARE)** |
+| N5 / N6 / N7 | scrise înainte (lot 6 −1,5…−2,1 ms din GELU'; −0,5…−0,9 cu P5d; oracolul lot 2) | NOT TESTED |
+| Verificările întregi | format, clippy, teste, no_std (`tools/check.sh`) | VEZI MAI JOS |
+
+**Nou pentru placă:** șapte programe (`mm_tc_v7_gelu_pf` / `v8_gelu_pf` / `v8n_gelu_pf`, `mm_tc_v7_res_pf` / `v8_res_pf` / `v8n_res_pf` /
+`v8r_res_pf`, SHA-256 în notă), care intră în locurile programelor `_gelu` / `_res` fără nicio altă schimbare. Doar adăugări în
+bibliotecă: modulul `nvidia_ga104::mm_tc_fast_pf` (octeți, SHA-256, registre, `check()`). Nota:
+`integration/cyber-universe/C-168_P5e_citiri-coada-inainte.md`; nota P5d are o actualizare (M6 revizuit).
+
+**Următorul pas:** comparațiile când vin (P5d M6 / M7 cu socoteala revizuită, P5e N5–N7); altfel P5f (cele 98 `colsum` finale într-o
+lansare) sau v8r în locul lui v8n la produsele înainte (os-513: ×1,046 pe qkv), cu plan + predicții întâi.
+
 ## Sesiunea 294 — 28 noiembrie 2026, ~16:11–17:50 (ora României), în cloud, FĂRĂ placă — **C-168 p.5 P5d: reziduurile înainte lipite în coada lui „out” / „proj” (`mm_tc_*_res`, `Plan::with_fused_res_fwd`, `pack_mixed_fast_attn13`) → PREDARE P5d; T311 CALCUL + SIMULARE**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 293), l-am pus `ocupat`. Nu venise nimic nou de pe placă (os-512 GATA DE TEST,
