@@ -3764,6 +3764,26 @@ pub fn mm_tc_v8n_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     mm_tc_tiles_mn_on_cpu(l, 128, 64)
 }
 
+/// C-168 p.3 follow-up (session 287, `docs/C-168_V8R.md`): what `tools/nak/out2/mm_tc_v8r.sm86.sass` needs — exactly
+/// [`MM_TC_V8_NEEDS`] (only the order of the fragment reads inside a slice changed): 24 576 B, one barrier.
+pub const MM_TC_V8R_NEEDS: Needs = MM_TC_V8_NEEDS;
+
+/// C-168 p.3 follow-up (session 287): the CPU stand-in for `tools/nak/out2/mm_tc_v8r.sm86.sass` — `mm_tc_v8` with the
+/// 4 B fragments of a slice read first and then one A fragment at a time with its 4 `hmma`. Every accumulator still
+/// gets one `hmma` per slice on the same f16 values, in the same order along K, so the arithmetic is
+/// [`mm_tc_v8_on_cpu`]'s (blocks of 256×1×1, 128×128 tiles, aligned products only; anything else REFUSED, no write).
+pub fn mm_tc_v8r_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    if l.block != [256, 1, 1] || l.grid[2] != 1 {
+        return Err(bad("SIM: mm_tc_v8r cere blocuri de 256x1x1"));
+    }
+    if !tc_aligned(l)? {
+        return Err(bad(
+            "SIM: mm_tc_v8r: produs nealiniat (randuri multiplu de 4, adrese multiplu de 16)",
+        ));
+    }
+    mm_tc_tiles_mn_on_cpu(l, 128, 128)
+}
+
 /// C-165 after os-416 (session 220): what `tools/nak/out2/mm_tc128.sm86.sass` needs — the f16 slices of op(A)
 /// (128×32) and op(B) (32×128) plus one 16×16 f32 scratch per subgroup (8 of them): 8 + 8 + 8 KiB, one barrier.
 pub const MM_TC128_NEEDS: Needs = Needs {

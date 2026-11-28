@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 287 — 28 noiembrie 2026, ~05:13–06:15 (ora României), în cloud, FĂRĂ placă — **C-168 p.3 urmarea: modulul `nvidia_ga104::mm_tc_v8r` pentru proba `--mm-tc-v8r` → PREDARE; T303 în SIMULARE**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 286), l-am pus `ocupat`. Niciun rezultat nou pe placă (os-501 și proba
+`--atentie-fwd-tc` n-au rulat încă) → am luat pasul scris: `docs/C-168_V8R.md` §4 punctul 1. (Copiile locale vechi erau despărțite de
+GitHub; am lucrat în clone noi, nimic șters.)
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| `nvidia_ga104::mm_tc_v8r` (doar adăugări) | binarul `6e28d531…274bf4`, `REGISTERS` = 120, `BLOCK` / `SHARED` / `grid` / `fits` = ale lui v8, 2 blocuri pe SM la 64 KiB | PASS |
+| `gpu_sim::cmdproc::mm_tc_v8r_on_cpu` + `MM_TC_V8R_NEEDS` | înlocuitorul = cel al lui v8, cu propriile refuzuri | PASS (SIMULARE) |
+| T303 a: numerele modulului = listarea NAK | 120 registre, 24 576 B, fără memorie locală, argumentele la 0x700; bucla K 16 `hmma`, 84 copii | PASS (CALCUL) |
+| T303 b: prin pushbuffer + QMD cu 120 de registre | **aceiași biți ca `mm_tc` și ca v8** pe 48 de seturi (6 forme × 8 steaguri); refuzuri fără scriere | PASS (SIMULARE) |
+| T303 c: v8 și v8r în același procesor de comenzi | aceleași ieșiri, fiecare lansare la programul ei | PASS (SIMULARE) |
+| V1–V4 (biți; qkv 0,85–1,01 ms; dX 0,83–0,99; dW 1,40–1,60) | scrise înainte (`docs/C-168_V8R.md` §3) | NOT TESTED |
+| Nota pentru OS | `integration/cyber-universe/C-168_P3d_mm-tc-v8r.md` | — |
+| Verificările întregi | format, clippy, teste, no_std | **1 514 PASS** |
+
+**Note:** `docs/C-168_V8R.md` §5, T303 în `TEST_MATRIX.md`, rândul în `PROVENANCE.md`. **Nou pentru placă:** programul `mm_tc_v8r`
+(SHA-256 `6e28d531…274bf4`, 120 registre în QMD), doar în probă, sub opțiune. **Nicio schimbare de interfață** (doar adăugări).
+
+**Următorul pas:** comparațiile când vin (os-501 G7, `--atentie-fwd-tc` H4 / H5, `--mm-tc-v8r` V1–V4); altfel proba de diagnostic
+pentru așteptarea citirilor din memoria plăcii (`docs/C-168_OS500_V8.md` §4) sau următorul punct deschis din C-168.
+
 ## Sesiunea 286 — 28 noiembrie 2026, ~04:11–05:08 (ora României), în cloud, FĂRĂ placă — **C-168 p.3 urmarea: `mm_tc_v8r` = v8 cu mai puține copii de registre, compilat și numărat pe listare (T302, CALCUL)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 285), l-am pus `ocupat`. Niciun rezultat nou pe placă după os-500 (os-501 și
