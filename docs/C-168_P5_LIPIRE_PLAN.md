@@ -125,3 +125,26 @@ lent decât v8n, deci planul rapid nu o folosește.
 - **J6 (placa, DEDUS):** `gelu_tr` înapoi ~2,5 ms la lot 6 (12 × ~210 µs: 113 MB pe strat la ~533 GB/s) dispare; coada citește
   în plus `u` (37,7 MB pe strat, ~70–110 µs) → câștig net **1,0–1,8 ms** la lot 6. Sub 0,5 ms = RATAT.
 - **J7 (placa):** oracolul lot 2: aceleași numere ca rândul P5a.
+
+## 8. Rezultatul P5b (CALCUL + SIMULARE, sesiunea 291) — se citește cu §7
+
+Unealta NAK a doua (Mesa 26.3.1) reconstruită în cloud în sesiunea asta; T307 = `crates/nvidia-ga104/tests/sim_c168_p5b_gelu_fast.rs`.
+
+| Predicția | Rezultat | Stare |
+|---|---|---|
+| J1a: fără `-DGELU` aceiași octeți | `mm_tc_v7` 953ed6b8…, `mm_tc_v8` 1b910a53…, `mm_tc_v8n` 9a0702bc…, `mm_tc_v8r` 6e28d531…, `mm_tc_gelu` 03de80cf… — recompilate, **identice** (git nu vede nicio schimbare în `out2/`) | **CONFIRMAT** (CALCUL) |
+| J1b: coada GELU' = a lui `mm_tc_gelu` | `compara_epilog.py --float` (nou: doar operațiile în virgulă mobilă, comparate ca arbore al valorii scrise): v7_gelu 32 / 32, v8_gelu 64 / 64, v8n_gelu 64 / 64 cozi **identice** cu a lui `mm_tc_gelu` (21 operații). Diferența găsită de forma veche a scriptului era doar ordinea: NAK mută testul de semn (`fsetp`) un loc mai sus / jos, iar adresa scrierii între ultimele două înmulțiri — aceleași operații pe aceleași valori | **CONFIRMAT** (CALCUL) |
+| J2: registrele | v7_gelu **128**, v8_gelu **128**, v8n_gelu **144** — exact ca programele fără GELU (4 / 2 / 3 blocuri pe SM), 0 „spills” | **CONFIRMAT** (CALCUL) — riscul pe v8 nu s-a produs |
+| J3: model mic, 5 pași rapizi, aceiași biți | P5a fără lipire = `mm_tc_gelu` = variantele rapide, bit cu bit (pierderi, gradientul pasului 1, greutăți); 90 → 88 lansări pe pas; plus S4: același produs forțat pe fiecare din cele 3 programe = biții lui `mm_tc_gelu` | **CONFIRMAT** (SIMULARE) |
+| J4: #513 exact −12 lansări | lot 2 și lot 6: 460 → 448 (pe placă 467 → 455); 12 `gelu_tr` înapoi dispar; „proj-dX” pe varianta GELU a aceluiași program: **lot 6 12 × v8n_gelu, lot 2 12 × v8_gelu**; restul listei și alegerile identice, în ordine; QMD-urile cu programul, registrele, blocul, grila lor | **CONFIRMAT** (SIMULARE) |
+| J5: refuzuri | variantă neîncărcată → refuz înainte de trimis (fără cădere tăcută pe `mm_tc_gelu`); adresă nealiniată; BIAS; `c == u`; `None` = `attn9` octet cu octet; prin RAM (`via_ram_attn10`) aceleași alegeri și aceeași listă | **CONFIRMAT** (SIMULARE) |
+| J6: câștig 1,0–1,8 ms la lot 6 | — | NOT TESTED (placa) |
+| J7: oracolul lot 2 aceleași numere | — | NOT TESTED (placa) |
+
+Limita comparației J1b (cinstit): ea arată că cele 21 de operații GELU' sunt aceleași pe aceleași intrări; nu verifică registrul care
+ține constanta 1,0 (o intrare încărcată înainte de coadă) și nu înlocuiește proba pe placă. Bucla K a fiecărui program e cea
+neschimbată (aceleași octeți ai sursei până la scriere), deci suma `v` e a programului fără GELU (dovedită pe placă: v7 os-490,
+v8 / v8n os-500).
+
+Următorul pas: P5c (GELU înainte în coada lui „fc”, scrie `u` și `act`) cu plan + predicții întâi; pe placă: rândul P5b (nota
+`integration/cyber-universe/C-168_P5b_gelu-in-coada-rapida.md`).

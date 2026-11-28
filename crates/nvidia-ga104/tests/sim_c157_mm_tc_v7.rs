@@ -416,6 +416,14 @@ fn t280d_only_the_row_lengths_changed_in_the_glsl() {
     // four stride literals.
     let body = |s: &'static str| &s[s.find("#version 460").unwrap()..];
     let mut v7s = body(SRC_V7).to_string();
+    // C-168 p.5 P5b (session 291): the `-DGELU` store (mm_tc_v7_gelu) is not part of mm_tc_v7 (its bytes are unchanged,
+    // T307): drop the `#ifdef GELU ... #else` lines and the `#endif` before comparing with v6.
+    if let Some(a) = v7s.find("#ifdef GELU\n") {
+        let b = v7s[a..].find("#else\n").unwrap() + a + "#else\n".len();
+        v7s.replace_range(a..b, "");
+        let e = v7s[a..].find("#endif\n").unwrap() + a;
+        v7s.replace_range(e..e + "#endif\n".len(), "");
+    }
     for (a, b) in [
         ("r * LA + p, p * LAT + r", "r * BK + p, p * BM + r"),
         ("p * LB + cl, cl * LBT + p", "p * BN + cl, cl * BK + p"),

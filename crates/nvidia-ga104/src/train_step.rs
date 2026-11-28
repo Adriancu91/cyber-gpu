@@ -3847,6 +3847,12 @@ pub enum TcPick {
     /// C-168 p.4 step 4 (session 289, `docs/C-168_ATTN_FWD_TC_PLAN.md` §11): a [`MixedLaunch::AttnFwdTc`] on
     /// `attn_fwd_tc` (120 registers, 27 648 B shared, the grid in pairs), only from [`pack_mixed_fast_attn9`].
     AttnFwdTc,
+    /// C-168 p.5 P5b (session 291): a [`MixedLaunch::TcGelu`] on `mm_tc_v7_gelu`, only from [`pack_mixed_fast_attn10`].
+    V7Gelu,
+    /// C-168 p.5 P5b (session 291): a [`MixedLaunch::TcGelu`] on `mm_tc_v8_gelu`, only from [`pack_mixed_fast_attn10`].
+    V8Gelu,
+    /// C-168 p.5 P5b (session 291): a [`MixedLaunch::TcGelu`] on `mm_tc_v8n_gelu`, only from [`pack_mixed_fast_attn10`].
+    V8nGelu,
 }
 
 /// C-168 p.3 G7 (session 280): where the OS loaded `mm_tc_v8` / `mm_tc_v8n` (both 256-aligned, non-zero), the active
@@ -3970,6 +3976,9 @@ impl TcPick {
             TcPick::AttnTc16V4 => "attn_back_tile_tc16_v4",
             TcPick::AttnTc16V4pf => "attn_back_tile_tc16_v4pf",
             TcPick::AttnFwdTc => "attn_fwd_tc",
+            TcPick::V7Gelu => "mm_tc_v7_gelu",
+            TcPick::V8Gelu => "mm_tc_v8_gelu",
+            TcPick::V8nGelu => "mm_tc_v8n_gelu",
         }
     }
 }
@@ -4301,6 +4310,62 @@ pub fn pack_mixed_fast_attn9(
     step_bytes: Option<u32>,
     zone_va: u64,
 ) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
+    pack_mixed_fast_attn10(
+        launches,
+        prog_va,
+        progs,
+        v5_va,
+        v6_va,
+        v7_va,
+        v8,
+        long_k,
+        attn_fwd_va,
+        None,
+        attn,
+        attn_fast,
+        attn0,
+        step_bytes,
+        zone_va,
+    )
+}
+
+/// C-168 p.5 P5b (session 291, `docs/C-168_P5_LIPIRE_PLAN.md` §7): where the OS loaded the GELU' variants of the fast
+/// `mm_tc` programs (`mm_tc_v7_gelu` / `mm_tc_v8_gelu` / `mm_tc_v8n_gelu`, [`crate::mm_tc_fast_gelu`]); 0 = not
+/// loaded. All 256-aligned.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GeluFast {
+    pub v7: u64,
+    pub v8: u64,
+    pub v8n: u64,
+}
+
+/// C-168 p.5 P5b (session 291, `docs/C-168_P5_LIPIRE_PLAN.md` §7): [`pack_mixed_fast_attn9`] with the **GELU' variants
+/// of the fast programs** as well (`gelu_fast`; `None` = not loaded = [`pack_mixed_fast_attn9`] byte for byte). A
+/// [`MixedLaunch::TcGelu`] (a [`Plan::with_fused_gelu`] plan: "proj-dX" + GELU's backward) whose product passes
+/// [`crate::mm_tc_v8::fits`] takes the GELU' variant of the program the same product would take without GELU
+/// ([`crate::mm_tc_v8::pick_long_k`] with `v8`, else `mm_tc_v7` when `v7_va != 0`): [`TcPick::V7Gelu`] /
+/// [`TcPick::V8Gelu`] / [`TcPick::V8nGelu`] — that program's block, grid, shared memory, its own registers, the cbuf of
+/// `mm_tc_gelu` (u at the bias slot). When that variant is not loaded (0) the list is **refused** before anything is
+/// sent (no silent fall to the slow `mm_tc_gelu`). Unaligned `TcGelu` launches stay on `mm_tc_gelu`. Same bits as
+/// `mm_tc_gelu` (the same product, the same store). **SIMULARE only** (T307); none of the three has run on the board.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub fn pack_mixed_fast_attn10(
+    launches: &[MixedLaunch],
+    prog_va: impl Fn(Prog) -> u64,
+    progs: &TcPrograms,
+    v5_va: u64,
+    v6_va: u64,
+    v7_va: u64,
+    v8: Option<V8Programs>,
+    long_k: u32,
+    attn_fwd_va: u64,
+    gelu_fast: Option<GeluFast>,
+    attn: Option<AttnTcProgram>,
+    attn_fast: Option<AttnTcFast>,
+    attn0: Attn0Programs,
+    step_bytes: Option<u32>,
+    zone_va: u64,
+) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
     use crate::mm_tc as tc;
     use crate::mm_tc_v8 as t8;
     if let Some(p) = v8
@@ -4311,7 +4376,9 @@ pub fn pack_mixed_fast_attn9(
         ));
     }
     let (v8_va, v8n_va) = v8.map_or((0, 0), |p| (p.v8, p.v8n));
+    use crate::mm_tc_fast_gelu as fg;
     use crate::mm_tc_gelu as tg;
+    let gf = gelu_fast.unwrap_or_default();
     let attn_tc_va = attn.map_or(0, AttnTcProgram::va);
     if attn.is_some() && attn_tc_va == 0 {
         return Err(bad("pas-mixt: attn_back_tile_tc la adresa 0"));
@@ -4336,6 +4403,9 @@ pub fn pack_mixed_fast_attn9(
             v8_va,
             v8n_va,
             attn_fwd_va,
+            gf.v7,
+            gf.v8,
+            gf.v8n,
         ]
         .iter()
         .any(|v| !v.is_multiple_of(256))
@@ -4350,6 +4420,25 @@ pub fn pack_mixed_fast_attn9(
                 .or(a.map(AttnTcProgram::pick))
                 .or(Some(TcPick::AttnTc)),
             (Some(TcPick::Attn0Tc), _) => Some(attn0_pick(l, attn0)),
+            (Some(TcPick::Gelu), _) if gelu_fast.is_some() => match l {
+                MixedLaunch::TcGelu { args, .. } => {
+                    let ta = fg::tc_args(args);
+                    if v8.is_some() && t8::fits(&ta) {
+                        v8.map(|p8| {
+                            match t8::pick_long_k(&ta, p8.sms, p8.rates, v7_va != 0, long_k) {
+                                t8::Pick::V7 => TcPick::V7Gelu,
+                                t8::Pick::V8 => TcPick::V8Gelu,
+                                t8::Pick::V8n => TcPick::V8nGelu,
+                            }
+                        })
+                    } else if v7_va != 0 && crate::mm_tc_v7::fits(&ta) {
+                        Some(TcPick::V7Gelu)
+                    } else {
+                        Some(TcPick::Gelu)
+                    }
+                }
+                _ => Some(TcPick::Gelu),
+            },
             (Some(p @ (TcPick::V4 | TcPick::Pf | TcPick::Tc)), _) => match l {
                 MixedLaunch::Tc { args, .. } if v8.is_some() && t8::fits(args) => {
                     v8.map(
@@ -4390,6 +4479,9 @@ pub fn pack_mixed_fast_attn9(
             TcPick::Attn0TcV4 => attn0.v4,
             TcPick::AttnTc16V4 | TcPick::AttnTc16V4pf => fast_va,
             TcPick::AttnFwdTc => attn_fwd_va,
+            TcPick::V7Gelu => gf.v7,
+            TcPick::V8Gelu => gf.v8,
+            TcPick::V8nGelu => gf.v8n,
         };
         if va == 0 {
             return Err(bad(match p {
@@ -4402,6 +4494,9 @@ pub fn pack_mixed_fast_attn9(
                 }
                 TcPick::Attn0Tc | TcPick::Attn0TcV4 => "pas-mixt: attn_back_tile0_tc nu e incarcat",
                 TcPick::AttnFwdTc => "pas-mixt: attn_fwd_tc nu e incarcat",
+                TcPick::V7Gelu | TcPick::V8Gelu | TcPick::V8nGelu => {
+                    "pas-mixt: varianta GELU a programului ales (mm_tc_v7_gelu / v8_gelu / v8n_gelu) nu e incarcata"
+                }
                 _ => "pas-mixt: programul mm_tc ales nu e incarcat",
             }));
         }
@@ -4556,14 +4651,41 @@ pub fn pack_mixed_fast_attn9(
                             let cb = args
                                 .cbuf()
                                 .ok_or(bad("pas-mixt: argumentele mm_tc_gelu refuzate"))?;
-                            (
-                                cb,
-                                args.grid(),
-                                tg::BLOCK,
-                                tg::SHARED,
-                                progs.gelu,
-                                tg::REGISTERS,
-                            )
+                            let ta = fg::tc_args(args);
+                            match pick {
+                                Some(TcPick::V8Gelu) => (
+                                    cb,
+                                    t8::grid(&ta),
+                                    t8::BLOCK,
+                                    t8::SHARED,
+                                    gf.v8,
+                                    fg::REGISTERS_V8,
+                                ),
+                                Some(TcPick::V8nGelu) => (
+                                    cb,
+                                    t8::grid_n(&ta),
+                                    t8::BLOCK_N,
+                                    t8::SHARED_N,
+                                    gf.v8n,
+                                    fg::REGISTERS_V8N,
+                                ),
+                                Some(TcPick::V7Gelu) => (
+                                    cb,
+                                    ta.grid(),
+                                    tc::BLOCK,
+                                    crate::mm_tc_v7::SHARED,
+                                    gf.v7,
+                                    fg::REGISTERS_V7,
+                                ),
+                                _ => (
+                                    cb,
+                                    args.grid(),
+                                    tg::BLOCK,
+                                    tg::SHARED,
+                                    progs.gelu,
+                                    tg::REGISTERS,
+                                ),
+                            }
                         }
                         MixedLaunch::Std(_)
                         | MixedLaunch::AttnTc(_)

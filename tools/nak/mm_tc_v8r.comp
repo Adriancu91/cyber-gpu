@@ -3,6 +3,8 @@
 // 26.3.1 listing (docs/C-168_V8R.md, T302): v8 128 registers, 148 movs in the loop, 32 of them a swap through one scratch
 // register that chains every hmma through r0..r3; v8r 120 registers, 84 movs, no swap, the hmma issue in groups of 4.
 // The -DV8N half is NOT built from this file (it gains nothing: 41 movs either way). Nothing here has run on a board.
+// C-168 p.5 P5b (session 291): the -DGELU store of mm_tc_v8.comp is mirrored here so the two sources keep differing only
+// in the read order (T302e); this file is never built with -DGELU, and without it the bytes are unchanged (6e28d531...).
 // C-168 point 3: the training matmul on the tensor cores, version 8 (plan + predictions G1-G7 written before this file:
 // docs/C-168_V8_PLAN.md, counted in T294). One source, two programs:
 //   mm_tc_v8  (default): 128x128 block of C, 256 threads = 8 warps (2 x 4), 24 576 B of shared memory (2 blocks/SM)
@@ -223,10 +225,26 @@ void main() {
                 uint gc = col0 + wc + 8u * j + e % 8u;
                 if (gr < args.m && gc < args.n) {
                     float v = uintBitsToFloat(packFloat2x16(sh_[so + e]));
+#ifdef GELU
+                    // C-168 p.5 P5b (-DGELU): mm_tc_gelu.comp's store, letter for letter (u at the bias slot, [row, col]).
+                    uint i = gr * args.n + gc;
+                    float u = args.bias.v[i];
+                    float z = u * 0.70710678118654752;
+                    float a = abs(z);
+                    float t = 1.0 / (1.0 + 0.3275911 * a);
+                    float p = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+                    float ex = exp(-a * a);
+                    float e1 = 1.0 - p * ex;
+                    float erf = z < 0.0 ? -e1 : e1;
+                    float cdf = 0.5 * (1.0 + erf);
+                    float pdf = 0.39894228040143268 * ex;
+                    args.c.v[i] = v * fma(u, pdf, cdf);
+#else
                     if ((args.flags & BIAS) != 0u) {
                         v += args.bias.v[gc];
                     }
                     args.c.v[gr * args.n + gc] = v;
+#endif
                 }
             }
             subgroupBarrier();

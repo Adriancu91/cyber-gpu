@@ -3980,10 +3980,91 @@ pub fn mm_tc_gelu_unfused_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
 }
 
 fn mm_tc_gelu_with(l: &mut Launch<'_>, f: fn(f32, f32) -> f32) -> GpuResult<()> {
-    use gpu_compute::mm_tc;
     if l.block != [128, 1, 1] || l.grid[2] != 1 {
         return Err(bad("SIM: mm_tc_gelu cere blocuri de 128x1x1"));
     }
+    mm_tc_gelu_tiles(l, f, 64, 64)
+}
+
+/// C-168 p.5 P5b (session 291, `docs/C-168_P5_LIPIRE_PLAN.md` §7): what `tools/nak/out2/mm_tc_v7_gelu.sm86.sass`
+/// needs — `mm_tc_v7`'s (only the store differs).
+pub const MM_TC_V7_GELU_NEEDS: Needs = MM_TC_V7_NEEDS;
+/// C-168 p.5 P5b: what `tools/nak/out2/mm_tc_v8_gelu.sm86.sass` needs — `mm_tc_v8`'s.
+pub const MM_TC_V8_GELU_NEEDS: Needs = MM_TC_V8_NEEDS;
+/// C-168 p.5 P5b: what `tools/nak/out2/mm_tc_v8n_gelu.sm86.sass` needs — `mm_tc_v8n`'s.
+pub const MM_TC_V8N_GELU_NEEDS: Needs = MM_TC_V8N_NEEDS;
+
+/// C-168 p.5 P5b (session 291): the CPU stand-in for `tools/nak/out2/mm_tc_v7_gelu.sm86.sass` — `mm_tc_v7`'s K loop
+/// (the same f16 values through the same `hmma` chain as `mm_tc`, os-490) with `mm_tc_gelu`'s store, so the
+/// arithmetic is [`mm_tc_gelu_on_cpu`]'s: blocks of 128×1×1, 64×64 tiles, aligned products only (anything else
+/// REFUSED, no write), BIAS and a C overlapping u refused.
+pub fn mm_tc_v7_gelu_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    fast_gelu(
+        l,
+        [128, 1, 1],
+        64,
+        64,
+        [
+            "SIM: mm_tc_v7_gelu cere blocuri de 128x1x1",
+            "SIM: mm_tc_v7_gelu: produs nealiniat (randuri multiplu de 4, adrese multiplu de 16)",
+        ],
+    )
+}
+
+/// C-168 p.5 P5b (session 291): the CPU stand-in for `tools/nak/out2/mm_tc_v8_gelu.sm86.sass` — [`mm_tc_v8_on_cpu`]'s
+/// product with `mm_tc_gelu`'s store: blocks of 256×1×1, 128×128 tiles, aligned only; the rest as
+/// [`mm_tc_v7_gelu_on_cpu`].
+pub fn mm_tc_v8_gelu_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    fast_gelu(
+        l,
+        [256, 1, 1],
+        128,
+        128,
+        [
+            "SIM: mm_tc_v8_gelu cere blocuri de 256x1x1",
+            "SIM: mm_tc_v8_gelu: produs nealiniat (randuri multiplu de 4, adrese multiplu de 16)",
+        ],
+    )
+}
+
+/// C-168 p.5 P5b (session 291): the CPU stand-in for `tools/nak/out2/mm_tc_v8n_gelu.sm86.sass` —
+/// [`mm_tc_v8n_on_cpu`]'s product with `mm_tc_gelu`'s store: blocks of 128×1×1, 128×64 tiles, aligned only.
+pub fn mm_tc_v8n_gelu_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    fast_gelu(
+        l,
+        [128, 1, 1],
+        128,
+        64,
+        [
+            "SIM: mm_tc_v8n_gelu cere blocuri de 128x1x1",
+            "SIM: mm_tc_v8n_gelu: produs nealiniat (randuri multiplu de 4, adrese multiplu de 16)",
+        ],
+    )
+}
+
+fn fast_gelu(
+    l: &mut Launch<'_>,
+    block: [u32; 3],
+    tile_m: usize,
+    tile_n: usize,
+    why: [&'static str; 2],
+) -> GpuResult<()> {
+    if l.block != block || l.grid[2] != 1 {
+        return Err(bad(why[0]));
+    }
+    if !tc_aligned(l)? {
+        return Err(bad(why[1]));
+    }
+    mm_tc_gelu_tiles(l, gpu_compute::layer::gelu_tr_gpu_back, tile_m, tile_n)
+}
+
+fn mm_tc_gelu_tiles(
+    l: &mut Launch<'_>,
+    f: fn(f32, f32) -> f32,
+    tile_m: usize,
+    tile_n: usize,
+) -> GpuResult<()> {
+    use gpu_compute::mm_tc;
     if l.mem.read_u64(l.cbuf0)? != 0 {
         return Err(bad(
             "SIM: baza grupurilor (cbuf0 0x0) diferita de 0, nemodelata",
@@ -4001,7 +4082,7 @@ fn mm_tc_gelu_with(l: &mut Launch<'_>, f: fn(f32, f32) -> f32) -> GpuResult<()> 
     if flags & !(mm_tc::TA | mm_tc::TB) != 0 {
         return Err(bad("SIM: mm_tc_gelu: biti de optiuni necunoscuti sau BIAS"));
     }
-    if (l.grid[0] as usize) < n.div_ceil(64) || (l.grid[1] as usize) < m.div_ceil(64) {
+    if (l.grid[0] as usize) < n.div_ceil(tile_n) || (l.grid[1] as usize) < m.div_ceil(tile_m) {
         return Err(bad("SIM: mm_tc_gelu: grila nu acopera C (nemodelat)"));
     }
     let bytes = 4 * (m * n) as u64;

@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 291 — 28 noiembrie 2026, ~10:13–11:26 (ora României), în cloud, FĂRĂ placă — **C-168 p.5 P5b: GELU' lipit în coada lui v7 / v8 / v8n (`mm_tc_*_gelu`, `pack_mixed_fast_attn10`) → PREDARE P5b; T307 SIMULARE**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 290), l-am pus `ocupat`. Niciun rezultat nou pe placă (os-505 repornit 10:04,
+P4b / P3e / P5a încă nerulate) → P5b, cu planul și predicțiile J1–J7 întâi (`docs/C-168_P5_LIPIRE_PLAN.md` §7, commit `ec08d96`).
+Unealta NAK a doua (Mesa 26.3.1) reconstruită în cloud (~35 min).
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| J1a: sursele cu `#ifdef GELU`, fără fanion aceiași octeți | v7 / v8 / v8n / v8r / `mm_tc_gelu` recompilate = aceleași SHA-256 | **PASS (CALCUL)** |
+| J1b: coada GELU' = a lui `mm_tc_gelu` | `compara_epilog.py --float` (nou: arborele valorii scrise): 32 / 64 / 64 cozi identice (21 operații) | **PASS (CALCUL)** |
+| J2: registre | v7_gelu 128, v8_gelu 128, v8n_gelu 144 (ca fără GELU; 4 / 2 / 3 blocuri pe SM), 0 spills | **PASS (CALCUL)** |
+| J3: model mic 5 pași rapizi | P5a = `mm_tc_gelu` = variantele rapide, aceiași biți; 90 → 88 lansări; produsul forțat pe fiecare program = biții lui `mm_tc_gelu` | **PASS (SIMULARE)** |
+| J4: #513 lot 2 / 6 | 460 → 448 (pe placă 467 → 455); proj-dX lot 6 12 × v8n_gelu, lot 2 12 × v8_gelu; restul și alegerile identice | **PASS (SIMULARE)** |
+| J5: refuzuri, `None` = `attn9`, prin RAM | toate | **PASS (SIMULARE)** |
+| J6 / J7 (câștig 1,0–1,8 ms la lot 6; oracolul lot 2) | scrise înainte | NOT TESTED |
+| Nota pentru OS | `integration/cyber-universe/C-168_P5b_gelu-in-coada-rapida.md` | — |
+| Verificările întregi | format, clippy, teste, no_std | **1 538 PASS** |
+
+**Nou pentru placă:** trei programe (`mm_tc_v7_gelu` ed808204…, `mm_tc_v8_gelu` d0d061ce…, `mm_tc_v8n_gelu` 81e6e4ab…), doar pe
+produse aliniate. Doar adăugări (`mm_tc_fast_gelu`, `GeluFast`, `TcPick::V7Gelu/V8Gelu/V8nGelu`, `pack_mixed_fast_attn10`,
+`pack_mixed_fast_via_ram_attn10`, înlocuitorii din `gpu-sim`). Două teste vechi care comparau sursele GLSL (T280d, T302e) știu acum
+de blocul `#ifdef GELU` (v8r primește același bloc, nefolosit, ca sursele să difere tot doar prin ordinea citirilor).
+
+**Următorul pas:** OS: P5a + P5b (după P4b). Noi: comparațiile când vin; altfel P5c (GELU înainte în coada lui „fc”) cu plan +
+predicții întâi.
+
 ## Sesiunea 290 — 28 noiembrie 2026, ~09:12–09:58 (ora României), în cloud, FĂRĂ placă — **C-168 p.5: inventarul lansărilor mărunte (os-503) + planul P5a–P5g + P5a (`ln_back_res` în pasul rapid) → PREDARE P5a; T306 SIMULARE**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 289), l-am pus `ocupat`. Niciun rezultat nou pe placă (P4b, P3e, `--mm-tc-v8r`
