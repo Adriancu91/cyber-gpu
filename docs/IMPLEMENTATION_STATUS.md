@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 286 — 28 noiembrie 2026, ~04:11–06:05 (ora României), în cloud, FĂRĂ placă — **C-168 p.3 urmarea: `mm_tc_v8r` = v8 cu mai puține copii de registre, compilat și numărat pe listare (T302, CALCUL)**
+## Sesiunea 286 — 28 noiembrie 2026, ~04:11–05:08 (ora României), în cloud, FĂRĂ placă — **C-168 p.3 urmarea: `mm_tc_v8r` = v8 cu mai puține copii de registre, compilat și numărat pe listare (T302, CALCUL)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 285), l-am pus `ocupat`. Niciun rezultat nou pe placă după os-500 (os-501 și
 proba `--atentie-fwd-tc` n-au rulat încă) → am luat pasul scris: `docs/C-168_OS500_V8.md` §6.2 (v8 cu mai puține copii). Unealta NAK
