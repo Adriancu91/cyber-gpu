@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 289 — 28 noiembrie 2026, ~08:11–09:20 (ora României), în cloud, FĂRĂ placă — **C-168 p.4: os-504 comparat (H4 CONFIRMATĂ, H5 RATATĂ în bine) + pasul 4: `attn_fwd_tc` legat în pas → PREDARE P4b; T305 SIMULARE**
+## Sesiunea 289 — 28 noiembrie 2026, ~08:11–09:05 (ora României), în cloud, FĂRĂ placă — **C-168 p.4: os-504 comparat (H4 CONFIRMATĂ, H5 RATATĂ în bine) + pasul 4: `attn_fwd_tc` legat în pas → PREDARE P4b; T305 SIMULARE**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 288), l-am pus `ocupat`. Rezultat nou pe placă: **os-504** (proba
 `--atentie-fwd-tc` TRECE, ×5,45 la #513) + cererea centrului: atenția înainte pe circuite legată în pas. Planul și predicțiile
@@ -20,6 +20,8 @@ H6a–H6d / H7 scrise înainte de cod (`docs/C-168_ATTN_FWD_TC_PLAN.md` §11, co
 **Note:** `docs/C-168_ATTN_FWD_TC_PLAN.md` §11–§12, T305 în `TEST_MATRIX.md`, rândul în `PROVENANCE.md`. **Nou pentru placă:**
 doar folosirea în pas a lui `attn_fwd_tc` (același binar ca în os-504), sub opțiunea OS-ului. **Nicio schimbare incompatibilă**
 (câte o variantă nouă la coada enum-urilor `MixedLaunch` și `TcPick`, ca la `Attn0Tc` / `V8n`; OS-ul nu le potrivește exhaustiv).
+
+**CI:** rularea 589 (`9428d34`) pornită la sfârșitul sesiunii (cea anterioară, 588, verde); local toate verificările trec.
 
 **Următorul pas:** OS: rândul lot 2 cu oracolul, apoi lot 6 (nota P4b; H6c / H6d / H7). Noi: comparațiile când vin (P4b, garda P3e,
 `--mm-tc-v8r` V1–V4); altfel C-168 p.5 (lipirea lansărilor mărunte) cu planul + predicțiile întâi.
