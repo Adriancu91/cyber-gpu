@@ -21,7 +21,7 @@ deoparte; lucrul pe o clonă proaspătă.
 | N3 aceeași aritmetică, citiri înainte | `compara_pf.py` (nou): aceleași operații în virgulă mobilă în ordine pe toate 7; citiri în așteptare deodată 1 → 8 (v7 1 → 16); greșeli plantate prinse | **PASS (CALCUL)** |
 | N4 SIMULARE | modelul mic P5a–P5d cu `_pf` în locuri = aceiași biți pe 4 viteze; #513 lot 2 / 6: 36 QMD-uri cu adresa și registrele bune | **PASS (SIMULARE)** |
 | N5 / N6 / N7 | scrise înainte (lot 6 −1,5…−2,1 ms din GELU'; −0,5…−0,9 cu P5d; oracolul lot 2) | NOT TESTED |
-| Verificările întregi | format, clippy, teste, no_std (`tools/check.sh`) | VEZI MAI JOS |
+| Verificările întregi | format, clippy, teste, no_std (aceiași pași ca `tools/check.sh`; T280d învățat să ignore blocurile `#ifdef PF`) | **1570 PASS** |
 
 **Nou pentru placă:** șapte programe (`mm_tc_v7_gelu_pf` / `v8_gelu_pf` / `v8n_gelu_pf`, `mm_tc_v7_res_pf` / `v8_res_pf` / `v8n_res_pf` /
 `v8r_res_pf`, SHA-256 în notă), care intră în locurile programelor `_gelu` / `_res` fără nicio altă schimbare. Doar adăugări în
