@@ -1,6 +1,6 @@
 # Starea implementării — cyber-gpu
 
-## Sesiunea 292 — 28 noiembrie 2026, ~12:14–13:00 (ora României), în cloud, FĂRĂ placă — **comparațiile os-505 (`--mm-tc-v8r`) și os-507 (P4b) + dW în fereastră (nota P3f, T308 CALCUL) + v8r legat în pas (P3g, T309 SIMULARE) → PREDARE P3f, P3g**
+## Sesiunea 292 — 28 noiembrie 2026, ~12:14–13:40 (ora României), în cloud, FĂRĂ placă — **comparațiile os-505 (`--mm-tc-v8r`) și os-507 (P4b) + dW în fereastră (nota P3f, T308 CALCUL) + v8r legat în pas (P3g, T309 SIMULARE) → PREDARE P3f, P3g**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 291), l-am pus `ocupat`. Au venit două rezultate pe placă: os-505 (proba v8r)
 și os-507 (date reale = PyTorch; atenția înainte în pas, RECORD 25 635 simb/s). Comparațiile au întâietate (`docs/C-168_OS505_OS507.md`).
@@ -16,14 +16,15 @@ Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 291), l-am pus `ocupat`. Au
 | T308 dW în fereastra de 1 800 s | modelul reface os-505; însoțitorii doar la @64k → 0 seturi afară (~1 266 s); dW întâi → 10 dX afară; doar dW → încape | **PASS (CALCUL)** |
 | T309 v8r în pas (K1–K4) | model mic aceiași biți v8 = v8r; #513 lot 2 exact 24 V8 → V8r, restul octet cu octet; lot 6 neschimbat; refuzuri; prin RAM | **PASS (SIMULARE)** |
 | K5 / K6, W1–W4 | scrise înainte | NOT TESTED |
-| Verificările întregi | format, clippy, teste, no_std | vezi mai jos |
+| Verificările întregi | format, clippy, teste, no_std (`tools/check.sh`) | **1 548 PASS** |
 
 **Nou pentru placă:** nimic nou ca program; P3g folosește în pas `mm_tc_v8r` (rulat deja în os-505), QMD cu 120 de registre. Doar
 adăugări: `TcPick::V8r`, `pack_mixed_fast_attn11`, `pack_mixed_fast_via_ram_attn11`. Notele: `integration/cyber-universe/C-168_P3f_dw-in-fereastra.md`
 (un fanion nou în probă: însoțitorii doar la 64 KiB) și `C-168_P3g_v8r-in-pas.md`.
 
 **Următorul pas:** OS: P3f (rândul cu dW în fereastră), P3g (lot 2 cu oracolul), P5a / P5b. Noi: comparațiile când vin (W1–W4,
-K5 / K6, I3 / I4, J6 / J7); altfel C-168 p.5 P5c (GELU înainte în coada lui „fc”) cu plan + predicții întâi.
+K5 / K6, I3 / I4, J6 / J7); altfel codul P5c — planul și predicțiile L1–L7 sunt scrise deja (`docs/C-168_P5_LIPIRE_PLAN.md` §9,
+commit `3d5d07d`); întâi unealta NAK a doua (Mesa 26.3.1, ~35 min).
 
 ## Sesiunea 291 — 28 noiembrie 2026, ~10:13–11:26 (ora României), în cloud, FĂRĂ placă — **C-168 p.5 P5b: GELU' lipit în coada lui v7 / v8 / v8n (`mm_tc_*_gelu`, `pack_mixed_fast_attn10`) → PREDARE P5b; T307 SIMULARE**
 
