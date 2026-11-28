@@ -148,3 +148,40 @@ v8 / v8n os-500).
 
 Următorul pas: P5c (GELU înainte în coada lui „fc”, scrie `u` și `act`) cu plan + predicții întâi; pe placă: rândul P5b (nota
 `integration/cyber-universe/C-168_P5b_gelu-in-coada-rapida.md`).
+
+## 9. P5c — GELU înainte în coada lui „fc”: planul și predicțiile (sesiunea 292, 28 nov, scrise ÎNAINTE de cod)
+
+**Ce e azi (planul P5a / P5b):** pe fiecare strat, înainte, „fc” (`h2 · Wfcᵀ + bias`, m = n·T = 3 072, n = F = 3 072, k = C = 768
+la lot 6, fanionul TB + BIAS) merge pe v8n / v8 / v7 și scrie `u` (F32, 37,7 MB la lot 6); apoi `gelu_tr` mode 0 citește `u` și
+scrie `act` = GELU(u) (F32, 37,7 MB). `u` trebuie păstrat (îl citește înapoi GELU', P5b), deci lipirea scrie **amândouă**.
+Profilul os-507 lot 6: `gelu_tr` 4,25 ms pe 24 de lansări; cele 12 înainte mută 75 MB pe strat → ~141 µs fiecare la ~533 GB/s.
+
+**Ce fac:**
+1. Aceleași surse cu un fanion nou `-DGELU_FWD` (`mm_tc_v8.comp` → `mm_tc_v8_geluf`, cu `-DV8N` → `mm_tc_v8n_geluf`,
+   `mm_tc_v7.comp` → `mm_tc_v7_geluf`): scrierea rămâne cea de azi (`c = v + bias`, adică `u`), plus `act[rând, col]` = corpul
+   lui `gelu_tr.comp` mode 0, literă cu literă, pe aceeași valoare. Adresa lui `act` vine la 0x730 (argumentele cresc de la 0x30 la
+   0x38 octeți; cbuf-ul rămâne 0x800). Fără fanion sursa dă **exact aceiași octeți** ca azi.
+2. `nvidia_ga104::mm_tc_fast_gelu_fwd` (programele, SHA-256, registrele, `Args` = `mm_tc::Args` + `act`, refuzurile: `act == c`,
+   `act` nealiniat, fără BIAS ok), doar adăugări.
+3. În simulator: înlocuitorii `mm_tc_v{7,8,8n}_geluf_on_cpu` = aritmetica programului fără fanion + `gelu_tr_gpu(u, None)`.
+4. `train_step`: `MixedLaunch::TcGeluFwd` (variantă nouă, doar adăugare), `Plan::with_fused_gelu_fwd()` (fc + gelu → o lansare
+   cu eticheta `inainte:fc+gelu`), `pack_mixed_fast_attn12` = `attn11` + `GeluFwdFast { v7, v8, v8n }`: un `TcGeluFwd` aliniat ia
+   varianta `geluf` a programului ales de `pick_long_k` pentru același produs (v8 → `v8_geluf`, nu există `v8r_geluf`); varianta
+   neîncărcată → refuz înainte de trimis; nealiniat → refuz (nu există `mm_tc_geluf` lent; planul OS-ului nu cere lipirea atunci).
+   `None` = `attn11` octet cu octet. `TcPick::V7GeluF` / `V8GeluF` / `V8nGeluF`.
+5. Unealta NAK a doua (Mesa 26.3.1) trebuie reconstruită în cloud (~35 min) — de aceea codul vine în sesiunea următoare.
+
+**Predicțiile (L1–L7):**
+- **L1 (CALCUL, NAK):** fără `-DGELU_FWD` toate programele vechi (v7 / v8 / v8n / v8r și variantele GELU') ies cu aceleași SHA-256.
+- **L2 (CALCUL, NAK):** registrele: v8n_geluf ≤ 168 (3 blocuri pe SM), v7_geluf ≤ 128 (4), v8_geluf ≤ 128 (2) — **riscul cel mai
+  mare**: GELU înainte ține mai multe valori vii decât GELU' (u și cdf odată cu suma); dacă v8_geluf trece de 128 îl notez, iar
+  `pick` oricum nu-l alege la lot 6 (0 produse pe v8).
+- **L3 (CALCUL):** coada `act` din fiecare listare = corpul lui `gelu_tr` mode 0 (`compara_epilog.py --float` față de
+  `gelu_tr.sm86.txt`, aceleași operații ftz pe aceeași valoare), iar coada `u` = cea a programului fără fanion.
+- **L4 (SIMULARE):** model mic aliniat, 5 pași rapizi cu `with_fused_gelu_fwd` (+ P5a + P5b): pierderile, gradientul pasului 1,
+  greutățile **bit cu bit** ca fără `with_fused_gelu_fwd`.
+- **L5 (SIMULARE):** #513 lot 2 și lot 6: exact **−12 lansări** (12 `gelu_tr` înainte), „fc” pe varianta `geluf` a programului
+  ales azi (lot 6: v8n_geluf), restul listei și alegerile identice.
+- **L6 (placa, DEDUS):** lot 6: −12 × ~141 µs (`gelu_tr` înainte) + 12 × ~71 µs (scrierea lui `act` în coadă) → câștig net
+  **0,6–1,1 ms**. Sub 0,4 ms = RATAT.
+- **L7 (placa):** oracolul lot 2: aceleași numere ca rândul fără P5c.
