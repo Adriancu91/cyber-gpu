@@ -1,0 +1,235 @@
+// C-168 point 3 follow-up (session 286): mm_tc_v8 with FEWER REGISTER COPIES in the K loop. The only change against
+// mm_tc_v8.comp is the order of the fragment reads inside the slice (B first, then A one by one). Measured on the NAK
+// 26.3.1 listing (docs/C-168_V8R.md, T302): v8 128 registers, 148 movs in the loop, 32 of them a swap through one scratch
+// register that chains every hmma through r0..r3; v8r 120 registers, 84 movs, no swap, the hmma issue in groups of 4.
+// The -DV8N half is NOT built from this file (it gains nothing: 41 movs either way). Nothing here has run on a board.
+// C-168 point 3: the training matmul on the tensor cores, version 8 (plan + predictions G1-G7 written before this file:
+// docs/C-168_V8_PLAN.md, counted in T294). One source, two programs:
+//   mm_tc_v8  (default): 128x128 block of C, 256 threads = 8 warps (2 x 4), 24 576 B of shared memory (2 blocks/SM)
+//   mm_tc_v8n (-DV8N):   128x64  block of C, 128 threads = 4 warps (2 x 2), 18 432 B of shared memory (3 blocks/SM)
+// Each warp computes a 64x32 piece (4 x 4 accumulators of 16x8). K slice = 16, two shared stages, ONE barrier per slice.
+// What changes against mm_tc_v7 (and why, from the plan):
+//   - In shared memory op(A) is ALWAYS stored by rows [r][p] and op(B) ALWAYS by columns [c][p] ("K along the row"),
+//     whatever TA / TB say, so NAK can read every fragment with ldsm.x4 (it does that only for A row-major and B
+//     column-major, Mesa 26.3.1 nak_nir_lower_cmat.c). The turn (transpose) is done in registers at the store: a thread
+//     loads two vec4 from rows p and p+1 of the stored matrix and writes four (p, p+1) f16 pairs, one per x.
+//   - Every shared row is 16 halves + 8 of padding = 48 bytes: the 8 rows of one ldsm matrix fall in 8 different
+//     16-byte groups of the 128-byte bank line (no conflict, T294). The padding is never written nor read.
+//   - Two stages: the next slice is loaded into registers before the tensor cores work on this one, then written into
+//     the other stage, then one barrier. Writing the other stage is safe: everybody passed the barrier that ended the
+//     slice which last read it. (No cp.async: NAK 26.3.1 has no such operation, plan section 1.)
+//   - Accumulators of 16x8 (B fragments 16x8, read with ldsm.x2): a 16x16x16 coopMatMulAdd becomes two
+//     hmma.m16n8k16 on SM 8.6 anyway; written as 16x8 each accumulator is exactly one hmma's 4 registers. With 16x16
+//     NAK 26.3.1 copied the accumulators in and out around every hmma (mm_tc_v8n: 161 movs in the K loop, 41 with
+//     16x8; session 279, docs/C-168_V8_PLAN.md section 7). Same hmma on the same values in the same K order.
+//   - The ending reuses the stages (after the last barrier nobody reads them): one 16x16 f32 scratch per warp, a
+//     subgroup barrier between store and read, as mm_tc128 / mm_tc_v5..v7 (bit-matched to mm_tc on the board, os-423).
+// The same as mm_tc: products of the same f16 values (0 outside the matrix), f32 sums over K in steps of 16 in order
+// from 0, one f32 add of the bias at the end -> the same bits as mm_tc. Same 48 bytes of push constants, the same
+// aligned-only rule (nvidia_ga104::mm_tc_v4::fits). Nothing here has run on a board.
+#version 460
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_shader_subgroup_basic : require
+
+#ifdef V8N
+#define BN 64u
+#define THREADS 128u
+#define WCOLS 2u        // warps along the columns of the block
+#define NUA 2u          // load units of A per thread and slice (a unit = 2 vec4 = 8 floats)
+#define NUB 1u          // load units of B per thread and slice
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+#else
+#define BN 128u
+#define THREADS 256u
+#define WCOLS 4u
+#define NUA 1u
+#define NUB 1u
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+#endif
+#define BM 128u
+#define BK 16u
+#define TA 1u
+#define TB 2u
+#define BIAS 4u
+#define LS 24u          // shared row: 16 halves + 8 of padding = 48 bytes
+// coopMatLoad stride in f16vec2 units (LS / 2), written as a literal so the stride lint (program_lint) can check it:
+#define SS 12u
+#define AST ((BM * LS) / 2u)   // f16vec2 per A stage: 1536 (6 144 B)
+#define BST ((BN * LS) / 2u)   // f16vec2 per B stage: 1536 / 768
+#define STAGE (AST + BST)      // f16vec2 per stage
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer In4 { vec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer In { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { float v[]; };
+
+// The same 48 bytes as mm_tc.
+layout(push_constant) uniform Args {
+    In4 a;
+    In4 b;
+    Out c;
+    In bias;
+    uint m;
+    uint n;
+    uint k;
+    uint flags;
+} args;
+
+// Two stages, each: op(A) [r][p] (128 rows of LS halves) then op(B) [c][p] (BN rows of LS halves). After the K loop the
+// first 8 KiB (v8) / 4 KiB (v8n) hold one 16x16 f32 scratch per warp (256 words each).
+shared f16vec2 sh_[2u * STAGE];
+
+// One operand of the slice at k offset t, seen as X rows of 16 values along p (X = 128 for A, BN for B):
+//   direct     (the vec4 runs along p; A without TA, B with TB): element (x, p) at x * ld + p.
+//              unit u: x = u / 2, p0 = 8 * (u % 2); vec4 0 = (x, p0..p0+3), vec4 1 = (x, p0+4..p0+7).
+//   transposed (the vec4 runs along x; A with TA, B without TB): element (x, p) at p * ld + x.
+//              unit u: x0 = 4 * (u % (X / 4)), p = 2 * (u / (X / 4)); vec4 0 = (p, x0..x0+3), vec4 1 = (p+1, x0..x0+3).
+// Outside the matrix the vec4 index is multiplied by 0 (vector 0, always valid); the value becomes 0 only at the
+// store. With fits() a vec4 is wholly inside or wholly outside (ld, x0, p0 multiples of 4).
+void load_unit(In4 src, uint ld, uint xs, uint t, uint x_total, uint u, uint xq, bool tr,
+               out vec4 v0, out vec4 v1, out uint in2) {
+    uint x = mix(u / 2u, 4u * (u % xq), tr);
+    uint p = mix(8u * (u % 2u), 2u * (u / xq), tr);
+    uint gx = xs + x;
+    uint gp = t + p;
+    // second vector: 4 further along p (direct) or the next p (transposed)
+    uint gp1 = gp + mix(4u, 1u, tr);
+    uint i0 = uint(gx < x_total) & uint(gp < args.k);
+    uint i1 = uint(gx < x_total) & uint(gp1 < args.k);
+    uint a0 = mix(gx * ld + gp, gp * ld + gx, tr);
+    uint a1 = mix(gx * ld + gp1, gp1 * ld + gx, tr);
+    v0 = src.v[(a0 / 4u) * i0];
+    v1 = src.v[(a1 / 4u) * i1];
+    in2 = i0 | (i1 << 1u);
+}
+
+// Writes one unit into an operand area starting at f16vec2 index `base` ([x][p], LS halves per row).
+void store_unit(uint base, uint u, uint xq, bool tr, vec4 v0, vec4 v1, uint in2) {
+    vec4 w0 = mix(vec4(0.0), v0, bvec4((in2 & 1u) != 0u));
+    vec4 w1 = mix(vec4(0.0), v1, bvec4((in2 & 2u) != 0u));
+    f16vec4 h0 = f16vec4(w0);
+    f16vec4 h1 = f16vec4(w1);
+    if (tr) {
+        uint x0 = 4u * (u % xq);
+        uint p = 2u * (u / xq);
+        for (uint i = 0u; i < 4u; i++) {
+            sh_[base + ((x0 + i) * LS + p) / 2u] = f16vec2(h0[i], h1[i]);
+        }
+    } else {
+        uint x = u / 2u;
+        uint p0 = 8u * (u % 2u);
+        uint o = base + (x * LS + p0) / 2u;
+        sh_[o] = h0.xy;
+        sh_[o + 1u] = h0.zw;
+        sh_[o + 2u] = h1.xy;
+        sh_[o + 3u] = h1.zw;
+    }
+}
+
+void main() {
+    uint tid = gl_LocalInvocationID.x;
+    uint w = tid / 32u;
+    uint wr = (w / WCOLS) * 64u;
+    uint wc = (w % WCOLS) * 32u;
+    uint row0 = gl_WorkGroupID.y * BM;
+    uint col0 = gl_WorkGroupID.x * BN;
+    bool ta = (args.flags & TA) != 0u;
+    bool tb = (args.flags & TB) != 0u;
+    // A: direct unless TA (ld = k direct, m transposed); B: direct only with TB (ld = k), else transposed (ld = n).
+    bool tra = ta;
+    bool trb = !tb;
+    uint lda = mix(args.k, args.m, ta);
+    uint ldb = mix(args.n, args.k, tb);
+
+    coopmat<float, gl_ScopeSubgroup, 16, 8, gl_MatrixUseAccumulator> acc[4][4];
+    for (uint i = 0u; i < 4u; i++) {
+        for (uint j = 0u; j < 4u; j++) {
+            acc[i][j] = coopmat<float, gl_ScopeSubgroup, 16, 8, gl_MatrixUseAccumulator>(0.0);
+        }
+    }
+
+    vec4 ra0[NUA];
+    vec4 ra1[NUA];
+    uint ia[NUA];
+    vec4 rb0[NUB];
+    vec4 rb1[NUB];
+    uint ib[NUB];
+
+    for (uint s = 0u; s < NUA; s++) {
+        load_unit(args.a, lda, row0, 0u, args.m, tid + s * THREADS, BM / 4u, tra, ra0[s], ra1[s], ia[s]);
+    }
+    for (uint s = 0u; s < NUB; s++) {
+        load_unit(args.b, ldb, col0, 0u, args.n, tid + s * THREADS, BN / 4u, trb, rb0[s], rb1[s], ib[s]);
+    }
+    for (uint s = 0u; s < NUA; s++) {
+        store_unit(0u, tid + s * THREADS, BM / 4u, tra, ra0[s], ra1[s], ia[s]);
+    }
+    for (uint s = 0u; s < NUB; s++) {
+        store_unit(AST, tid + s * THREADS, BN / 4u, trb, rb0[s], rb1[s], ib[s]);
+    }
+    barrier();
+
+    uint cur = 0u;
+    for (uint t = 0u; t < args.k; t += BK) {
+        // The next slice's loads go out now and land while the tensor cores work on this one (no branch: after the
+        // last slice they are all outside, vector 0, and what they write into the other stage is never read).
+        for (uint s = 0u; s < NUA; s++) {
+            load_unit(args.a, lda, row0, t + BK, args.m, tid + s * THREADS, BM / 4u, tra, ra0[s], ra1[s], ia[s]);
+        }
+        for (uint s = 0u; s < NUB; s++) {
+            load_unit(args.b, ldb, col0, t + BK, args.n, tid + s * THREADS, BN / 4u, trb, rb0[s], rb1[s], ib[s]);
+        }
+        uint sa = cur * STAGE;
+        uint sb = sa + AST;
+        // v8r: the 4 B fragments first (8 registers), then ONE A fragment at a time (4 registers live, not 16) and its
+        // 4 hmma. Same hmma on the same values, each accumulator still gets its slices in K order -> the same bits as v8.
+        coopmat<float16_t, gl_ScopeSubgroup, 16, 8, gl_MatrixUseB> fb[4];
+        for (uint j = 0u; j < 4u; j++) {
+            coopMatLoad(fb[j], sh_, sb + ((wc + 8u * j) * LS) / 2u, SS, gl_CooperativeMatrixLayoutColumnMajor);
+        }
+        for (uint i = 0u; i < 4u; i++) {
+            coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseA> fa;
+            coopMatLoad(fa, sh_, sa + ((wr + 16u * i) * LS) / 2u, SS, gl_CooperativeMatrixLayoutRowMajor);
+            for (uint j = 0u; j < 4u; j++) {
+                acc[i][j] = coopMatMulAdd(fa, fb[j], acc[i][j]);
+            }
+        }
+        uint nx = (cur ^ 1u) * STAGE;
+        for (uint s = 0u; s < NUA; s++) {
+            store_unit(nx, tid + s * THREADS, BM / 4u, tra, ra0[s], ra1[s], ia[s]);
+        }
+        for (uint s = 0u; s < NUB; s++) {
+            store_unit(nx + AST, tid + s * THREADS, BN / 4u, trb, rb0[s], rb1[s], ib[s]);
+        }
+        barrier();
+        cur ^= 1u;
+    }
+
+    // Ending: after the last barrier nobody reads the stages. Warp w stores its accumulators one by one into its own
+    // 128 of its 256 words (f16vec2 and f32 are both 4 bytes) and its lanes copy them out; a subgroup barrier orders the store, the
+    // reads and the next store (mm_tc128's ending).
+    uint lane = tid % 32u;
+    uint so = w * 256u;
+    for (uint i = 0u; i < 4u; i++) {
+        for (uint j = 0u; j < 4u; j++) {
+            coopMatStore(acc[i][j], sh_, so, 8u, gl_CooperativeMatrixLayoutRowMajor);
+            subgroupBarrier();
+            for (uint s = 0u; s < 4u; s++) {
+                uint e = lane + s * 32u;
+                uint gr = row0 + wr + 16u * i + e / 8u;
+                uint gc = col0 + wc + 8u * j + e % 8u;
+                if (gr < args.m && gc < args.n) {
+                    float v = uintBitsToFloat(packFloat2x16(sh_[so + e]));
+                    if ((args.flags & BIAS) != 0u) {
+                        v += args.bias.v[gc];
+                    }
+                    args.c.v[gr * args.n + gc] = v;
+                }
+            }
+            subgroupBarrier();
+        }
+    }
+}

@@ -702,3 +702,6 @@ niciun octet de firmware NVIDIA.
 - **Sesiunea 285 (28 nov 2026):** `crates/nvidia-ga104/src/attn_fwd_tc_probe.rs` (proba `--atentie-fwd-tc`: seturile, citirile,
   verdictul, rândurile de raport) și testul `crates/nvidia-ga104/tests/sim_c168_attn_fwd_tc_probe.rs` (T301) — ale noastre, pe tiparul
   probei atenției noastre (`attn_tile_probe`). Nimic copiat, nimic din firmware-ul NVIDIA.
+- **Sesiunea 286 (28 nov 2026):** `tools/nak/mm_tc_v8r.comp` (al nostru: `mm_tc_v8.comp` cu altă ordine a citirilor din felie) și
+  testul `crates/nvidia-ga104/tests/calc_c168_v8r.rs` (T302, numără pe listarea NAK) — ale noastre. Compilat cu Mesa NAK 26.3.1 (MIT),
+  pe gazdă. Nimic copiat, nimic din firmware-ul NVIDIA.

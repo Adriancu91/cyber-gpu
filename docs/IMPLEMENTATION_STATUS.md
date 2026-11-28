@@ -1,5 +1,28 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 286 — 28 noiembrie 2026, ~04:11–06:05 (ora României), în cloud, FĂRĂ placă — **C-168 p.3 urmarea: `mm_tc_v8r` = v8 cu mai puține copii de registre, compilat și numărat pe listare (T302, CALCUL)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 285), l-am pus `ocupat`. Niciun rezultat nou pe placă după os-500 (os-501 și
+proba `--atentie-fwd-tc` n-au rulat încă) → am luat pasul scris: `docs/C-168_OS500_V8.md` §6.2 (v8 cu mai puține copii). Unealta NAK
+(Mesa 26.3.1) reconstruită în cloud; `mm_tc_v8` / `mm_tc_v8n` ies identic. (Copiile locale vechi erau despărțite de GitHub; am lucrat
+în clone noi, nimic șters.)
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Ce frâna pe v8 (listarea) | 32 din cele 148 de copii = schimb prin `r125` care leagă toate cele 16 `hmma` într-un lanț | MĂSURAT pe listare |
+| `tools/nak/mm_tc_v8r.comp` (+ `build2.sh mm_tc_v8r`) | B întâi, A câte una; aceleași `hmma`, aceeași ordine pe K → aceiași biți ca v8 | COMPILAT (`6e28d531…274bf4`, identic la 2 compilări) |
+| T302 (`calc_c168_v8r.rs`) | 120 registre (v8 128), 2 blocuri / SM; copii 148 → 84, schimb 32 → 0, întârzieri 645 → 378 tacte (v8n 367); sursa = v8 în afara feliei | PASS (CALCUL) |
+| Ordinea inversă (A toate, B pe rând) | 180 de copii — mai rău, nepăstrată | încercat |
+| v8n cu aceeași schimbare | 41 de copii oricum — fără câștig, nepăstrat | încercat |
+| V1–V4 (biți; qkv 0,85–1,01 ms; dX 0,83–0,99; dW 1,40–1,60) | scrise înainte de placă (`docs/C-168_V8R.md` §3) | NOT TESTED |
+| Verificările întregi | format, clippy, teste, no_std | **1 508 PASS** |
+
+**Note:** `docs/C-168_V8R.md`, T302 în `TEST_MATRIX.md`, rândul în `PROVENANCE.md`. **Nou pentru placă:** nimic încă (v8r nu e
+predat; are nevoie de modul + probă). **Nicio schimbare de interfață** (doar adăugări: un test, o sursă GLSL, un binar).
+
+**Următorul pas:** comparațiile când vin (os-501 G7, `--atentie-fwd-tc` H4 / H5); altfel modulul `nvidia_ga104::mm_tc_v8r` + proba
+`--mm-tc-v8r` pentru OS (`docs/C-168_V8R.md` §4).
+
 ## Sesiunea 285 — 28 noiembrie 2026, ~03:11–04:10 (ora României), în cloud, FĂRĂ placă — **C-168 p.4 pasul 3: proba `--atentie-fwd-tc` pentru OS (`attn_fwd_tc` lângă `attn_fwd_tile3`) → PREDARE; T301 în SIMULARE**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 284), l-am pus `ocupat`. Niciun rezultat nou pe placă după os-500 (G7 așteaptă

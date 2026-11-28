@@ -19,6 +19,7 @@
 #   sh tools/nak/build2.sh mm_tc_v7     # C-157 p.2: mm_tc_v6 with 16 bytes of padding per shared row (conflict-free reads), same bits (session 266)
 #   sh tools/nak/build2.sh mm_tc_v8     # C-168 p.3: 128x128 blocks, 2 shared stages, A by rows / B by columns (all ldsm), same bits (session 279)
 #   sh tools/nak/build2.sh mm_tc_v8n    # C-168 p.3: the same source with -DV8N: 128x64 blocks, 128 threads (session 279)
+#   sh tools/nak/build2.sh mm_tc_v8r    # C-168 p.3 follow-up: mm_tc_v8 with B fragments first, A one at a time (fewer register copies), same bits (session 286)
 #   sh tools/nak/build2.sh mm_tc128_v4  # C-157 p.2: mm_tc128 with mm_tc_v4's cure (loads ahead, 128 bits), same bits (session 231)
 #   sh tools/nak/build2.sh mm_s8        # B1 step 3: int8 matmul on the tensor cores, 128x128 tiles, i32 out (session 225)
 #   sh tools/nak/build2.sh attn_back_tile_tc # C-157: attn_back_tile_3's dQ / dK / dV on the tensor cores, f16 inputs (session 243)
@@ -89,6 +90,9 @@ mm_tc_v7)
     ;;
 mm_tc_v8)
     exec sh "$0" kernel mm_tc_v8 48
+    ;;
+mm_tc_v8r)
+    exec sh "$0" kernel mm_tc_v8r 48
     ;;
 mm_tc_v8n)
     GLSL_DEFS=-DV8N; KSRC=mm_tc_v8; export GLSL_DEFS KSRC
