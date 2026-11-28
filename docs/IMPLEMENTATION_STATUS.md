@@ -1,5 +1,30 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 283 — 28 noiembrie 2026, ~01:10–02:10 (ora României), în cloud, FĂRĂ placă — **os-500 comparat (C-168 p.3, proba `--mm-tc-v8`): G4 CONFIRMATĂ (aceiași biți), G5 / G6 RATATE (câștig mic); v8n cel mai rapid → vitezele măsurate `RATES_OS500`, pasul lot 6 prezis ~133 ms**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 282), l-am pus `ocupat`. Rezultat nou pe placă: **os-500** (ciclul 00:49, proba
+`--mm-tc-v8` la 64 KiB) → comparația are întâietate față de C-168 p.4 pasul 2. (Copia locală a ramurii era iar despărțită de
+GitHub; am lucrat pe ramura locală `lucru-283` pornită din `origin/g0-g2-fundatie`, nimic șters.)
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| G4 biții (os-500) | v8, v8@64k, v8n, v8n@64k = `mm_tc`, 7 / 7 seturi aliniate | CONFIRMATĂ (placă, OS) |
+| G5 v8 qkv-513 0,75–0,96 ms | 1,063 ms = 20,4 TFLOP/s (×1,13 față de v7, sub pragul ×1,15) | RATATĂ |
+| G6 v8 dX 0,72–0,92 / v8 dW 1,22–1,56 / v8n dW 1,02–1,30 | 1,037 / 1,650 / în afara ferestrei de viteză | RATATĂ / RATATĂ / NOT TESTED |
+| v8n (lipsea din nota hub-ului) | qkv 1,012 ms = 21,5 TFLOP/s (×1,18), dX 0,929 = 23,4 (×1,23) — cel mai rapid | MĂSURAT (OS) |
+| Vitezele pe SM la valuri pline (T300) | v8 112,7 / 110,6 %, v8n 118,4 / 123,4 % → `mm_tc_v8::RATES_OS500` = 110 / 118 (doar adăugare) | PASS (CALCUL) |
+| Modelul valurilor pe dW | v7 +4 %, v8 +12 % (pesimist); v8n dW prezis 1,24 ms | PASS (CALCUL / DEDUS) |
+| De ce ~1/3 din câștig | tehnicile din plan făcute (listare); v8n > v8 cu mai puține fire → nu ocuparea; v8 curge mai încet din L2 cu jumătate din octeți → nu cantitatea; primul suspect: copiile de registre din v8 (9,25 / `hmma` față de 2,56) | DEDUS, nedovedit |
+| Pasul lot 6 cu vitezele măsurate | alegerea v7 12 / v8 0 / v8n 135; înmulțirile 98,1 → ~83,7 ms; placa ~133 ms ≈ 23 000 simb/s | DEDUS; pe placă NOT TESTED |
+| Nota pentru OS | `integration/cyber-universe/C-168_P3c_v8-vitezele-masurate.md` | — |
+| Verificările întregi | format, clippy, teste, no_std | **1 485 PASS** |
+
+**Note:** `docs/C-168_OS500_V8.md`, `docs/C-168_V8_PLAN.md` §9, T300 (`crates/nvidia-ga104/tests/calc_c168_os500_v8.rs`), rândul în
+`TEST_MATRIX.md`. **Nou pentru placă:** nimic (aceleași două programe din os-500). **Nicio schimbare de interfață** (doar adăugări).
+
+**Următorul pas:** comparația pasului cu `attn8` + `RATES_OS500` când vine (G7); altfel C-168 p.4 pasul 2 (`attn_fwd_tc`: modelul pe
+procesor + SIMULARE, H3, T299); apoi v8 cu mai puține copii de registre / proba de diagnostic (`docs/C-168_OS500_V8.md` §4).
+
 ## Sesiunea 282 — 28 noiembrie 2026, ~00:11–00:55 (ora României), în cloud, FĂRĂ placă — **C-168 p.4 pasul 1: atenția înainte pe circuitele speciale (`attn_fwd_tc`) scrisă și compilată; H1 și H2 CONFIRMATE pe listare (120 registre, 27 648 B, 2 blocuri pe SM, toți operanzii prin `ldsm`)**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 281), l-am pus `ocupat`. Proba `--mm-tc-v8` (P3a) n-a rulat încă pe placă (niciun

@@ -170,3 +170,10 @@ T297 (`crates/nvidia-ga104/tests/sim_c168_mm_tc_v8_mixed.rs`, SIMULARE):
 
 **Pe placă: nimic nou de rulat acum.** Ordinea rămâne: întâi proba `--mm-tc-v8` (P3a, G4–G6); dacă v8 / v8n dau biții lui `mm_tc`,
 vitezele măsurate intră în `Rates` și abia apoi pasul cu `attn8` (G7). Copiile de registre din v8 (148 în buclă) rămân de redus.
+
+## 9. Pe placă: os-500 (sesiunea Cyber-GPU 283, 28 nov 2026)
+
+G4 **CONFIRMATĂ** (v8 și v8n = biții lui `mm_tc`, 7 / 7). G5 / G6 **RATATE**: v8 qkv-513 1,063 ms (×1,13 față de v7), dX ×1,11,
+dW 1,650 (mai lent, ultimul val). **v8n e mai rapid decât v8**: qkv 1,012 (×1,18), dX 0,929 (×1,23); dW în afara ferestrei de viteză.
+Vitezele măsurate: `RATES_OS500` = 110 / 118 % → la lot 6 v7 12 / v8 0 / v8n 135, pasul prezis ~133 ms (DEDUS). Analiza (de ce
+~1/3 din câștig, copiile de registre ca prim suspect, drumul L2 → SM exclus): `docs/C-168_OS500_V8.md`, T300.

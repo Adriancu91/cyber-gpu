@@ -96,6 +96,16 @@ pub const RATES_PLAN: Rates = Rates {
     v8n_pct: 126,
 };
 
+/// The rates **measured on the board** (os-500, 28 Nov 2026, probe `--mm-tc-v8` at 64 KiB, medians of 5 launches):
+/// per SM at full waves, in percent of `mm_tc_v7`'s, on the two probe shapes where all three programs fill their waves
+/// exactly (qkv-513 and qkv-513-dx): v8 112,7 / 110,6 %, v8n 118,4 / 123,4 %. Taken as the lower of the two, rounded
+/// down (T300, `docs/C-168_OS500_V8.md`). The `pick` with these rates puts no product on v8 at lot 6 (v8n is faster
+/// per SM and never fills its waves worse on the step's shapes).
+pub const RATES_OS500: Rates = Rates {
+    v8_pct: 110,
+    v8n_pct: 118,
+};
+
 /// Rates per SM at full waves, in percent of `mm_tc_v7`'s (`mm_tc_v7` = 100). Both non-zero.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rates {
