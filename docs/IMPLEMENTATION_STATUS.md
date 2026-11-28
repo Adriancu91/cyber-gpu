@@ -1,5 +1,34 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 293 — 28 noiembrie 2026, ~14:10–15:35 (ora României), în cloud, FĂRĂ placă — **P5a comparat cu os-508 + C-168 p.5 P5c: GELU înainte lipit în coada lui „fc” (`mm_tc_*_geluf`, `Plan::with_fused_gelu_fwd`, `pack_mixed_fast_attn12`) → PREDARE P5c; T310 CALCUL + SIMULARE**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 292), l-am pus `ocupat`. A venit os-508 (P5a pe placă) → comparația întâi
+(`docs/C-168_P5_LIPIRE_PLAN.md` §10), apoi codul P5c după planul scris în sesiunea 292 (§9, predicțiile L1–L7). Unealta NAK a doua
+(Mesa 26.3.1) reconstruită în cloud (~35 min). Dosarul local vechi `cyber-gpu` (sesiunea 196, istorie nelegată) lăsat deoparte;
+lucrul pe o clonă proaspătă a ramurii `g0-g2-fundatie`.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| I3 P5a lot 6 (os-508) | 119,8 → 118,8 ms = −1,0 ms (banda 0,5–1,1) | **CONFIRMAT (pe placă)** |
+| I3 P5a lot 2 | −0,9 ms (prezis 0,2–0,4; o singură măsurătoare) | **RATAT ÎN BINE (pe placă)** |
+| I4 oracolul lot 2 | aceleași numere | **CONFIRMAT (pe placă)** |
+| L1 fără `-DGELU_FWD` aceiași octeți | v7 / v8 / v8n / v8r / variantele GELU' / `mm_tc_gelu` recompilate = aceleași SHA-256 | **PASS (CALCUL)** |
+| L2 registre | v7_geluf 128, v8_geluf 128, v8n_geluf 144 (ca programele simple; 4 / 2 / 3 blocuri pe SM), 0 spills în memorie | **PASS (CALCUL)** |
+| L3 coada `act` = `gelu_tr` mod 0 de pe placă | `compara_gelu_fwd.py` (nou): 32 / 64 / 64 cozi = arborele celor 58 de operații ale lui `gelu_tr` (Mesa 25.0.7) după rescrieri exacte; din valoarea scrisă în C, scrise la `act`; restul programului = cel simplu; 3 greșeli plantate prinse | **PASS (CALCUL)** |
+| L4 model mic 5 pași | P5a + P5b ± P5c aceiași biți (os-500 → v7_geluf; v8 + v8r → v8_geluf); 88 → 86 lansări; produsul 256×512×128 cu bias pe fiecare program = fc + `gelu_tr` | **PASS (SIMULARE)** |
+| L5 #513 −12 lansări | lot 2 / 6: 448 → 436; lot 6 12 × v8n_geluf, lot 2 12 × v8_geluf; restul alegerilor și cbuf-urilor identice; refuzuri; prin RAM aceeași listă | **PASS (SIMULARE)** |
+| L6 / L7 | scrise înainte (−0,6…−1,1 ms la lot 6; oracolul lot 2) | NOT TESTED |
+| Verificările întregi | format, clippy, teste, no_std (`tools/check.sh`) | **1 557 PASS** |
+
+**Nou pentru placă:** trei programe (`mm_tc_v7_geluf` / `v8_geluf` / `v8n_geluf`, SHA-256 în notă; două au ~70 KiB, peste 64 KiB),
+doar pe produse aliniate, cu o scriere în plus pe element. Doar adăugări în bibliotecă: `mm_tc_fast_gelu_fwd`, `MixedLaunch::TcGeluFwd`
+(variantă nouă a unui enum public — OS-ul folosește doar `matches!`, deci compilează; un test al nostru cu `match` complet a cerut o
+ramură), `Plan::with_fused_gelu_fwd`, `GeluFwdFast`, `TcPick::V7GeluF / V8GeluF / V8nGeluF`, `pack_mixed_fast_attn12`,
+`pack_mixed_fast_via_ram_attn12`. Nota: `integration/cyber-universe/C-168_P5c_gelu-inainte-in-coada-fc.md`.
+
+**Următorul pas:** comparațiile când vin (P5b J6 / J7, P5c L6 / L7, P3f W1–W4, P3g K5 / K6); altfel P5d (reziduurile înainte în coada
+lui „out” / „proj”) cu planul + predicțiile întâi.
+
 ## Sesiunea 292 — 28 noiembrie 2026, ~12:14–13:40 (ora României), în cloud, FĂRĂ placă — **comparațiile os-505 (`--mm-tc-v8r`) și os-507 (P4b) + dW în fereastră (nota P3f, T308 CALCUL) + v8r legat în pas (P3g, T309 SIMULARE) → PREDARE P3f, P3g**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 291), l-am pus `ocupat`. Au venit două rezultate pe placă: os-505 (proba v8r)

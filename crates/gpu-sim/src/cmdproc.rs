@@ -4058,6 +4058,107 @@ fn fast_gelu(
     mm_tc_gelu_tiles(l, gpu_compute::layer::gelu_tr_gpu_back, tile_m, tile_n)
 }
 
+/// C-168 p.5 P5c (session 293, `docs/C-168_P5_LIPIRE_PLAN.md` §9): what `tools/nak/out2/mm_tc_v7_geluf.sm86.sass`
+/// needs — `mm_tc_v7`'s (only the store differs: one more write per element).
+pub const MM_TC_V7_GELUF_NEEDS: Needs = MM_TC_V7_NEEDS;
+/// C-168 p.5 P5c: what `tools/nak/out2/mm_tc_v8_geluf.sm86.sass` needs — `mm_tc_v8`'s.
+pub const MM_TC_V8_GELUF_NEEDS: Needs = MM_TC_V8_NEEDS;
+/// C-168 p.5 P5c: what `tools/nak/out2/mm_tc_v8n_geluf.sm86.sass` needs — `mm_tc_v8n`'s.
+pub const MM_TC_V8N_GELUF_NEEDS: Needs = MM_TC_V8N_NEEDS;
+
+/// C-168 p.5 P5c (session 293): the CPU stand-in for `tools/nak/out2/mm_tc_v7_geluf.sm86.sass` — [`mm_tc_v7_on_cpu`]
+/// unchanged (C = u = op(A)·op(B) (+ bias), the same bits as `mm_tc`), then `act[i]` = `gelu_tr` mode 0 of the value
+/// just written (`gpu_compute::layer::gelu_tr_gpu(u, None)`), `act` read at cbuf0 0x730. Blocks of 128×1×1, 64×64 tiles,
+/// aligned products only; `act` at 0, unaligned (4) or overlapping A, B, C or the bias is REFUSED with nothing written.
+pub fn mm_tc_v7_geluf_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    fast_geluf(
+        l,
+        [128, 1, 1],
+        64,
+        64,
+        [
+            "SIM: mm_tc_v7_geluf cere blocuri de 128x1x1",
+            "SIM: mm_tc_v7_geluf: produs nealiniat (randuri multiplu de 4, adrese multiplu de 16)",
+        ],
+    )
+}
+
+/// C-168 p.5 P5c (session 293): the CPU stand-in for `tools/nak/out2/mm_tc_v8_geluf.sm86.sass` — [`mm_tc_v8_on_cpu`]
+/// then act = GELU(C): blocks of 256×1×1, 128×128 tiles; the rest as [`mm_tc_v7_geluf_on_cpu`].
+pub fn mm_tc_v8_geluf_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    fast_geluf(
+        l,
+        [256, 1, 1],
+        128,
+        128,
+        [
+            "SIM: mm_tc_v8_geluf cere blocuri de 256x1x1",
+            "SIM: mm_tc_v8_geluf: produs nealiniat (randuri multiplu de 4, adrese multiplu de 16)",
+        ],
+    )
+}
+
+/// C-168 p.5 P5c (session 293): the CPU stand-in for `tools/nak/out2/mm_tc_v8n_geluf.sm86.sass` —
+/// [`mm_tc_v8n_on_cpu`] then act = GELU(C): blocks of 128×1×1, 128×64 tiles; the rest as [`mm_tc_v7_geluf_on_cpu`].
+pub fn mm_tc_v8n_geluf_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    fast_geluf(
+        l,
+        [128, 1, 1],
+        128,
+        64,
+        [
+            "SIM: mm_tc_v8n_geluf cere blocuri de 128x1x1",
+            "SIM: mm_tc_v8n_geluf: produs nealiniat (randuri multiplu de 4, adrese multiplu de 16)",
+        ],
+    )
+}
+
+fn fast_geluf(
+    l: &mut Launch<'_>,
+    block: [u32; 3],
+    tile_m: usize,
+    tile_n: usize,
+    why: [&'static str; 2],
+) -> GpuResult<()> {
+    if l.block != block || l.grid[2] != 1 {
+        return Err(bad(why[0]));
+    }
+    if !tc_aligned(l)? {
+        return Err(bad(why[1]));
+    }
+    let base = l.cbuf0 + MMA16_PUSH_BASE;
+    let a = l.mem.read_u64(base)?;
+    let b = l.mem.read_u64(base + 0x08)?;
+    let c = l.mem.read_u64(base + 0x10)?;
+    let bias = l.mem.read_u64(base + 0x18)?;
+    let m = u64::from(l.mem.read_u32(base + 0x20)?);
+    let n = u64::from(l.mem.read_u32(base + 0x24)?);
+    let k = u64::from(l.mem.read_u32(base + 0x28)?);
+    let flags = l.mem.read_u32(base + 0x2c)?;
+    let act = l.mem.read_u64(base + 0x30)?;
+    if act == 0 || !act.is_multiple_of(4) {
+        return Err(bad("SIM: mm_tc_geluf: act la 0 sau nealiniat"));
+    }
+    let over = |va: u64, len: u64| va < act + 4 * m * n && act < va + len;
+    if over(c, 4 * m * n)
+        || over(a, 4 * m * k)
+        || over(b, 4 * k * n)
+        || (flags & 4 != 0 && over(bias, 4 * n))
+    {
+        return Err(bad(
+            "SIM: mm_tc_geluf: act se suprapune cu A, B, C sau bias",
+        ));
+    }
+    mm_tc_tiles_mn_on_cpu(l, tile_m, tile_n)?;
+    let u = l.mem.read_f32s(c, (m * n) as usize)?;
+    let y: Vec<f32> = u
+        .iter()
+        .map(|&u| gpu_compute::layer::gelu_tr_gpu(u, None))
+        .collect();
+    l.mem.write_f32s(act, &y);
+    Ok(())
+}
+
 fn mm_tc_gelu_tiles(
     l: &mut Launch<'_>,
     f: fn(f32, f32) -> f32,

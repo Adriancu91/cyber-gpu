@@ -22,6 +22,9 @@
 #   sh tools/nak/build2.sh mm_tc_v8_gelu  # C-168 p.5 P5b: mm_tc_v8.comp with -DGELU: mm_tc_gelu's store (GELU' with u at the bias slot) (session 291)
 #   sh tools/nak/build2.sh mm_tc_v8n_gelu # C-168 p.5 P5b: mm_tc_v8.comp with -DV8N -DGELU (session 291)
 #   sh tools/nak/build2.sh mm_tc_v7_gelu  # C-168 p.5 P5b: mm_tc_v7.comp with -DGELU (session 291)
+#   sh tools/nak/build2.sh mm_tc_v8_geluf  # C-168 p.5 P5c: mm_tc_v8.comp with -DGELU_FWD: C = u (+bias) and act = GELU(u) at 0x730 (session 293)
+#   sh tools/nak/build2.sh mm_tc_v8n_geluf # C-168 p.5 P5c: mm_tc_v8.comp with -DV8N -DGELU_FWD (session 293)
+#   sh tools/nak/build2.sh mm_tc_v7_geluf  # C-168 p.5 P5c: mm_tc_v7.comp with -DGELU_FWD (session 293)
 #   sh tools/nak/build2.sh mm_tc_v8r    # C-168 p.3 follow-up: mm_tc_v8 with B fragments first, A one at a time (fewer register copies), same bits (session 286)
 #   sh tools/nak/build2.sh mm_tc128_v4  # C-157 p.2: mm_tc128 with mm_tc_v4's cure (loads ahead, 128 bits), same bits (session 231)
 #   sh tools/nak/build2.sh mm_s8        # B1 step 3: int8 matmul on the tensor cores, 128x128 tiles, i32 out (session 225)
@@ -112,6 +115,18 @@ mm_tc_v8n_gelu)
 mm_tc_v7_gelu)
     GLSL_DEFS=-DGELU; KSRC=mm_tc_v7; export GLSL_DEFS KSRC
     exec sh "$0" kernel mm_tc_v7_gelu 48
+    ;;
+mm_tc_v8_geluf)
+    GLSL_DEFS=-DGELU_FWD; KSRC=mm_tc_v8; export GLSL_DEFS KSRC
+    exec sh "$0" kernel mm_tc_v8_geluf 56
+    ;;
+mm_tc_v8n_geluf)
+    GLSL_DEFS="-DV8N -DGELU_FWD"; KSRC=mm_tc_v8; export GLSL_DEFS KSRC
+    exec sh "$0" kernel mm_tc_v8n_geluf 56
+    ;;
+mm_tc_v7_geluf)
+    GLSL_DEFS=-DGELU_FWD; KSRC=mm_tc_v7; export GLSL_DEFS KSRC
+    exec sh "$0" kernel mm_tc_v7_geluf 56
     ;;
 mm_tc128_v4)
     exec sh "$0" kernel mm_tc128_v4 48

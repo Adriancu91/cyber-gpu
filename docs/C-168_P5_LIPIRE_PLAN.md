@@ -185,3 +185,46 @@ Profilul os-507 lot 6: `gelu_tr` 4,25 ms pe 24 de lansări; cele 12 înainte mut
 - **L6 (placa, DEDUS):** lot 6: −12 × ~141 µs (`gelu_tr` înainte) + 12 × ~71 µs (scrierea lui `act` în coadă) → câștig net
   **0,6–1,1 ms**. Sub 0,4 ms = RATAT.
 - **L7 (placa):** oracolul lot 2: aceleași numere ca rândul fără P5c.
+
+## 10. P5a comparat cu os-508 (sesiunea 293, 28 nov 14:20) — placa
+
+Sursa: hub `rezultate/2026-11-28-workstation-os508-rezidual-lipit/REZULTAT.md` (nucleul os-508 `c4ebc1e`, `--pas-rezidual-lipit`,
+două rânduri într-o pornire, `ceas 60`, max 62 °C). Martorul = os-507 (aceeași placă, aceleași programe, fără lipire).
+
+| Predicția | Măsurat | Stare |
+|---|---|---|
+| I3: câștig 0,5–1,1 ms la lot 6 (sub 0,3 = RATAT) | 119,8 → **118,8 ms** = **−1,0 ms** (25 635 → 25 865 simb/s, +0,9 %) | **CONFIRMAT** (placa) |
+| I3: ~0,2–0,4 ms la lot 2 | 60,8 → 59,9 ms = −0,9 ms | **RATAT ÎN BINE** (placa; o singură măsurătoare pe rând, zgomotul între porniri nu e cunoscut la lot 2 — de privit la rândul următor) |
+| I4: oracolul lot 2 aceleași numere | „ACELEAȘI NUMERE” (pierderea 6,3·10⁻⁶, norma 6,4·10⁻⁵) | **CONFIRMAT** (placa) |
+
+Aflat: la lot 6 câștigul e la capătul de sus al benzii, deci cele 24 `vadd` costau cât am socotit (~50 µs fiecare) și `ln_back_res`
+aproape nimic în plus. La lot 2 câștigul pare cât la lot 6, deși mută de 3 ori mai puțini octeți: probabil la lot 2 costul fiecărei
+lansări mărunte e mai mult așteptare / pornire decât memorie (DEDUS) — de aceea P5c (−12 lansări) ar putea da și la lot 2 mai mult
+decât banda de memorie.
+
+## 11. Rezultatul P5c (CALCUL + SIMULARE, sesiunea 293) — se citește cu §9
+
+Unealta NAK a doua (Mesa 26.3.1) reconstruită în cloud (~35 min); T310 = `crates/nvidia-ga104/tests/sim_c168_p5c_gelu_fwd.rs`;
+comparatorul nou `tools/nak/compara_gelu_fwd.py`.
+
+| Predicția | Rezultat | Stare |
+|---|---|---|
+| L1: fără `-DGELU_FWD` aceiași octeți | `mm_tc_v7` 953ed6b8…, `mm_tc_v8` 1b910a53…, `mm_tc_v8n` 9a0702bc…, `mm_tc_v8r` 6e28d531…, `mm_tc_v7_gelu` ed808204…, `mm_tc_v8_gelu` d0d061ce…, `mm_tc_v8n_gelu` 81e6e4ab…, `mm_tc_gelu` 03de80cf… — recompilate, **identice** (git nu vede nicio schimbare în `out2/`) | **CONFIRMAT** (CALCUL) |
+| L2: registrele | `mm_tc_v7_geluf` **128**, `mm_tc_v8_geluf` **128**, `mm_tc_v8n_geluf` **144** — exact ca programele simple (4 / 2 / 3 blocuri pe SM); 0 „spills” în memorie (v7: aceleași 14 copii în registre ca `mm_tc_v7`) | **CONFIRMAT** (CALCUL) — riscul pe v8 nu s-a produs |
+| L3: coada `act` = `gelu_tr` mod 0; coada `u` = a programului simplu | `compara_gelu_fwd.py`: v7 32 / 32, v8 64 / 64, v8n 64 / 64 cozi = arborele lui `gelu_tr` mod 0 (58 de operații) din `out/gelu_tr.sm86.txt` — **programul de pe placă, făcut de Mesa 25.0.7**; fiecare coadă pornește din registrul scris în C (adresa din 0x710) și scrie la adresa din 0x730; restul operațiilor (virgulă mobilă + `hmma`), fără cozi, = programul simplu, în aceeași ordine (503 / 586 / 413). 3 greșeli plantate (o constantă, o adunare, adresa `act`) prinse | **CONFIRMAT** (CALCUL) |
+| L4: model mic, 5 pași rapizi, aceiași biți | P5a + P5b ± P5c: pierderile, gradientul pasului 1, greutățile **bit cu bit**, cu vitezele os-500 (fc pe v7_geluf) și cu vitezele forțate pe v8 + v8r încărcat (fc pe v8_geluf, restul pe v8r); 88 → 86 lansări; plus S4: produsul 256×512×128 (TB + BIAS) pe fiecare din cele 3 programe = C și act ale perechii fc + `gelu_tr`, bit cu bit | **CONFIRMAT** (SIMULARE) |
+| L5: #513 exact −12 lansări | lot 2 și lot 6: 448 → 436 (lista P5b, fără copierile lotului); 12 `gelu_tr` înainte dispar; „fc” pe varianta `geluf` a programului de azi: **lot 6 12 × v8n_geluf, lot 2 12 × v8_geluf** (unde azi e v8r: v8r nu are variantă `geluf`, deci v8_geluf — aceiași biți); celelalte alegeri și toate celelalte cbuf-uri identice, în ordine; QMD-urile cu adresa, registrele, blocul, grila variantei; cbuf-ul = al lui „fc” + `act` la 0x730 | **CONFIRMAT** (SIMULARE) |
+| refuzuri | `gelu_fwd = None` = `attn11` octet cu octet; o listă cu fc+gelu refuzată de `attn11`, de `pack_mixed_gelu` și de `attn12` fără programele `geluf`; variantă neîncărcată, adresă nealiniată, fără v7 / v8, produs nealiniat, `act` suprapus peste A / B / C / bias — refuzate înainte de trimis; prin RAM (`via_ram_attn12`) aceleași alegeri și aceeași listă | **CONFIRMAT** (SIMULARE) |
+| L6: câștig 0,6–1,1 ms la lot 6 | — | NOT TESTED (placa) |
+| L7: oracolul lot 2 aceleași numere | — | NOT TESTED (placa) |
+
+Limitele, cinstit: (1) comparația L3 rescrie cele două listări cu identități **exacte** (|x| și −x ca modificatori, −0 + x = x pe o
+valoare deja FTZ, semnul scos din înmulțire, `mov C` = C, `mufu.*.f32` = `mufu.*`); orice altă diferență ar rămâne. Ea arată că pe
+aceeași intrare se fac aceleași operații, nu că `MUFU.RCP` / `MUFU.EX2` dau aceiași biți pe placă (sunt aceleași instrucțiuni, deci
+ar trebui). (2) Pe lot 2, unde azi „fc” merge pe v8r, P5c îl mută pe v8_geluf (v8 + coadă): cu biții identici, dar o înmulțire cu
+~9 % mai lentă (os-505: v8r 0,981 față de v8 1,063 ms la qkv) — câștigul la lot 2 poate fi mai mic; la lot 6 (v8n) nu se schimbă
+nimic din asta. (3) Programele `v8_geluf` / `v8n_geluf` au ~70 KiB (peste 64 KiB); OS-ul le alocă după mărime (`program_map_bytes`),
+deci nu e o problemă acolo, dar orice loc fix de 64 KiB pe program le-ar suprapune (testul nostru avea așa ceva — reparat).
+
+Nota pentru OS: `integration/cyber-universe/C-168_P5c_gelu-inainte-in-coada-fc.md`. Următorul pas: P5d (reziduurile înainte în coada
+lui „out” / „proj”) cu plan + predicții întâi; pe placă: rândurile P5b și P5c.

@@ -24,6 +24,9 @@
 // aligned-only rule (nvidia_ga104::mm_tc_v4::fits). Nothing here has run on a board.
 // C-168 p.5 P5b (session 291): with -DGELU the store is mm_tc_gelu.comp's (v * GELU'(u), u read at [row, col] from the
 // bias slot, BIAS unused): mm_tc_*_gelu. Without -DGELU the source compiles to the same bytes as before.
+// C-168 p.5 P5c (session 293): with -DGELU_FWD the store also writes act[row, col] = gelu_tr.comp mode 0 of the value
+// just written to C (u = v + bias), act at the end of the push constants (0x730): mm_tc_*_geluf. Without -DGELU_FWD the
+// source compiles to the same bytes as before.
 #version 460
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
@@ -73,6 +76,9 @@ layout(push_constant) uniform Args {
     uint n;
     uint k;
     uint flags;
+#ifdef GELU_FWD
+    Out act;
+#endif
 } args;
 
 // Two stages, each: op(A) [r][p] (128 rows of LS halves) then op(B) [c][p] (BN rows of LS halves). After the K loop the
@@ -239,6 +245,19 @@ void main() {
                         v += args.bias.v[gc];
                     }
                     args.c.v[gr * args.n + gc] = v;
+#ifdef GELU_FWD
+                    // C-168 p.5 P5c (-DGELU_FWD): gelu_tr.comp mode 0, letter for letter, on the value just written (u).
+                    float u = v;
+                    float z = u * 0.70710678118654752;
+                    float a = abs(z);
+                    float t = 1.0 / (1.0 + 0.3275911 * a);
+                    float p = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+                    float ex = exp(-a * a);
+                    float e1 = 1.0 - p * ex;
+                    float erf = z < 0.0 ? -e1 : e1;
+                    float cdf = 0.5 * (1.0 + erf);
+                    args.act.v[gr * args.n + gc] = u * cdf;
+#endif
 #endif
                 }
             }
