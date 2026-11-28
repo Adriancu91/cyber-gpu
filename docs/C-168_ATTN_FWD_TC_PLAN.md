@@ -238,9 +238,9 @@ adăugări) → PREDARE (H6, H7).
 | H4 | 5 / 5 seturi în margine (O ≤ 1·10⁻³, P ≤ 2·10⁻³) | 5 / 5; la #513 O 1,9·10⁻⁴, P 5,2·10⁻⁵ (= SIMULAREA, T301) | **CONFIRMATĂ** |
 | H5 (proba) | `atentie-513-b4` 0,37–0,62 ms (×1,6–2,7) | **0,184 ms** (tile3 1,003 → ×5,45); seturile mici ×1,9–2,4 | **RATATĂ în bine** (de 2–3,4 ori mai rapid decât intervalul) |
 
-Ce înseamnă H5 ratată în bine (DEDUS, nu măsurat): pe 3 produse de 64×64×64 pe placă și pe toate capetele (`atentie-513-b4`:
-4 × 12 × 36 plăci × 3 produse = 0,68 GFLOP… ×2 pentru treceri) programul nou face ~**11 TFLOP/s** pe produsele utile — peste
-`tc16_v4` (8,96), nu de 1,2–1,8 ori sub el cum presupusesem. Presupunerea greșită: că S dus prin memoria comună și cele 5 bariere
+Ce înseamnă H5 ratată în bine (CALCUL pe timpul măsurat): `atentie-513-b4` = 4 × 12 capete × 36 de plăci sub diagonală × 3
+produse 64×64×64 = **2,72 GFLOP** în 0,184 ms = **~14,8 TFLOP/s** (pe cele 2 produse utile, fără S-ul refăcut: ~9,9) — peste
+`tc16_v4` (8,96 pe 3 produse), nu de 1,2–1,8 ori sub el cum presupusesem. Presupunerea greșită: că S dus prin memoria comună și cele 5 bariere
 costă cât produsele; pe placă costul s-a ascuns în cele 2 blocuri pe SM. Pragul din §4 / §10 („peste 0,62 ms → proba aranjării
 acumulatorilor”) **nu s-a atins** → pasul 4 (legarea în pas) e următorul, cum scrie în plan.
 
