@@ -89,3 +89,39 @@ Aflat: packerul nu verifică dacă un program `Std` e încărcat (`prog_va` gre�
 os-415). Nota pentru OS: `integration/cyber-universe/C-168_P5a_rezidual-lipit-in-pas-rapid.md`.
 
 Următorul pas (P5b): planul + predicțiile pentru GELU' în coada lui v8n / v7 („proj-dX”), apoi codul.
+
+## 7. P5b — GELU' în coada înmulțirilor rapide: planul și predicțiile (sesiunea 291, 28 nov, scrise ÎNAINTE de cod)
+
+**Ce e azi (os-503 / planul P5a):** pe fiecare strat, înapoi, „proj-dX” (`dY · Wproj`, m = n·T = 3 072, n = F = 3 072,
+k = C = 768 la lot 6) merge pe v8n / v8 / v7 (alegerea pe valuri), apoi `gelu_tr` mode 1 citește `u` și rezultatul și scrie
+`dwide2` (3 × 37,7 MB pe strat). Lipirea există doar pe `mm_tc`-ul vechi (`mm_tc_gelu`, 64×64, sesiunea 199) — de 3–4 ori mai
+lent decât v8n, deci planul rapid nu o folosește.
+
+**Ce fac:**
+1. Aceeași sursă cu un fanion nou `-DGELU`: `mm_tc_v8.comp` → `mm_tc_v8_gelu` și `mm_tc_v8n_gelu` (cu `-DV8N`),
+   `mm_tc_v7.comp` → `mm_tc_v7_gelu`. Fără `-DGELU` sursa dă **exact aceiași octeți** ca azi (verific recompilând v7 / v8 /
+   v8n și comparând SHA-256). Coada cu `-DGELU` = a lui `mm_tc_gelu.comp`, literă cu literă (u din locul biasului, 0x718).
+2. `nvidia_ga104::mm_tc_fast_gelu` (programele, registrele, `Args` = `mm_tc_gelu::Args`, refuzurile), doar adăugări.
+3. În simulator: înlocuitorii `mm_tc_v7_gelu_on_cpu` / `mm_tc_v8_gelu_on_cpu` / `mm_tc_v8n_gelu_on_cpu` = aritmetica lui
+   `mm_tc_gelu_on_cpu` cu blocul / grila / alinierea programului.
+4. `train_step::pack_mixed_fast_attn10` = `attn9` + `GeluFast { v7, v8, v8n }`: un `TcGelu` aliniat ia varianta GELU a
+   programului pe care l-ar alege `pick_long_k` pentru același produs fără GELU; dacă acea variantă nu e încărcată → refuz
+   înainte de orice trimis (nu cad tăcut pe `mm_tc_gelu`). Cu `None` = `attn9` octet cu octet. `TcPick` primește
+   `V7Gelu` / `V8Gelu` / `V8nGelu` (doar adăugări).
+5. OS-ul: plan rapid + `.with_fused_gelu()`, încarcă cele trei programe.
+
+**Predicțiile (J1–J7):**
+- **J1 (CALCUL, NAK):** fără `-DGELU` cele trei programe vechi ies cu aceleași SHA-256. Cu `-DGELU`, coada GELU' din fiecare
+  listare NAK = coada din `mm_tc_gelu.sm86.txt`, instrucțiune cu instrucțiune (`compara_epilog.py`).
+- **J2 (CALCUL, NAK):** registrele: v8n_gelu ≤ 168 (păstrează 3 blocuri pe SM), v8_gelu ≤ 128 (păstrează 2 blocuri pe SM —
+  **riscul cel mai mare**: peste 128 → 1 bloc pe SM), v7_gelu ≤ 128 (4 blocuri). Dacă v8_gelu trece de 128, `pick` nu-l va
+  alege oricum pe #513 (lot 6 0 produse pe v8), îl notez și merg mai departe.
+- **J3 (SIMULARE):** model mic aliniat, 5 pași rapizi cu `with_fused_back` + `with_fused_gelu`: pierderile, gradientul
+  pasului 1 și greutățile de la sfârșit **bit cu bit** ca același plan cu `mm_tc_gelu` (aceeași aritmetică) și ca planul P5a
+  fără `with_fused_gelu` (aritmetica lui `mm_tc_gelu` = `mm_tc` + `gelu_tr` mode 1, sesiunea 199).
+- **J4 (SIMULARE):** #513 lot 6: lista are **exact L = 12 lansări mai puțin** (467 → 455 pe placă), 12 `gelu_tr` dispar, cele
+  12 „proj-dX” devin `TcGelu` pe varianta GELU a aceluiași program ales azi; restul listei identic, în ordine.
+- **J5 (SIMULARE):** refuzuri fără nimic trimis: variantă neîncărcată, adresă nealiniată, `c == u`, BIAS.
+- **J6 (placa, DEDUS):** `gelu_tr` înapoi ~2,5 ms la lot 6 (12 × ~210 µs: 113 MB pe strat la ~533 GB/s) dispare; coada citește
+  în plus `u` (37,7 MB pe strat, ~70–110 µs) → câștig net **1,0–1,8 ms** la lot 6. Sub 0,5 ms = RATAT.
+- **J7 (placa):** oracolul lot 2: aceleași numere ca rândul P5a.
