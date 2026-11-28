@@ -3853,6 +3853,10 @@ pub enum TcPick {
     V8Gelu,
     /// C-168 p.5 P5b (session 291): a [`MixedLaunch::TcGelu`] on `mm_tc_v8n_gelu`, only from [`pack_mixed_fast_attn10`].
     V8nGelu,
+    /// C-168 p.3 P3g (session 292, `docs/C-168_V8R.md` §6): a [`MixedLaunch::Tc`] on `mm_tc_v8r` (v8 with fewer register
+    /// copies: 120 registers, v8's block, grid and shared memory) where the waves pick v8, only from
+    /// [`pack_mixed_fast_attn11`].
+    V8r,
 }
 
 /// C-168 p.3 G7 (session 280): where the OS loaded `mm_tc_v8` / `mm_tc_v8n` (both 256-aligned, non-zero), the active
@@ -3979,6 +3983,7 @@ impl TcPick {
             TcPick::V7Gelu => "mm_tc_v7_gelu",
             TcPick::V8Gelu => "mm_tc_v8_gelu",
             TcPick::V8nGelu => "mm_tc_v8n_gelu",
+            TcPick::V8r => "mm_tc_v8r",
         }
     }
 }
@@ -4366,14 +4371,64 @@ pub fn pack_mixed_fast_attn10(
     step_bytes: Option<u32>,
     zone_va: u64,
 ) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
+    pack_mixed_fast_attn11(
+        launches,
+        prog_va,
+        progs,
+        v5_va,
+        v6_va,
+        v7_va,
+        v8,
+        long_k,
+        attn_fwd_va,
+        gelu_fast,
+        0,
+        attn,
+        attn_fast,
+        attn0,
+        step_bytes,
+        zone_va,
+    )
+}
+
+/// C-168 p.3 P3g (session 292, `docs/C-168_V8R.md` §6): [`pack_mixed_fast_attn10`] with `mm_tc_v8r` as well:
+/// `v8r_va` = where the OS loaded it (256-aligned; 0 = not loaded = [`pack_mixed_fast_attn10`] byte for byte). Every
+/// [`MixedLaunch::Tc`] the waves give to `mm_tc_v8` ([`crate::mm_tc_v8::pick_long_k`], the same rates, so the v7 / v8 /
+/// v8n split does not change) goes to `mm_tc_v8r` instead: [`TcPick::V8r`], v8's grid, block and shared memory,
+/// [`crate::mm_tc_v8r::REGISTERS`] (120) in the QMD, the same cbuf. `mm_tc_v8n` and the GELU' variants are not
+/// touched. `v8r_va ≠ 0` without `v8` is refused before anything is sent. Same bits as `mm_tc_v8` (= `mm_tc`; on the
+/// board v8r gave `mm_tc`'s bits in os-505). **SIMULARE only** (T309) for the step.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub fn pack_mixed_fast_attn11(
+    launches: &[MixedLaunch],
+    prog_va: impl Fn(Prog) -> u64,
+    progs: &TcPrograms,
+    v5_va: u64,
+    v6_va: u64,
+    v7_va: u64,
+    v8: Option<V8Programs>,
+    long_k: u32,
+    attn_fwd_va: u64,
+    gelu_fast: Option<GeluFast>,
+    v8r_va: u64,
+    attn: Option<AttnTcProgram>,
+    attn_fast: Option<AttnTcFast>,
+    attn0: Attn0Programs,
+    step_bytes: Option<u32>,
+    zone_va: u64,
+) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
     use crate::mm_tc as tc;
     use crate::mm_tc_v8 as t8;
+    use crate::mm_tc_v8r as t8r;
     if let Some(p) = v8
         && (p.v8 == 0 || p.v8n == 0 || p.sms == 0 || p.rates.v8_pct == 0 || p.rates.v8n_pct == 0)
     {
         return Err(bad(
             "pas-mixt: mm_tc_v8 / mm_tc_v8n la adresa 0 sau fara SM-uri / viteze",
         ));
+    }
+    if v8r_va != 0 && v8.is_none() {
+        return Err(bad("pas-mixt: mm_tc_v8r fara mm_tc_v8 / mm_tc_v8n"));
     }
     let (v8_va, v8n_va) = v8.map_or((0, 0), |p| (p.v8, p.v8n));
     use crate::mm_tc_fast_gelu as fg;
@@ -4406,6 +4461,7 @@ pub fn pack_mixed_fast_attn10(
             gf.v7,
             gf.v8,
             gf.v8n,
+            v8r_va,
         ]
         .iter()
         .any(|v| !v.is_multiple_of(256))
@@ -4444,6 +4500,7 @@ pub fn pack_mixed_fast_attn10(
                     v8.map(
                         |p8| match t8::pick_long_k(args, p8.sms, p8.rates, v7_va != 0, long_k) {
                             t8::Pick::V7 => TcPick::V7,
+                            t8::Pick::V8 if v8r_va != 0 => TcPick::V8r,
                             t8::Pick::V8 => TcPick::V8,
                             t8::Pick::V8n => TcPick::V8n,
                         },
@@ -4482,6 +4539,7 @@ pub fn pack_mixed_fast_attn10(
             TcPick::V7Gelu => gf.v7,
             TcPick::V8Gelu => gf.v8,
             TcPick::V8nGelu => gf.v8n,
+            TcPick::V8r => v8r_va,
         };
         if va == 0 {
             return Err(bad(match p {
@@ -4617,6 +4675,10 @@ pub fn pack_mixed_fast_attn10(
                                 Some(TcPick::V8n) => {
                                     let r = (v8n_va, t8::REGISTERS_N, t8::SHARED_N);
                                     (cb, t8::grid_n(args), t8::BLOCK_N, r.2, r.0, r.1)
+                                }
+                                Some(TcPick::V8r) => {
+                                    let r = (v8r_va, t8r::REGISTERS, t8r::SHARED);
+                                    (cb, t8r::grid(args), t8r::BLOCK, r.2, r.0, r.1)
                                 }
                                 _ => {
                                     let (va, regs, shared) = match pick {
