@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 288 — 28 noiembrie 2026, ~07:11–07:50 (ora României), în cloud, FĂRĂ placă — **C-168 p.3: os-503 comparat (G7) + garda „sumă lungă” (dX-ul capului înapoi pe v7) → PREDARE P3e; T304 CALCUL + SIMULARE**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 287), l-am pus `ocupat`. Rezultat nou pe placă: **os-503** (pasul #513 cu
+alegerea pe formă v8n / v7, record 21 837 simb/s) → comparația are întâietate.
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| G7 alegerile (lot 6 v7 12 / v8n 135; lot 2 73 / 24 / 50) | exact ca prezis | **CONFIRMAT** (pe placă, os-503) |
+| G7 biții | oracolul lot 2 aceleași numere; lot 6 pierderile identice cu os-496 | **CONFIRMAT** (pe placă) |
+| G7 timpul (prezis ~133 ms, înmulțirile ~83,7) | 140,7 ms, înmulțirile 91,1 | **RATAT** (+5,8 %) |
+| T304 C1: unde s-a dus diferența | o singură lansare: dX-ul capului (k = 16 384) 12,78 ms pe v8n = 6 TFLOP/s (modelul 3,46); celelalte etichete −1,6 ms sub model | PASS (CALCUL) |
+| T304 C2: v8n față de v7 în pas | ×1,19–1,30 pe valuri pline (proba: 1,18), ×1,04 pe qkv-dW; dX-ul capului pe v7 sub 7,87 ms (os-496) | PASS (CALCUL) |
+| `mm_tc_v8::{LONG_K_OS503, pick_long_k}`, `pack_mixed_fast_attn8k`, `pack_mixed_fast_via_ram_attn8k` (doar adăugări) | k ≥ 8 192 → v7; `long_k = 0` = `attn8` octet cu octet | PASS |
+| T304 S1–S4 | gardă oprită = attn8 octet cu octet; cu gardă doar dX-ul capului pe v7 (12/0/135 → 13/0/134), QMD-ul lui v7; 5 pași mini bit cu bit; prin RAM aceleași alegeri | PASS (SIMULARE) |
+| T304 C3: pasul cu garda | 132,0–135,8 ms = 22 630–23 280 simb/s | NOT TESTED (DEDUS, scris înainte) |
+| Nota pentru OS | `integration/cyber-universe/C-168_P3e_garda-suma-lunga.md` | — |
+| Verificările întregi | format, clippy, teste, no_std | **1 521 PASS** |
+
+**Note:** `docs/C-168_OS503_G7.md`, T304 în `TEST_MATRIX.md`, rândul în `PROVENANCE.md`. De ce e v8n lent pe dX-ul capului nu știm
+(candidați: rândurile lui A la exact 64 KiB, sau suma lungă) — proba care ar despărți e propusă în nota §4. **Nou pentru placă:**
+nimic (aceleași programe). **Nicio schimbare de interfață** (doar adăugări; `pack_mixed_fast_attn8` dă aceiași octeți).
+
+**Următorul pas:** OS: pasul lot 6 cu garda (P3e). Noi: comparațiile os-504 (`--atentie-fwd-tc`, H4 / H5), garda (P3e) și
+`--mm-tc-v8r` (V1–V4) când vin; altfel proba „64 KiB sau sumă lungă” (`docs/C-168_OS503_G7.md` §4) sau proba de diagnostic a
+așteptării citirilor (`docs/C-168_OS500_V8.md` §4).
+
 ## Sesiunea 287 — 28 noiembrie 2026, ~05:13–06:12 (ora României), în cloud, FĂRĂ placă — **C-168 p.3 urmarea: modulul `nvidia_ga104::mm_tc_v8r` pentru proba `--mm-tc-v8r` → PREDARE; T303 în SIMULARE**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 286), l-am pus `ocupat`. Niciun rezultat nou pe placă (os-501 și proba

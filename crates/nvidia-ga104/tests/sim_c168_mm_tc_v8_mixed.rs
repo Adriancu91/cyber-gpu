@@ -329,6 +329,23 @@ fn run(
     list_edit: &dyn Fn(&mut [MixedLaunch]),
     zone_edit: &ZoneEdit,
 ) -> Result<(Out, Vec<Option<TcPick>>), String> {
+    run_k(progs, v5, v6, v7, v8, 0, attn, fast, list_edit, zone_edit)
+}
+
+/// [`run`] packed by `pack_mixed_fast_attn8k` with the long-sum guard `long_k` (T304; 0 = `run`).
+#[allow(clippy::too_many_arguments)]
+fn run_k(
+    progs: &TcPrograms,
+    v5: u64,
+    v6: u64,
+    v7: u64,
+    v8: Option<V8Programs>,
+    long_k: u32,
+    attn: Option<AttnTcProgram>,
+    fast: Option<AttnTcFast>,
+    list_edit: &dyn Fn(&mut [MixedLaunch]),
+    zone_edit: &ZoneEdit,
+) -> Result<(Out, Vec<Option<TcPick>>), String> {
     let (inputs, targets) = batch();
     let params = initial();
     let plan = plan_mini(&inputs);
@@ -353,7 +370,7 @@ fn run(
             .unwrap();
         let mut list = ts::attn0_tc_list(ts::attn_tc_list(list).unwrap()).unwrap();
         list_edit(&mut list);
-        let (mut zone, qmds, p) = ts::pack_mixed_fast_attn8(
+        let (mut zone, qmds, p) = ts::pack_mixed_fast_attn8k(
             &list,
             prog_va,
             progs,
@@ -361,6 +378,7 @@ fn run(
             v6,
             v7,
             v8,
+            long_k,
             attn,
             fast,
             A0,
@@ -730,5 +748,272 @@ fn t297_via_ram() {
     println!(
         "kt c297 prin RAM SIMULARE: fara v8 -> attn7 octet cu octet; cu v8 aceleasi alegeri ca fara RAM ({} x mm_tc_v8n)",
         count(&pr, TcPick::V8n)
+    );
+}
+
+// ------------------------------------------------------------------ T304 (session 288): the long-sum guard
+
+/// The measured rates of os-500, as the OS ran os-503.
+const P8M: V8Programs = V8Programs {
+    rates: t8::RATES_OS500,
+    ..P8
+};
+
+fn tc_k(l: &MixedLaunch) -> Option<u32> {
+    match l {
+        MixedLaunch::Tc { args, .. } => Some(args.k),
+        _ => None,
+    }
+}
+
+/// T304 S1, SIMULARE: the guard off (`long_k = 0`), or with nothing to fall back on (v7 not loaded, or no v8) =
+/// `pack_mixed_fast_attn8` byte for byte (mini, #513 lot 2 and lot 6).
+#[test]
+fn t304_s1_guard_off_same_bytes() {
+    let k = Some(64 * KIB);
+    for l in [mini_list(), list_513(2), list_513(6)] {
+        for (v7, v8, long_k) in [
+            (V7, Some(P8M), 0),
+            (0, Some(P8M), t8::LONG_K_OS503),
+            (V7, None, t8::LONG_K_OS503),
+            (0, None, 0),
+        ] {
+            let a =
+                ts::pack_mixed_fast_attn8(&l, prog_va, &FAST, V5, V6, v7, v8, AT, FV4, A0, k, ZONE)
+                    .unwrap();
+            let b = ts::pack_mixed_fast_attn8k(
+                &l, prog_va, &FAST, V5, V6, v7, v8, long_k, AT, FV4, A0, k, ZONE,
+            )
+            .unwrap();
+            assert_eq!(a, b);
+        }
+    }
+    println!(
+        "kt c304 S1 SIMULARE: garda oprita (long_k 0, fara v7 sau fara v8) -> attn8 octet cu octet (mini, #513 lot 2 si 6)"
+    );
+}
+
+/// T304 S2, SIMULARE: with the guard (`LONG_K_OS503`) and the os-500 rates, exactly the launches with k ≥ 8 192 move
+/// to v7 — in #513 the head's dX alone (k = 16 384); their QMD = v7's (program, registers, shared, grid), the cbuf is
+/// the same bytes; nothing else moves. Lot 6: os-503's 12 / 0 / 135 → 13 / 0 / 134.
+#[test]
+fn t304_s2_picks() {
+    use nvidia_rm570::regs::qmd_v03_00 as q;
+    let k = Some(64 * KIB);
+    let mut lines = Vec::new();
+    for (name, l) in [
+        ("mini", mini_list()),
+        ("#513 lot 2", list_513(2)),
+        ("#513 lot 6", list_513(6)),
+    ] {
+        let (za, qa, pa) = ts::pack_mixed_fast_attn8(
+            &l,
+            prog_va,
+            &FAST,
+            V5,
+            V6,
+            V7,
+            Some(P8M),
+            AT,
+            FV4,
+            A0,
+            k,
+            ZONE,
+        )
+        .unwrap();
+        let (zb, qb, pb) = ts::pack_mixed_fast_attn8k(
+            &l,
+            prog_va,
+            &FAST,
+            V5,
+            V6,
+            V7,
+            Some(P8M),
+            t8::LONG_K_OS503,
+            AT,
+            FV4,
+            A0,
+            k,
+            ZONE,
+        )
+        .unwrap();
+        assert_eq!(qa, qb);
+        assert_eq!(za.len(), zb.len());
+        let mut moved = 0;
+        let mut long = 0;
+        for (((qv, x), y), launch) in qb.iter().zip(&pa).zip(&pb).zip(&l) {
+            let at = (qv - ZONE) as usize;
+            let is_long = matches!(x, Some(TcPick::V7 | TcPick::V8 | TcPick::V8n))
+                && tc_k(launch).is_some_and(|kk| kk >= t8::LONG_K_OS503);
+            if !is_long {
+                assert_eq!(x, y, "{name}");
+                assert_eq!(&za[at..at + 0x100], &zb[at..at + 0x100], "{name}");
+                continue;
+            }
+            long += 1;
+            assert_eq!(tc_k(launch), Some(16_384), "{name}");
+            assert_eq!(*y, Some(TcPick::V7), "{name}");
+            assert_eq!(&za[at - 0x800..at], &zb[at - 0x800..at], "{name}");
+            if *x == Some(TcPick::V7) {
+                assert_eq!(&za[at..at + 0x100], &zb[at..at + 0x100]);
+                continue;
+            }
+            moved += 1;
+            let MixedLaunch::Tc { args, .. } = launch else {
+                unreachable!()
+            };
+            assert_eq!(program_va(&zb, *qv), V7);
+            assert_eq!(
+                field(&zb, *qv, q::NVC6C0_QMDV03_00_REGISTER_COUNT_V),
+                u64::from(nvidia_ga104::mm_tc_v7::REGISTERS)
+            );
+            assert_eq!(
+                field(&zb, *qv, q::NVC6C0_QMDV03_00_SHARED_MEMORY_SIZE),
+                u64::from(nvidia_ga104::mm_tc_v7::SHARED.bytes)
+            );
+            assert_eq!(
+                field(&zb, *qv, q::NVC6C0_QMDV03_00_CTA_RASTER_WIDTH),
+                u64::from(nvidia_ga104::mm_tc_v7::grid(args)[0])
+            );
+        }
+        // One head, one dX with the vocabulary as its sum.
+        assert_eq!(long, 1, "{name}");
+        let a = v8_counts(&pa);
+        let b = v8_counts(&pb);
+        if name == "#513 lot 6" {
+            assert_eq!(a, [12, 0, 135]);
+            assert_eq!(b, [13, 0, 134]);
+            assert_eq!(moved, 1);
+        }
+        if name == "#513 lot 2" {
+            assert_eq!(a, [73, 24, 50]);
+        }
+        lines.push(format!(
+            "{name} {}/{}/{} -> {}/{}/{}",
+            a[0], a[1], a[2], b[0], b[1], b[2]
+        ));
+    }
+    println!(
+        "kt c304 S2 SIMULARE: garda k >= {}: doar dX-ul capului (k 16384) trece pe v7, QMD-ul lui v7, cbuf neschimbat; v7/v8/v8n {}",
+        t8::LONG_K_OS503,
+        lines.join("; ")
+    );
+}
+
+/// T304 S3, SIMULARE: five mini steps with the guard = without it, bit for bit (losses, first gradient, weights).
+#[test]
+fn t304_s3_training_same_bits() {
+    let (base, pb) = run(&FAST, V5, V6, V7, Some(P8M), AT, None, &no_edit, NONE).unwrap();
+    let (r, p) = run_k(
+        &FAST,
+        V5,
+        V6,
+        V7,
+        Some(P8M),
+        t8::LONG_K_OS503,
+        AT,
+        None,
+        &no_edit,
+        NONE,
+    )
+    .unwrap();
+    for (a, b) in r.losses.iter().zip(&base.losses) {
+        assert!(bits(a, b));
+    }
+    assert!(bits(&r.grad1, &base.grad1));
+    assert!(bits(&r.weights, &base.weights));
+    let (a, b) = (v8_counts(&pb), v8_counts(&p));
+    assert_eq!(a.iter().sum::<usize>(), b.iter().sum::<usize>());
+    assert_eq!(b[0], a[0] + 1);
+    println!(
+        "kt c304 S3 SIMULARE: mini 5 pasi cu garda (v7/v8/v8n {}/{}/{} -> {}/{}/{}) = fara garda bit cu bit",
+        a[0], a[1], a[2], b[0], b[1], b[2]
+    );
+}
+
+/// T304 S4, SIMULARE: through RAM — `long_k = 0` = `via_ram_attn8` byte for byte; with the guard the picks are those of
+/// `pack_mixed_fast_attn8k`.
+#[test]
+fn t304_s4_via_ram() {
+    use nvidia_ga104::batch_ram as br;
+    let (inputs, targets) = batch();
+    let plan = plan_mini(&inputs).resident().unwrap();
+    let v = br::via_ram(&plan, &inputs, &targets, VA + 0x80_0000).unwrap();
+    let list = mini_list();
+    let k = Some(64 * KIB);
+    let old = br::pack_mixed_fast_via_ram_attn8(
+        &list,
+        prog_va,
+        &FAST,
+        V5,
+        V6,
+        V7,
+        Some(P8M),
+        AT,
+        FV4,
+        A0,
+        k,
+        TC,
+        ZONE,
+        &v,
+    )
+    .unwrap();
+    let off = br::pack_mixed_fast_via_ram_attn8k(
+        &list,
+        prog_va,
+        &FAST,
+        V5,
+        V6,
+        V7,
+        Some(P8M),
+        0,
+        AT,
+        FV4,
+        A0,
+        k,
+        TC,
+        ZONE,
+        &v,
+    )
+    .unwrap();
+    assert_eq!(old, off);
+    let (_, _, pr) = br::pack_mixed_fast_via_ram_attn8k(
+        &list,
+        prog_va,
+        &FAST,
+        V5,
+        V6,
+        V7,
+        Some(P8M),
+        t8::LONG_K_OS503,
+        AT,
+        FV4,
+        A0,
+        k,
+        TC,
+        ZONE,
+        &v,
+    )
+    .unwrap();
+    let (_, _, pd) = ts::pack_mixed_fast_attn8k(
+        &list,
+        prog_va,
+        &FAST,
+        V5,
+        V6,
+        V7,
+        Some(P8M),
+        t8::LONG_K_OS503,
+        AT,
+        FV4,
+        A0,
+        k,
+        ZONE,
+    )
+    .unwrap();
+    assert_eq!(pr, pd);
+    assert_eq!(count(&pr, TcPick::V7), count(&old.2, TcPick::V7) + 1);
+    println!(
+        "kt c304 S4 prin RAM SIMULARE: long_k 0 -> via_ram_attn8 octet cu octet; cu garda aceleasi alegeri ca fara RAM"
     );
 }

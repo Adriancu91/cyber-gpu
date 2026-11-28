@@ -149,6 +149,23 @@ pub fn pick(args: &tc::Args, sms: u32, rates: Rates, with_v7: bool) -> Pick {
     best.map_or(Pick::V8, |b| b.0)
 }
 
+/// C-168 p.3 after os-503 (session 288, `docs/C-168_OS503_G7.md`): the depth of the sum (`k`) from which a product
+/// goes back to `mm_tc_v7` in [`pick_long_k`]. In the #513 step only the head's dX has such a sum (k = 16 384, the
+/// vocabulary); every other product has k ≤ 3 072. On the board (os-503, lot 6) that one launch took **12,78 ms on
+/// v8n** (6,0 TFLOP/s; the wave model: ~3,5 ms), while on v7 in os-496 it was below 7,87 ms (outside the 8 longest
+/// labels). Why v8n is slow there is not known (DEDUS candidates in the note); the guard only avoids it.
+pub const LONG_K_OS503: u32 = 8192;
+
+/// [`pick`], except that a product with `k ≥ long_k` takes `mm_tc_v7` when it is loaded (`with_v7`). `long_k = 0`
+/// = no guard = [`pick`] exactly. The bits do not change (v7, v8 and v8n give `mm_tc`'s bits, os-500 / T297 N3).
+pub fn pick_long_k(args: &tc::Args, sms: u32, rates: Rates, with_v7: bool, long_k: u32) -> Pick {
+    if with_v7 && long_k != 0 && args.k >= long_k {
+        Pick::V7
+    } else {
+        pick(args, sms, rates, with_v7)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

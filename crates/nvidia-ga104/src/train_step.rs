@@ -4160,6 +4160,33 @@ pub fn pack_mixed_fast_attn8(
     step_bytes: Option<u32>,
     zone_va: u64,
 ) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
+    pack_mixed_fast_attn8k(
+        launches, prog_va, progs, v5_va, v6_va, v7_va, v8, 0, attn, attn_fast, attn0, step_bytes,
+        zone_va,
+    )
+}
+
+/// C-168 p.3 after os-503 (session 288, `docs/C-168_OS503_G7.md`): [`pack_mixed_fast_attn8`] with the long-sum guard
+/// `long_k` ([`crate::mm_tc_v8::pick_long_k`]): an aligned product with `k ≥ long_k` goes to `mm_tc_v7` when it is
+/// loaded (`v7_va != 0`) instead of the program the waves pick. In the #513 step that is the head's dX alone (k =
+/// 16 384) with [`crate::mm_tc_v8::LONG_K_OS503`]. `long_k = 0` (or `v8 = None`, or `v7_va = 0`) = [`pack_mixed_fast_attn8`]
+/// byte for byte. Same bits either way. **SIMULARE only** (T304); the step with the guard has not run on the board.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub fn pack_mixed_fast_attn8k(
+    launches: &[MixedLaunch],
+    prog_va: impl Fn(Prog) -> u64,
+    progs: &TcPrograms,
+    v5_va: u64,
+    v6_va: u64,
+    v7_va: u64,
+    v8: Option<V8Programs>,
+    long_k: u32,
+    attn: Option<AttnTcProgram>,
+    attn_fast: Option<AttnTcFast>,
+    attn0: Attn0Programs,
+    step_bytes: Option<u32>,
+    zone_va: u64,
+) -> GpuResult<(Vec<u8>, Vec<u64>, Vec<Option<TcPick>>)> {
     use crate::mm_tc as tc;
     use crate::mm_tc_v8 as t8;
     if let Some(p) = v8
@@ -4199,11 +4226,13 @@ pub fn pack_mixed_fast_attn8(
             (Some(TcPick::Attn0Tc), _) => Some(attn0_pick(l, attn0)),
             (Some(p @ (TcPick::V4 | TcPick::Pf | TcPick::Tc)), _) => match l {
                 MixedLaunch::Tc { args, .. } if v8.is_some() && t8::fits(args) => {
-                    v8.map(|p8| match t8::pick(args, p8.sms, p8.rates, v7_va != 0) {
-                        t8::Pick::V7 => TcPick::V7,
-                        t8::Pick::V8 => TcPick::V8,
-                        t8::Pick::V8n => TcPick::V8n,
-                    })
+                    v8.map(
+                        |p8| match t8::pick_long_k(args, p8.sms, p8.rates, v7_va != 0, long_k) {
+                            t8::Pick::V7 => TcPick::V7,
+                            t8::Pick::V8 => TcPick::V8,
+                            t8::Pick::V8n => TcPick::V8n,
+                        },
+                    )
                 }
                 MixedLaunch::Tc { args, .. } if v7_va != 0 && crate::mm_tc_v7::fits(args) => {
                     Some(TcPick::V7)

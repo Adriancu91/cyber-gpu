@@ -708,3 +708,7 @@ niciun octet de firmware NVIDIA.
 - **Sesiunea 287 (28 nov 2026):** `crates/nvidia-ga104/src/mm_tc_v8r.rs` (modulul: binarul, numerele pentru QMD, `fits` / `grid`),
   `mm_tc_v8r_on_cpu` / `MM_TC_V8R_NEEDS` în `crates/gpu-sim/src/cmdproc.rs` și testul `crates/nvidia-ga104/tests/sim_c168_mm_tc_v8r.rs`
   (T303) — ale noastre, pe tiparul lui `mm_tc_v8`. Nimic copiat, nimic din firmware-ul NVIDIA.
+- **Sesiunea 288 (28 nov 2026):** `mm_tc_v8::{LONG_K_OS503, pick_long_k}`, `train_step::pack_mixed_fast_attn8k`,
+  `batch_ram::pack_mixed_fast_via_ram_attn8k` și testele `crates/nvidia-ga104/tests/calc_c168_os503.rs` + `t304_s*` din
+  `sim_c168_mm_tc_v8_mixed.rs` (T304) — ale noastre; cifrele de placă copiate din jurnalele OS-ului din hub (os-496, os-503).
+  Nimic copiat, nimic din firmware-ul NVIDIA.
