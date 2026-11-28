@@ -696,3 +696,6 @@ niciun octet de firmware NVIDIA.
   (FlashAttention / FlashAttention-2, arXiv 2205.14135 și 2307.08691: plăcile în memoria comună, maximul și suma din mers;
   perechile de rânduri pentru echilibrul cauzal) — nicio linie copiată. Binarul e ieșirea compilatorului Mesa NAK 26.3.1 (MIT)
   pe sursa noastră. Nimic din firmware-ul NVIDIA.
+- **Sesiunea 284 (28 nov 2026):** `crates/gpu-compute/src/attn_fwd_tc.rs` (modelul pe procesor), `attn_fwd_tc_on_cpu` din
+  `crates/gpu-sim/src/cmdproc.rs`, testul `crates/nvidia-ga104/tests/sim_c168_attn_fwd_tc.rs` (T299) — ale noastre, scrise după
+  GLSL-ul nostru și listarea NAK; sumatorul circuitelor = ipoteza noastră potrivită pe os-335. Nimic copiat, nimic din firmware-ul NVIDIA.

@@ -2521,6 +2521,109 @@ pub fn attn_fwd_tile_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
     Ok(())
 }
 
+/// C-168 point 4, step 2 (`docs/C-168_ATTN_FWD_TC_PLAN.md` §8): what `tools/nak/out2/attn_fwd_tc.sm86.sass` needs —
+/// the dump's `Shared size: 27648` (three areas of 64 rows × 144 B) and one barrier.
+pub const ATTN_FWD_TC_NEEDS: Needs = Needs {
+    shared_bytes: 27_648,
+    barriers: 1,
+};
+
+/// C-168 point 4, step 2: the CPU stand-in for `tools/nak/out2/attn_fwd_tc.sm86.sass` — the causal attention forward
+/// on the tensor cores (two passes, P written once), blocks of 256. **cbuf0 is NOT `attn_fwd_tile3`'s:** the
+/// arguments sit at 0x700 (qkv / p / att at 0x700 / 0x708 / 0x710, T 0x718, C 0x71c, H 0x720, d 0x724, scale 0x728;
+/// the dump). Grid in pairs [≤ ⌈T/64 / 2⌉, ≤ H, ≤ B]: block x does row tiles x and T/64 − 1 − x (one of them when they
+/// coincide); every row tile is `gpu_compute::attn_fwd_tc::fwd_tile` (a HYPOTHESIS: the tensor-core adder fitted on
+/// os-335, `MUFU` correctly rounded). Written: for each row tile rt, the P keys of tiles 0 … rt and the head's 64
+/// columns of att; the tiles of P above the diagonal tile are NOT written (the program does not write them). Only the
+/// aligned shapes the program takes (d = 64 = C / H, T a multiple of 64, qkv / p / att multiples of 16 bytes);
+/// anything else, a grid past the pairs or past H, or a Q / K / V value that is not a finite binary16 is refused (no
+/// write) instead of guessed.
+pub fn attn_fwd_tc_on_cpu(l: &mut Launch<'_>) -> GpuResult<()> {
+    use gpu_compute::attn_fwd_tc::{TILE, fwd_tile};
+    use gpu_compute::layer::AttnShape;
+    if l.block != [256, 1, 1] {
+        return Err(bad("SIM: attn_fwd_tc cere blocuri de 256x1x1"));
+    }
+    if l.mem.read_u64(l.cbuf0)? != 0 || l.mem.read_u32(l.cbuf0 + 0x8)? != 0 {
+        return Err(bad(
+            "SIM: baza grupurilor (cbuf0 0x0..0x8) diferita de 0, nemodelata",
+        ));
+    }
+    let base = l.cbuf0 + ATTN_TC_PUSH_BASE;
+    let r64 = |l: &Launch<'_>, o: u64| l.mem.read_u64(base + o);
+    let r32 = |l: &Launch<'_>, o: u64| l.mem.read_u32(base + o);
+    let (qkv, p, att) = (r64(l, 0x00)?, r64(l, 0x08)?, r64(l, 0x10)?);
+    let (t, c, heads, d) = (
+        r32(l, 0x18)? as usize,
+        r32(l, 0x1c)? as usize,
+        r32(l, 0x20)? as usize,
+        r32(l, 0x24)? as usize,
+    );
+    let scale = f32::from_bits(r32(l, 0x28)?);
+    let [gx, gy, gz] = l.grid.map(|g| g as usize);
+    if d != TILE || heads == 0 || c != TILE * heads || t == 0 || !t.is_multiple_of(TILE) {
+        return Err(bad(
+            "SIM: attn_fwd_tc: doar d = 64 = C/H si T multiplu de 64 (altfel attn_fwd_tile3)",
+        ));
+    }
+    if [qkv, p, att]
+        .iter()
+        .any(|&a| a == 0 || !a.is_multiple_of(16))
+    {
+        return Err(bad(
+            "SIM: attn_fwd_tc: adresa nealiniata la 16 octeti (citiri / scrieri de 128 de biti)",
+        ));
+    }
+    let nt = t / TILE;
+    if gy > heads || gx > nt.div_ceil(2) {
+        return Err(bad(
+            "SIM: attn_fwd_tc: grila trece de perechi / H, nemodelata",
+        ));
+    }
+    if gz == 0 || gy == 0 || gx == 0 {
+        return Ok(());
+    }
+    let s = AttnShape {
+        batch: gz,
+        t,
+        c,
+        heads,
+    };
+    let (nq, _, _) = s
+        .sizes()
+        .ok_or_else(|| bad("SIM: attn_fwd_tc: forma prea mare"))?;
+    let qkv_v = l.mem.read_f32s(qkv, nq)?;
+    // Every tile first (a refusal writes nothing), then the writes.
+    let mut tiles = alloc::vec::Vec::new();
+    for b in 0..gz {
+        for h in 0..gy {
+            for bx in 0..gx {
+                let second = nt - 1 - bx;
+                let rts: &[usize] = if second > bx { &[bx, second] } else { &[bx] };
+                for &rt in rts {
+                    let tile = fwd_tile(&s, &qkv_v, scale, (b, h, rt)).ok_or_else(|| {
+                        bad("SIM: attn_fwd_tc: o intrare nu e f16 finit (pe placa ar iesi inf / NaN), nemodelat")
+                    })?;
+                    tiles.push(((b, h, rt), tile));
+                }
+            }
+        }
+    }
+    for ((b, h, rt), tile) in tiles {
+        let wcols = (rt + 1) * TILE;
+        for r in 0..TILE {
+            let i = rt * TILE + r;
+            let at = (((b * heads + h) * t + i) * t) as u64;
+            l.mem
+                .write_f32s(p + 4 * at, &tile.p[r * wcols..(r + 1) * wcols]);
+            let o = ((b * t + i) * c + h * TILE) as u64;
+            l.mem
+                .write_f32s(att + 4 * o, &tile.att[r * TILE..(r + 1) * TILE]);
+        }
+    }
+    Ok(())
+}
+
 /// The CPU stand-in for C-160 point 7's `attn_p_tile.sm86.sass` (`docs/C-160_P7_ATTN_P_TILE.md`): `attn_fwd_tile2`
 /// without P·V — the cbuf0, blocks and grid of [`attn_fwd_tile_on_cpu`], but only P is written: every row
 /// (b, h, i < min(T, 64·x)) is `gpu_compute::layer::attn_p_tile_row_gpu`; `att` (0x38) is never touched. d > 64, a grid

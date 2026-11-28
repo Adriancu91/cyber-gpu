@@ -990,6 +990,28 @@ pub fn attn_fwd_gpu(s: &AttnShape, qkv: &[f32], scale: f32) -> Option<(Vec<f32>,
     Some((p, att))
 }
 
+/// C-168 point 4, step 2: the CPU model of `attn_fwd_tc` (the attention forward on the tensor cores, two passes,
+/// P written once) — the whole launch, (P [B, H, T, T], att [B·T, C]); the tiles of P above the diagonal tile (not
+/// written by the program) are `fill`. Only d = 64 and T a multiple of 64. See [`crate::attn_fwd_tc`]. SIMULARE only.
+pub fn attn_fwd_tc_gpu(
+    s: &AttnShape,
+    qkv: &[f32],
+    scale: f32,
+    fill: f32,
+) -> Option<(Vec<f32>, Vec<f32>)> {
+    crate::attn_fwd_tc::fwd_model(s, qkv, scale, fill)
+}
+
+/// C-168 point 4, step 2: one row tile `rt` of head (b, h) of `attn_fwd_tc` ([`crate::attn_fwd_tc::fwd_tile`]).
+pub fn attn_fwd_tc_tile_gpu(
+    s: &AttnShape,
+    qkv: &[f32],
+    scale: f32,
+    bhr: (usize, usize, usize),
+) -> Option<crate::attn_fwd_tc::FwdTile> {
+    crate::attn_fwd_tc::fwd_tile(s, qkv, scale, bhr)
+}
+
 /// The largest head width `attn_fwd_tile.comp` takes (its shared tiles are 64 wide).
 pub const ATTN_TILE_MAX_D: usize = 64;
 

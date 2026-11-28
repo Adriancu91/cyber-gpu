@@ -150,3 +150,41 @@ Ce s-a schimbat față de §3 (și de ce), toate fără efect pe aritmetica rân
 
 **Pasul următor (2):** modelul pe procesor `gpu_compute::layer::attn_fwd_tc_gpu` + emularea în `gpu-sim` (H3, T299), cu `exp2`
 ca `ex2_ftz` și rotunjirile f16 ale lui Q, K, V, P.
+
+## 9. Pasul 2 făcut (sesiunea 284, 28 nov 2026, cloud, FĂRĂ placă): modelul pe procesor + SIMULAREA — H3 CONFIRMATĂ (SIMULARE)
+
+Ce s-a scris (doar adăugări, nicio interfață schimbată):
+
+- **Modelul:** `gpu_compute::attn_fwd_tc` (`fwd_tile` = o placă de rânduri a unui cap, `fwd_model` = toată lansarea, `rel_norm`),
+  plus numele din plan `gpu_compute::layer::attn_fwd_tc_gpu` / `attn_fwd_tc_tile_gpu`. Ordinea e cea din listarea NAK 26.3.1 (toate
+  operațiile f32 `fadd.ftz` / `fmul.ftz` / `fmnmx.ftz`, 0 `ffma`): Q, K, V, P rotunjite f16; produsele în pași de 16 cu sumatorul
+  potrivit pe os-335 (ipoteza `mm_tc`); fiecare rând pe 4 sferturi (coloanele 4q + 16m + i) cu maximul și suma din mers; unirea
+  sferturilor în ordinea 0, 1, 2, 3; `ex2` și `rcp` corect rotunjite (pe placă sunt aproximative → pe placă verdictul e o margine).
+- **Înlocuitorul în simulator:** `gpu_sim::cmdproc::attn_fwd_tc_on_cpu` + `ATTN_FWD_TC_NEEDS` (27 648 B, o barieră): argumentele de la
+  0x700, grila în perechi, scrie P doar până la placa diagonală inclusiv; refuză (fără nicio scriere) d ≠ 64, T nemultiplu de 64,
+  adrese nealiniate la 16 B, grila peste perechi / H și o intrare care nu e f16 finit.
+- **T299** (`crates/nvidia-ga104/tests/sim_c168_attn_fwd_tc.rs`): o **emulare literală a GLSL-ului** — bloc cu bloc, grup cu grup,
+  fir cu fir, barierele ca faze; memoria comună = cele 6 912 cuvinte ale programului (perechi f16 ca `packFloat2x16`, plăci f32 pe
+  rânduri de 68), fiecare `coopMatLoad` / `coopMatStore` cu adresa, pasul și aranjarea lui, fiecare vec4 global verificat în buffer,
+  **fiecare cuvânt citit și scris între două bariere verificat pentru curse**.
+
+| # | Prezis (§4) | Ieșit (SIMULARE) | Verdict |
+|---|---|---|---|
+| H3 a | emularea = modelul bit cu bit pe margini | **aceiași biți** (P unde e scris, O) pe T 64 / 128 / 192 (impar: blocul din mijloc are o placă) / 320 / 256, B 1–2, H 1–2, amplitudini 1, 4, 12, și pe capetele 0 și 11 ale formei #513 (T 512, toate cele 4 blocuri); **0 curse** între bariere | CONFIRMATĂ |
+| H3 b | d < 64 refuzat | d = 32, T = 96, qkv la 8 mod 16, un K = 10⁶ (în afara f16): `fits` = fals și înlocuitorul refuză, **nimic scris** | CONFIRMATĂ |
+| H3 c | față de `attn_fwd_tile3` (F32) la mărimea #513: O ≤ 1·10⁻³, P ≤ 2·10⁻³ | B 1, T 512, C 768, H 12: amplitudine 1 → **O 2,7·10⁻⁴, P 7,6·10⁻⁵** (cel mai rău P 5,5·10⁻⁵ absolut); amplitudine 2 → **O 4,0·10⁻⁴, P 2,8·10⁻⁴** | CONFIRMATĂ |
+| H3 d | deasupra diagonalei lui P nimic scris | plăcile de deasupra plăcii diagonale rămân NaN (prin emulare și prin pushbuffer + QMD); în placa diagonală 0 exact deasupra diagonalei, ca `attn_fwd_tile3` | CONFIRMATĂ |
+
+Verificări în plus:
+
+- **Comparațiile nu sunt oarbe:** 6 greșeli plantate, toate prinse — 2 bariere scoase (→ curse găsite), Vᵀ neîntors, a doua placă
+  a perechii uitată (în emulare); unirea sferturilor inversată, fără mască în trecerea 2, P trunchiat în loc de rotunjit (în model).
+- **Înapoi nu citește plăcile nescrise** (cerința din §8): `attn_tc::back0_model` (dS sub diagonală) și `attn_tc::model` (modelul lui
+  `tc16_v4`) dau **aceiași biți** cu NaN acolo (ce lasă `attn_fwd_tc`) ca și cu 0 (ce scria `attn_fwd_tile3`).
+- O = P16·V16: față de o sumă f64 pe P și V rotunjite f16, cel mai rău 5,3·10⁻⁸ (verificare a modelului față de propria definiție).
+
+**Ce NU arată pasul 2:** nimic despre placă. Sumatorul circuitelor e ipoteza potrivită pe os-335; `ex2` / `rcp` ale plăcii sunt
+aproximative; că NAK a tradus GLSL-ul exact cum îl emulăm e verificat doar pe listare (H2). Pe placă se judecă **marginea** față de
+`attn_fwd_tile3`, nu biții (H4), și timpul (H5).
+
+**Pasul următor (3):** nota pentru OS — proba `--atentie-fwd-tc` lângă `attn_fwd_tile3` pe aceleași intrări (H4, H5) → PREDARE.

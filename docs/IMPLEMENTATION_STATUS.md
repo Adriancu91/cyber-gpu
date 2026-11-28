@@ -1,5 +1,31 @@
 # Starea implementării — cyber-gpu
 
+## Sesiunea 284 — 28 noiembrie 2026, ~02:11–03:10 (ora României), în cloud, FĂRĂ placă — **C-168 p.4 pasul 2: modelul pe procesor al atenției înainte pe circuite (`attn_fwd_tc`) + emularea programului; H3 CONFIRMATĂ în SIMULARE (T299)**
+
+Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 283), l-am pus `ocupat`. Niciun rezultat nou pe placă după os-500 (G7 așteaptă
+pasul cu `attn8` + `RATES_OS500`) → am luat pasul scris: `docs/C-168_ATTN_FWD_TC_PLAN.md` §6 pasul 2. (Copia locală veche era iar
+despărțită de GitHub; am lucrat într-o clonă nouă a ramurii `g0-g2-fundatie`, nimic șters.)
+
+| Ce | Rezultat | Stare |
+|---|---|---|
+| Modelul pe procesor `gpu_compute::attn_fwd_tc` (+ `layer::attn_fwd_tc_gpu` / `attn_fwd_tc_tile_gpu`) | ordinea listării NAK 26.3.1: f16 pe Q / K / V / P, sumatorul os-335, 4 sferturi pe rând, unirea 0-1-2-3, `ex2` / `rcp` corect rotunjite | PASS (SIMULARE) |
+| Înlocuitorul `gpu_sim::cmdproc::attn_fwd_tc_on_cpu` + `ATTN_FWD_TC_NEEDS` | argumentele la 0x700, grila în perechi, P scris doar până la placa diagonală; refuză fără scriere ce programul nu ia | PASS (SIMULARE) |
+| H3 a: emularea literală a GLSL-ului = modelul | **aceiași biți** pe T 64 / 128 / 192 / 320 / 256, B, H, amplitudini 1–12, capetele 0 și 11 la T 512; **0 curse** între bariere | CONFIRMATĂ (SIMULARE) |
+| H3 b: forme refuzate | d = 32, T = 96, adresă 8 mod 16, K în afara f16: `fits` nu, înlocuitorul refuză, nimic scris | CONFIRMATĂ (SIMULARE) |
+| H3 c: față de `attn_fwd_tile3` (F32) la #513 (B 1, T 512, H 12) | O **2,7·10⁻⁴** / 4,0·10⁻⁴, P **7,6·10⁻⁵** / 2,8·10⁻⁴ (amplitudine 1 / 2; prag 1·10⁻³ / 2·10⁻³) | CONFIRMATĂ (SIMULARE) |
+| H3 d: P deasupra plăcii diagonale | nescris (rămâne NaN), prin emulare și prin pushbuffer + QMD | CONFIRMATĂ (SIMULARE) |
+| Greșeli plantate | 6 / 6 prinse (2 bariere lipsă → curse, Vᵀ neîntors, a doua placă uitată, unirea inversată, fără mască, P trunchiat) | PASS |
+| Înapoi cu NaN în plăcile nescrise | `back0_model` și modelul `tc16_v4`: aceiași biți ca cu 0 | PASS (SIMULARE) |
+| H4–H7 (placa, pasul) | — | NOT TESTED |
+| Verificările întregi | format, clippy, teste, no_std | **1 496 PASS** |
+
+**Note:** `docs/C-168_ATTN_FWD_TC_PLAN.md` §9, T299 (`crates/nvidia-ga104/tests/sim_c168_attn_fwd_tc.rs`), `crates/gpu-compute/src/attn_fwd_tc.rs`,
+rândurile în `TEST_MATRIX.md` și `PROVENANCE.md`. **Nou pentru placă:** nimic (proba vine la pasul 3). **Nicio schimbare de interfață**
+(doar adăugări).
+
+**Următorul pas:** comparația pasului cu `attn8` + `RATES_OS500` când vine (G7); altfel C-168 p.4 pasul 3: proba `--atentie-fwd-tc`
+lângă `attn_fwd_tile3` (H4, H5) + nota pentru OS → PREDARE.
+
 ## Sesiunea 283 — 28 noiembrie 2026, ~01:10–02:10 (ora României), în cloud, FĂRĂ placă — **os-500 comparat (C-168 p.3, proba `--mm-tc-v8`): G4 CONFIRMATĂ (aceiași biți), G5 / G6 RATATE (câștig mic); v8n cel mai rapid → vitezele măsurate `RATES_OS500`, pasul lot 6 prezis ~133 ms**
 
 Semnul `in-lucru/cyber-gpu.md` era `liber` (sesiunea 282), l-am pus `ocupat`. Rezultat nou pe placă: **os-500** (ciclul 00:49, proba
